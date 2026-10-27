@@ -1,0 +1,222 @@
+"use client";
+import { useState } from "react";
+import Icon from "../Icon";
+import { ASSESSMENTS, BRANCH_NAMES, FACILITY_TASKS, MASTER_TASKS } from "@/lib/mock";
+import { downloadCsv, useCrud } from "@/lib/store";
+import { useApp } from "@/lib/app";
+import { DataTable, FieldDef, FormDialog, Modal, PageHeader, Section, SearchBox, Select, Tabs, Field } from "../ui";
+
+const CATEGORIES = ["กิจวัตรประจำวัน (ADL)", "งานพยาบาล", "กายภาพบำบัด", "ส่งเสริมสุขภาพ", "กิจกรรมกลุ่ม", "งานทั่วไป", "งานอื่นๆ"];
+type Dlg = { mode: "add" | "edit"; i: number } | null;
+
+/* ---------- งานทั่วไปประจำสาขา ---------- */
+const FAC_COLS = ["ชื่องาน", "หมวดหมู่", "เวลา / ความถี่", "ระบบจ่ายงาน"];
+const FAC_FIELDS: FieldDef[] = [
+  { label: "เลือกงานจากคลังมาตรฐาน (Task Dictionary)", options: Array.from(new Set([...MASTER_TASKS, ...FACILITY_TASKS].map((t) => t[1] === undefined ? "" : t[0].startsWith("T-") ? t[1] : t[0]))), required: true, wide: true },
+  { label: "หมวดหมู่ (ดึงจากคลังอัตโนมัติ)", options: ["ความสะอาด NA", "งานทั่วไป / ซ่อมบำรุง", ...CATEGORIES] },
+  { label: "ระบบจ่ายงาน", options: ["สร้างอัตโนมัติ (Routine)", "จ่ายเอง (Manual)"], required: true },
+  { label: "ความถี่", options: ["ทุกวัน (Daily)", "ทุกสัปดาห์ (Weekly)", "ทุกเดือน (Monthly)"], required: true },
+  { label: "เวลาที่ต้องทำ (เช่น 07:00 หรือ กะเช้า)" },
+  { label: "คำแนะนำเพิ่มเติม (ถ้ามี)", area: true },
+];
+
+export function FacilityTasks() {
+  const { rows, add, update, remove } = useCrud("facility", FACILITY_TASKS);
+  const { toast, confirm, go } = useApp();
+  const [q, setQ] = useState("");
+  const [cat, setCat] = useState("");
+  const [mode, setMode] = useState("ทั้งหมด");
+  const [dlg, setDlg] = useState<Dlg>(null);
+  const shown = rows.map((r, i) => ({ r, i })).filter(({ r }) =>
+    (!q || r[0].includes(q)) && (!cat || r[1] === cat) && (mode === "ทั้งหมด" || r[3] === mode));
+  // ฟอร์มมี 6 ช่อง ส่วนตารางแสดง 4 คอลัมน์: ชื่องาน, หมวดหมู่, เวลา/ความถี่, ระบบจ่ายงาน
+  const toRow = (v: string[]) => [v[0], v[1], [v[4], v[3]].filter(Boolean).join(" / "), v[2], v[5]];
+  return (
+    <>
+      <PageHeader
+        title="งานทั่วไปประจำสาขา (Facility Tasks)"
+        sub="จัดการงานสถานที่ งานทำความสะอาด และงานทั่วไปที่ไม่ผูกกับผู้รับบริการ"
+        actions={<>
+          <button className="btn-soft" onClick={() => go("master_tasks")}>จัดการคลังงานมาตรฐาน</button>
+          <button className="btn-soft" onClick={() => downloadCsv("งานทั่วไปประจำสาขา", FAC_COLS, rows)}><Icon name="download" className="h-4 w-4" /> ส่งออก CSV (Excel)</button>
+          <button className="btn-primary" onClick={() => setDlg({ mode: "add", i: -1 })}><Icon name="plus" className="h-4 w-4" /> เพิ่มงานทั่วไป</button>
+        </>}
+      />
+      <Section>
+        <div className="mb-4 grid gap-3 md:grid-cols-[1fr_16rem]">
+          <div onChange={(e) => setQ((e.target as HTMLInputElement).value)}><SearchBox placeholder="ค้นหาชื่อ/รายละเอียดงาน" /></div>
+          <Select options={["ความสะอาด NA", "งานทั่วไป / ซ่อมบำรุง", ...CATEGORIES]} placeholder="หมวดหมู่" value={cat} onChange={setCat} />
+        </div>
+        <div className="mb-4"><Tabs tabs={["ทั้งหมด", "จ่ายเอง (Manual)", "สร้างอัตโนมัติ (Routine)"]} value={mode} onChange={setMode} /></div>
+        <DataTable
+          columns={FAC_COLS}
+          rows={shown.map((x) => x.r)}
+          actions={[
+            { label: "แก้ไข", onClick: (n) => setDlg({ mode: "edit", i: shown[n].i }) },
+            { label: "ลบ", danger: true, onClick: (n) => confirm({ title: "ลบงานทั่วไป", message: `ต้องการลบ "${shown[n].r[0]}" ใช่หรือไม่`, danger: true, okLabel: "ลบ", onOk: () => { remove(shown[n].i); toast("ลบงานแล้ว"); } }) },
+          ]}
+        />
+      </Section>
+      <FormDialog
+        open={!!dlg} mode={dlg?.mode ?? "add"} title={dlg?.mode === "edit" ? "แก้ไขงานการดูแล" : "เพิ่มงานทั่วไปประจำสาขา"}
+        fields={FAC_FIELDS} value={dlg?.mode === "edit" ? [rows[dlg.i][0], rows[dlg.i][1], rows[dlg.i][3], "", rows[dlg.i][2], ""] : undefined}
+        onClose={() => setDlg(null)} saveLabel="บันทึกข้อมูล"
+        onSave={(v) => {
+          const r = toRow(v).slice(0, 4);
+          if (dlg?.mode === "edit") update(dlg.i, r); else add(r);
+          setDlg(null); toast("บันทึกข้อมูลแล้ว");
+        }}
+      />
+    </>
+  );
+}
+
+/* ---------- คลังงานมาตรฐาน ---------- */
+const MT_COLS = ["รหัส", "ชื่องาน", "คำสั่งงาน (Instruction)", "หมวด", "กะ", "สาขา"];
+const MT_FIELDS: FieldDef[] = [
+  { label: "รหัสงาน" },
+  { label: "ชื่องาน", required: true },
+  { label: "คำสั่งงาน (Instruction)", area: true, required: true },
+  { label: "หมวดหมู่", options: CATEGORIES },
+  { label: "กะที่ต้องทำ", options: ["ทั้งสองกะ", "กะเช้า", "กะดึก"] },
+  { label: "สาขา", options: ["ส่วนกลาง", ...BRANCH_NAMES] },
+  { label: "วิชาชีพ" },
+];
+
+export function MasterTasks() {
+  const { rows, add, update, remove } = useCrud("master", MASTER_TASKS);
+  const { toast, confirm } = useApp();
+  const [q, setQ] = useState("");
+  const [cat, setCat] = useState("");
+  const [shift, setShift] = useState("");
+  const [dlg, setDlg] = useState<Dlg>(null);
+  const [group, setGroup] = useState(false);
+  const [gname, setGname] = useState("");
+  const shown = rows.map((r, i) => ({ r, i })).filter(({ r }) =>
+    (!q || r[1].includes(q) || r[2].includes(q)) && (!cat || r[3] === cat) && (!shift || r[4] === shift));
+  return (
+    <>
+      <PageHeader
+        title="คลังงานมาตรฐาน (Master Tasks)"
+        sub="จัดการชื่องานและคำสั่งงานที่เป็นมาตรฐานของศูนย์"
+        actions={<>
+          <button className="btn-soft" onClick={() => downloadCsv("คลังงานมาตรฐาน", MT_COLS, rows.map((r) => r.slice(0, 6)))}><Icon name="download" className="h-4 w-4" /> ส่งออก CSV</button>
+          <button className="btn-soft" onClick={() => setGroup(true)}>สร้างกลุ่มงานใหม่</button>
+          <button className="btn-primary" onClick={() => setDlg({ mode: "add", i: -1 })}><Icon name="plus" className="h-4 w-4" /> เพิ่มงานมาตรฐาน</button>
+        </>}
+      />
+      <Section>
+        <div className="mb-4 grid gap-3 md:grid-cols-[1fr_16rem_12rem]">
+          <div onChange={(e) => setQ((e.target as HTMLInputElement).value)}><SearchBox placeholder="ค้นหาชื่อ/คำสั่งงาน" /></div>
+          <Select options={CATEGORIES} placeholder="หมวดหมู่: ทั้งหมด" value={cat} onChange={setCat} />
+          <Select options={["กะเช้า", "กะดึก", "ทั้งสองกะ"]} placeholder="กะ: ทั้งหมด" value={shift} onChange={setShift} />
+        </div>
+        <DataTable
+          columns={MT_COLS}
+          rows={shown.map((x) => x.r.slice(0, 6))}
+          actions={[
+            { label: "แก้ไข", onClick: (n) => setDlg({ mode: "edit", i: shown[n].i }) },
+            { label: "ลบ", danger: true, onClick: (n) => confirm({ title: "ลบงานมาตรฐาน", message: `ต้องการลบ "${shown[n].r[1]}" ใช่หรือไม่`, danger: true, okLabel: "ลบ", onOk: () => { remove(shown[n].i); toast("ลบงานแล้ว"); } }) },
+          ]}
+        />
+      </Section>
+      <FormDialog
+        open={!!dlg} mode={dlg?.mode ?? "add"} title={dlg?.mode === "edit" ? "แก้ไขงานมาตรฐาน" : "เพิ่มงานมาตรฐาน"}
+        fields={MT_FIELDS} value={dlg?.mode === "edit" ? rows[dlg.i] : undefined}
+        onClose={() => setDlg(null)} saveLabel="บันทึกข้อมูล"
+        onSave={(v) => { if (dlg?.mode === "edit") update(dlg.i, v); else add(v); setDlg(null); toast("บันทึกข้อมูลแล้ว"); }}
+      />
+      <Modal
+        open={group} title="สร้างกลุ่มงานใหม่" onClose={() => setGroup(false)}
+        footer={<><button className="btn-soft" onClick={() => setGroup(false)}>ยกเลิก</button>
+          <button className="btn-primary" onClick={() => { if (!gname.trim()) return toast("กรุณากรอกชื่อกลุ่มงาน"); setGroup(false); setGname(""); toast("บันทึกกลุ่มงานแล้ว"); }}>บันทึกกลุ่มงาน</button></>}
+      >
+        <div className="space-y-4">
+          <Field label="ชื่อกลุ่มงาน" required><input value={gname} onChange={(e) => setGname(e.target.value)} /></Field>
+          <Field label="คำอธิบาย"><textarea rows={2} /></Field>
+          <Field label="รายการงานในกลุ่ม (ดึงงานจากคลัง)">
+            <div className="space-y-1 rounded-xl border border-cream-300 bg-cream-50/60 p-2">
+              {rows.map((r) => (
+                <label key={r[0]} className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm hover:bg-white"><input type="checkbox" /> {r[1]}</label>
+              ))}
+            </div>
+          </Field>
+        </div>
+      </Modal>
+    </>
+  );
+}
+
+/* ---------- ประเมินภาวะและเสนอแผนดูแล ---------- */
+const AS_COLS = ["ชื่อแผนการดูแล (Plan Name)", "ชื่อผู้สูงอายุ (Resident Name)", "โรคประจำตัว (Chronic Diseases)", "เบอร์โทรติดต่อญาติ (Relative Phone)", "ราคาประเมินรวม (บาท)"];
+const AS_FIELDS: FieldDef[] = [
+  { label: "ชื่อแผนการดูแล (Plan Name)", required: true },
+  { label: "ชื่อผู้สูงอายุ (Resident Name)", required: true },
+  { label: "โรคประจำตัว (Chronic Diseases)", area: true },
+  { label: "เบอร์โทรติดต่อญาติ (Relative Phone)", type: "tel" },
+  { label: "ราคาประเมินรวม (บาท)", type: "number" },
+  { label: "หมายเหตุ / เงื่อนไขเพิ่มเติม", area: true },
+];
+
+export function Quotations() {
+  const { rows, add, update, remove } = useCrud("assessments", ASSESSMENTS);
+  const { toast, confirm } = useApp();
+  const [q, setQ] = useState("");
+  const [applied, setApplied] = useState("");
+  const [dlg, setDlg] = useState<Dlg>(null);
+  const [print, setPrint] = useState<number | null>(null);
+  const shown = rows.map((r, i) => ({ r, i })).filter(({ r }) => !applied || r[1].includes(applied) || r[0].includes(applied));
+  return (
+    <>
+      <PageHeader
+        title="ระบบประเมินภาวะและเสนอแผนดูแล (Assessments & Care Plan)"
+        sub="ประเมินภาวะผู้รับบริการ จัดกลุ่มงาน และออกใบเสนอแผนการดูแล"
+        actions={<button className="btn-primary" onClick={() => setDlg({ mode: "add", i: -1 })}><Icon name="plus" className="h-4 w-4" /> สร้างใบประเมิน</button>}
+      />
+      <p className="mb-4 rounded-xl bg-gold-100/70 px-4 py-2.5 text-sm text-gold-700">ข้อมูลยึดตามรอบเวร (ตัดกะ 07:00 น.)</p>
+      <Section>
+        <form className="mb-4 flex flex-col gap-3 sm:flex-row" onSubmit={(e) => { e.preventDefault(); setApplied(q); }}>
+          <div className="flex-1" onChange={(e) => setQ((e.target as HTMLInputElement).value)}><SearchBox placeholder="ค้นหาชื่อลูกค้า/ผู้สูงอายุ" /></div>
+          <button className="btn-primary">ค้นหา</button>
+          <button type="button" className="btn-soft" onClick={() => downloadCsv("ใบประเมินภาวะ", AS_COLS, rows.map((r) => r.slice(0, 5)))}><Icon name="download" className="h-4 w-4" /> ดาวน์โหลด CSV</button>
+        </form>
+        <DataTable
+          columns={AS_COLS}
+          rows={shown.map((x) => x.r.slice(0, 5))}
+          actions={[
+            { label: "ใบเสนอราคา", onClick: (n) => setPrint(shown[n].i) },
+            { label: "แก้ไข", onClick: (n) => setDlg({ mode: "edit", i: shown[n].i }) },
+            { label: "ลบ", danger: true, onClick: (n) => confirm({ title: "ลบใบประเมิน", message: `ต้องการลบ "${shown[n].r[0]}" ใช่หรือไม่`, danger: true, okLabel: "ลบ", onOk: () => { remove(shown[n].i); toast("ลบใบประเมินแล้ว"); } }) },
+          ]}
+        />
+      </Section>
+      <FormDialog
+        open={!!dlg} mode={dlg?.mode ?? "add"} title={dlg?.mode === "edit" ? "แก้ไขใบประเมิน" : "ประเมินภาวะและแผนการดูแล"}
+        fields={AS_FIELDS} value={dlg?.mode === "edit" ? rows[dlg.i] : undefined}
+        onClose={() => setDlg(null)} saveLabel="บันทึกใบประเมินและแผน"
+        onSave={(v) => { if (dlg?.mode === "edit") update(dlg.i, v); else add(v); setDlg(null); toast("บันทึกใบประเมินแล้ว"); }}
+      />
+      <Modal open={print !== null} wide title="แผนการดูแล (ใบเสนอราคา)" onClose={() => setPrint(null)} footer={<><button className="btn-soft" onClick={() => setPrint(null)}>ปิด</button><button className="btn-primary" onClick={() => window.print()}>สั่งพิมพ์</button></>}>
+        {print !== null && (
+          <div className="space-y-4 text-sm">
+            <dl className="grid gap-3 rounded-xl bg-cream-50 p-4 sm:grid-cols-3">
+              <div><dt className="text-gold-500">ชื่อผู้สูงอายุ</dt><dd className="font-medium">{rows[print][1]}</dd></div>
+              <div><dt className="text-gold-500">โรคประจำตัว</dt><dd className="font-medium">{rows[print][2] || "-"}</dd></div>
+              <div><dt className="text-gold-500">เบอร์ติดต่อญาติ</dt><dd className="font-medium">{rows[print][3] || "-"}</dd></div>
+            </dl>
+            <div className="flex items-center justify-between rounded-xl border border-cream-300 p-4">
+              <span className="font-medium">{rows[print][0]} <span className="text-gold-500">(ราคาประเมิน)</span></span>
+              <b className="text-lg text-gold-700">{rows[print][4]} บาท</b>
+            </div>
+            <p className="text-xs text-gold-600">หมายเหตุ: รายการและราคาข้างต้นเป็นการประเมินเบื้องต้นตามแพ็กเกจมาตรฐาน อาจมีการปรับเปลี่ยนตามอาการและแผนการรักษารายบุคคล</p>
+            <div className="grid gap-6 pt-6 sm:grid-cols-2">
+              {["ผู้เสนอราคา", "ลูกค้า/ผู้รับบริการ (ผู้พิจารณา)"].map((t) => (
+                <div key={t} className="text-center"><div className="border-b border-dashed border-gold-400 pt-8" /><p className="mt-2 text-gold-600">{t}</p></div>
+              ))}
+            </div>
+          </div>
+        )}
+      </Modal>
+    </>
+  );
+}
