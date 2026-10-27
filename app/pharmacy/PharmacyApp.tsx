@@ -5,7 +5,10 @@ import Link from "next/link";
 import Icon from "@/components/Icon";
 import { DataTable, Field, MetricGrid, Modal, PageHeader, Section, Select, StatusBadge, Tabs } from "@/components/ui";
 import { AppProvider, useApp } from "@/lib/app";
-import { downloadCsv } from "@/lib/store";
+import { downloadCsv, useCrud, useRecords } from "@/lib/store";
+import { OfflineBar } from "@/components/Pwa";
+import Login from "@/components/Login";
+import { useSession, SessionUser } from "@/lib/session";
 
 /* ---------- ชนิดข้อมูล ---------- */
 type Drug = {
@@ -81,13 +84,13 @@ const Chip = ({ on, children, onClick }: { on: boolean; children: React.ReactNod
 );
 
 /* ---------- แอป ---------- */
-function App() {
+function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   const [page, setPage] = useState<Page>("dashboard");
   const [drawer, setDrawer] = useState(false);
   const [big, setBig] = useState(false);
-  const [drugs, setDrugs] = useState(DRUGS0);
-  const [master, setMaster] = useState(MASTER0);
-  const [packs, setPacks] = useState<Pack[]>([]);
+  const [drugs, setDrugs] = useRecords("pharmacy-drugs", DRUGS0);
+  const { rows: master, set: setMaster } = useCrud("pharmacy-master", MASTER0);
+  const [packs, setPacks] = useRecords<Pack>("pharmacy-packs", []);
   const today = iso();
 
   // เปิดหน้าตาม ?page= เช่น /pharmacy?page=dispense
@@ -109,7 +112,7 @@ function App() {
   const sidebar = (
     <div className="sidebar-inner">
       <Link href="/pharmacy" className="sidebar-brand"><Image src="/logo-mark.png" alt="KIN" width={43} height={34} /><div><span className="sidebar-wordmark">KIN<span>med</span></span><span className="sidebar-brand-caption">ระบบบริหารจัดการยา</span></div></Link>
-      <div className="workspace-identity"><span className="workspace-monogram">ห</span><div><strong>ห้องยา · กรุงเทพมหานคร</strong><span>พนักงานห้องยา</span></div><span className="workspace-live" /></div>
+      <div className="workspace-identity"><span className="workspace-monogram">ห</span><div><strong>{user.name}</strong><span>ห้องยา · {user.branch}</span></div><span className="workspace-live" /></div>
       <nav className="sidebar-nav" aria-label="เมนูห้องยา">
         {GROUPS.map((g) => (
           <div key={g.id} className="nav-group">
@@ -125,7 +128,8 @@ function App() {
       </nav>
       <div className="sidebar-bottom space-y-1">
         <button className="nav-item" onClick={() => setBig(!big)} aria-pressed={big}><Icon name="eye" /><span>โหมดมือถือ (ตัวหนังสือใหญ่)</span><span className={`ml-auto h-5 w-9 rounded-full p-0.5 transition ${big ? "bg-gold-600" : "bg-cream-300"}`}><span className={`block h-4 w-4 rounded-full bg-white transition ${big ? "translate-x-4" : ""}`} /></span></button>
-        <Link href="/staff" className="nav-item"><Icon name="phone" /><span>กลับแอป CG2</span></Link>
+        <Link href="/staff" className="nav-item"><Icon name="phone" /><span>กลับ KinApp</span></Link>
+        <button className="nav-item" onClick={onLogout}><Icon name="logout" /><span>ออกจากระบบ</span></button>
       </div>
     </div>
   );
@@ -142,6 +146,7 @@ function App() {
           </div>
           <button className="btn-primary !min-h-[40px] !px-4 !py-2 text-sm" onClick={() => go("dispense")}><Icon name="pill" className="h-4 w-4" /> จัดยา</button>
         </header>
+        <OfflineBar />
         <main className="workspace-main" key={page}>
           {page === "dashboard" && <Dashboard go={go} need={todayNeed.length} packed={packedToday} low={low} waitQa={waitQa} />}
           {page === "dispense" && <Dispense drugs={drugs} setDrugs={setDrugs} packs={packs} setPacks={setPacks} go={go} />}
@@ -635,5 +640,7 @@ function Manual() {
 }
 
 export default function PharmacyApp() {
-  return <AppProvider go={() => {}}><App /></AppProvider>;
+  const { user, ready, setUser, logout } = useSession();
+  if (!ready) return <main className="grid min-h-dvh place-items-center text-sm text-gold-500">กำลังตรวจสอบการเข้าสู่ระบบ…</main>;
+  return <AppProvider go={() => {}}>{user ? <App user={user} onLogout={logout} /> : <Login staff onLogin={setUser} />}</AppProvider>;
 }

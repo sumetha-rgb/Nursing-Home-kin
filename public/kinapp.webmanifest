@@ -1,0 +1,21 @@
+{
+  "id": "/staff",
+  "name": "KinApp · KIN Rehabilitation & Homecare",
+  "short_name": "KinApp",
+  "description": "แอปทีมดูแล KIN: งานวันนี้ คิวจ่ายยา สมุดส่งเวร ใช้ได้แม้สัญญาณอินเทอร์เน็ตไม่เสถียร",
+  "lang": "th",
+  "start_url": "/staff",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#faf6ee",
+  "theme_color": "#8b6e3e",
+  "icons": [
+    { "src": "/icons/kinapp-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/kinapp-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/kinapp-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "แอปจัดยา", "url": "/pharmacy", "icons": [{ "src": "/icons/kinapp-192.png", "sizes": "192x192" }] }
+  ]
+}

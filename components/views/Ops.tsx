@@ -131,7 +131,7 @@ export function Dashboard() {
 
 /* ---------- ระบบตารางนัดหมาย ---------- */
 const APPT_FIELDS: FieldDef[] = [
-  { label: "วันที่", type: "text", required: true },
+  { label: "วันที่ (วว/ดด/ปปปป)", type: "text", required: true },
   { label: "เวลา", type: "time", required: true },
   { label: "ผู้รับบริการ", options: RESIDENTS.map((r) => r[0]), required: true },
   { label: "รายการ", required: true },

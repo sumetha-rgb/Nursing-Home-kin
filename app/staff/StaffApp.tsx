@@ -3,10 +3,14 @@ import { ReactNode, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import Login from "@/components/Login";
+import PasswordDialog from "@/components/PasswordDialog";
+import { useSession, SessionUser } from "@/lib/session";
+import { ROLE_INFO } from "@/lib/roles";
 import Icon from "@/components/Icon";
 import { Field, Modal, Select } from "@/components/ui";
 import { AppProvider, useApp } from "@/lib/app";
-import { downloadCsv } from "@/lib/store";
+import { downloadCsv, useRecords } from "@/lib/store";
+import { OfflineBar, usePwa } from "@/components/Pwa";
 
 /* ---------- ข้อมูลจำลอง ---------- */
 type Task = { id: number; who: string; title: string; time: string; ins: string; done?: string; note?: string };
@@ -44,8 +48,8 @@ const RANK = [
   { name: "พยาบาล นภา", branch: "เชียงใหม่", shift: "N", n: 91 },
 ];
 const HANDOVER0 = [
-  { type: "เฝ้าระวังอาการ", who: "คุณมาลี ศรีสุข", text: "แขนขวาอ่อนแรงมากขึ้นเล็กน้อย ให้ตรวจซ้ำทุก 4 ชม.", by: "พยาบาล วิภา", at: "เมื่อวาน 19:10" },
-  { type: "ญาติฝากแจ้ง", who: "คุณสุดา วงศ์สวัสดิ์", text: "ลูกสาวจะมาเยี่ยมบ่ายนี้ ฝากเตรียมเสื้อผ้าชุดใหม่", by: "พนักงาน ลัดดา", at: "วันนี้ 06:40" },
+  { id: 1, type: "เฝ้าระวังอาการ", who: "คุณมาลี ศรีสุข", text: "แขนขวาอ่อนแรงมากขึ้นเล็กน้อย ให้ตรวจซ้ำทุก 4 ชม.", by: "พยาบาล วิภา", at: "เมื่อวาน 19:10" },
+  { id: 2, type: "ญาติฝากแจ้ง", who: "คุณสุดา วงศ์สวัสดิ์", text: "ลูกสาวจะมาเยี่ยมบ่ายนี้ ฝากเตรียมเสื้อผ้าชุดใหม่", by: "พนักงาน ลัดดา", at: "วันนี้ 06:40" },
 ];
 const TYPES = ["เฝ้าระวังอาการ", "คำสั่งแพทย์", "ญาติฝากแจ้ง", "งานค้าง/ทั่วไป"];
 const REPORT: Record<string, Record<string, string[][]>> = {};
@@ -103,12 +107,13 @@ function PhotoInput({ label, file, onFile }: { label: string; file: string; onFi
 }
 
 /* ---------- แอป ---------- */
-function App({ onLogout }: { onLogout: () => void }) {
+function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   const { toast } = useApp();
+  const pwa = usePwa();
   const [tab, setTab] = useState<Tab>("tasks");
-  const [tasks, setTasks] = useState(TASKS0);
-  const [meds, setMeds] = useState(MEDS0);
-  const [handover, setHandover] = useState(HANDOVER0);
+  const [tasks, setTasks] = useRecords("staff-tasks", TASKS0);
+  const [meds, setMeds] = useRecords("staff-meds", MEDS0);
+  const [handover, setHandover] = useRecords("staff-handover", HANDOVER0);
   const [bonus, setBonus] = useState(0);
   const [menu, setMenu] = useState(false);
   const [fab, setFab] = useState(false);
@@ -127,7 +132,6 @@ function App({ onLogout }: { onLogout: () => void }) {
   const [chatTab, setChatTab] = useState("กลุ่มสาขา");
   const [chat, setChat] = useState<{ me: boolean; t: string }[]>([{ me: false, t: "สวัสดีครับ วันนี้มีงานด่วนที่ต้องช่วยกันไหม" }]);
   const [msg, setMsg] = useState("");
-  const [pw, setPw] = useState({ a: "", b: "" });
   const [vit, setVit] = useState<Record<string, string>>({});
 
   const close = () => { setModal(null); setPhoto(""); setNote(""); setCur(null); setMenu(false); };
@@ -146,15 +150,17 @@ function App({ onLogout }: { onLogout: () => void }) {
       <header className="sticky top-0 z-30 flex items-center justify-between gap-3 border-b border-cream-300/60 bg-white/95 px-4 py-3 backdrop-blur">
         <div className="flex items-center gap-2.5">
           <Image src="/logo-mark.png" alt="KIN" width={44} height={33} className="h-9 w-auto" />
-          <div className="leading-tight"><p className="text-[15px] font-semibold text-gold-800">CG2 App</p><p className="text-[10px] tracking-[0.16em] text-gold-500">KIN HOMECARE</p></div>
+          <div className="leading-tight"><p className="text-[15px] font-semibold text-gold-800">KinApp</p><p className="text-[10px] tracking-[0.16em] text-gold-500">KIN HOMECARE</p></div>
         </div>
         <div className="flex items-center gap-2">
           <button onClick={() => open("chat")} className="relative flex items-center gap-1.5 rounded-full bg-gold-100 px-3 py-1.5 text-xs font-medium text-gold-700">พี่แคร์<span className="grid h-4 w-4 place-items-center rounded-full bg-red-500 text-[10px] text-white">1</span></button>
           <div className="relative" onClick={(e) => e.stopPropagation()}>
-            <button onClick={() => setMenu(!menu)} className="flex items-center gap-2 rounded-full border border-cream-300 py-1 pl-1 pr-3 text-sm"><span className="grid h-7 w-7 place-items-center rounded-full bg-gold-700 text-xs font-semibold text-white">พ</span>คุณพนักงาน</button>
+            <button onClick={() => setMenu(!menu)} className="flex min-w-0 max-w-[40vw] items-center gap-2 rounded-full border border-cream-300 py-1 pl-1 pr-1 text-sm sm:max-w-none sm:pr-3" aria-label={user.name}><span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-gold-700 text-xs font-semibold text-white">{user.name.charAt(0)}</span><span className="hidden truncate sm:inline">{user.name}</span></button>
             {menu && (
               <div className="absolute right-0 top-[calc(100%+8px)] w-56 overflow-hidden rounded-2xl border border-cream-300 bg-white shadow-soft">
-                <div className="border-b border-cream-300/60 px-4 py-3"><p className="text-sm font-medium">คุณพนักงาน</p><p className="text-xs text-gold-500">พนักงานดูแล · กรุงเทพมหานคร</p></div>
+                <div className="border-b border-cream-300/60 px-4 py-3"><p className="text-sm font-medium">{user.name}</p><p className="text-xs text-gold-500">{ROLE_INFO[user.role].th} · {user.branch}</p></div>
+                {pwa.canInstall && <button className="flex w-full items-center gap-2 px-4 py-3 text-sm font-medium text-gold-800 hover:bg-cream-100" onClick={async () => { setMenu(false); if (await pwa.install()) toast("ติดตั้ง KinApp แล้ว เปิดได้จากหน้าจอโทรศัพท์"); }}><Icon name="download" className="h-4 w-4" /> ติดตั้ง KinApp บนเครื่อง</button>}
+                {pwa.iosHint && <button className="flex w-full items-center gap-2 px-4 py-3 text-sm font-medium text-gold-800 hover:bg-cream-100" onClick={() => { setMenu(false); toast("กดปุ่มแชร์ของ Safari แล้วเลือก \"เพิ่มไปยังหน้าจอโฮม\""); }}><Icon name="download" className="h-4 w-4" /> ติดตั้ง KinApp บนเครื่อง</button>}
                 <button className="flex w-full items-center gap-2 px-4 py-3 text-sm hover:bg-cream-100" onClick={() => open("manual")}><Icon name="book" className="h-4 w-4" /> คู่มือผู้ใช้งาน</button>
                 <button className="flex w-full items-center gap-2 px-4 py-3 text-sm hover:bg-cream-100" onClick={() => open("pwd")}><Icon name="lock" className="h-4 w-4" /> เปลี่ยนรหัสผ่าน</button>
                 <button className="flex w-full items-center gap-2 px-4 py-3 text-sm text-red-600 hover:bg-red-50" onClick={onLogout}><Icon name="logout" className="h-4 w-4" /> ออกจากระบบ</button>
@@ -162,6 +168,7 @@ function App({ onLogout }: { onLogout: () => void }) {
             )}
           </div>
         </div>
+        <div className="absolute inset-x-0 top-full"><OfflineBar /></div>
       </header>
 
       <main className="space-y-4 px-4 py-5">
@@ -338,7 +345,7 @@ function App({ onLogout }: { onLogout: () => void }) {
       </Modal>
 
       <Modal open={modal === "viewtask"} title="ผลการปฏิบัติงาน" onClose={close} footer={<button className="btn-soft w-full" onClick={close}>ปิดหน้าต่าง</button>}>
-        {t && <dl className="space-y-3 text-sm">{[["ผู้รับบริการ", t.who], ["ชื่องาน", t.title], ["คำสั่งงาน", t.ins], ["ผู้ปฏิบัติงาน", "คุณพนักงาน"], ["เวลาที่ส่งจริง", t.done ?? "-"], ["บันทึกย่อ", t.note || "-"]].map(([k, v]) => <div key={k}><dt className="text-xs text-gold-500">{k}</dt><dd className="font-medium">{v}</dd></div>)}</dl>}
+        {t && <dl className="space-y-3 text-sm">{[["ผู้รับบริการ", t.who], ["ชื่องาน", t.title], ["คำสั่งงาน", t.ins], ["ผู้ปฏิบัติงาน", user.name], ["เวลาที่ส่งจริง", t.done ?? "-"], ["บันทึกย่อ", t.note || "-"]].map(([k, v]) => <div key={k}><dt className="text-xs text-gold-500">{k}</dt><dd className="font-medium">{v}</dd></div>)}</dl>}
       </Modal>
 
       {/* ผลงานพิเศษ */}
@@ -400,7 +407,7 @@ function App({ onLogout }: { onLogout: () => void }) {
       <Modal open={modal === "write"} title="บันทึกส่งเวร" onClose={() => setModal("handover")}
         footer={<button className="btn-primary w-full" onClick={() => {
           if (!hoWho || !hoText.trim()) return toast("กรุณาเลือกผู้ป่วยและกรอกรายละเอียด");
-          setHandover([{ type: hoType, who: hoWho, text: hoText, by: "คุณพนักงาน", at: "เมื่อสักครู่" }, ...handover]); setModal("handover"); toast("บันทึกส่งเวรแล้ว");
+          setHandover([{ id: Date.now(), type: hoType, who: hoWho, text: hoText, by: user.name, at: "เมื่อสักครู่" }, ...handover]); setModal("handover"); toast("บันทึกส่งเวรแล้ว");
         }}>บันทึกส่งเวร</button>}>
         <div className="space-y-4">
           <Field label="1. ระบุผู้ป่วย"><Select options={RESIDENTS.map((r) => r.name)} placeholder="-- เลือก --" value={hoWho} onChange={setHoWho} /></Field>
@@ -418,20 +425,13 @@ function App({ onLogout }: { onLogout: () => void }) {
 
       <Modal open={modal === "manual"} title="คู่มือผู้ใช้งาน" onClose={close} footer={<button className="btn-soft w-full" onClick={close}>ปิดหน้าต่าง</button>}><p className="text-sm text-gold-600">-</p></Modal>
 
-      <Modal open={modal === "pwd"} title="เปลี่ยนรหัสผ่าน" onClose={() => { setPw({ a: "", b: "" }); close(); }}
-        footer={<button className="btn-primary w-full" onClick={() => {
-          if (pw.a.length < 6) return toast("รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร");
-          if (pw.a !== pw.b) return toast("รหัสผ่านทั้งสองช่องไม่ตรงกัน");
-          setPw({ a: "", b: "" }); close(); toast("เปลี่ยนรหัสผ่านเรียบร้อย");
-        }}>บันทึกรหัสผ่านใหม่</button>}>
-        <div className="space-y-4"><Field label="รหัสผ่านใหม่"><input type="password" value={pw.a} onChange={(e) => setPw({ ...pw, a: e.target.value })} /></Field><Field label="ยืนยันรหัสผ่านใหม่"><input type="password" value={pw.b} onChange={(e) => setPw({ ...pw, b: e.target.value })} /></Field></div>
-      </Modal>
+      <PasswordDialog open={modal === "pwd"} onClose={close} />
     </div>
   );
 }
 
 /* ---------- หน้าเข้าสู่ระบบแอปพนักงาน ---------- */
 export default function StaffApp() {
- const [authed,setAuthed]=useState(false);
- return <AppProvider go={()=>{}}>{authed?<App onLogout={()=>setAuthed(false)} />:<Login staff onLogin={()=>setAuthed(true)} />}</AppProvider>;
+ const { user, ready, setUser, logout } = useSession();
+ return <AppProvider go={()=>{}}>{!ready?<main className="grid min-h-dvh place-items-center text-sm text-gold-500">กำลังตรวจสอบการเข้าสู่ระบบ…</main>:user?<App user={user} onLogout={logout} />:<Login staff onLogin={setUser} />}</AppProvider>;
 }

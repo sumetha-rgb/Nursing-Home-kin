@@ -1,10 +1,12 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Icon from "../Icon";
-import { BRANCHES, BRANCH_NAMES, STAFF } from "@/lib/mock";
+import { BRANCHES, BRANCH_NAMES } from "@/lib/mock";
+import { api, SessionUser, UserRow } from "@/lib/session";
+import { ROLE_INFO, ROLES } from "@/lib/roles";
 import { downloadCsv, useCrud } from "@/lib/store";
 import { useApp } from "@/lib/app";
-import { DataTable, Field, FieldDef, FormDialog, PageHeader, Section, Select, MetricGrid, StatusBadge, Tabs } from "../ui";
+import { DataTable, Field, FieldDef, FormDialog, Modal, PageHeader, Section, MetricGrid, StatusBadge, Tabs } from "../ui";
 
 /* ---------- จัดการสาขา ---------- */
 const BRANCH_FIELDS: FieldDef[] = [
@@ -48,30 +50,85 @@ export function Branches() {
   </>;
 }
 
-/* ---------- ผู้ใช้งานระบบ ---------- */
+/* ---------- ผู้ใช้งานระบบ (บัญชีล็อกอินจริง ผ่าน /api/users) ---------- */
 const TYPES = ["B (NJY GROUP)", "MF (Master Franchise)", "F (Franchise)"];
-const LEVELS = ["Operation", "Branch Admin", "Global Admin"];
-const STAFF_FIELDS: FieldDef[] = [
-  { label: "ชื่อ-นามสกุล", required: true },
-  { label: "ประเภทสัญญา", options: TYPES, required: true },
-  { label: "ระดับสิทธิ์", options: LEVELS, required: true },
-  { label: "สาขา", options: ["ทุกสาขา", ...BRANCH_NAMES], required: true },
-  { label: "สถานะ", options: ["ทำงาน", "ลาออก", "พักงาน"], required: true },
-];
-const STAFF_COLS = ["ชื่อ-นามสกุล", "ประเภทสัญญา", "ระดับสิทธิ์", "สาขา", "สถานะ"];
+const STATUSES = ["ทำงาน", "รออนุมัติ", "พักงาน", "ลาออก"];
+const STAFF_COLS = ["ชื่อ-นามสกุล", "อีเมล", "ประเภทสัญญา", "ระดับสิทธิ์", "สาขา", "สถานะ"];
 
 export function Staff() {
-  const {rows,add,update,remove,clear}=useCrud("staff",STAFF);
-  const {toast,confirm}=useApp();
-  const [dlg,setDlg]=useState<{mode:"add"|"edit";i:number}|null>(null);
-  const [filter,setFilter]=useState("ทั้งหมด");
-  const shown=rows.map((r,i)=>({r,i})).filter(({r})=>filter==="ทั้งหมด"||r[4]===filter);
+  const { toast, confirm } = useApp();
+  const [users, setUsers] = useState<UserRow[]>([]);
+  const [me, setMe] = useState<SessionUser | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [dlg, setDlg] = useState<{ mode: "add" | "edit"; u?: UserRow } | null>(null);
+  const [reset, setReset] = useState<UserRow | null>(null);
+  const [newPw, setNewPw] = useState("");
+  const [filter, setFilter] = useState("ทั้งหมด");
+
+  const run = async (body?: object, ok?: string) => {
+    try {
+      const r = await api.users(body) as { users: UserRow[]; me?: SessionUser };
+      setUsers(r.users); if (r.me) setMe(r.me);
+      if (ok) toast(ok);
+      return true;
+    } catch (e) { toast((e as Error).message); return false; }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { run(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const global = me?.role === "Global Admin";
+  const levels = global ? [...ROLES] : ["Operation"];
+  const branches = global ? ["ทุกสาขา", ...BRANCH_NAMES] : [me?.branch ?? ""];
+  const fields: FieldDef[] = [
+    { label: "ชื่อ-นามสกุล", required: true },
+    { label: "อีเมล (ใช้เข้าสู่ระบบ)", type: "email", required: true },
+    ...(dlg?.mode === "add" ? [{ label: "รหัสผ่านเริ่มต้น (อย่างน้อย 8 ตัวอักษร)", type: "password", required: true }] : []),
+    { label: "ประเภทสัญญา", options: TYPES },
+    { label: "ระดับสิทธิ์", options: levels, required: true },
+    { label: "สาขา", options: branches, required: true },
+    { label: "สถานะ", options: STATUSES, required: true },
+  ];
+  const toForm = (u: UserRow) => [u.full_name, u.email ?? "", u.contract_type ?? "", u.access_level, u.branch_name ?? "", u.status];
+  const save = async (v: string[]) => {
+    const add = dlg?.mode === "add";
+    const [full_name, email, ...rest] = v;
+    const [password, contract_type, access_level, branch_name, status] = add ? rest : ["", ...rest];
+    const ok = await run(add ? { action: "create", full_name, email, password, contract_type, access_level, branch_name, status }
+      : { action: "update", id: dlg!.u!.id, full_name, email, contract_type, access_level, branch_name, status }, add ? "สร้างบัญชีเรียบร้อย" : "บันทึกข้อมูลสมาชิกเรียบร้อย");
+    if (ok) setDlg(null);
+  };
+
+  // ค่าเริ่มต้นของฟอร์มต้องคงที่ระหว่างพิมพ์ (FormDialog รีเซตเมื่อ value เปลี่ยน)
+  const formValue = useMemo(() => dlg?.mode === "edit" && dlg.u ? toForm(dlg.u) : dlg?.mode === "add" ? ["", "", "", TYPES[0], "Operation", global ? "" : me?.branch ?? "", "ทำงาน"] : undefined, [dlg]); // eslint-disable-line react-hooks/exhaustive-deps
+  const shown = users.filter((u) => filter === "ทั้งหมด" || u.status === filter);
+  const pending = users.filter((u) => u.status === "รออนุมัติ").length;
   return <>
-    <PageHeader title="ทีมและสิทธิ์การใช้งาน" sub="คนเบื้องหลังทุกการดูแล จัดการสมาชิกและสิทธิ์ให้เหมาะกับหน้าที่" actions={<><button className="btn-soft" onClick={()=>downloadCsv("ผู้ใช้งานระบบ",STAFF_COLS,rows)}><Icon name="download" className="h-4 w-4" />ส่งออกข้อมูล</button><button className="btn-primary" onClick={()=>setDlg({mode:"add",i:-1})}><Icon name="plus" className="h-4 w-4" />เพิ่มสมาชิกทีม</button></>} />
-    <MetricGrid items={[{label:"สมาชิกในระบบ",value:rows.length,unit:"คน",icon:"user",accent:true},{label:"กำลังปฏิบัติงาน",value:rows.filter(r=>r[4]==="ทำงาน").length,unit:"คน",icon:"check"},{label:"ผู้บริหารองค์กร",value:rows.filter(r=>r[2].includes("Global Admin")).length,unit:"คน",icon:"id"},{label:"ดูแลทุกสาขา",value:rows.filter(r=>r[3]==="ทุกสาขา").length,unit:"คน",icon:"building"}]} />
-    <Section title="สมาชิกทีม KIN" sub="ค้นหาสมาชิก ดูหน้าที่ และจัดการสิทธิ์การเข้าถึง" actions={<Tabs tabs={["ทั้งหมด","ทำงาน","พักงาน","ลาออก"]} value={filter} onChange={setFilter} />}><DataTable columns={STAFF_COLS} rows={shown.map(x=>x.r)} actions={[{label:"แก้ไขสมาชิก",onClick:n=>setDlg({mode:"edit",i:shown[n].i})},{label:"ลบ",danger:true,onClick:n=>{const i=shown[n].i;confirm({title:"ลบสมาชิกทีม",message:`ต้องการลบ ${rows[i][0]} ใช่หรือไม่`,danger:true,okLabel:"ลบสมาชิก",onOk:()=>{remove(i);toast("ลบสมาชิกเรียบร้อย");}});}}]} /></Section>
-    <div className="mt-5 flex items-start gap-3 rounded-xl border border-cream-200 bg-cream-100/50 p-5"><Icon name="lock" className="mt-1 h-4 w-4 shrink-0 text-gold-500" /><p className="text-xs leading-7 text-gold-600">สิทธิ์การใช้งานแบ่งเป็นระดับปฏิบัติงาน ผู้จัดการสาขา และผู้บริหารองค์กร เพื่อให้สมาชิกแต่ละคนเข้าถึงข้อมูลตามหน้าที่</p></div>
-    <details className="mt-7 text-xs text-gold-500"><summary className="cursor-pointer">การจัดการข้อมูลขั้นสูง</summary><button className="btn-danger mt-4" onClick={()=>confirm({title:"ล้างข้อมูลสมาชิกทั้งหมด",message:"ต้องการลบรายชื่อผู้ใช้งานทั้งหมดใช่หรือไม่",danger:true,okLabel:"ล้างทั้งหมด",onOk:()=>{clear();toast("ล้างข้อมูลเรียบร้อย");}})}>ล้างข้อมูลสมาชิก</button></details>
-    <FormDialog open={!!dlg} mode={dlg?.mode??"add"} title={dlg?.mode==="edit"?"แก้ไขสมาชิกทีม":"เพิ่มสมาชิกทีม KIN"} fields={STAFF_FIELDS} value={dlg?.mode==="edit"?rows[dlg.i]:undefined} onClose={()=>setDlg(null)} onSave={v=>{if(dlg?.mode==="edit")update(dlg.i,v);else add(v);setDlg(null);toast("บันทึกข้อมูลสมาชิกเรียบร้อย");}} />
+    <PageHeader title="ทีมและสิทธิ์การใช้งาน" sub={global ? "สร้างบัญชีเข้าสู่ระบบ อนุมัติผู้สมัคร และกำหนดสิทธิ์ให้เหมาะกับหน้าที่" : `จัดการบัญชีระดับปฏิบัติงานของสาขา${me?.branch ?? ""}`}
+      actions={<><button className="btn-soft" onClick={() => downloadCsv("ผู้ใช้งานระบบ", STAFF_COLS, users.map(toForm))}><Icon name="download" className="h-4 w-4" />ส่งออกข้อมูล</button><button className="btn-primary" onClick={() => setDlg({ mode: "add" })}><Icon name="plus" className="h-4 w-4" />สร้างบัญชีสมาชิก</button></>} />
+    <MetricGrid items={[
+      { label: "สมาชิกในระบบ", value: users.length, unit: "คน", icon: "user", accent: true },
+      { label: "กำลังปฏิบัติงาน", value: users.filter((u) => u.status === "ทำงาน").length, unit: "คน", icon: "check" },
+      { label: "รออนุมัติ", value: pending, unit: "คน", icon: "bell", note: pending ? "สมัครเองจากหน้าเข้าสู่ระบบ" : undefined },
+      { label: "มีบัญชีล็อกอิน", value: users.filter((u) => u.email).length, unit: "คน", icon: "lock" },
+    ]} />
+    <Section title="สมาชิกทีม KIN" sub="อนุมัติผู้สมัคร แก้ไขสิทธิ์ และรีเซตรหัสผ่าน" actions={<Tabs tabs={["ทั้งหมด", ...STATUSES]} value={filter} onChange={setFilter} />}>
+      <DataTable columns={STAFF_COLS} rows={shown.map((u) => [u.full_name, u.email ?? "—", u.contract_type ?? "—", u.access_level, u.branch_name ?? "—", u.status])}
+        empty={loading ? "กำลังโหลดรายชื่อ…" : "ไม่พบสมาชิก"}
+        actions={[
+          { label: "อนุมัติ", onClick: (n) => shown[n].status === "รออนุมัติ" ? run({ action: "approve", id: shown[n].id }, `อนุมัติ ${shown[n].full_name} แล้ว`) : toast("บัญชีนี้ไม่ได้อยู่ในสถานะรออนุมัติ") },
+          { label: "แก้ไข", onClick: (n) => setDlg({ mode: "edit", u: shown[n] }) },
+          { label: "รีเซตรหัสผ่าน", onClick: (n) => { setNewPw(""); setReset(shown[n]); } },
+          { label: "ลบ", danger: true, onClick: (n) => { const u = shown[n]; confirm({ title: "ลบบัญชีสมาชิก", message: `ต้องการลบบัญชี ${u.full_name} ใช่หรือไม่ บัญชีนี้จะเข้าสู่ระบบไม่ได้อีก`, danger: true, okLabel: "ลบบัญชี", onOk: () => { run({ action: "delete", id: u.id }, "ลบบัญชีเรียบร้อย"); } }); } },
+        ]} />
+    </Section>
+    <div className="mt-5 grid gap-3 md:grid-cols-3">{[...ROLES].reverse().map((r) => <div key={r} className="rounded-xl border border-cream-200 bg-cream-100/50 p-4"><p className="text-sm font-medium text-gold-800">{ROLE_INFO[r].th} <span className="font-normal text-gold-500">· {r}</span></p><p className="mt-1 text-xs leading-6 text-gold-600">{ROLE_INFO[r].sees}</p></div>)}</div>
+    <FormDialog open={!!dlg} mode={dlg?.mode ?? "add"} title={dlg?.mode === "edit" ? "แก้ไขสมาชิกทีม" : "สร้างบัญชีสมาชิกทีม KIN"} fields={fields}
+      value={formValue}
+      onClose={() => setDlg(null)} onSave={save} saveLabel={dlg?.mode === "edit" ? "บันทึก" : "สร้างบัญชี"} />
+    <Modal open={!!reset} title={`รีเซตรหัสผ่าน · ${reset?.full_name ?? ""}`} onClose={() => setReset(null)}
+      footer={<><button className="btn-soft" onClick={() => setReset(null)}>ยกเลิก</button><button className="btn-primary" onClick={async () => { if (await run({ action: "reset_password", id: reset!.id, password: newPw }, "ตั้งรหัสผ่านใหม่แล้ว แจ้งรหัสให้สมาชิกทราบ")) setReset(null); }}>ตั้งรหัสผ่านใหม่</button></>}>
+      <p className="mb-4 text-sm text-gold-600">สมาชิกจะถูกออกจากระบบทุกเครื่อง และต้องเข้าสู่ระบบด้วยรหัสใหม่</p>
+      <Field label="รหัสผ่านใหม่ (อย่างน้อย 8 ตัวอักษร)" required><input type="text" autoComplete="off" value={newPw} onChange={(e) => setNewPw(e.target.value)} /></Field>
+    </Modal>
   </>;
 }

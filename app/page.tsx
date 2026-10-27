@@ -2,14 +2,17 @@
 import { useState } from "react";
 import Login from "@/components/Login";
 import Shell from "@/components/Shell";
-import { Field, Modal } from "@/components/ui";
-import { AppProvider, useApp } from "@/lib/app";
+import PasswordDialog from "@/components/PasswordDialog";
+import { AppProvider } from "@/lib/app";
+import { useSession } from "@/lib/session";
+import { isAdmin } from "@/lib/roles";
 import { ViewId } from "@/lib/nav";
 import { Contracts, Residents, TasksTable, Workflow } from "@/components/views/Core";
 import { DailyTasks } from "@/components/views/Daily";
 import { FacilityTasks, MasterTasks, Quotations } from "@/components/views/Tasks";
 import { Appointments, Dashboard, Feedbacks, HealthLogs, OfficialDocs } from "@/components/views/Ops";
 import { Branches, Staff } from "@/components/views/Admin";
+import { AuditLog } from "@/components/views/Audit";
 
 const VIEWS: Record<ViewId, () => JSX.Element> = {
   careplan: Workflow,
@@ -27,47 +30,45 @@ const VIEWS: Record<ViewId, () => JSX.Element> = {
   facility_tasks: FacilityTasks,
   master_tasks: MasterTasks,
   quotations: Quotations,
+  audit: AuditLog,
 };
 
-function PasswordDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { toast } = useApp();
-  const [a, setA] = useState("");
-  const [b, setB] = useState("");
-  const done = () => { setA(""); setB(""); onClose(); };
+function Splash() {
+  return <main className="grid min-h-dvh place-items-center text-sm text-gold-500">กำลังตรวจสอบการเข้าสู่ระบบ…</main>;
+}
+
+/** บัญชีระดับปฏิบัติงานเข้าระบบจัดการไม่ได้ */
+function OperationOnly({ name, onLogout }: { name: string; onLogout: () => void }) {
   return (
-    <Modal
-      open={open}
-      title="เปลี่ยนรหัสผ่านใหม่"
-      onClose={done}
-      footer={<>
-        <button className="btn-soft" onClick={done}>ยกเลิก</button>
-        <button className="btn-primary" onClick={() => {
-          if (a.length < 6) return toast("รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร");
-          if (a !== b) return toast("รหัสผ่านทั้งสองช่องไม่ตรงกัน");
-          done(); toast("เปลี่ยนรหัสผ่านเรียบร้อย");
-        }}>ยืนยันการเปลี่ยนรหัสผ่าน</button>
-      </>}
-    >
-      <div className="space-y-4">
-        <Field label="รหัสผ่านใหม่ (อย่างน้อย 6 ตัวอักษร)" required><input type="password" value={a} onChange={(e) => setA(e.target.value)} /></Field>
-        <Field label="ยืนยันการเปลี่ยนรหัสผ่าน"><input type="password" value={b} onChange={(e) => setB(e.target.value)} /></Field>
-      </div>
-    </Modal>
+    <main className="grid min-h-dvh place-items-center px-5">
+      <section className="card w-full max-w-md p-8 text-center">
+        <p className="kicker justify-center">KIN CARE TEAM</p>
+        <h1 className="mt-3 text-2xl font-medium text-gold-800">สวัสดี {name}</h1>
+        <p className="mt-3 text-sm leading-7 text-gold-600">บัญชีระดับปฏิบัติงาน (Operation) ใช้ได้กับแอปพนักงานและแอปจัดยา ระบบจัดการสำหรับผู้จัดการสาขาและผู้บริหาร</p>
+        <div className="mt-6 grid gap-2 sm:grid-cols-2">
+          <a href="/staff" className="btn-primary">KinApp (แอปพนักงาน)</a>
+          <a href="/pharmacy" className="btn-soft">แอปจัดยา</a>
+        </div>
+        <button className="mt-5 text-sm text-gold-500 underline-offset-4 hover:underline" onClick={onLogout}>ออกจากระบบ</button>
+      </section>
+    </main>
   );
 }
 
 export default function Home() {
-  const [authed, setAuthed] = useState(false);
+  const { user, ready, setUser, logout } = useSession();
   const [view, setView] = useState<ViewId>("careplan");
   const [pw, setPw] = useState(false);
 
-  if (!authed) return <Login onLogin={() => setAuthed(true)} />;
+  if (!ready) return <Splash />;
+  if (!user) return <Login onLogin={setUser} />;
+  if (!isAdmin(user.role)) return <OperationOnly name={user.name} onLogout={logout} />;
   const View = VIEWS[view];
   const go = (v: ViewId) => { setView(v); window.scrollTo(0, 0); };
 
   return (
     <AppProvider go={go}>
-      <Shell view={view} onView={go} onLogout={() => { setPw(false); setAuthed(false); }} onChangePassword={() => setPw(true)}>
+      <Shell view={view} onView={go} user={user} onLogout={logout} onChangePassword={() => setPw(true)}>
         <View />
       </Shell>
       <PasswordDialog open={pw} onClose={() => setPw(false)} />

@@ -1,5 +1,6 @@
 ﻿const P: Record<string, string> = {
   arrow: "M4 12h16m-6-6 6 6-6 6",
+  history: "M3 12a9 9 0 1 0 3-6.7L3 8m0-5v5h5m4-1v5l3 2",
   chart: "M4 4v16h17M8 15V9m5 6V6m5 9v-4",
   flow: "M6 3v6m0 0a3 3 0 1 0 0 6 3 3 0 0 0 0-6Zm12 12a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm0 0V9a6 6 0 0 0-6-6H9",
   doc: "M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5Zm0 0v5h5M9 13h6M9 17h6",
