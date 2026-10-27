@@ -159,8 +159,11 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
             {menu && (
               <div className="absolute right-0 top-[calc(100%+8px)] w-56 overflow-hidden rounded-2xl border border-cream-300 bg-white shadow-soft">
                 <div className="border-b border-cream-300/60 px-4 py-3"><p className="text-sm font-medium">{user.name}</p><p className="text-xs text-gold-500">{ROLE_INFO[user.role].th} · {user.branch}</p></div>
-                {pwa.canInstall && <button className="flex w-full items-center gap-2 px-4 py-3 text-sm font-medium text-gold-800 hover:bg-cream-100" onClick={async () => { setMenu(false); if (await pwa.install()) toast("ติดตั้ง KinApp แล้ว เปิดได้จากหน้าจอโทรศัพท์"); }}><Icon name="download" className="h-4 w-4" /> ติดตั้ง KinApp บนเครื่อง</button>}
-                {pwa.iosHint && <button className="flex w-full items-center gap-2 px-4 py-3 text-sm font-medium text-gold-800 hover:bg-cream-100" onClick={() => { setMenu(false); toast("กดปุ่มแชร์ของ Safari แล้วเลือก \"เพิ่มไปยังหน้าจอโฮม\""); }}><Icon name="download" className="h-4 w-4" /> ติดตั้ง KinApp บนเครื่อง</button>}
+                {!pwa.installed && <button className="flex w-full items-center gap-2 px-4 py-3 text-sm font-medium text-gold-800 hover:bg-cream-100" onClick={async () => {
+                  setMenu(false);
+                  if (pwa.canInstall) { if (await pwa.install()) toast("ติดตั้ง KinApp แล้ว เปิดได้จากหน้าจอโทรศัพท์"); }
+                  else toast(pwa.iosHint ? "กดปุ่มแชร์ของ Safari แล้วเลือก \"เพิ่มไปยังหน้าจอโฮม\"" : "เปิดเมนูของเบราว์เซอร์ (⋮) แล้วเลือก \"ติดตั้งแอป\" หรือ \"เพิ่มลงในหน้าจอหลัก\"");
+                }}><Icon name="download" className="h-4 w-4" /> ติดตั้ง KinApp บนเครื่อง</button>}
                 <button className="flex w-full items-center gap-2 px-4 py-3 text-sm hover:bg-cream-100" onClick={() => open("manual")}><Icon name="book" className="h-4 w-4" /> คู่มือผู้ใช้งาน</button>
                 <button className="flex w-full items-center gap-2 px-4 py-3 text-sm hover:bg-cream-100" onClick={() => open("pwd")}><Icon name="lock" className="h-4 w-4" /> เปลี่ยนรหัสผ่าน</button>
                 <button className="flex w-full items-center gap-2 px-4 py-3 text-sm text-red-600 hover:bg-red-50" onClick={onLogout}><Icon name="logout" className="h-4 w-4" /> ออกจากระบบ</button>
