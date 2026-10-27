@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { endSession } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
 
 export async function POST(req: NextRequest) {
   const res = NextResponse.json({ ok: true });

@@ -15,8 +15,9 @@ export type Col = { col: string; t: ColType; field?: string };
  * branchCol    : คอลัมน์สาขา ผู้ใช้ที่ไม่ใช่ Global Admin เห็น/แก้เฉพาะสาขาตัวเอง (และเห็นข้อมูลส่วนกลางแบบอ่านอย่างเดียว)
  * hiddenBranch : คอลัมน์สาขาไม่ได้อยู่ใน cols หน้าเว็บไม่เห็น server ใส่ค่าให้ตอนสร้างรายการ
  * adminOnly    : ระดับปฏิบัติงานเข้าไม่ได้
+ * residentLink : มีคอลัมน์ resident_name → server เก็บ resident_id (รหัสผู้รับบริการ) ให้เอง
  */
-export type Spec = { table: string; kind: "rows" | "object"; cols: Col[]; numericId?: boolean; branchCol?: string; hiddenBranch?: boolean; adminOnly?: boolean; scope?: { col: string; value: string } };
+export type Spec = { table: string; kind: "rows" | "object"; cols: Col[]; numericId?: boolean; branchCol?: string; hiddenBranch?: boolean; residentLink?: boolean; adminOnly?: boolean; scope?: { col: string; value: string } };
 
 /** ค่าสาขาของข้อมูลส่วนกลาง ทุกสาขาเห็นได้ */
 export const SHARED_BRANCHES = ["ทุกสาขา", "ส่วนกลาง"];
@@ -51,7 +52,7 @@ const SPECS: Record<string, Omit<Spec, "scope">> = {
   },
   "pharmacy-packs": {
     table: "medication_packs", kind: "object", numericId: true, ...own,
-    cols: [c("pack_date", "date", "date"), c("resident_name", "text", "who"), c("meal", "text", "meal"), c("items", "list", "items"), c("qa_status", "text", "qa"), c("error_reason", "text", "reason"), c("given", "bool", "given"), c("packed_by", "text", "by")],
+    cols: [c("pack_date", "date", "date"), c("resident_name", "text", "who"), c("meal", "text", "meal"), c("items", "list", "items"), c("qa_status", "text", "qa"), c("error_reason", "text", "reason"), c("given", "bool", "given"), c("packed_by", "text", "by"), c("given_by", "text", "gby"), c("given_at", "ts_th", "gat"), c("checked_by", "text", "qby")],
   },
   "staff-tasks": {
     table: "caregiver_tasks", kind: "object", numericId: true, ...own,
@@ -67,15 +68,23 @@ const SPECS: Record<string, Omit<Spec, "scope">> = {
   },
 };
 
-const DAILY = { table: "daily_tasks", kind: "rows" as const, ...own, cols: [c("resident_name"), c("task_name"), c("assignee"), c("scheduled_time", "time"), c("shift"), c("status"), c("instruction"), c("vital_signs"), c("submitted_time", "time")] };
+const DAILY = { table: "daily_tasks", kind: "rows" as const, ...own, cols: [c("resident_name"), c("task_name"), c("assignee"), c("scheduled_time", "time"), c("shift"), c("status"), c("instruction"), c("vital_signs"), c("submitted_time", "time"), c("note"), c("done_by")] };
+
+const linked = (cols: Col[]) => cols.some((c) => c.col === "resident_name");
+/** ชุดข้อมูลที่ระดับปฏิบัติงานใช้ได้: แอปพนักงาน แอปจัดยา บันทึกสุขภาพ (พนักงานบันทึกสัญญาณชีพจาก KinApp) และงานประจำวัน (daily-*) */
+const OPERATION_KEYS = /^(pharmacy-|staff-|health$)/;
 
 /** หา spec จากชื่อชุดข้อมูล เช่น "contracts" หรือ "daily-2026-10-27" */
 export function specFor(key: string): Spec | null {
-  if (SPECS[key]) return { ...SPECS[key], adminOnly: !/^(pharmacy|staff)-/.test(key) };
+  if (SPECS[key]) return { ...SPECS[key], residentLink: linked(SPECS[key].cols), adminOnly: !OPERATION_KEYS.test(key) };
   const m = key.match(/^daily-(\d{4}-\d{2}-\d{2})$/);
-  if (m) return { ...DAILY, adminOnly: true, scope: { col: "work_date", value: m[1] } };
+  // งานประจำวัน: ผู้จัดการมอบหมาย พนักงานส่งงานจาก KinApp (เห็นเฉพาะสาขาตัวเอง)
+  if (m) return { ...DAILY, residentLink: true, adminOnly: false, scope: { col: "work_date", value: m[1] } };
   return null;
 }
+
+/** ตารางที่อ้างถึงผู้รับบริการ (ใช้แก้ชื่อตามเมื่อเปลี่ยนชื่อผู้รับบริการ) */
+export const RESIDENT_TABLES = [...new Set([...Object.values(SPECS), DAILY].filter((s) => linked(s.cols)).map((s) => s.table))];
 
 /* ---------- แปลงค่าระหว่างหน้าเว็บกับฐานข้อมูล ---------- */
 const blank = (v: unknown) => v === undefined || v === null || v === "" || v === "-";

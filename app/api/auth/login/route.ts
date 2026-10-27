@@ -5,6 +5,7 @@ import { audit } from "@/lib/audit";
 import type { Role } from "@/lib/roles";
 
 export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));

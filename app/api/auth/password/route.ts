@@ -4,6 +4,7 @@ import { currentUser, hashPassword, passwordProblem, unauthorized, verifyPasswor
 import { audit } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
 
 /** เปลี่ยนรหัสผ่านของตัวเอง ต้องยืนยันรหัสผ่านเดิม */
 export async function POST(req: NextRequest) {

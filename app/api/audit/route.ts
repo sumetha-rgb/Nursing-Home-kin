@@ -4,6 +4,7 @@ import { currentUser, forbidden, unauthorized } from "@/lib/auth";
 import { ACTION_GROUPS } from "@/lib/auditLabels";
 
 export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
 
 const PAGE = 50;
 

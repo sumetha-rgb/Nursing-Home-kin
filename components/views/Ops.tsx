@@ -4,6 +4,11 @@ import Icon from "../Icon";
 import { ACTIVITY, APPOINTMENTS, BRANCH_NAMES, COMPLAINTS, DOCS, HEALTH, KPI_ROWS, RESIDENTS } from "@/lib/mock";
 import { downloadCsv, useCrud } from "@/lib/store";
 import { useApp } from "@/lib/app";
+import ResidentProfile from "../care/ResidentProfile";
+import VitalsDialog from "../care/VitalsDialog";
+import { useResidents } from "@/lib/care";
+import { useSession } from "@/lib/session";
+import { evaluateVitals, LEVEL_TH, levelOf, parseVitals } from "@/lib/vitals";
 import { BlankForm, DataTable, Field, FieldDef, FormDialog, Modal, MetricGrid, PageHeader, Section, Select, Tabs, Toggle } from "../ui";
 
 /* ---------- ผลงาน KPI ---------- */
@@ -171,8 +176,14 @@ export function Appointments() {
 const HEALTH_COLS = ["วัน-เวลา", "ชื่อผู้สูงอายุ", "สัญญาณชีพ (Vital Signs)", "O2 Sat", "DTX", "น้ำหนัก/ส่วนสูง", "ข้อมูลอื่น", "โน้ต / อาการ", "ผู้บันทึก"];
 
 export function HealthLogs() {
-  const { rows } = useCrud("health", HEALTH);
+  const { rows, add } = useCrud("health", HEALTH);
   const { toast } = useApp();
+  const { user } = useSession();
+  const { residents } = useResidents();
+  const [record, setRecord] = useState(false);
+  const [profile, setProfile] = useState<string | null>(null);
+  const names = residents.length ? residents.map((r) => r.full_name) : RESIDENTS.map((r) => r[0]);
+  const levelCol = (r: string[]) => LEVEL_TH[levelOf(evaluateVitals(parseVitals(r[2], r[3], r[4])))];
   const [person, setPerson] = useState("");
   const [applied, setApplied] = useState("");
   const [sample, setSample] = useState(false);
@@ -180,11 +191,12 @@ export function HealthLogs() {
   const shown = rows.filter((r) => !applied || r[1] === applied);
   return (
     <>
-      <PageHeader title="รายงานข้อมูลสุขภาพ (Health Logs)" sub="ดูบันทึกสัญญาณชีพและการประเมินต่างๆ ของผู้สูงอายุ" />
+      <PageHeader title="รายงานข้อมูลสุขภาพ (Health Logs)" sub="ดูบันทึกสัญญาณชีพและการประเมินต่างๆ ของผู้สูงอายุ · ค่าที่เกินเกณฑ์ระบบแจ้งเตือนพยาบาลให้เอง"
+        actions={<button className="btn-primary" onClick={() => setRecord(true)}><Icon name="plus" className="h-4 w-4" /> บันทึกสัญญาณชีพ</button>} />
       <Section>
         <div className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <Select options={BRANCH_NAMES} placeholder="-- ทุกสาขา --" />
-          <Select options={RESIDENTS.map((r) => r[0])} placeholder="-- ทุกคน --" value={person} onChange={setPerson} />
+          <Select options={names} placeholder="-- ทุกคน --" value={person} onChange={setPerson} />
           <div className="flex min-w-0 items-center gap-2 sm:col-span-2 lg:col-span-2">
             <input type="date" aria-label="วันที่เริ่มต้น" className="min-w-0 flex-1" />
             <span className="shrink-0 text-sm text-gold-600">ถึง</span>
@@ -196,8 +208,14 @@ export function HealthLogs() {
           <button className="btn-soft" onClick={() => window.print()}><Icon name="print" className="h-4 w-4" /> พิมพ์</button>
           <button className="btn-soft" onClick={() => setSample(true)}>ตัวอย่าง สบส. (แบบฟอร์มเปล่า)</button>
         </div>
-        <DataTable columns={HEALTH_COLS} rows={shown} actions={[{ label: "ดู", onClick: (i) => setView(rows.indexOf(shown[i])) }]} />
+        <DataTable columns={[...HEALTH_COLS, "ผลประเมิน"]} badgeCols={[HEALTH_COLS.length]} rows={shown.map((r) => [...r, levelCol(r)])}
+          actions={[
+            { label: "ดู", onClick: (i) => setView(rows.indexOf(shown[i])) },
+            { label: "ประวัติ", onClick: (i) => { const r = residents.find((x) => x.full_name === shown[i][1]); if (r) setProfile(r.id); else toast("ยังไม่มีผู้รับบริการชื่อนี้ในทะเบียน"); } },
+          ]} />
       </Section>
+      <VitalsDialog open={record} residents={names} recorder={user?.name ?? "-"} onClose={() => setRecord(false)} onSave={(row) => add(row)} />
+      <ResidentProfile id={profile} onClose={() => setProfile(null)} />
       <FormDialog open={view !== null} mode="view" title="บันทึกสุขภาพ" fields={HEALTH_COLS.map((label) => ({ label }))} value={view !== null ? rows[view] : undefined} onClose={() => setView(null)} onSave={() => {}} />
       <BlankForm open={sample} title="แบบบันทึกสัญญาณชีพ (แบบฟอร์มเปล่า)" onClose={() => setSample(false)}
         lines={["ชื่อผู้สูงอายุ", "วัน-เวลา", "BT อุณหภูมิ", "PR ชีพจร", "RR การหายใจ", "BP ความดันโลหิต", "O2SAT ออกซิเจน", "DTX น้ำตาล", "น้ำหนัก (ก.ก.)", "ส่วนสูง (ซ.ม.)", "โน้ต / อาการ", "ผู้บันทึก"]} />

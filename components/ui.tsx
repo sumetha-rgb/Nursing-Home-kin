@@ -1,6 +1,8 @@
 "use client";
 import { ReactNode, useEffect, useState, useId, useRef, Children, isValidElement, cloneElement, ReactElement } from "react";
+import { createPortal } from "react-dom";
 import Icon from "./Icon";
+import { clearNotice, closeModal, openModal, useNotice } from "@/lib/notice";
 
 export function PageHeader({ title, sub, actions }: { title: string; sub?: string; actions?: ReactNode }) {
   const clean = title.replace(/\s*\([^)]*\)/g, "").trim();
@@ -14,8 +16,8 @@ export function MetricGrid({items}:{items:{label:string;value:string|number;unit
 }
 export function StatusBadge({value}:{value:string}) {
   const success=/^(เพิ่ม|อนุมัติ|สมัครสมาชิก|เข้าสู่ระบบ$|ตรวจแล้ว|เสร็จแล้ว|เสร็จสิ้น|แก้ไขแล้ว|ใช้งานอยู่|ทำงาน|เปิด|เข้าอยู่|สำเร็จ|ตรวจผ่าน|จัดยาแล้ว|จ่ายยาแล้ว|ปกติ)/.test(value);
-  const warning=/^(รอ|กำลัง|แอดมิท|แก้ไข$|แทนที่|เปลี่ยนรหัส|รีเซตรหัส)/.test(value);
-  const danger=/^(ลบ|ล้างข้อมูล|เข้าสู่ระบบไม่สำเร็จ|ปิด|ลาออก|สิ้นสุด|พักงาน|งด|ยาหมด|ยางด|แจ้งจัดยาผิด)/.test(value);
+  const warning=/^(เฝ้าระวัง|รอ|กำลัง|แอดมิท|แก้ไข$|แทนที่|เปลี่ยนรหัส|รีเซตรหัส)/.test(value);
+  const danger=/^(ผิดปกติ|ลบ|ล้างข้อมูล|เข้าสู่ระบบไม่สำเร็จ|ปิด|ลาออก|สิ้นสุด|พักงาน|งด|ยาหมด|ยางด|แจ้งจัดยาผิด)/.test(value);
   return <span className={"status-badge "+(success?"status-success":warning?"status-warning":danger?"status-danger":"status-neutral")}>{value.replace(/\s*\([^)]*\)/g, "")}</span>;
 }
 
@@ -60,7 +62,7 @@ export function DataTable({ columns, rows = [], empty = "ไม่พบข้�
   const button=(x:RowAction,i:number)=><button type="button" key={x.label} onClick={()=>x.onClick(i)} className={"row-action "+(x.danger?"danger":"")}>{x.label}</button>;
   const cell=(value:string,col:number)=>columns[col]?.includes("สถานะ")||badgeCols.includes(col)?<StatusBadge value={value} />:value;
   const blank=<div className="empty-state"><Icon name="search" /><p>{query?"ไม่พบรายการที่ตรงกับคำค้นหา":empty}</p>{query&&<button className="mt-3 text-sm text-plum-700" onClick={()=>{setQuery("");setPage(0);}}>ล้างคำค้นหา</button>}</div>;
-  return <div className="data-table-container"><div className="table-toolbar">{search?<div className="table-search"><Icon name="search" /><input id={searchId} aria-label="ค้นหาในรายการ" placeholder="ค้นหาในรายการ…" value={query} onChange={e=>{setQuery(e.target.value);setPage(0);}} /></div>:<span />}<span className="table-count" aria-live="polite">{filtered.length} รายการ</span></div><div className="table-scroll hidden md:block"><table className="data-table"><thead><tr>{columns.map((c,i)=><th scope="col" key={i}>{c.replace(/\s*\([^)]*\)/g,"")}</th>)}{actions&&<th scope="col">จัดการ</th>}</tr></thead><tbody>{shown.length?shown.map(({r,i})=><tr key={i}>{r.map((c,j)=><td key={j}>{cell(c,j)}</td>)}{actions&&<td className="cell-actions"><div className="row-actions">{actions.map(x=>button(x,i))}</div></td>}</tr>):<tr><td colSpan={columns.length+(actions?1:0)}>{blank}</td></tr>}</tbody></table></div><div className="space-y-3 md:hidden">{shown.length?shown.map(({r,i})=><dl className="mobile-data-row" key={i}>{r.map((c,j)=><div key={j}><dt>{columns[j]?.replace(/\s*\([^)]*\)/g,"")}</dt><dd>{cell(c,j)}</dd></div>)}{actions&&<div className="row-actions border-t border-cream-200 pt-3">{actions.map(x=>button(x,i))}</div>}</dl>):blank}</div><div className="table-pagination"><span>{filtered.length?(current*PAGE_SIZE+1)+"–"+Math.min((current+1)*PAGE_SIZE,filtered.length)+" จาก "+filtered.length+" รายการ":"0 รายการ"}</span><div className="table-pagination-controls"><button type="button" disabled={current===0} aria-label="หน้าก่อนหน้า" onClick={()=>setPage(current-1)}><Icon name="chevron" className="h-3.5 w-3.5 rotate-90" /></button><span>หน้า {current+1} / {pages}</span><button type="button" disabled={current>=pages-1} aria-label="หน้าถัดไป" onClick={()=>setPage(current+1)}><Icon name="chevron" className="h-3.5 w-3.5 -rotate-90" /></button></div></div></div>;
+  return <div className="data-table-container"><div className="table-toolbar">{search?<div className="table-search"><Icon name="search" /><input id={searchId} aria-label="ค้นหาในรายการ" placeholder="ค้นหาในรายการ…" value={query} onChange={e=>{setQuery(e.target.value);setPage(0);}} /></div>:<span />}<span className="table-count" aria-live="polite">{filtered.length} รายการ</span></div><div className="table-scroll hidden md:block"><table className="data-table"><thead><tr>{columns.map((c,i)=><th scope="col" key={i}>{c.replace(/\s*\([^)]*\)/g,"")}</th>)}{actions&&<th scope="col" className="cell-actions">จัดการ</th>}</tr></thead><tbody>{shown.length?shown.map(({r,i})=><tr key={i}>{r.map((c,j)=><td key={j}>{cell(c,j)}</td>)}{actions&&<td className="cell-actions"><div className="row-actions">{actions.map(x=>button(x,i))}</div></td>}</tr>):<tr><td colSpan={columns.length+(actions?1:0)}>{blank}</td></tr>}</tbody></table></div><div className="space-y-3 md:hidden">{shown.length?shown.map(({r,i})=><dl className="mobile-data-row" key={i}>{r.map((c,j)=><div key={j}><dt>{columns[j]?.replace(/\s*\([^)]*\)/g,"")}</dt><dd>{cell(c,j)}</dd></div>)}{actions&&<div className="row-actions border-t border-cream-200 pt-3">{actions.map(x=>button(x,i))}</div>}</dl>):blank}</div><div className="table-pagination"><span>{filtered.length?(current*PAGE_SIZE+1)+"–"+Math.min((current+1)*PAGE_SIZE,filtered.length)+" จาก "+filtered.length+" รายการ":"0 รายการ"}</span><div className="table-pagination-controls"><button type="button" disabled={current===0} aria-label="หน้าก่อนหน้า" onClick={()=>setPage(current-1)}><Icon name="chevron" className="h-3.5 w-3.5 rotate-90" /></button><span>หน้า {current+1} / {pages}</span><button type="button" disabled={current>=pages-1} aria-label="หน้าถัดไป" onClick={()=>setPage(current+1)}><Icon name="chevron" className="h-3.5 w-3.5 -rotate-90" /></button></div></div></div>;
 }
 
 export type FieldDef = { label: string; options?: string[]; type?: string; area?: boolean; required?: boolean; wide?: boolean };
@@ -78,7 +80,7 @@ export function FormDialog({ open, mode, title, fields, value, onClose, onSave, 
   return (
     <Modal
       open={open} wide={fields.length > 6} title={title} onClose={onClose}
-      footer={view ? <button className="btn-primary" onClick={onClose}>ปิด</button> : (
+      footer={view ? <><button className="btn-soft" onClick={() => window.print()}><Icon name="print" className="h-4 w-4" /> พิมพ์เอกสาร</button><button className="btn-primary" onClick={onClose}>ปิด</button></> : (
         <><button type="button" className="btn-soft" onClick={onClose}>ยกเลิก</button><button form="form-dialog" className="btn-primary">{saveLabel}</button></>
       )}
     >
@@ -87,7 +89,7 @@ export function FormDialog({ open, mode, title, fields, value, onClose, onSave, 
         {fields.map((f, i) => (
           <Field key={f.label} label={f.label} required={f.required && !view} className={f.wide || f.area ? "md:col-span-2" : ""}>
             {view ? (
-              <p className="min-h-[2.5rem] rounded-xl bg-cream-50 px-3.5 py-2.5 text-sm">{v[i] || "-"}</p>
+              <p className="field-view">{v[i] || "-"}</p>
             ) : f.options ? (
               <select value={v[i] ?? ""} required={f.required} onChange={(e) => set(i, e.target.value)}>
                 <option value="">-- เลือก --</option>
@@ -101,7 +103,50 @@ export function FormDialog({ open, mode, title, fields, value, onClose, onSave, 
           </Field>
         ))}
       </form>
+      {view && <PrintSignatures />}
     </Modal>
+  );
+}
+
+/* ---------- หัวกระดาษและท้ายกระดาษ (แสดงเฉพาะตอนพิมพ์) ---------- */
+export const COMPANY = {
+  th: "บริษัท ทีทรี สโตรก เนอสซิ่งโฮม จำกัด",
+  brand: "KIN Rehabilitation & Homecare",
+  address: "6 ซอยนาคนิวาส 18 (ลาดพร้าว 71) แขวงลาดพร้าว เขตลาดพร้าว กรุงเทพมหานคร 10230",
+  contact: "โทร 02-096-4996 · kinrehab.com",
+};
+const printedAt = () => new Date().toLocaleString("th-TH", { dateStyle: "long", timeStyle: "short" });
+
+/** หัวกระดาษบริษัท: โลโก้ ชื่อบริษัท ที่อยู่ ชื่อเอกสาร และวันที่พิมพ์ */
+export function PrintLetterhead({ title, className = "" }: { title?: string; className?: string }) {
+  return (
+    <div className={"print-only print-letterhead " + className}>
+      <div className="print-letterhead-row">
+        <img src="/logo-mark.png" alt="KIN" className="print-logo" />
+        <div className="print-company">
+          <strong>{COMPANY.brand}</strong>
+          <span>{COMPANY.th}</span>
+          <small>{COMPANY.address}</small>
+          <small>{COMPANY.contact}</small>
+        </div>
+        <div className="print-meta"><span>วันที่พิมพ์</span><b>{printedAt()}</b></div>
+      </div>
+      {title && <h1 className="print-title">{title}</h1>}
+    </div>
+  );
+}
+
+/** ท้ายกระดาษ: ข้อความกำกับเอกสาร */
+export function PrintFooter() {
+  return <div className="print-only print-footer"><span>{COMPANY.brand} · THE ART OF CARE</span><span>เอกสารนี้พิมพ์จากระบบ KIN Care Management · ใช้ภายในองค์กร</span></div>;
+}
+
+/** ช่องลงชื่อท้ายเอกสาร */
+export function PrintSignatures({ roles = ["ผู้บันทึก", "ผู้ตรวจสอบ"] }: { roles?: string[] }) {
+  return (
+    <div className="print-only print-signatures">
+      {roles.map((r) => <div key={r}><div className="print-sign-line" /><p>({r})</p><p>วันที่ ........./........./.........</p></div>)}
+    </div>
   );
 }
 
@@ -110,13 +155,14 @@ export function BlankForm({ open, title, lines, onClose }: { open: boolean; titl
   return (
     <Modal open={open} wide title={title} onClose={onClose} footer={<><button className="btn-soft" onClick={onClose}>ปิด</button><button className="btn-primary" onClick={() => window.print()}>พิมพ์</button></>}>
       <div className="rounded-xl border border-cream-300 p-5">
-        <p className="mb-5 text-center font-semibold text-gold-800">{title}</p>
+        <p className="print-hide mb-5 text-center font-semibold text-gold-800">{title}</p>
         <div className="grid gap-x-8 gap-y-5 sm:grid-cols-2">
           {lines.map((l) => (
             <div key={l} className="text-sm"><span className="text-gold-700">{l}</span><div className="mt-5 border-b border-dashed border-gold-400" /></div>
           ))}
         </div>
       </div>
+      <PrintSignatures roles={["ผู้ให้ข้อมูล", "เจ้าหน้าที่ผู้บันทึก"]} />
     </Modal>
   );
 }
@@ -125,6 +171,11 @@ export function Modal({ open, title, onClose, children, footer, wide }: { open: 
   const titleId=useId();
   const panel=useRef<HTMLDivElement>(null);
   const closeRef=useRef(onClose); closeRef.current=onClose;
+  const [stackId,setStackId]=useState<number|null>(null);
+  const notice=useNotice(stackId);
+  useEffect(()=>{if(!open)return;const id=openModal();setStackId(id);return()=>{closeModal(id);setStackId(null);};},[open]);
+  const noteRef=useRef<HTMLParagraphElement>(null);
+  useEffect(()=>{if(notice)noteRef.current?.scrollIntoView({block:"nearest",behavior:"smooth"});},[notice]);
   useEffect(()=>{
     if(!open)return;
     const previous=document.activeElement as HTMLElement|null;
@@ -137,7 +188,9 @@ export function Modal({ open, title, onClose, children, footer, wide }: { open: 
     return()=>{window.removeEventListener("keydown",key);document.body.style.overflow=oldOverflow;previous?.focus();};
   },[open]);
   if(!open)return null;
-  return <div className="modal-overlay" onClick={onClose}><div ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId} className={"modal-panel "+(wide?"is-wide":"")} onClick={e=>e.stopPropagation()}><div className="modal-header"><h3 id={titleId}>{title}</h3><button type="button" className="icon-button" onClick={onClose} aria-label="ปิดหน้าต่าง"><Icon name="close" className="h-4 w-4" /></button></div><div className="modal-body">{children}</div>{footer&&<div className="modal-footer">{footer}</div>}</div></div>;
+  // แสดงที่ document.body เสมอ: ถ้าอยู่ใต้กล่องที่มี backdrop-filter/transform (เช่นแถบด้านบน) popup จะถูกจำกัดอยู่ในกล่องนั้น
+  const node = <div className="modal-overlay" onClick={onClose}><div ref={panel} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId} className={"modal-panel "+(wide?"is-wide":"")} onClick={e=>e.stopPropagation()}><div className="modal-header"><h3 id={titleId}>{title}</h3><button type="button" className="icon-button" onClick={onClose} aria-label="ปิดหน้าต่าง"><Icon name="close" className="h-4 w-4" /></button></div><div className="modal-body" onInput={clearNotice} onChange={clearNotice}><PrintLetterhead title={title} />{children}<PrintFooter /></div>{notice&&<p ref={noteRef} role="alert" className="modal-notice"><Icon name="alert" className="h-4 w-4 shrink-0" />{notice}</p>}{footer&&<div className="modal-footer">{footer}</div>}</div></div>;
+  return typeof document === "undefined" ? node : createPortal(node, document.body);
 }
 
 export function Toggle({ label, hint }: { label: string; hint?: string }) {

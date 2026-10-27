@@ -1,60 +1,18 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, createContext, useContext } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import Icon from "@/components/Icon";
-import { DataTable, Field, MetricGrid, Modal, PageHeader, Section, Select, StatusBadge, Tabs } from "@/components/ui";
+import { DataTable, Field, MetricGrid, Modal, PageHeader, PrintLetterhead, Section, Select, StatusBadge, Tabs } from "@/components/ui";
 import { AppProvider, useApp } from "@/lib/app";
 import { downloadCsv, useCrud, useRecords } from "@/lib/store";
 import { OfflineBar } from "@/components/Pwa";
+import PhotoPicker from "@/components/PhotoPicker";
+import { useResidents } from "@/lib/care";
 import Login from "@/components/Login";
 import { useSession, SessionUser } from "@/lib/session";
 
-/* ---------- ชนิดข้อมูล ---------- */
-type Drug = {
-  id: number; who: string; name: string; use: string; how: string; store: string; form: string;
-  bulk: boolean; dose: number; timing: string; meals: string[]; days: string[]; warn: string[];
-  stock: number; unit: string; fridge: boolean; hold: boolean; status: string;
-};
-type Pack = { id: number; date: string; who: string; meal: string; items: string[]; qa: "รอตรวจ" | "ตรวจผ่าน" | "แจ้งจัดยาผิด"; reason?: string; given: boolean; by: string };
-type Page = "dashboard" | "inventory" | "master" | "templates" | "audit" | "dispense" | "qa" | "report" | "manual";
-
-const MEALS = ["เช้า", "กลางวัน", "เย็น", "ก่อนนอน"];
-const DAYS = ["จ.", "อ.", "พ.", "พฤ.", "ศ.", "ส.", "อา."];
-const FORMS = ["ยาเม็ด / แคปซูล", "ยาน้ำ / ไซรัป", "ยาทา / ยาใช้ภายนอก", "ยาหยอด / พ่น", "ยาฉีด (เช่น อินซูลิน)"];
-const STORES = ["คลังยา (อุณหภูมิห้อง)", "ตู้เย็น", "กล่องยาฉุกเฉิน"];
-const TIMINGS = ["- ไม่ระบุ / ตามอาการ -", "หลังอาหาร (After)", "ก่อนอาหาร (Before)", "พร้อมอาหาร (With meal)", "ก่อนนอน (Bedtime)", "เมื่อมีอาการ (PRN)"];
-const AUDIT_STATUS = ["ปกติ", "ยาหมด / หมดสต๊อก", "ยาหมดอายุ", "ยางดใช้ (Discontinued)"];
-const ERR_5R = ["ผิดคน (Right Patient)", "ผิดชนิดยา (Right Drug)", "ผิดขนาด / จำนวนเม็ด (Right Dose)", "ผิดมื้อ / เวลา (Right Time)", "ผิดวิธีให้ยา (Right Route)"];
-const WARN_SUGGEST = ["ทานหลังอาหารทันที", "อาจทำให้ง่วงซึม", "ห้ามบด / ห้ามเคี้ยว", "ดื่มน้ำตามมากๆ", "หลีกเลี่ยงแอลกอฮอล์"];
-const RESIDENTS = ["คุณสุดา วงศ์สวัสดิ์", "คุณมาลี ศรีสุข", "คุณบุญช่วย แก้วมณี", "คุณสมศรี พิมพ์ทอง"];
-
-const d = (x: Partial<Drug> & Pick<Drug, "id" | "who" | "name">): Drug => ({
-  use: "", how: "", store: STORES[0], form: FORMS[0], bulk: false, dose: 1, timing: TIMINGS[1], meals: ["เช้า"], days: [],
-  warn: [], stock: 30, unit: "เม็ด", fridge: false, hold: false, status: "ปกติ", ...x,
-});
-const DRUGS0: Drug[] = [
-  d({ id: 1, who: RESIDENTS[0], name: "Metformin 500 mg", use: "ยาลดน้ำตาลในเลือด", how: "วันละ 2 ครั้ง หลังอาหาร เช้า-เย็น", meals: ["เช้า", "เย็น"], stock: 42, warn: ["ทานหลังอาหารทันที"] }),
-  d({ id: 2, who: RESIDENTS[0], name: "Amlodipine 5 mg", use: "ยาลดความดันโลหิต", how: "วันละ 1 ครั้ง หลังอาหารเช้า", stock: 18 }),
-  d({ id: 3, who: RESIDENTS[1], name: "Aspirin 81 mg", use: "ยาต้านเกล็ดเลือด", how: "วันละ 1 ครั้ง หลังอาหารเช้า", stock: 25 }),
-  d({ id: 4, who: RESIDENTS[1], name: "Simvastatin 20 mg", use: "ยาลดไขมันในเลือด", how: "วันละ 1 ครั้ง ก่อนนอน", timing: TIMINGS[4], meals: ["ก่อนนอน"], stock: 2 }),
-  d({ id: 5, who: RESIDENTS[1], name: "Lactulose syrup", use: "ยาระบาย", how: "15 ml ก่อนนอน", form: FORMS[1], bulk: true, unit: "ขวด", stock: 2, meals: ["ก่อนนอน"] }),
-  d({ id: 6, who: RESIDENTS[2], name: "Glucosamine 1,500 mg", use: "บำรุงข้อ", how: "วันละ 1 ซอง ก่อนอาหารกลางวัน", timing: TIMINGS[2], meals: ["กลางวัน"], unit: "ซอง", stock: 20 }),
-  d({ id: 7, who: RESIDENTS[2], name: "Calcium + Vit D", use: "เสริมแคลเซียม", how: "วันละ 1 เม็ด หลังอาหารเย็น จ. พ. ศ.", meals: ["เย็น"], days: ["จ.", "พ.", "ศ."], stock: 12 }),
-  d({ id: 8, who: RESIDENTS[3], name: "Furosemide 40 mg", use: "ยาขับปัสสาวะ", how: "วันละ 1 ครั้ง หลังอาหารเช้า", stock: 9, warn: ["ดื่มน้ำตามมากๆ"] }),
-];
-const MASTER0 = [
-  ["Metformin 500 mg", "ยาลดน้ำตาลในเลือด"], ["Amlodipine 5 mg", "ยาลดความดันโลหิต"], ["Aspirin 81 mg", "ยาต้านเกล็ดเลือด"],
-  ["Simvastatin 20 mg", "ยาลดไขมันในเลือด"], ["Atorvastatin 40 mg", "ยาลดไขมันในเลือด"], ["Furosemide 40 mg", "ยาขับปัสสาวะ"],
-  ["Lactulose syrup", "ยาระบาย"], ["Glucosamine 1,500 mg", "บำรุงข้อ"], ["Calcium + Vit D", "เสริมแคลเซียม"],
-];
-
-const iso = (x = new Date()) => `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`;
-const thai = (s: string) => new Date(s + "T00:00:00").toLocaleDateString("th-TH", { day: "numeric", month: "short", year: "numeric" });
-const dayOf = (s: string) => DAYS[(new Date(s + "T00:00:00").getDay() + 6) % 7];
-/** ยาที่ต้องจัดลงซองในมื้อนั้นของวันนั้น (ไม่รวมยาขวด และยาที่งดชั่วคราว) */
-const drugsFor = (drugs: Drug[], who: string, meal: string, date: string) =>
-  drugs.filter((x) => x.who === who && !x.bulk && !x.hold && x.status === "ปกติ" && x.meals.includes(meal) && (!x.days.length || x.days.includes(dayOf(date))));
+import { nowTh, Drug, Pack, Page, MEALS, DAYS, FORMS, STORES, TIMINGS, AUDIT_STATUS, ERR_5R, WARN_SUGGEST, RESIDENTS as RESIDENTS0, d, DRUGS0, MASTER0, iso, thai, dayOf, drugsFor } from "@/lib/pharmacy";
 
 const NAV: { id: Page; label: string; icon: string; group: number }[] = [
   { id: "dashboard", label: "แดชบอร์ด", icon: "grid", group: 0 },
@@ -70,14 +28,13 @@ const NAV: { id: Page; label: string; icon: string; group: number }[] = [
 const GROUPS = [{ id: 0, label: "งานประจำวัน", en: "DAILY" }, { id: 1, label: "คลังยา", en: "STOCK" }, { id: 2, label: "รายงาน", en: "REPORT" }];
 
 /* ---------- ช่องถ่ายรูป ---------- */
-function Photo({ value, onChange, label = "แตะเพื่อถ่ายรูป / เลือกรูป" }: { value: string; onChange: (u: string) => void; label?: string }) {
-  return (
-    <label className="relative grid h-44 cursor-pointer place-items-center overflow-hidden rounded-2xl border-2 border-dashed border-gold-300 bg-cream-50 text-center text-sm text-gold-600">
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      {value ? <img src={value} alt="รูปที่แนบ" className="h-full w-full object-cover" /> : <span className="flex flex-col items-center gap-2 px-4"><Icon name="camera" className="h-8 w-8" />{label}</span>}
-      <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) onChange(URL.createObjectURL(f)); }} />
-    </label>
-  );
+/** รายชื่อผู้รับบริการจริงของสาขา (จากฐานข้อมูล) ส่งให้ทุกหน้าในแอป · ยังโหลดไม่ได้ใช้รายชื่อตัวอย่าง */
+const NamesCtx = createContext<string[]>(RESIDENTS0);
+const useNames = () => useContext(NamesCtx);
+
+/** ช่องแนบรูป: เปิดกล้อง หรือเลือกรูปจากไฟล์ */
+function Photo({ value, onChange, label = "แนบรูปภาพ", invalid = false }: { value: string; onChange: (u: string) => void; label?: string; invalid?: boolean }) {
+  return <PhotoPicker value={value} onChange={onChange} label={label} invalid={invalid} />;
 }
 const Chip = ({ on, children, onClick }: { on: boolean; children: React.ReactNode; onClick: () => void }) => (
   <button type="button" onClick={onClick} aria-pressed={on} className={`rounded-xl border px-3.5 py-2 text-sm transition ${on ? "border-gold-600 bg-gold-100 font-medium text-gold-800" : "border-cream-300 bg-white text-gold-600"}`}>{children}</button>
@@ -85,6 +42,8 @@ const Chip = ({ on, children, onClick }: { on: boolean; children: React.ReactNod
 
 /* ---------- แอป ---------- */
 function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
+  const { residents: live } = useResidents();
+  const RESIDENTS = live.length ? live.map((r) => r.full_name) : RESIDENTS0;
   const [page, setPage] = useState<Page>("dashboard");
   const [drawer, setDrawer] = useState(false);
   const [big, setBig] = useState(false);
@@ -135,6 +94,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   );
 
   return (
+    <NamesCtx.Provider value={RESIDENTS}>
     <div className="app-shell" style={big ? { zoom: 1.15 } : undefined}>
       <aside className="desktop-sidebar">{sidebar}</aside>
       {drawer && <div className="mobile-drawer"><button className="drawer-scrim" aria-label="ปิดเมนู" onClick={() => setDrawer(false)} /><aside><button className="drawer-close icon-button" aria-label="ปิดเมนู" onClick={() => setDrawer(false)}><Icon name="close" /></button>{sidebar}</aside></div>}
@@ -148,9 +108,10 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
         </header>
         <OfflineBar />
         <main className="workspace-main" key={page}>
+          <PrintLetterhead title="ระบบบริหารจัดการยา" className="page-letterhead" />
           {page === "dashboard" && <Dashboard go={go} need={todayNeed.length} packed={packedToday} low={low} waitQa={waitQa} />}
-          {page === "dispense" && <Dispense drugs={drugs} setDrugs={setDrugs} packs={packs} setPacks={setPacks} go={go} />}
-          {page === "qa" && <QA packs={packs} setPacks={setPacks} go={go} />}
+          {page === "dispense" && <Dispense drugs={drugs} setDrugs={setDrugs} packs={packs} setPacks={setPacks} go={go} me={user.name} />}
+          {page === "qa" && <QA packs={packs} setPacks={setPacks} go={go} me={user.name} />}
           {page === "inventory" && <Inventory drugs={drugs} setDrugs={setDrugs} master={master} />}
           {page === "audit" && <Audit drugs={drugs} setDrugs={setDrugs} />}
           {page === "templates" && <Templates drugs={drugs} setDrugs={setDrugs} />}
@@ -161,6 +122,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
         <footer className="workspace-footer"><span>KIN MEDCARE</span><span>จัดยาด้วยหลัก 5R เพื่อความปลอดภัยของผู้รับบริการ</span></footer>
       </div>
     </div>
+    </NamesCtx.Provider>
   );
 }
 
@@ -204,15 +166,19 @@ function Dashboard({ go, need, packed, low, waitQa }: { go: (p: Page) => void; n
 }
 
 /* ---------- จัดยารายวัน ---------- */
-function Dispense({ drugs, setDrugs, packs, setPacks, go }: { drugs: Drug[]; setDrugs: (x: Drug[]) => void; packs: Pack[]; setPacks: (x: Pack[]) => void; go: (p: Page) => void }) {
+function Dispense({ drugs, setDrugs, packs, setPacks, go, me }: { drugs: Drug[]; setDrugs: (x: Drug[]) => void; packs: Pack[]; setPacks: (x: Pack[]) => void; go: (p: Page) => void; me: string }) {
+  const RESIDENTS = useNames();
   const { toast, confirm } = useApp();
   const [who, setWho] = useState(RESIDENTS[0]);
+  useEffect(() => { if (!RESIDENTS.includes(who)) setWho(RESIDENTS[0]); }, [RESIDENTS]); // eslint-disable-line react-hooks/exhaustive-deps
   const [date, setDate] = useState(iso());
   const [meal, setMeal] = useState<string | null>(null);
   const [photo, setPhoto] = useState("");
   const [checked, setChecked] = useState<number[]>([]);
   const [bulk, setBulk] = useState(false);
   const [preview, setPreview] = useState(false);
+  /** ข้อความเตือนสีแดงเหนือปุ่มบันทึก (หน้านี้ไม่ใช่ popup จึงไม่ใช้ toast) */
+  const [saveErr, setSaveErr] = useState<"" | "check" | "photo">("");
   const meals = MEALS.map((m) => ({ m, list: drugsFor(drugs, who, m, date), pack: packs.find((p) => p.date === date && p.who === who && p.meal === m) })).filter((x) => x.list.length || x.pack);
   const sel = meals.find((x) => x.m === meal);
   const bulkDrugs = drugs.filter((x) => x.who === who && x.bulk);
@@ -220,11 +186,12 @@ function Dispense({ drugs, setDrugs, packs, setPacks, go }: { drugs: Drug[]; set
 
   const save = () => {
     if (!sel) return;
-    if (checked.length < sel.list.length) return toast("กรุณาติ๊กยาให้ครบทุกรายการก่อนบันทึก");
-    if (!photo) return toast("กรุณาถ่ายรูปซองยาที่จัดเสร็จ");
+    if (checked.length < sel.list.length) return setSaveErr("check");
+    if (!photo) return setSaveErr("photo");
+    setSaveErr("");
     const items = sel.list.map((x) => (x.stock >= x.dose ? `${x.name} × ${x.dose}` : `${x.name} (ยาหมด/รอเติม)`));
     setDrugs(drugs.map((x) => (sel.list.some((y) => y.id === x.id) ? { ...x, stock: Math.max(0, x.stock - x.dose) } : x)));
-    setPacks([{ id: Date.now(), date, who, meal: sel.m, items, qa: "รอตรวจ", given: false, by: "พนักงานห้องยา" }, ...packs]);
+    setPacks([{ id: Date.now(), date, who, meal: sel.m, items, qa: "รอตรวจ", given: false, by: me }, ...packs]);
     setMeal(null); toast(`บันทึกการจัดยามื้อ${sel.m}แล้ว ส่งเข้าตะกร้ายา`);
   };
 
@@ -243,7 +210,7 @@ function Dispense({ drugs, setDrugs, packs, setPacks, go }: { drugs: Drug[]; set
                 return (
                   <li key={x.id}>
                     <label className={`flex cursor-pointer items-start gap-3 rounded-2xl border p-4 transition ${on ? "border-emerald-300 bg-emerald-50/60" : "border-cream-300 bg-white"}`}>
-                      <input type="checkbox" className="mt-1.5" checked={on} onChange={() => setChecked(on ? checked.filter((y) => y !== x.id) : [...checked, x.id])} />
+                      <input type="checkbox" className="mt-1.5" checked={on} onChange={() => { setChecked(on ? checked.filter((y) => y !== x.id) : [...checked, x.id]); if (saveErr === "check") setSaveErr(""); }} />
                       <span className="min-w-0 flex-1">
                         <span className="flex flex-wrap items-baseline justify-between gap-x-3"><b className="font-medium text-gold-900">{x.name}</b><span className="text-lg font-semibold text-gold-700">{x.dose} {x.unit}</span></span>
                         <span className="block text-sm text-gold-600">{x.how}</span>
@@ -256,9 +223,10 @@ function Dispense({ drugs, setDrugs, packs, setPacks, go }: { drugs: Drug[]; set
             </ul>
           </Section>
           <Section title="ถ่ายรูปเมื่อจัดเสร็จ">
-            <Photo value={photo} onChange={setPhoto} label="ถ่ายรูปซองยาที่จัดเสร็จ (บังคับ)" />
+            <Photo value={photo} onChange={(u) => { setPhoto(u); if (saveErr === "photo") setSaveErr(""); }} label="ถ่ายรูปซองยาที่จัดเสร็จ (บังคับ)" invalid={saveErr === "photo"} />
             <p className="mt-2 text-xs text-gold-500">ถ่ายให้เห็นเม็ดยาคู่กับป้ายฉลาก เพื่อให้ผู้ตรวจ QA เทียบกับรูปยาต้นฉบับได้</p>
-            <button className="btn-primary mt-5 w-full" onClick={save}>บันทึกการจัดยามื้อนี้</button>
+            {saveErr && <p role="alert" className="form-error mt-4"><Icon name="alert" className="h-4 w-4 shrink-0" />{saveErr === "photo" ? "กรุณาถ่ายรูปซองยาที่จัดเสร็จก่อนบันทึก (แตะช่องกล้องด้านบน)" : `กรุณาติ๊กยาให้ครบทุกรายการก่อนบันทึก (ติ๊กแล้ว ${checked.length} จาก ${sel.list.length})`}</p>}
+            <button className="btn-primary mt-4 w-full" onClick={save}>บันทึกการจัดยามื้อนี้</button>
           </Section>
         </div>
       </>
@@ -283,13 +251,15 @@ function Dispense({ drugs, setDrugs, packs, setPacks, go }: { drugs: Drug[]; set
             <div key={x.m} className={`card flex min-w-0 flex-col p-5 ${x.pack ? "!border-emerald-200 bg-emerald-50/40" : ""}`}>
               <div className="flex items-center justify-between gap-2"><h3 className="text-lg font-medium text-gold-800">{x.m}</h3>{x.pack ? <StatusBadge value="จัดยาแล้ว" /> : <StatusBadge value={`รอจัด ${x.list.length} รายการ`} />}</div>
               <ul className="mt-3 flex-1 space-y-1 text-sm text-gold-600">{(x.pack ? x.pack.items : x.list.map((y) => `${y.name} × ${y.dose}`)).map((t) => <li key={t} className="truncate">• {t}</li>)}</ul>
-              {x.pack ? (
-                <button className="btn-danger mt-4 w-full" onClick={() => confirm({ title: "รีเซตมื้อยา", message: `ล้างการจัดยามื้อ${x.m}ของวันนี้ และคืนสต็อกยา ใช่หรือไม่`, danger: true, okLabel: "รีเซต", onOk: () => {
+              {x.pack?.given ? (
+                <p className="mt-4 rounded-xl bg-emerald-50 px-3 py-2 text-center text-xs text-emerald-800">จ่ายยาแล้ว · {x.pack.gby ?? "-"}{x.pack.gat ? ` · ${x.pack.gat}` : ""}<br />ซองที่จ่ายแล้วรีเซตไม่ได้ (เป็นบันทึกการให้ยา)</p>
+              ) : x.pack ? (
+                <button className="btn-danger mt-4 w-full" onClick={() => confirm({ title: "รีเซตมื้อยา", message: `ล้างการจัดยามื้อ${x.m}ของวันนี้ และคืนสต็อกยา ใช่หรือไม่${x.pack!.qa === "ตรวจผ่าน" ? " (ซองนี้ตรวจ QA ผ่านแล้วและอยู่ในคิวจ่ายยาของ KinApp)" : ""}`, danger: true, okLabel: "รีเซต", onOk: () => {
                   setDrugs(drugs.map((y) => (x.list.some((z) => z.id === y.id) ? { ...y, stock: y.stock + y.dose } : y)));
                   setPacks(packs.filter((p) => p.id !== x.pack!.id)); toast("รีเซตแล้ว เริ่มจัดใหม่ได้");
                 } })}>รีเซต</button>
               ) : (
-                <button className="btn-primary mt-4 w-full" onClick={() => { setMeal(x.m); setChecked([]); setPhoto(""); }}>เริ่มจัดยามื้อนี้</button>
+                <button className="btn-primary mt-4 w-full" onClick={() => { setMeal(x.m); setChecked([]); setPhoto(""); setSaveErr(""); }}>เริ่มจัดยามื้อนี้</button>
               )}
             </div>
           ))}
@@ -317,7 +287,7 @@ function Dispense({ drugs, setDrugs, packs, setPacks, go }: { drugs: Drug[]; set
 }
 
 /* ---------- ตะกร้ายา & QA ---------- */
-function QA({ packs, setPacks, go }: { packs: Pack[]; setPacks: (x: Pack[]) => void; go: (p: Page) => void }) {
+function QA({ packs, setPacks, go, me }: { packs: Pack[]; setPacks: (x: Pack[]) => void; go: (p: Page) => void; me: string }) {
   const { toast } = useApp();
   const [tab, setTab] = useState("รอตรวจ");
   const [err, setErr] = useState<Pack | null>(null);
@@ -345,11 +315,12 @@ function QA({ packs, setPacks, go }: { packs: Pack[]; setPacks: (x: Pack[]) => v
               {p.qa === "รอตรวจ" && (
                 <div className="mt-4 grid grid-cols-2 gap-2">
                   <button className="btn-danger !px-3" onClick={() => { setErr(p); setReason(""); }}>แจ้งจัดยาผิด</button>
-                  <button className="btn-primary !px-3" onClick={() => { set(p.id, { qa: "ตรวจผ่าน" }); toast("ตรวจผ่าน บันทึกชื่อผู้ตรวจแล้ว"); }}>ตรวจผ่าน</button>
+                  <button className="btn-primary !px-3" onClick={() => { set(p.id, { qa: "ตรวจผ่าน", qby: me }); toast("ตรวจผ่าน ซองนี้ขึ้นคิวจ่ายยาใน KinApp แล้ว"); }}>ตรวจผ่าน</button>
                 </div>
               )}
-              {p.qa === "ตรวจผ่าน" && !p.given && <button className="btn-soft mt-4 w-full" onClick={() => { set(p.id, { given: true }); toast("บันทึกว่าจ่ายยาให้ผู้รับบริการแล้ว"); }}>บันทึกว่าจ่ายยาแล้ว</button>}
-              {p.given && <p className="mt-4 text-center text-xs text-emerald-700">จ่ายยาแล้ว</p>}
+              {p.qa === "ตรวจผ่าน" && !p.given && <p className="mt-4 rounded-xl bg-cream-50 px-3 py-2 text-center text-xs text-gold-600">ตรวจโดย {p.qby ?? "-"} · รอพนักงานจ่ายยาใน KinApp</p>}
+              {p.qa === "ตรวจผ่าน" && !p.given && <button className="btn-soft mt-2 w-full" onClick={() => { set(p.id, { given: true, gby: me, gat: nowTh() }); toast("บันทึกว่าจ่ายยาให้ผู้รับบริการแล้ว"); }}>บันทึกว่าจ่ายยาแล้ว (ห้องยาจ่ายเอง)</button>}
+              {p.given && <p className="mt-4 rounded-xl bg-emerald-50 px-3 py-2 text-center text-xs text-emerald-800">จ่ายยาแล้ว · {p.gby ?? "-"}{p.gat ? ` · ${p.gat}` : ""}</p>}
             </article>
           ))}
         </div>
@@ -367,6 +338,7 @@ function QA({ packs, setPacks, go }: { packs: Pack[]; setPacks: (x: Pack[]) => v
 const blankForm = () => ({ who: "", name: "", use: "", how: "", store: STORES[0], form: FORMS[0], bulk: false, dose: "1", timing: TIMINGS[1], meals: ["เช้า"] as string[], days: [] as string[], warn: [] as string[], stock: "", unit: "เม็ด", fridge: false, hold: false, photo: "" });
 
 function Inventory({ drugs, setDrugs, master }: { drugs: Drug[]; setDrugs: (x: Drug[]) => void; master: string[][] }) {
+  const RESIDENTS = useNames();
   const { toast, confirm } = useApp();
   const [f, setF] = useState(blankForm);
   const [tag, setTag] = useState("");
@@ -459,6 +431,7 @@ function Inventory({ drugs, setDrugs, master }: { drugs: Drug[]; setDrugs: (x: D
 
 /* ---------- เคลียร์คลังยา ---------- */
 function Audit({ drugs, setDrugs }: { drugs: Drug[]; setDrugs: (x: Drug[]) => void }) {
+  const RESIDENTS = useNames();
   const { toast } = useApp();
   const [who, setWho] = useState<string | null>(null);
   const [idx, setIdx] = useState(0);
@@ -533,6 +506,7 @@ function Audit({ drugs, setDrugs }: { drugs: Drug[]; setDrugs: (x: Drug[]) => vo
 
 /* ---------- ซองมื้อยา ---------- */
 function Templates({ drugs, setDrugs }: { drugs: Drug[]; setDrugs: (x: Drug[]) => void }) {
+  const RESIDENTS = useNames();
   const { toast } = useApp();
   const [who, setWho] = useState("");
   const date = iso();
@@ -595,15 +569,16 @@ function Master({ master, setMaster }: { master: string[][]; setMaster: (x: stri
 
 /* ---------- รายงานการจัดยา ---------- */
 function Report({ packs }: { packs: Pack[] }) {
+  const RESIDENTS = useNames();
   const [who, setWho] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [status, setStatus] = useState("");
   const [q, setQ] = useState({ who: "", from: "", to: "", status: "" });
-  const cols = ["วันกินยา", "ชื่อผู้รับบริการ", "มื้อยา", "รายการยา", "สถานะ"];
+  const cols = ["วันกินยา", "ชื่อผู้รับบริการ", "มื้อยา", "รายการยา", "จัดโดย", "ตรวจ QA โดย", "ผู้ให้ยา", "เวลาที่ให้ยา", "สถานะ"];
   const rows = useMemo(() => packs
     .filter((p) => (!q.who || p.who === q.who) && (!q.from || p.date >= q.from) && (!q.to || p.date <= q.to) && (!q.status || (q.status === "จ่ายยาแล้ว") === p.given))
-    .map((p) => [thai(p.date), p.who, p.meal, p.items.join(", "), p.given ? "จ่ายยาแล้ว" : "รอจ่าย"]), [packs, q]);
+    .map((p) => [thai(p.date), p.who, p.meal, p.items.join(", "), p.by || "-", p.qby || "-", p.gby || "-", p.gat || "-", p.given ? "จ่ายยาแล้ว" : "รอจ่าย"]), [packs, q]);
   return (
     <>
       <PageHeader title="รายงานการจัดยา" sub="ดูประวัติและรายงานการจัดยาทั้งหมด แยกตามวันเวลา สาขา และผู้จัดยา"

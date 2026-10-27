@@ -8,7 +8,8 @@ function db(): Sql {
   if (!client) {
     const url = process.env.DATABASE_URL;
     if (!url) throw new Error("DATABASE_URL is not set (see .env.example)");
-    client = neon(url);
+    // no-store: Next.js แคชการเรียก fetch ใน route handler ได้ (ไดรเวอร์ Neon ใช้ fetch) ทำให้คำสั่ง SQL เดิมได้ผลเก่า
+    client = neon(url, { fetchOptions: { cache: "no-store" } });
   }
   return client;
 }

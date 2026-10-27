@@ -389,3 +389,76 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 CREATE INDEX IF NOT EXISTS audit_logs_at ON audit_logs (at DESC);
 CREATE INDEX IF NOT EXISTS audit_logs_branch ON audit_logs (branch_name, at DESC);
 COMMENT ON TABLE audit_logs IS 'ประวัติการแก้ไขข้อมูลและการเข้าสู่ระบบ';
+
+-- ---------------------------------------------------------------- รหัสผู้รับบริการ (foreign key)
+-- ทุกตารางที่อ้างถึงผู้รับบริการเก็บ resident_id → residents.id (server ใส่ให้จากชื่อที่เลือก)
+-- เปลี่ยนชื่อผู้รับบริการ = ระบบแก้ resident_name ในทุกตารางตาม resident_id · ลบผู้รับบริการ = ประวัติยังอยู่ (resident_id เป็น NULL)
+-- UPDATE เติมรหัสให้ข้อมูลเดิม: จับคู่ชื่อ เลือกคนในสาขาเดียวกันก่อน (รันซ้ำได้)
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS resident_id text REFERENCES residents(id) ON DELETE SET NULL;
+ALTER TABLE task_logs ADD COLUMN IF NOT EXISTS resident_id text REFERENCES residents(id) ON DELETE SET NULL;
+ALTER TABLE appointments ADD COLUMN IF NOT EXISTS resident_id text REFERENCES residents(id) ON DELETE SET NULL;
+ALTER TABLE health_logs ADD COLUMN IF NOT EXISTS resident_id text REFERENCES residents(id) ON DELETE SET NULL;
+ALTER TABLE care_assessments ADD COLUMN IF NOT EXISTS resident_id text REFERENCES residents(id) ON DELETE SET NULL;
+ALTER TABLE daily_tasks ADD COLUMN IF NOT EXISTS resident_id text REFERENCES residents(id) ON DELETE SET NULL;
+ALTER TABLE caregiver_tasks ADD COLUMN IF NOT EXISTS resident_id text REFERENCES residents(id) ON DELETE SET NULL;
+ALTER TABLE shift_handovers ADD COLUMN IF NOT EXISTS resident_id text REFERENCES residents(id) ON DELETE SET NULL;
+ALTER TABLE resident_medications ADD COLUMN IF NOT EXISTS resident_id text REFERENCES residents(id) ON DELETE SET NULL;
+ALTER TABLE medication_packs ADD COLUMN IF NOT EXISTS resident_id text REFERENCES residents(id) ON DELETE SET NULL;
+ALTER TABLE medication_rounds ADD COLUMN IF NOT EXISTS resident_id text REFERENCES residents(id) ON DELETE SET NULL;
+UPDATE contracts SET resident_id = (SELECT r.id FROM residents r WHERE r.full_name = contracts.resident_name ORDER BY (r.branch_name IS NOT DISTINCT FROM contracts.branch_name) DESC, r.created_at LIMIT 1) WHERE resident_id IS NULL AND resident_name IS NOT NULL;
+UPDATE task_logs SET resident_id = (SELECT r.id FROM residents r WHERE r.full_name = task_logs.resident_name ORDER BY (r.branch_name IS NOT DISTINCT FROM task_logs.branch_name) DESC, r.created_at LIMIT 1) WHERE resident_id IS NULL AND resident_name IS NOT NULL;
+UPDATE appointments SET resident_id = (SELECT r.id FROM residents r WHERE r.full_name = appointments.resident_name ORDER BY (r.branch_name IS NOT DISTINCT FROM appointments.branch_name) DESC, r.created_at LIMIT 1) WHERE resident_id IS NULL AND resident_name IS NOT NULL;
+UPDATE health_logs SET resident_id = (SELECT r.id FROM residents r WHERE r.full_name = health_logs.resident_name ORDER BY (r.branch_name IS NOT DISTINCT FROM health_logs.branch_name) DESC, r.created_at LIMIT 1) WHERE resident_id IS NULL AND resident_name IS NOT NULL;
+UPDATE care_assessments SET resident_id = (SELECT r.id FROM residents r WHERE r.full_name = care_assessments.resident_name ORDER BY (r.branch_name IS NOT DISTINCT FROM care_assessments.branch_name) DESC, r.created_at LIMIT 1) WHERE resident_id IS NULL AND resident_name IS NOT NULL;
+UPDATE daily_tasks SET resident_id = (SELECT r.id FROM residents r WHERE r.full_name = daily_tasks.resident_name ORDER BY (r.branch_name IS NOT DISTINCT FROM daily_tasks.branch_name) DESC, r.created_at LIMIT 1) WHERE resident_id IS NULL AND resident_name IS NOT NULL;
+UPDATE caregiver_tasks SET resident_id = (SELECT r.id FROM residents r WHERE r.full_name = caregiver_tasks.resident_name ORDER BY (r.branch_name IS NOT DISTINCT FROM caregiver_tasks.branch_name) DESC, r.created_at LIMIT 1) WHERE resident_id IS NULL AND resident_name IS NOT NULL;
+UPDATE shift_handovers SET resident_id = (SELECT r.id FROM residents r WHERE r.full_name = shift_handovers.resident_name ORDER BY (r.branch_name IS NOT DISTINCT FROM shift_handovers.branch_name) DESC, r.created_at LIMIT 1) WHERE resident_id IS NULL AND resident_name IS NOT NULL;
+UPDATE resident_medications SET resident_id = (SELECT r.id FROM residents r WHERE r.full_name = resident_medications.resident_name ORDER BY (r.branch_name IS NOT DISTINCT FROM resident_medications.branch_name) DESC, r.created_at LIMIT 1) WHERE resident_id IS NULL AND resident_name IS NOT NULL;
+UPDATE medication_packs SET resident_id = (SELECT r.id FROM residents r WHERE r.full_name = medication_packs.resident_name ORDER BY (r.branch_name IS NOT DISTINCT FROM medication_packs.branch_name) DESC, r.created_at LIMIT 1) WHERE resident_id IS NULL AND resident_name IS NOT NULL;
+UPDATE medication_rounds SET resident_id = (SELECT r.id FROM residents r WHERE r.full_name = medication_rounds.resident_name ORDER BY (r.branch_name IS NOT DISTINCT FROM medication_rounds.branch_name) DESC, r.created_at LIMIT 1) WHERE resident_id IS NULL AND resident_name IS NOT NULL;
+CREATE INDEX IF NOT EXISTS contracts_resident ON contracts (resident_id);
+CREATE INDEX IF NOT EXISTS task_logs_resident ON task_logs (resident_id);
+CREATE INDEX IF NOT EXISTS appointments_resident ON appointments (resident_id);
+CREATE INDEX IF NOT EXISTS health_logs_resident ON health_logs (resident_id);
+CREATE INDEX IF NOT EXISTS care_assessments_resident ON care_assessments (resident_id);
+CREATE INDEX IF NOT EXISTS daily_tasks_resident ON daily_tasks (resident_id);
+CREATE INDEX IF NOT EXISTS caregiver_tasks_resident ON caregiver_tasks (resident_id);
+CREATE INDEX IF NOT EXISTS shift_handovers_resident ON shift_handovers (resident_id);
+CREATE INDEX IF NOT EXISTS resident_medications_resident ON resident_medications (resident_id);
+CREATE INDEX IF NOT EXISTS medication_packs_resident ON medication_packs (resident_id);
+CREATE INDEX IF NOT EXISTS medication_rounds_resident ON medication_rounds (resident_id);
+
+-- ---------------------------------------------------------------- การให้ยา (เชื่อมแอปจัดยา → KinApp)
+-- ซองยาที่ตรวจ QA ผ่านแล้ว = คิวจ่ายยาของพนักงานใน KinApp · กดจ่ายแล้วบันทึกผู้ให้ยาและเวลา (Medication Administration Record)
+ALTER TABLE medication_packs ADD COLUMN IF NOT EXISTS given_by text;
+ALTER TABLE medication_packs ADD COLUMN IF NOT EXISTS given_at timestamp;
+ALTER TABLE medication_packs ADD COLUMN IF NOT EXISTS checked_by text;
+
+-- ---------------------------------------------------------------- แจ้งเตือนสัญญาณชีพผิดปกติ
+-- server สร้างให้เมื่อบันทึกสัญญาณชีพที่เกินเกณฑ์ (lib/vitals.ts) · 1 แถวต่อ 1 รายการบันทึก · status: open / acknowledged
+CREATE TABLE IF NOT EXISTS care_alerts (
+  id            text PRIMARY KEY,
+  area          text NOT NULL,
+  record_id     text,
+  resident_id   text REFERENCES residents(id) ON DELETE SET NULL,
+  resident_name text,
+  branch_name   text,
+  level         text NOT NULL,
+  summary       text,
+  items         jsonb,
+  vital_text    text,
+  created_by    text,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  status        text NOT NULL DEFAULT 'open',
+  ack_by        text,
+  ack_at        timestamptz,
+  ack_note      text
+);
+CREATE INDEX IF NOT EXISTS care_alerts_open ON care_alerts (status, branch_name, created_at DESC);
+CREATE INDEX IF NOT EXISTS care_alerts_resident ON care_alerts (resident_id, created_at DESC);
+COMMENT ON TABLE care_alerts IS 'แจ้งเตือนสัญญาณชีพผิดปกติ รอพยาบาลรับทราบ';
+
+-- ---------------------------------------------------------------- งานประจำวัน ↔ KinApp
+-- ผู้จัดการมอบหมายงาน (จากคลังงานมาตรฐาน) → พนักงานส่งงานใน KinApp: บันทึกย่อ + ชื่อผู้ส่ง
+ALTER TABLE daily_tasks ADD COLUMN IF NOT EXISTS note text;
+ALTER TABLE daily_tasks ADD COLUMN IF NOT EXISTS done_by text;

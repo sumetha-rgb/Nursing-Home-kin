@@ -6,6 +6,7 @@ import { ROLES, Role, SessionUser } from "@/lib/roles";
 import { audit } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
 
 /**
  * จัดการบัญชีทีม (ระบบจัดการ › ทีมและสิทธิ์การใช้งาน)

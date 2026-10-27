@@ -5,6 +5,7 @@ import { hashPassword, normEmail, passwordProblem, startSession, validEmail } fr
 import { audit } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
 
 /**
  * สมัครสมาชิกเอง: ได้สิทธิ์ระดับปฏิบัติงาน (Operation) เสมอ

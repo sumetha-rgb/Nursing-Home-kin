@@ -158,7 +158,7 @@ export function useCrud(key: string, initial: string[][]) {
     sync(key, { op: "replace", items: list });
   }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
   return {
-    rows, loaded, error, set,
+    rows, ids: items.map((x) => x.id), loaded, error, set,
     add: (r: string[]) => { const it = { id: newId(), data: r }; local([it, ...items]); sync(key, { op: "upsert", items: [it] }); },
     update: (i: number, r: string[]) => { const it = { ...items[i], data: r }; local(items.map((x, j) => (j === i ? it : x))); sync(key, { op: "upsert", items: [it] }); },
     remove: (i: number) => { const id = items[i]?.id; local(items.filter((_, j) => j !== i)); if (id) sync(key, { op: "delete", ids: [id] }); },

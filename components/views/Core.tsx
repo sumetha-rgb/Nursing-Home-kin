@@ -6,6 +6,7 @@ import { APPOINTMENTS, CONTRACTS, DAILY_LIST, RESIDENTS, TASKS, BRANCH_NAMES } f
 import { downloadCsv, useCrud } from "@/lib/store";
 import { useApp } from "@/lib/app";
 import { ViewId } from "@/lib/nav";
+import ResidentProfile from "../care/ResidentProfile";
 import { BlankForm, DataTable, Field, FieldDef, FormDialog, Modal, MetricGrid, PageHeader, Section, Select, Upload, Tabs } from "../ui";
 
 /* ---------- ขั้นตอนการทำงาน ---------- */
@@ -196,10 +197,12 @@ const RES_FIELDS: FieldDef[] = [
 ];
 
 export function Residents() {
-  const { rows, update, remove } = useCrud("residents", RESIDENTS);
+  const { rows, ids, update, remove } = useCrud("residents", RESIDENTS);
   const { confirm, toast } = useApp();
   const [sample, setSample] = useState(false);
   const [dlg, setDlg] = useState<Dlg>(null);
+  const [profile, setProfile] = useState<string | null>(null);
+  const norm = (x: string) => x.trim().replace(/\s+/g, " ");
   return (
     <>
       <PageHeader
@@ -212,7 +215,7 @@ export function Residents() {
           columns={["ชื่อ-นามสกุล", "อายุ", "ห้อง/เตียง", "สาขา", "โรคประจำตัว", "สถานะ"]}
           rows={rows}
           actions={[
-            { label: "ดู", onClick: (i) => setDlg({ mode: "view", i }) },
+            { label: "ประวัติ", onClick: (i) => setProfile(ids[i]) },
             { label: "แก้ไข", onClick: (i) => setDlg({ mode: "edit", i }) },
             { label: "ลบ", danger: true, onClick: (i) => confirm({ title: "ลบข้อมูลผู้รับบริการ", message: `ต้องการลบ ${rows[i][0]} ใช่หรือไม่`, danger: true, okLabel: "ลบ", onOk: () => { remove(i); toast("ลบข้อมูลแล้ว"); } }) },
           ]}
@@ -221,8 +224,14 @@ export function Residents() {
       <FormDialog
         open={!!dlg} mode={dlg?.mode ?? "view"} title={dlg?.mode === "edit" ? "แก้ไขข้อมูลผู้รับบริการ" : "ข้อมูลผู้รับบริการ"}
         fields={RES_FIELDS} value={dlg ? rows[dlg.i] : undefined} onClose={() => setDlg(null)}
-        onSave={(v) => { if (dlg) update(dlg.i, v); setDlg(null); toast("บันทึกการแก้ไขแล้ว"); }} saveLabel="บันทึกการแก้ไข"
+        onSave={(v) => {
+          if (!dlg) return;
+          if (!norm(v[0])) return toast("กรุณากรอกชื่อ-นามสกุล");
+          if (rows.some((r, j) => j !== dlg.i && norm(r[0]) === norm(v[0]) && r[3] === v[3])) return toast(`มีผู้รับบริการชื่อ "${norm(v[0])}" ในสาขา${v[3]}แล้ว กรุณาเพิ่มชื่อเล่นหรือเลขห้องต่อท้ายเพื่อแยกกัน`);
+          update(dlg.i, [norm(v[0]), ...v.slice(1)]); setDlg(null); toast("บันทึกการแก้ไขแล้ว · ข้อมูลที่เกี่ยวข้องเปลี่ยนชื่อตามให้แล้ว");
+        }} saveLabel="บันทึกการแก้ไข"
       />
+      <ResidentProfile id={profile} onClose={() => setProfile(null)} />
       <BlankForm open={sample} title="แบบประเมินแรกรับ (แบบฟอร์มเปล่า)" onClose={() => setSample(false)}
         lines={["ชื่อ-สกุล ผู้รับบริการ", "สาขา", "วันเข้าอยู่ (รับดูแลเมื่อ)", "อายุ (ปี)", "BT อุณหภูมิ", "PR ชีพจร", "RR การหายใจ", "BP ความดันโลหิต", "O2SAT ออกซิเจน", "DTX น้ำตาล", "น้ำหนัก (ก.ก.)", "ส่วนสูง (ซ.ม.)", "ลงชื่อผู้ประเมิน", "วัน/เดือน/ปี ที่ประเมิน"]} />
     </>

@@ -512,3 +512,171 @@ input::placeholder,textarea::placeholder { color:#8a785b; }
 .nav-item>svg,.nav-group-title,.sidebar-brand-caption { color:var(--text-muted); }
 .nav-item.is-active { color:#5e4520; }
 .desktop-sidebar,.mobile-drawer aside { border-right-color:#e6dccb; }
+
+/* ======================================================================
+   Fields: read-only values and inputs stand out from the white panel
+   ====================================================================== */
+.field-view { min-height:42px; display:flex; align-items:center; padding:9px 14px; border-radius:10px; background:#f5efe3; border:1px solid #e2d4bb; color:var(--text); font-size:14px; font-weight:500; line-height:1.6; overflow-wrap:anywhere; }
+@layer base {
+  input,select,textarea { background-color:#fffdf8; border-color:#d8c9ad; }
+  input:hover,select:hover,textarea:hover { border-color:#c7b38d; }
+  input:focus,select:focus,textarea:focus { background-color:#fff; border-color:#a88a52; box-shadow:0 0 0 3px #c9a96a33; }
+  input:disabled,select:disabled,textarea:disabled { background-color:#f1ebe0; color:#7a6a4e; }
+}
+.modal-body .label { color:#4a3d29; }
+
+/* ======================================================================
+   Print: A4 company document with letterhead, signatures and footer
+   ====================================================================== */
+.print-only { display:none; }
+@media print {
+  /* ขอบกระดาษ 0 = เบราว์เซอร์ไม่มีที่วางหัว/ท้ายกระดาษของตัวเอง (วันที่ ชื่อแท็บ URL เลขหน้า) · ระยะขอบจริงใช้ padding แทน */
+  @page { size:A4; margin:0; }
+  html,body { background:#fff!important; color:#1f1a12; font-size:11pt; }
+  body { padding:14mm 14mm 12mm!important; -webkit-box-decoration-break:clone; box-decoration-break:clone; }
+  html,body,.app-shell,.staff-app,.workspace-main,.app-body { min-height:0!important; height:auto!important; }
+  body { box-sizing:border-box; }
+  .modal-notice { display:none!important; }
+  .app-body,.staff-app,.workspace-main,main { background:#fff!important; }
+  * { -webkit-print-color-adjust:exact; print-color-adjust:exact; box-shadow:none!important; animation:none!important; }
+  .print-only { display:block; }
+  .print-hide,.page-actions,.section-actions,.table-toolbar,.table-pagination,.row-actions,.segmented-tabs,.icon-button,.command-trigger,.form-intro,.staff-app>header,.staff-app nav,.drawer-scrim,.workspace-footer { display:none!important; }
+
+  /* มี popup เปิดอยู่ = พิมพ์เฉพาะ popup: ซ่อนทุกอย่างที่ไม่ได้อยู่บนทางไปหา popup */
+  body:has(.modal-overlay) :not(:has(.modal-overlay)):not(.modal-overlay):not(.modal-overlay *) { display:none!important; }
+  body:has(.modal-overlay) .app-body,body:has(.modal-overlay) .workspace-main,body:has(.modal-overlay) .staff-app { margin:0!important; padding:0!important; min-height:0!important; border:0!important; max-width:none!important; }
+  .modal-overlay { position:static!important; display:block!important; padding:0!important; background:none!important; backdrop-filter:none!important; }
+  .modal-panel { max-width:none!important; max-height:none!important; border:0!important; border-radius:0!important; overflow:visible!important; }
+  .modal-header,.modal-footer { display:none!important; }
+  .modal-body { padding:0!important; overflow:visible!important; }
+  .workspace-main { padding:0!important; max-width:none!important; }
+  .app-body { margin:0!important; }
+
+  /* หัวกระดาษ */
+  .print-letterhead { margin-bottom:6mm; }
+  .print-letterhead-row { display:flex; align-items:center; gap:4mm; padding-bottom:3mm; border-bottom:2px solid #8b6e3e; }
+  .print-logo { width:17mm; height:auto; flex-shrink:0; }
+  .print-company { display:flex; flex-direction:column; line-height:1.45; min-width:0; flex:1; }
+  .print-company strong { font-size:14pt; font-weight:600; color:#6b5228; letter-spacing:.01em; }
+  .print-company span { font-size:10pt; color:#2f2618; font-weight:500; }
+  .print-company small { font-size:8pt; color:#5a4a30; }
+  .print-meta { padding-right:1mm; text-align:right; font-size:8pt; color:#5a4a30; line-height:1.5; flex-shrink:0; }
+  .print-meta b { display:block; font-size:9pt; color:#2f2618; font-weight:500; }
+  .print-title { margin-top:5mm; text-align:center; font-size:15pt; font-weight:600; color:#2f2618; letter-spacing:.01em; }
+  .print-title::after { content:""; display:block; width:18mm; height:2px; margin:2mm auto 0; background:#c9a96a; }
+
+  /* ข้อมูลในเอกสาร */
+  .form-grid { display:grid!important; grid-template-columns:repeat(2,minmax(0,1fr))!important; gap:3mm 6mm!important; }
+  .form-grid .label { font-size:8.5pt; margin-bottom:1mm; color:#5a4a30; font-weight:600; }
+  .field-view { min-height:0; padding:2mm 3mm; background:#faf7f1!important; border:1px solid #cdbd9f; border-radius:1.5mm; font-size:10.5pt; color:#1f1a12; break-inside:avoid; }
+  .card,.section-surface { border:0!important; padding:0!important; background:none!important; }
+  .metrics-grid { grid-template-columns:repeat(4,minmax(0,1fr))!important; gap:3mm!important; margin-bottom:5mm!important; }
+  .metric-value { font-size:16pt!important; margin-top:1mm!important; }
+  .metric-top { font-size:9pt!important; }
+  .metric { border:1px solid #cdbd9f!important; padding:3mm!important; background:#fff!important; break-inside:avoid; }
+  .metric.accent { background:#f5efe3!important; }
+  .metric.accent .metric-top,.metric.accent .metric-value,.metric.accent .metric-value small,.metric.accent .metric-note,.metric.accent .metric-top svg { color:#2f2618!important; }
+  .metric-top svg { display:none; }
+  .page-header { margin-bottom:4mm!important; }
+  .page-header .kicker { display:none; }
+  .page-letterhead + .page-header h1 { display:none; }
+
+  /* ตาราง: ใช้แบบตารางเสมอ ไม่ใช้การ์ดมือถือ */
+  .table-scroll { display:block!important; overflow:visible!important; border:1px solid #cdbd9f!important; border-radius:0!important; }
+  .table-scroll + .md\:hidden { display:none!important; }
+  .data-table { width:100%!important; font-size:9pt!important; }
+  .data-table th { background:#f1e9d9!important; color:#2f2618!important; padding:2mm 2.5mm!important; border-bottom:1px solid #cdbd9f!important; }
+  .data-table td { padding:2mm 2.5mm!important; color:#1f1a12!important; border-bottom:1px solid #e2d6c2!important; max-width:none!important; }
+  .data-table tr { break-inside:avoid; }
+  .data-table .cell-actions { display:none!important; }
+  .status-badge { padding:0!important; background:none!important; box-shadow:none!important; color:#1f1a12!important; }
+
+  /* ลงชื่อ + ท้ายกระดาษ */
+  .print-signatures { display:grid!important; grid-template-columns:repeat(2,1fr); gap:14mm; margin-top:14mm; text-align:center; font-size:9.5pt; color:#2f2618; break-inside:avoid; }
+  .print-sign-line { border-bottom:1px dotted #5a4a30; height:12mm; margin:0 6mm 2mm; }
+  .print-signatures p { line-height:1.7; }
+  .print-footer { display:flex!important; justify-content:space-between; gap:6mm; margin-top:10mm; padding-top:2.5mm; border-top:1px solid #cdbd9f; font-size:7.5pt; color:#6b5a3f; break-inside:avoid; }
+}
+
+/* คำเตือนใน popup: ตัวหนังสือสีแดงเหนือปุ่ม */
+.modal-notice { display:flex; align-items:center; gap:8px; margin:0; padding:10px 24px; background:#fdecee; border-top:1px solid #f3c6cd; color:#b4233a; font-size:13.5px; font-weight:600; line-height:1.6; animation:notice-in .18s ease-out; }
+@keyframes notice-in { from { opacity:0; transform:translateY(4px); } }
+
+/* Sidebar headings: clear section titles, readable Thai caption */
+.sidebar-brand-caption { font-size:10.5px; letter-spacing:.06em; color:#6b5a3f; font-weight:500; margin-top:3px; }
+.nav-group+.nav-group { margin-top:14px; padding-top:12px; border-top:1px solid #efe6d6; }
+.nav-group-title { padding:4px 12px 6px; font-size:13px; font-weight:700; letter-spacing:0; color:#3a2f20; }
+.nav-group-title span { font-size:9.5px; font-weight:600; letter-spacing:.14em; color:#9a8566; }
+.nav-item { color:#3f3423; font-size:14.5px; }
+.nav-item>svg { color:#8b6e3e; }
+.nav-item.is-active { color:#5e4520; }
+.nav-item.is-active>svg { color:#7a5a2a; }
+.sidebar-bottom button,.sidebar-bottom a { color:#3f3423; }
+
+/* ======================================================================
+   Care features: vitals verdict, resident profile, charts, alerts
+   ====================================================================== */
+.vitals-verdict { border-radius:12px; padding:12px 14px; font-size:13.5px; line-height:1.7; border:1px solid; }
+.vitals-verdict.is-normal { background:#eaf5ee; border-color:#c3e2cf; color:#25603f; }
+.vitals-verdict.is-watch { background:#fdf3df; border-color:#f0d49a; color:#7d4f0b; }
+.vitals-verdict.is-critical { background:#fdecee; border-color:#f3c0c8; color:#a3213a; }
+
+.profile-head { display:flex; align-items:flex-start; gap:14px; padding:16px; border-radius:14px; background:#f8f2e6; border:1px solid #eadcc3; }
+.profile-avatar { display:grid; place-items:center; flex-shrink:0; width:52px; height:52px; border-radius:50%; background:#8b6e3e; color:#fff; font-size:20px; font-weight:600; }
+.profile-box { border:1px solid var(--border); border-radius:12px; padding:14px 16px; background:#fff; min-width:0; }
+.profile-box h4,.profile-sub { font-size:13.5px; font-weight:700; color:#3a2f20; margin-bottom:8px; }
+
+.chart-card { border:1px solid var(--border); border-radius:12px; padding:12px 14px 8px; background:#fff; min-width:0; }
+.chart-card figcaption { display:flex; align-items:baseline; justify-content:space-between; font-size:13.5px; font-weight:700; color:#3a2f20; margin-bottom:4px; }
+.chart-card figcaption small { font-size:11px; font-weight:500; color:#8a785b; }
+.chart-grid { stroke:#efe6d6; stroke-width:1; }
+.chart-axis { font-size:10px; fill:#8a785b; }
+.chart-limit { stroke-width:1.2; stroke-dasharray:5 4; }
+.chart-limit.is-critical { stroke:#d9667a; } .chart-limit.is-watch { stroke:#e0a83a; }
+.chart-limit-label { font-size:9.5px; font-weight:600; }
+.chart-limit-label.is-critical { fill:#b4233a; } .chart-limit-label.is-watch { fill:#9a6610; }
+.chart-legend { display:flex; gap:14px; font-size:11.5px; color:#5a4a30; padding:2px 2px 4px; }
+.chart-legend i { display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:5px; vertical-align:-1px; }
+
+.alerts-bell { position:relative; display:inline-flex; align-items:center; gap:7px; min-height:36px; padding:0 11px; border:1px solid var(--border); border-radius:10px; background:#fff; color:#6b5a3f; font-size:12.5px; box-shadow:0 1px 2px #3b30200a; }
+.alerts-bell.is-compact { width:36px; padding:0; justify-content:center; border-radius:999px; }
+.alerts-bell b { display:grid; place-items:center; min-width:19px; height:19px; padding:0 5px; border-radius:999px; font-size:11px; color:#fff; background:#c9852b; }
+.alerts-bell.is-compact b { position:absolute; top:-6px; right:-6px; }
+.alerts-bell.is-watch { border-color:#f0d49a; color:#7d4f0b; background:#fffaf0; }
+.alerts-bell.is-critical { border-color:#f3c0c8; color:#a3213a; background:#fff5f6; }
+.alerts-bell.is-critical b { background:#c0283f; animation:bell-pulse 1.6s ease-in-out infinite; }
+@keyframes bell-pulse { 50% { box-shadow:0 0 0 5px #c0283f26; } }
+.alert-item { border:1px solid var(--border); border-left-width:4px; border-radius:12px; padding:14px 16px; background:#fff; }
+.alert-item.is-critical { border-left-color:#c0283f; } .alert-item.is-watch { border-left-color:#d99a2b; }
+.alert-level { display:inline-block; margin-left:6px; padding:1px 8px; border-radius:999px; font-size:11px; font-weight:600; vertical-align:2px; }
+.alert-level.is-critical { background:#fdecee; color:#a3213a; } .alert-level.is-watch { background:#fdf3df; color:#7d4f0b; }
+@media print { .alerts-bell { display:none!important; } .chart-card,.profile-box { break-inside:avoid; border-color:#cdbd9f!important; } }
+
+/* ข้อความเตือนในฟอร์มหน้าปกติ (ไม่ใช่ popup): ตัวหนังสือสีแดงเหนือปุ่ม */
+.form-error { display:flex; align-items:flex-start; gap:8px; padding:10px 12px; border-radius:10px; background:#fdecee; border:1px solid #f3c6cd; color:#b4233a; font-size:13.5px; font-weight:600; line-height:1.6; animation:notice-in .18s ease-out; }
+@media print { .form-error { display:none!important; } }
+
+/* ช่องแนบรูป: เปิดกล้อง / เลือกรูป */
+.photo-picker { position:relative; overflow:hidden; border:2px dashed #d3bd92; border-radius:16px; background:#fbf7ef; }
+.photo-picker.has-photo { border-style:solid; border-color:#e0d3bd; background:#fff; }
+.photo-picker.is-invalid { border-color:#e07a8c; background:#fdeff1; }
+.photo-picker img { display:block; width:100%; max-height:260px; object-fit:contain; background:#f3ede2; }
+.photo-picker-empty { display:flex; flex-direction:column; align-items:center; gap:8px; padding:22px 14px 10px; text-align:center; font-size:14px; color:#6b5a3f; }
+.photo-picker.is-invalid .photo-picker-empty { color:#b4233a; }
+.photo-picker-actions { display:flex; flex-wrap:wrap; justify-content:center; gap:8px; padding:12px; }
+.photo-picker.has-photo .photo-picker-actions { border-top:1px solid #eee4d3; background:#fcfaf6; }
+.photo-picker-actions .btn-primary,.photo-picker-actions .btn-soft { min-height:40px; padding:8px 14px; font-size:13.5px; }
+.photo-picker-actions { flex-wrap:nowrap; }
+.photo-picker-actions > button:not([aria-label]) { flex:1 1 0; min-width:0; white-space:nowrap; }
+.photo-picker-actions > button[aria-label] { flex:0 0 auto; }
+.camera-view { position:relative; overflow:hidden; border-radius:14px; background:#1d1913; aspect-ratio:4/3; }
+.camera-view video { width:100%; height:100%; object-fit:cover; }
+.camera-wait { position:absolute; inset:0; display:grid; place-items:center; color:#f4ece0; font-size:14px; }
+.camera-flip { position:absolute; right:12px; bottom:12px; display:grid; place-items:center; width:44px; height:44px; border-radius:50%; background:#ffffffd9; color:#3a2f20; box-shadow:0 2px 8px #0005; }
+
+/* รายการติ๊กเลือก (มอบหมายงาน) */
+.pick-list { max-height:260px; overflow-y:auto; border:1px solid var(--border); border-radius:12px; background:#fff; }
+.pick-list li + li { border-top:1px solid #f0e8da; }
+.pick-list label { display:flex; align-items:flex-start; gap:10px; padding:9px 12px; font-size:14px; color:#2f2618; cursor:pointer; }
+.pick-list label:hover { background:#faf5ec; }
+.pick-list input { margin-top:4px; }

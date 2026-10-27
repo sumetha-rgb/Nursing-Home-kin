@@ -9,18 +9,20 @@ import { ROLE_INFO } from "@/lib/roles";
 import Icon from "@/components/Icon";
 import { Field, Modal, Select } from "@/components/ui";
 import { AppProvider, useApp } from "@/lib/app";
-import { downloadCsv, useRecords } from "@/lib/store";
+import { downloadCsv, useCrud, useRecords } from "@/lib/store";
+import { useResidents } from "@/lib/care";
+import { HEALTH } from "@/lib/mock";
+import { daysLeft, Drug, DRUGS0, iso, MEALS, nowTh, Pack } from "@/lib/pharmacy";
+import AlertsBell from "@/components/care/AlertsBell";
+import ResidentProfile from "@/components/care/ResidentProfile";
+import VitalsDialog from "@/components/care/VitalsDialog";
+import PhotoPicker from "@/components/PhotoPicker";
 import { OfflineBar, usePwa } from "@/components/Pwa";
 
 /* ---------- ข้อมูลจำลอง ---------- */
-type Task = { id: number; who: string; title: string; time: string; ins: string; done?: string; note?: string };
+/** งานวันนี้ใน KinApp (มาจากหน้างานประจำวันของผู้จัดการ) */
+type Task = { id: number; who: string; title: string; time: string; ins: string; done?: string; note?: string; shift?: string; status?: string; by?: string };
 
-const TASKS0: Task[] = [
-  { id: 1, who: "คุณสุดา วงศ์สวัสดิ์", title: "ช่วยอาบน้ำ แต่งตัว", time: "07:30", ins: "ช่วยอาบน้ำและแต่งตัว สังเกตสภาพผิวหนัง" },
-  { id: 2, who: "คุณมาลี ศรีสุข", title: "ให้อาหารเช้า", time: "08:00", ins: "ป้อนอาหารอ่อน สังเกตการกลืน บันทึกปริมาณที่ทาน" },
-  { id: 3, who: "คุณบุญช่วย แก้วมณี", title: "พาเดินออกกำลังกาย", time: "09:30", ins: "พาเดินในสวน 15 นาที ระวังการหกล้ม" },
-  { id: 4, who: "คุณสมศรี พิมพ์ทอง", title: "เปลี่ยนผ้าอ้อมและทำความสะอาด", time: "10:30", ins: "ทำความสะอาดผิวหนังและทาครีมกันผื่น" },
-];
 const FLOATING = [
   { id: 101, title: "ทำความสะอาดห้องโถงส่วนกลาง", time: "09:00" },
   { id: 102, title: "เช็ดทำความสะอาดโซฟาส่วนกลาง", time: "14:00" },
@@ -29,12 +31,8 @@ const APPTS = [
   { who: "คุณสุดา วงศ์สวัสดิ์", what: "พบแพทย์ตามนัด", when: "วันนี้ 13:00" },
   { who: "คุณมาลี ศรีสุข", what: "ตรวจเลือด", when: "พรุ่งนี้ 10:00" },
 ];
-const MEDS0 = [
-  { id: 1, who: "คุณสุดา วงศ์สวัสดิ์", meal: "หลังอาหารเช้า", meds: ["Metformin 500 mg 1 เม็ด", "Amlodipine 5 mg 1 เม็ด"], short: "", done: false },
-  { id: 2, who: "คุณมาลี ศรีสุข", meal: "หลังอาหารเช้า", meds: ["Aspirin 81 mg 1 เม็ด", "Simvastatin 20 mg 1 เม็ด"], short: "Simvastatin เหลือ 2 เม็ด", done: false },
-  { id: 3, who: "คุณบุญช่วย แก้วมณี", meal: "ก่อนอาหารเที่ยง", meds: ["Glucosamine 1,500 mg 1 ซอง"], short: "", done: true },
-];
-const RESIDENTS = [
+/** ใช้เมื่อยังโหลดรายชื่อจริงไม่ได้ (ครั้งแรกที่ออฟไลน์) */
+const RESIDENTS0: { id?: string; name: string; room: string; age: number | string }[] = [
   { name: "คุณสุดา วงศ์สวัสดิ์", room: "A-101", age: 78 },
   { name: "คุณมาลี ศรีสุข", room: "A-103", age: 84 },
   { name: "คุณบุญช่วย แก้วมณี", room: "B-204", age: 81 },
@@ -90,20 +88,7 @@ const Count = ({ n }: { n: number }) => <span className="grid h-6 min-w-6 place-
 const Empty = ({ t }: { t: string }) => <p className="rounded-2xl bg-cream-50 py-6 text-center text-sm text-gold-500">{t}</p>;
 
 function PhotoInput({ label, file, onFile }: { label: string; file: string; onFile: (u: string) => void }) {
-  return (
-    <div>
-      <label className="relative grid h-40 cursor-pointer place-items-center overflow-hidden rounded-2xl border-2 border-dashed border-gold-300 bg-cream-50 text-center text-sm text-gold-600 transition hover:bg-cream-100">
-        {file ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={file} alt="ตัวอย่างภาพที่ถ่าย" className="h-full w-full object-cover" />
-        ) : (
-          <span className="flex flex-col items-center gap-2"><Icon name="camera" className="h-8 w-8" />{label}</span>
-        )}
-        <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(URL.createObjectURL(f)); }} />
-      </label>
-      <p className="mt-1.5 text-xs text-gold-500">* บังคับถ่ายภาพจากกล้องสดเท่านั้น{file && " · แตะที่ภาพเพื่อถ่ายใหม่"}</p>
-    </div>
-  );
+  return <PhotoPicker value={file} onChange={onFile} label={label} hint="ถ่ายสดจากกล้อง หรือเลือกรูปจากเครื่อง" />;
 }
 
 /* ---------- แอป ---------- */
@@ -111,8 +96,23 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   const { toast } = useApp();
   const pwa = usePwa();
   const [tab, setTab] = useState<Tab>("tasks");
-  const [tasks, setTasks] = useRecords("staff-tasks", TASKS0);
-  const [meds, setMeds] = useRecords("staff-meds", MEDS0);
+  // งานวันนี้ = งานที่ผู้จัดการมอบหมายในหน้า "ตรวจงานประจำวัน" ของวันนี้ · ส่งงานแล้วสถานะกลับไปให้ผู้จัดการตรวจ
+  const { rows: drows, update: updDaily } = useCrud(`daily-${iso()}`, []);
+  const tasks: Task[] = drows
+    .map((r, k) => ({ id: k + 1, who: r[0], title: r[1], time: String(r[3] ?? "").slice(0, 5), ins: r[6] && r[6] !== "-" ? r[6] : "ไม่มีคำสั่งงานเพิ่มเติม", done: r[5] && r[5] !== "รอทำ" ? (r[8] && r[8] !== "-" ? String(r[8]).slice(0, 5) : "ส่งแล้ว") : undefined, note: r[9] && r[9] !== "-" ? r[9] : "", shift: r[4], status: r[5], by: r[10] && r[10] !== "-" ? r[10] : undefined }))
+    .sort((a, b) => a.time.localeCompare(b.time));
+  // คิวจ่ายยา = ซองยาที่ห้องยาจัด (แอปจัดยา) ของวันนี้ · ตรวจ QA ผ่านแล้วจึงจ่ายได้
+  const [packs, setPacks] = useRecords<Pack>("pharmacy-packs", []);
+  const [drugs] = useRecords<Drug>("pharmacy-drugs", DRUGS0);
+  const { add: addHealth } = useCrud("health", HEALTH);
+  const { residents: live } = useResidents();
+  const RESIDENTS = live.length ? live.map((r) => ({ id: r.id, name: r.full_name, room: r.room ?? "-", age: r.age ?? "-" })) : RESIDENTS0;
+  const [profile, setProfile] = useState<string | null>(null);
+  const [vitalsFor, setVitalsFor] = useState<string | null>(null);
+  const todayIso = iso();
+  const queue = packs.filter((p) => p.date === todayIso).sort((a, b) => MEALS.indexOf(a.meal) - MEALS.indexOf(b.meal) || a.who.localeCompare(b.who, "th"));
+  const ready = queue.filter((p) => p.qa === "ตรวจผ่าน" && !p.given);
+  const lowFor = (who: string) => drugs.filter((x) => x.who === who && !x.hold && (daysLeft(x) ?? 99) <= 2);
   const [handover, setHandover] = useRecords("staff-handover", HANDOVER0);
   const [bonus, setBonus] = useState(0);
   const [menu, setMenu] = useState(false);
@@ -132,15 +132,13 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   const [chatTab, setChatTab] = useState("กลุ่มสาขา");
   const [chat, setChat] = useState<{ me: boolean; t: string }[]>([{ me: false, t: "สวัสดีครับ วันนี้มีงานด่วนที่ต้องช่วยกันไหม" }]);
   const [msg, setMsg] = useState("");
-  const [vit, setVit] = useState<Record<string, string>>({});
 
   const close = () => { setModal(null); setPhoto(""); setNote(""); setCur(null); setMenu(false); };
   const open = (m: NonNullable<typeof modal>, i: number | null = null) => { setCur(i); setPhoto(""); setNote(""); setModal(m); };
   const doneTasks = tasks.filter((t) => t.done);
   const waiting = tasks.filter((t) => !t.done);
   const t = cur !== null ? tasks.find((x) => x.id === cur) : undefined;
-  const md = cur !== null ? meds.find((x) => x.id === cur) : undefined;
-  const res = cur !== null ? RESIDENTS[cur] : undefined;
+  const md = cur !== null ? packs.find((x) => x.id === cur) : undefined;
   const unread = handover.length;
   const mine = doneTasks.length + bonus;
 
@@ -153,6 +151,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
           <div className="leading-tight"><p className="text-[15px] font-semibold text-gold-800">KinApp</p><p className="text-[10px] tracking-[0.16em] text-gold-500">KIN HOMECARE</p></div>
         </div>
         <div className="flex items-center gap-2">
+          <AlertsBell compact />
           <button onClick={() => open("chat")} className="relative flex items-center gap-1.5 rounded-full bg-gold-100 px-3 py-1.5 text-xs font-medium text-gold-700">พี่แคร์<span className="grid h-4 w-4 place-items-center rounded-full bg-red-500 text-[10px] text-white">1</span></button>
           <div className="relative" onClick={(e) => e.stopPropagation()}>
             <button onClick={() => setMenu(!menu)} className="flex min-w-0 max-w-[40vw] items-center gap-2 rounded-full border border-cream-300 py-1 pl-1 pr-1 text-sm sm:max-w-none sm:pr-3" aria-label={user.name}><span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-gold-700 text-xs font-semibold text-white">{user.name.charAt(0)}</span><span className="hidden truncate sm:inline">{user.name}</span></button>
@@ -201,12 +200,12 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
             </Card>
 
             <Card title="งานใหม่ที่รอทำ" icon="check" right={<Count n={waiting.length} />}>
-              {waiting.length === 0 ? <Empty t="ไม่มีงานค้างแล้ว เยี่ยมมาก" /> : (
+              {waiting.length === 0 ? <Empty t={tasks.length ? "ไม่มีงานค้างแล้ว เยี่ยมมาก" : "ยังไม่มีงานที่ผู้จัดการมอบหมายสำหรับวันนี้"} /> : (
                 <ul className="space-y-3">{waiting.map((k) => (
                   <li key={k.id} className="rounded-2xl border border-cream-300/70 p-4">
                     <div className="flex items-start justify-between gap-3">
                       <div><p className="font-medium text-gold-900">{k.title}</p><p className="mt-0.5 text-sm text-gold-600">{k.who}</p></div>
-                      <span className="shrink-0 rounded-full bg-gold-100 px-2.5 py-1 text-xs font-medium text-gold-700">{k.time}</span>
+                      <span className="shrink-0 rounded-full bg-gold-100 px-2.5 py-1 text-xs font-medium text-gold-700">{k.time}{k.shift ? ` · ${k.shift}` : ""}</span>
                     </div>
                     <div className="mt-3 flex gap-2">
                       <button className="btn-soft flex-1 !py-2.5" onClick={() => open("sop", k.id)}>คู่มือปฏิบัติงาน</button>
@@ -228,28 +227,44 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
         {tab === "meds" && (
           <>
             <Card title="คิวจ่ายยาวันนี้" icon="pill" right={<Link href="/pharmacy?page=dispense" className="btn-soft !min-h-0 !px-3 !py-1.5 text-xs">เปิดแอปจัดยา (Pharmacy Hub)</Link>}>
-              <div className="grid grid-cols-2 gap-3 text-center">
-                <div className="rounded-2xl bg-amber-50 p-3"><p className="text-2xl font-semibold text-amber-700">{meds.filter((m) => !m.done).length}</p><p className="text-xs text-amber-700">รอจ่าย</p></div>
-                <div className="rounded-2xl bg-emerald-50 p-3"><p className="text-2xl font-semibold text-emerald-700">{meds.filter((m) => m.done).length}</p><p className="text-xs text-emerald-700">จ่ายแล้ว</p></div>
+              <div className="grid grid-cols-3 gap-2 text-center">
+                <div className="rounded-2xl bg-amber-50 p-3"><p className="text-2xl font-semibold text-amber-700">{ready.length}</p><p className="text-xs text-amber-700">พร้อมจ่าย</p></div>
+                <div className="rounded-2xl bg-cream-100 p-3"><p className="text-2xl font-semibold text-gold-700">{queue.filter((m) => m.qa !== "ตรวจผ่าน").length}</p><p className="text-xs text-gold-600">รอห้องยาตรวจ</p></div>
+                <div className="rounded-2xl bg-emerald-50 p-3"><p className="text-2xl font-semibold text-emerald-700">{queue.filter((m) => m.given).length}</p><p className="text-xs text-emerald-700">จ่ายแล้ว</p></div>
               </div>
+              <p className="mt-3 text-xs leading-6 text-gold-600">ซองยามาจากห้องยา (แอปจัดยา) · จ่ายได้เมื่อห้องยาตรวจ QA ผ่านแล้ว · กดจ่ายแล้วระบบบันทึกชื่อผู้ให้ยาและเวลา</p>
             </Card>
-            <ul className="space-y-3">{meds.map((m) => (
-              <li key={m.id} className={`rounded-3xl border p-4 ${m.done ? "border-emerald-200 bg-emerald-50/50" : "border-cream-300/70 bg-white shadow-soft"}`}>
-                <div className="flex items-start justify-between gap-3"><div><p className="font-semibold text-gold-900">{m.who}</p><p className="text-sm text-gold-600">{m.meal}</p></div>
-                  {m.done ? <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-700">จ่ายแล้ว</span> : <button className="btn-primary !px-4 !py-2" onClick={() => open("dispense", m.id)}>จ่ายยา</button>}</div>
-                {m.short && !m.done && <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700">ระวังมียาขาด: {m.short}</p>}
-              </li>
-            ))}</ul>
+            {queue.length === 0 ? <Empty t="ยังไม่มีซองยาของวันนี้ ห้องยาจัดยาได้ที่แอปจัดยา" /> : (
+              <ul className="space-y-3">{queue.map((m) => {
+                const low = lowFor(m.who);
+                return (
+                  <li key={m.id} className={`rounded-3xl border p-4 ${m.given ? "border-emerald-200 bg-emerald-50/50" : "border-cream-300/70 bg-white shadow-soft"}`}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0"><p className="font-semibold text-gold-900">{m.who}</p><p className="text-sm text-gold-600">มื้อ{m.meal} · {m.items.length} รายการ</p></div>
+                      {m.given ? <span className="shrink-0 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-700">จ่ายแล้ว</span>
+                        : m.qa === "ตรวจผ่าน" ? <button className="btn-primary shrink-0 !px-4 !py-2" onClick={() => open("dispense", m.id)}>จ่ายยา</button>
+                          : <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-medium ${m.qa === "แจ้งจัดยาผิด" ? "bg-red-100 text-red-700" : "bg-cream-200 text-gold-700"}`}>{m.qa === "แจ้งจัดยาผิด" ? "ห้องยากำลังแก้ไข" : "รอห้องยาตรวจ"}</span>}
+                    </div>
+                    <ul className="mt-2 space-y-0.5 text-sm text-gold-700">{m.items.map((x) => <li key={x}>• {x}</li>)}</ul>
+                    {m.given && <p className="mt-2 text-xs text-emerald-800">ให้ยาโดย {m.gby ?? "-"}{m.gat ? ` · ${m.gat}` : ""}</p>}
+                    {!m.given && low.length > 0 && <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700">ระวังยาใกล้หมด: {low.map((x) => `${x.name} เหลือ ${x.stock} ${x.unit}`).join(", ")}</p>}
+                  </li>
+                );
+              })}</ul>
+            )}
           </>
         )}
 
         {tab === "residents" && (
           <Card title="ผู้รับบริการ (สาขาของคุณ)" icon="user">
-            <ul className="space-y-3">{RESIDENTS.map((r, i) => (
+            <ul className="space-y-3">{RESIDENTS.map((r) => (
               <li key={r.name} className="flex items-center gap-3 rounded-2xl border border-cream-300/70 p-3">
                 <span className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-gold-100 text-lg font-semibold text-gold-700">{r.name.replace("คุณ", "").charAt(0)}</span>
                 <div className="min-w-0 flex-1"><p className="truncate font-medium">{r.name}</p><p className="text-xs text-gold-600">ห้อง {r.room} · อายุ {r.age} ปี</p></div>
-                <button className="btn-soft !px-3 !py-2 text-xs" onClick={() => { setVit({}); open("metrics", i); }}>บันทึกข้อมูล</button>
+                <div className="flex shrink-0 flex-col gap-1.5">
+                  <button className="btn-primary !min-h-0 !px-3 !py-1.5 text-xs" onClick={() => setVitalsFor(r.name)}>สัญญาณชีพ</button>
+                  {r.id && <button className="btn-soft !min-h-0 !px-3 !py-1.5 text-xs" onClick={() => setProfile(r.id!)}>ประวัติ</button>}
+                </div>
               </li>
             ))}</ul>
           </Card>
@@ -270,7 +285,11 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
               <p className="mb-3 text-xs text-gold-600">รวมข้อมูลรายงานสุขภาพ (สัญญาณชีพ/อาหาร/ขับถ่าย) การให้ยา เรื่องเฝ้าระวัง และโน้ตการทำงาน รายบุคคล เพื่อให้พนักงานทุกคนตอบคำถามญาติได้ตรงกัน</p>
               <Select options={RESIDENTS.map((r) => r.name)} placeholder="-- เลือกผู้รับบริการเพื่อดูข้อมูลตอบญาติ --" value={rep.who} onChange={(v) => setRep({ ...rep, who: v })} />
               <div className="my-3 flex gap-2">{["วันนี้", "เมื่อวาน"].map((d) => <button key={d} onClick={() => setRep({ ...rep, day: d })} className={`flex-1 rounded-full py-2 text-sm ${rep.day === d ? "bg-gold-700 text-white" : "bg-cream-200 text-gold-700"}`}>{d}</button>)}</div>
-              {rep.who ? <dl className="space-y-2">{reportFor(rep.who, rep.day).map(([k, v]) => <div key={k} className="rounded-2xl bg-cream-50 p-3 text-sm"><dt className="text-xs font-medium text-gold-600">{k}</dt><dd className="mt-0.5">{v}</dd></div>)}</dl> : <Empty t="กรุณาเลือกผู้รับบริการด้านบนเพื่อดูสรุปสุขภาพและไทม์ไลน์ตอบญาติ" />}
+              {rep.who ? (() => {
+                const r = RESIDENTS.find((x) => x.name === rep.who);
+                return r?.id ? <button className="btn-primary w-full" onClick={() => setProfile(r.id!)}><Icon name="doc" className="h-4 w-4" /> เปิดประวัติของ {rep.who}</button>
+                  : <dl className="space-y-2">{reportFor(rep.who, rep.day).map(([k, v]) => <div key={k} className="rounded-2xl bg-cream-50 p-3 text-sm"><dt className="text-xs font-medium text-gold-600">{k}</dt><dd className="mt-0.5">{v}</dd></div>)}</dl>;
+              })() : <Empty t="กรุณาเลือกผู้รับบริการด้านบนเพื่อดูสรุปสุขภาพและไทม์ไลน์ตอบญาติ" />}
             </Card>
           </>
         )}
@@ -333,7 +352,11 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
       <Modal open={modal === "task"} title="ส่งงาน (Proof of Work)" onClose={close}
         footer={<button className="btn-primary w-full" onClick={() => {
           if (!photo) return toast("กรุณาถ่ายภาพก่อนส่งงาน");
-          setTasks(tasks.map((k) => (k.id === cur ? { ...k, done: new Date().toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" }), note } : k)));
+          const k = (cur as number) - 1;
+          const row = [...drows[k]]; while (row.length < 11) row.push("-");
+          const now = new Date();
+          row[5] = "เสร็จแล้ว"; row[8] = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`; row[9] = note.trim() || "-"; row[10] = user.name;
+          updDaily(k, row);
           close(); toast("ส่งงานเรียบร้อย");
         }}>ยืนยันการส่งงาน</button>}>
         {t && <div className="space-y-4">
@@ -348,7 +371,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
       </Modal>
 
       <Modal open={modal === "viewtask"} title="ผลการปฏิบัติงาน" onClose={close} footer={<button className="btn-soft w-full" onClick={close}>ปิดหน้าต่าง</button>}>
-        {t && <dl className="space-y-3 text-sm">{[["ผู้รับบริการ", t.who], ["ชื่องาน", t.title], ["คำสั่งงาน", t.ins], ["ผู้ปฏิบัติงาน", user.name], ["เวลาที่ส่งจริง", t.done ?? "-"], ["บันทึกย่อ", t.note || "-"]].map(([k, v]) => <div key={k}><dt className="text-xs text-gold-500">{k}</dt><dd className="font-medium">{v}</dd></div>)}</dl>}
+        {t && <dl className="space-y-3 text-sm">{[["ผู้รับบริการ", t.who], ["ชื่องาน", t.title], ["คำสั่งงาน", t.ins], ["ผู้ปฏิบัติงาน", t.by ?? user.name], ["เวลาที่ส่งจริง", t.done ?? "-"], ["บันทึกย่อ", t.note || "-"], ["สถานะ", t.status === "ตรวจแล้ว" ? "ผู้จัดการตรวจแล้ว" : "รอผู้จัดการตรวจ"]].map(([k, v]) => <div key={k}><dt className="text-xs text-gold-500">{k}</dt><dd className="font-medium">{v}</dd></div>)}</dl>}
       </Modal>
 
       {/* ผลงานพิเศษ */}
@@ -370,28 +393,21 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
       {/* จ่ายยา */}
       <Modal open={modal === "dispense"} title="ยืนยันการจ่ายยา" onClose={close}
         footer={<><button className="btn-soft" onClick={close}>ยกเลิก</button><button className="btn-primary" onClick={() => {
-          if (!photo) return toast("กรุณาถ่ายรูปยืนยันการให้ยา");
-          setMeds(meds.map((m) => (m.id === cur ? { ...m, done: true } : m))); close(); toast("บันทึกการจ่ายยาแล้ว");
+          if (!photo) return toast("กรุณาถ่ายรูปยืนยันการให้ยาก่อน (แตะช่องกล้องด้านบน)");
+          setPacks(packs.map((m) => (m.id === cur ? { ...m, given: true, gby: user.name, gat: nowTh() } : m))); close(); toast("บันทึกการให้ยาแล้ว ห้องยาเห็นสถานะนี้ทันที");
         }}>ยืนยันว่าจ่ายแล้ว</button></>}>
         {md && <div className="space-y-4">
-          <div className="rounded-2xl bg-cream-50 p-4"><p className="font-semibold text-gold-900">{md.who}</p><p className="text-sm text-gold-600">{md.meal}</p></div>
-          {md.short && <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">ระวังมียาขาด: {md.short}</p>}
-          <div><p className="label">รายการยา:</p><ul className="space-y-1.5">{md.meds.map((x) => <li key={x} className="rounded-xl border border-cream-300 px-3 py-2 text-sm">{x}</li>)}</ul></div>
+          <div className="rounded-2xl bg-cream-50 p-4"><p className="font-semibold text-gold-900">{md.who}</p><p className="text-sm text-gold-600">มื้อ{md.meal} · จัดโดย {md.by}{md.qby ? ` · ตรวจ QA โดย ${md.qby}` : ""}</p></div>
+          {lowFor(md.who).length > 0 && <p className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">ระวังยาใกล้หมด: {lowFor(md.who).map((x) => `${x.name} เหลือ ${x.stock} ${x.unit}`).join(", ")}</p>}
+          <div><p className="label">รายการยาในซอง (ตรวจให้ตรงก่อนให้ยา):</p><ul className="space-y-1.5">{md.items.map((x) => <li key={x} className="rounded-xl border border-cream-300 px-3 py-2 text-sm">{x}</li>)}</ul></div>
           <div><p className="label">ถ่ายรูปยืนยันการให้ยา (จำเป็นต้องถ่ายสด):</p><PhotoInput label="แตะเพื่อเปิดกล้อง" file={photo} onFile={setPhoto} /></div>
         </div>}
       </Modal>
 
-      {/* บันทึกข้อมูลสุขภาพ */}
-      <Modal open={modal === "metrics"} title="บันทึกข้อมูล" onClose={close}
-        footer={<button className="btn-primary w-full" onClick={() => { close(); toast("บันทึกส่งงานแล้ว"); }}>บันทึกส่งงาน</button>}>
-        {res && <div className="space-y-4">
-          <p className="rounded-2xl bg-cream-50 p-4 font-semibold text-gold-900">{res.name}</p>
-          <div className="grid grid-cols-2 gap-3">{["BT อุณหภูมิ", "PR ชีพจร", "RR การหายใจ", "BP ความดันโลหิต", "O2SAT ออกซิเจน", "DTX น้ำตาล", "น้ำหนัก (ก.ก.)", "ส่วนสูง (ซ.ม.)"].map((l) => (
-            <Field key={l} label={l}><input inputMode="decimal" value={vit[l] ?? ""} onChange={(e) => setVit({ ...vit, [l]: e.target.value })} /></Field>
-          ))}</div>
-          <div><p className="label">ถ่ายรูป (หลักฐาน)</p><PhotoInput label="แตะเพื่อถ่ายรูป" file={photo} onFile={setPhoto} /></div>
-        </div>}
-      </Modal>
+      {/* บันทึกสัญญาณชีพ (ลงบันทึกสุขภาพ · ค่าเกินเกณฑ์แจ้งเตือนพยาบาลอัตโนมัติ) */}
+      <VitalsDialog open={vitalsFor !== null} residents={RESIDENTS.map((r) => r.name)} resident={vitalsFor ?? undefined} recorder={user.name}
+        onClose={() => setVitalsFor(null)} onSave={(row) => addHealth(row)} />
+      <ResidentProfile id={profile} onClose={() => setProfile(null)} />
 
       {/* สมุดส่งเวร */}
       <Modal open={modal === "handover"} title="สมุดส่งเวร" onClose={close} footer={<button className="btn-primary w-full" onClick={() => { setHoWho(""); setHoText(""); setModal("write"); }}><Icon name="plus" className="h-4 w-4" /> เขียนส่งเวรใหม่</button>}>
