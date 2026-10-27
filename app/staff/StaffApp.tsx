@@ -1,6 +1,7 @@
 "use client";
 import { ReactNode, useState } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import Login from "@/components/Login";
 import Icon from "@/components/Icon";
 import { Field, Modal, Select } from "@/components/ui";
@@ -216,7 +217,7 @@ function App({ onLogout }: { onLogout: () => void }) {
 
         {tab === "meds" && (
           <>
-            <Card title="คิวจ่ายยาวันนี้" icon="pill" right={<button className="btn-soft !px-3 !py-1.5 text-xs" onClick={() => toast("แอปจัดยา (Pharmacy Hub) ยังไม่รวมอยู่ในตัวอย่างนี้")}>เปิดแอปจัดยา (Pharmacy Hub)</button>}>
+            <Card title="คิวจ่ายยาวันนี้" icon="pill" right={<Link href="/pharmacy?page=dispense" className="btn-soft !min-h-0 !px-3 !py-1.5 text-xs">เปิดแอปจัดยา (Pharmacy Hub)</Link>}>
               <div className="grid grid-cols-2 gap-3 text-center">
                 <div className="rounded-2xl bg-amber-50 p-3"><p className="text-2xl font-semibold text-amber-700">{meds.filter((m) => !m.done).length}</p><p className="text-xs text-amber-700">รอจ่าย</p></div>
                 <div className="rounded-2xl bg-emerald-50 p-3"><p className="text-2xl font-semibold text-emerald-700">{meds.filter((m) => m.done).length}</p><p className="text-xs text-emerald-700">จ่ายแล้ว</p></div>

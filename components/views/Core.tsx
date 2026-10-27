@@ -14,7 +14,7 @@ type Step = { t: string; d: string; link: string; href?: string; go?: ViewId };
 const ADMISSION: Step[] = [
   { t: "ทำใบเสนอราคาและสัญญา", d: "สร้างใบเสนอราคาใหม่ และกดปุ่มอัปเกรดเป็นสัญญาเพื่อรับผู้รับบริการ", link: "ระบบสัญญา", go: "contracts" },
   { t: "นำเข้าประวัติและวิเคราะห์ความเสี่ยง", d: "เปิดโปรไฟล์ผู้รับบริการใหม่ และกดปุ่มให้ AI วิเคราะห์ความเสี่ยงจากโรคและยา", link: "ข้อมูลผู้สูงอายุ", go: "residents" },
-  { t: "นำเข้ายา (Pharmacy Hub)", d: "บันทึกข้อมูลยาทั้งหมดที่ญาตินำมาให้ เพื่อจ่ายยาให้ตรงรอบเวลา", link: "เปิด Pharmacy Hub", href: "pharmacy_app/index.html" },
+  { t: "นำเข้ายา (Pharmacy Hub)", d: "บันทึกข้อมูลยาทั้งหมดที่ญาตินำมาให้ เพื่อจ่ายยาให้ตรงรอบเวลา", link: "เปิด Pharmacy Hub", href: "/pharmacy?page=inventory" },
   { t: "สร้างแผนการดูแล 24 ชม.", d: "ใช้ AI Careplan Designer ร่างตารางงานตลอด 24 ชั่วโมง", link: "หน้าจัดแผนดูแล", go: "quotations" },
   { t: "อนุมัติและกระจายงาน", d: "กดปุ่ม \"เปิดใช้ระบบจ่ายงานทั้งหมด\" เพื่อยิงตารางงานไปที่แอปพนักงาน (CG2)", link: "อนุมัติกระจายงาน", go: "tasks" },
 ];
@@ -22,7 +22,7 @@ const ADMISSION: Step[] = [
 const DAILY: Step[] = [
   { t: "ตรวจปรับปรุงประวัติและวิเคราะห์ความเสี่ยง", d: "ตรวจสอบความถูกต้องของข้อมูลผู้รับบริการและประเมินความเสี่ยง", link: "ข้อมูลผู้สูงอายุ", go: "residents" },
   { t: "อัปเดตแผนการดูแล", d: "จัดการแผนการดูแลผู้รับบริการรายบุคคล", link: "หน้ารายชื่อผู้สูงอายุ", go: "residents" },
-  { t: "ตรวจสอบอัปเดตระบบยา", d: "นำเข้าข้อมูลการกินยา หรือจัดการยาประจำตัวของผู้รับบริการ", link: "เปิด Pharmacy Hub", href: "pharmacy_app/index.html" },
+  { t: "ตรวจสอบอัปเดตระบบยา", d: "นำเข้าข้อมูลการกินยา หรือจัดการยาประจำตัวของผู้รับบริการ", link: "เปิด Pharmacy Hub", href: "/pharmacy" },
   { t: "กระจายงานให้แอปพนักงาน (CG2)", d: "กดปุ่มนี้ทุกเช้า เพื่อส่งงานทั้งหมดประจำวันเข้าสู่มือถือพนักงาน", link: "เปิดแอปพนักงาน (CG2)", href: "cg2.html" },
   { t: "ตรวจสอบความคืบหน้าของงาน ตรวจงาน", d: "ดูสถานะว่าพนักงานทำภารกิจสำเร็จกี่เปอร์เซ็นต์ หรือมีปัญหาอะไรไหม", link: "ผลงาน KPI (Dashboard)", go: "dashboard" },
   { t: "ตรวจสอบงานทั่วไปรายวัน", d: "จัดการงานที่ได้รับมอบหมายอื่นๆ นอกเหนือจากงานประจำวัน เช่น การซ่อมบำรุง หรือทำความสะอาดทั่วไป", link: "งานทั่วไปประจำศูนย์", go: "facility_tasks" },
@@ -31,7 +31,7 @@ const DAILY: Step[] = [
 
 function Steps({title,steps}:{title:string;steps:Step[]}) {
   const {go,toast}=useApp();
-  return <Section title={title} sub="แนวทางสำหรับทีม เพื่อให้การดูแลครบถ้วนในทุกขั้นตอน"><ol className="workflow-list">{steps.map((s,i)=><li key={s.t} className="workflow-step"><span className="step-number">{String(i+1).padStart(2,"0")}</span><div><h3>{s.t}</h3><p>{s.d}</p><button className="step-link" onClick={()=>s.go?go(s.go):toast(`“${s.link}” ยังไม่เชื่อมต่อในระบบตัวอย่าง`)}>{s.link}<Icon name="arrow" className="h-3.5 w-3.5" /></button></div></li>)}</ol></Section>;
+  return <Section title={title} sub="แนวทางสำหรับทีม เพื่อให้การดูแลครบถ้วนในทุกขั้นตอน"><ol className="workflow-list">{steps.map((s,i)=><li key={s.t} className="workflow-step"><span className="step-number">{String(i+1).padStart(2,"0")}</span><div><h3>{s.t}</h3><p>{s.d}</p><button className="step-link" onClick={()=>s.go?go(s.go):s.href?.startsWith("/")?window.location.assign(s.href):toast(`“${s.link}” ยังไม่เชื่อมต่อในระบบตัวอย่าง`)}>{s.link}<Icon name="arrow" className="h-3.5 w-3.5" /></button></div></li>)}</ol></Section>;
 }
 export function Workflow() {
   const {go}=useApp();

@@ -13,9 +13,9 @@ export function MetricGrid({items}:{items:{label:string;value:string|number;unit
   return <div className="metrics-grid">{items.map(item=><div key={item.label} className={"metric "+(item.accent?"accent":"")}><div className="metric-top"><span>{item.label}</span><Icon name={item.icon||"chart"} /></div><div className="metric-value">{item.value}<small>{item.unit}</small></div>{item.note&&<p className="metric-note">{item.note}</p>}</div>)}</div>;
 }
 export function StatusBadge({value}:{value:string}) {
-  const success=/^(ตรวจแล้ว|เสร็จแล้ว|เสร็จสิ้น|แก้ไขแล้ว|ใช้งานอยู่|ทำงาน|เปิด|เข้าอยู่|สำเร็จ)/.test(value);
+  const success=/^(ตรวจแล้ว|เสร็จแล้ว|เสร็จสิ้น|แก้ไขแล้ว|ใช้งานอยู่|ทำงาน|เปิด|เข้าอยู่|สำเร็จ|ตรวจผ่าน|จัดยาแล้ว|จ่ายยาแล้ว|ปกติ)/.test(value);
   const warning=/^(รอ|กำลัง|แอดมิท)/.test(value);
-  const danger=/^(ปิด|ลาออก|สิ้นสุด|พักงาน)/.test(value);
+  const danger=/^(ปิด|ลาออก|สิ้นสุด|พักงาน|งด|ยาหมด|ยางด|แจ้งจัดยาผิด)/.test(value);
   return <span className={"status-badge "+(success?"status-success":warning?"status-warning":danger?"status-danger":"status-neutral")}>{value.replace(/\s*\([^)]*\)/g, "")}</span>;
 }
 
