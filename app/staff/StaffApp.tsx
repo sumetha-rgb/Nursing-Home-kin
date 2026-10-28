@@ -1,5 +1,6 @@
 "use client";
 import { ReactNode, useEffect, useState } from "react";
+import TutorialVideos from "@/components/TutorialVideos";
 import Image from "next/image";
 import Link from "next/link";
 import Login from "@/components/Login";
@@ -116,7 +117,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   const [bonus, setBonus] = useState(0);
   const [menu, setMenu] = useState(false);
   const [fab, setFab] = useState(false);
-  const [modal, setModal] = useState<null | "task" | "sop" | "bonus" | "dispense" | "metrics" | "handover" | "write" | "chat" | "pwd" | "manual" | "viewtask">(null);
+  const [modal, setModal] = useState<null | "task" | "sop" | "bonus" | "dispense" | "metrics" | "handover" | "write" | "pwd" | "manual" | "viewtask">(null);
   const [cur, setCur] = useState<number | null>(null);
   const [photo, setPhoto] = useState("");
   const [note, setNote] = useState("");
@@ -128,9 +129,6 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   const [hoType, setHoType] = useState(TYPES[0]);
   const [rep, setRep] = useState({ who: "", day: "วันนี้" });
   const [praised, setPraised] = useState<string[]>([]);
-  const [chatTab, setChatTab] = useState("กลุ่มสาขา");
-  const [chat, setChat] = useState<{ me: boolean; t: string }[]>([{ me: false, t: "สวัสดีครับ วันนี้มีงานด่วนที่ต้องช่วยกันไหม" }]);
-  const [msg, setMsg] = useState("");
 
   const close = () => { setModal(null); setPhoto(""); setNote(""); setShareFam(true); setCur(null); setMenu(false); };
   const open = (m: NonNullable<typeof modal>, i: number | null = null) => { setCur(i); setPhoto(""); setNote(""); setModal(m); };
@@ -176,7 +174,6 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
         </div>
         <div className="flex items-center gap-2">
           <AlertsBell compact />
-          <button onClick={() => open("chat")} className="relative flex items-center gap-1.5 rounded-full bg-gold-100 px-3 py-1.5 text-xs font-medium text-gold-700">พี่แคร์<span className="grid h-4 w-4 place-items-center rounded-full bg-red-500 text-[10px] text-white">1</span></button>
           <div className="relative" onClick={(e) => e.stopPropagation()}>
             <button onClick={() => setMenu(!menu)} className="flex min-w-0 max-w-[40vw] items-center gap-2 rounded-full border border-cream-300 py-1 pl-1 pr-1 text-sm sm:max-w-none sm:pr-3" aria-label={user.name}><span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-gold-700 text-xs font-semibold text-white">{user.name.charAt(0)}</span><span className="hidden truncate sm:inline">{user.name}</span></button>
             {menu && (
@@ -519,14 +516,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
         </div>
       </Modal>
 
-      {/* พี่แคร์ */}
-      <Modal open={modal === "chat"} title="พี่แคร์" onClose={close}
-        footer={<form className="flex w-full gap-2" onSubmit={(e) => { e.preventDefault(); if (!msg.trim()) return; setChat([...chat, { me: true, t: msg }]); setMsg(""); }}><input value={msg} onChange={(e) => setMsg(e.target.value)} placeholder="พิมพ์ข้อความ..." /><button className="btn-primary !px-4" aria-label="ส่ง"><Icon name="send" className="h-4 w-4" /></button></form>}>
-        <div className="mb-3 flex gap-2">{["กลุ่มสาขา", "คุยส่วนตัว (1:1)", "โหมด CEO"].map((x) => <button key={x} onClick={() => setChatTab(x)} className={`flex-1 rounded-full py-1.5 text-xs ${chatTab === x ? "bg-gold-700 text-white" : "bg-cream-200 text-gold-700"}`}>{x}</button>)}</div>
-        <div className="space-y-2">{chat.map((c, i) => <div key={i} className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm ${c.me ? "ml-auto bg-gold-700 text-white" : "bg-cream-100 text-gold-900"}`}>{c.t}</div>)}</div>
-      </Modal>
-
-      <Modal open={modal === "manual"} title="คู่มือผู้ใช้งาน" onClose={close} footer={<button className="btn-soft w-full" onClick={close}>ปิดหน้าต่าง</button>}><p className="text-sm text-gold-600">-</p></Modal>
+      <Modal open={modal === "manual"} title="วิดีโอสอนใช้งาน" onClose={close} footer={<button className="btn-soft w-full" onClick={close}>ปิดหน้าต่าง</button>}><TutorialVideos only={[4, 5]} compact /></Modal>
 
       <PasswordDialog open={modal === "pwd"} onClose={close} />
     </div>

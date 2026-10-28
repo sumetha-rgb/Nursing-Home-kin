@@ -35,6 +35,22 @@ PostgreSQL (ตอนนี้ใช้ Neon) · โครงตารางท�
 
 การจับคู่คอลัมน์กับหน้าเว็บอยู่ที่ `lib/schema.ts` · API อยู่ที่ `app/api/data/[key]/route.ts`
 
+ตารางที่มี API ของตัวเอง (ไม่ผ่านชุดข้อมูลข้างบน):
+
+| ตาราง | ใช้ทำอะไร | API |
+|---|---|---|
+| audit_logs | ประวัติการแก้ไขและการเข้าสู่ระบบ | `/api/audit` |
+| care_alerts | แจ้งเตือนสัญญาณชีพเกินเกณฑ์ | `/api/care` |
+| care_routines | งานประจำ (สร้างงานใน daily_tasks ให้ทุกวัน ล่วงหน้าได้ 14 วัน) | `/api/care` |
+| staff_shifts, attendance | ตารางเวร และการเช็คชื่อพร้อมรูป | `/api/roster` |
+| satisfaction_surveys | แบบประเมินความพึงพอใจจากครอบครัว | `/api/public/feedback`, `/api/care?op=surveys` |
+| review_links | ลิงก์ครอบครัวของผู้รับบริการ (รหัสสุ่ม หมดอายุ ยกเลิกได้) | `/api/reviews` |
+| staff_reviews | รีวิวพนักงานจากครอบครัว | `/api/public/review`, `/api/reviews` |
+| kpi_settings | น้ำหนัก KPI พนักงาน (แถวเดียว รวม 100) | `/api/kpi` |
+
+คอลัมน์ใน `daily_tasks` ที่ไม่ได้ส่งไปกับรายการงาน (โหลดแยกผ่าน `/api/care`): `photo`, `photo_at`, `share_family` (แชร์รูปให้ครอบครัว),
+`review_stars`, `review_note`, `reviewed_by`, `reviewed_at` (ดาวจากผู้จัดการตอนตรวจงาน)
+
 ## ย้ายไปฐานข้อมูล PostgreSQL อื่น
 
 ```bash

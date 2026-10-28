@@ -17,6 +17,7 @@ import { StaffKpi } from "@/components/views/StaffKpi";
 import { Branches, Staff } from "@/components/views/Admin";
 import { AuditLog } from "@/components/views/Audit";
 import { Roster } from "@/components/views/Roster";
+import { Tutorials } from "@/components/views/Tutorials";
 
 const VIEWS: Record<ViewId, () => JSX.Element> = {
   careplan: Workflow,
@@ -38,6 +39,7 @@ const VIEWS: Record<ViewId, () => JSX.Element> = {
   roster: Roster,
   reviews: StaffReviews,
   kpi: StaffKpi,
+  tutorials: Tutorials,
 };
 
 function Splash() {

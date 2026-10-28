@@ -1,4 +1,4 @@
-﻿export type ViewId = "careplan"|"contracts"|"residents"|"tasks_table"|"tasks"|"appointments"|"health_logs"|"feedbacks"|"dashboard"|"official-docs"|"branches"|"staff"|"facility_tasks"|"master_tasks"|"quotations"|"audit"|"roster"|"reviews"|"kpi";
+﻿export type ViewId = "careplan"|"contracts"|"residents"|"tasks_table"|"tasks"|"appointments"|"health_logs"|"feedbacks"|"dashboard"|"official-docs"|"branches"|"staff"|"facility_tasks"|"master_tasks"|"quotations"|"audit"|"roster"|"reviews"|"kpi"|"tutorials";
 export type NavItem = {kind:"view";id:ViewId;label:string;icon:string;group:0|1|2}|{kind:"link";href:string;label:string;icon:string;group:0|1|2};
 export const NAV:NavItem[]=[
 {kind:"view",id:"careplan",label:"ภาพรวมการดูแล",icon:"grid",group:0},
@@ -20,5 +20,6 @@ export const NAV:NavItem[]=[
 {kind:"view",id:"facility_tasks",label:"งานทั่วไปของศูนย์",icon:"building",group:2},
 {kind:"view",id:"master_tasks",label:"คลังงานมาตรฐาน",icon:"book",group:2},
 {kind:"view",id:"official-docs",label:"เอกสารและระเบียบ",icon:"files",group:2},
+{kind:"view",id:"tutorials",label:"วิดีโอสอนใช้งาน",icon:"play",group:2},
 {kind:"link",href:"/staff",label:"แอปทีมดูแล",icon:"phone",group:2},
 ];

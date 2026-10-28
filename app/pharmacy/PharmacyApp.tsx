@@ -8,6 +8,7 @@ import { AppProvider, useApp } from "@/lib/app";
 import { downloadCsv, useCrud, useRecords } from "@/lib/store";
 import { OfflineBar } from "@/components/Pwa";
 import PhotoPicker from "@/components/PhotoPicker";
+import TutorialVideos from "@/components/TutorialVideos";
 import { useResidents } from "@/lib/care";
 import Login from "@/components/Login";
 import { useSession, SessionUser } from "@/lib/session";
@@ -46,7 +47,6 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   const RESIDENTS = live.length ? live.map((r) => r.full_name) : RESIDENTS0;
   const [page, setPage] = useState<Page>("dashboard");
   const [drawer, setDrawer] = useState(false);
-  const [big, setBig] = useState(false);
   const [drugs, setDrugs] = useRecords("pharmacy-drugs", DRUGS0);
   const { rows: master, set: setMaster } = useCrud("pharmacy-master", MASTER0);
   const [packs, setPacks] = useRecords<Pack>("pharmacy-packs", []);
@@ -86,16 +86,15 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
         ))}
       </nav>
       <div className="sidebar-bottom space-y-1">
-        <button className="nav-item" onClick={() => setBig(!big)} aria-pressed={big}><Icon name="eye" /><span>โหมดมือถือ (ตัวหนังสือใหญ่)</span><span className={`ml-auto h-5 w-9 rounded-full p-0.5 transition ${big ? "bg-gold-600" : "bg-cream-300"}`}><span className={`block h-4 w-4 rounded-full bg-white transition ${big ? "translate-x-4" : ""}`} /></span></button>
         <Link href="/staff" className="nav-item"><Icon name="phone" /><span>กลับ KinApp</span></Link>
-        <button className="nav-item" onClick={onLogout}><Icon name="logout" /><span>ออกจากระบบ</span></button>
+        <button className="nav-item nav-logout" onClick={onLogout}><Icon name="logout" /><span>ออกจากระบบ</span></button>
       </div>
     </div>
   );
 
   return (
     <NamesCtx.Provider value={RESIDENTS}>
-    <div className="app-shell" style={big ? { zoom: 1.15 } : undefined}>
+    <div className="app-shell">
       <aside className="desktop-sidebar">{sidebar}</aside>
       {drawer && <div className="mobile-drawer"><button className="drawer-scrim" aria-label="ปิดเมนู" onClick={() => setDrawer(false)} /><aside><button className="drawer-close icon-button" aria-label="ปิดเมนู" onClick={() => setDrawer(false)}><Icon name="close" /></button>{sidebar}</aside></div>}
       <div className="app-body">
@@ -609,6 +608,7 @@ function Manual() {
   return (
     <>
       <PageHeader title="คู่มือผู้ใช้งานระบบ (User Manual)" sub="ระบบถูกออกแบบมาเพื่อความถูกต้อง ปลอดภัย และสืบย้อนข้อมูลได้ ตั้งแต่ตอนรับยาจากโรงพยาบาล จนถึงตอนที่ผู้สูงอายุทานยา" />
+      <div className="mb-6"><TutorialVideos only={[5, 4]} /></div>
       <div className="grid gap-4 lg:grid-cols-2">{parts.map(([t, p]) => <section key={t} className="card p-6"><h2 className="text-[17px] font-medium text-gold-800">{t}</h2><p className="mt-2 text-sm leading-7 text-gold-600">{p}</p></section>)}</div>
     </>
   );

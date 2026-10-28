@@ -883,3 +883,24 @@ input::placeholder,textarea::placeholder { color:#8a785b; }
 .kpi-parts small { display:block; margin-top:4px; font-size:11.5px; color:#9a8462; }
 .kpi-bar { height:8px; margin:8px 0; border-radius:999px; background:#efe6d6; overflow:hidden; }
 .kpi-bar i { display:block; height:100%; border-radius:999px; background:linear-gradient(90deg,#b8893f,#8a6420); }
+
+/* ปุ่มออกจากระบบในแถบเมนู */
+.nav-item.nav-logout { margin-top:8px; justify-content:center; border:1.5px solid #e7b4ad; background:#fdf2f0; color:#b3261e; font-weight:600; }
+.nav-item.nav-logout>svg { color:#b3261e; }
+.nav-item.nav-logout:hover { background:#b3261e; border-color:#b3261e; color:white; }
+.nav-item.nav-logout:hover>svg { color:white; }
+
+/* วิดีโอสอนใช้งาน */
+.tutorials { display:grid; gap:18px; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); }
+.tutorials.is-compact { grid-template-columns:1fr; gap:14px; }
+.tutorials>li { overflow:hidden; border:1px solid #e8dfcd; border-radius:16px; background:white; }
+.tutorial-thumb,.tutorial-player { position:relative; display:block; width:100%; aspect-ratio:16/9; background:#2c2418; }
+.tutorial-thumb img,.tutorial-player iframe { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; border:0; }
+.tutorial-thumb:disabled { cursor:default; background:#f3ecdf; }
+.tutorial-play { position:absolute; inset:0; display:grid; place-items:center; color:#8a7451; font-size:13px; }
+.tutorial-thumb:not(:disabled) .tutorial-play>svg { box-sizing:content-box; padding:14px; border-radius:999px; background:#000a; color:white; transition:background .16s; }
+.tutorial-thumb:not(:disabled):hover .tutorial-play>svg { background:#b3261e; }
+.tutorial-info { display:flex; flex-direction:column; gap:2px; padding:12px 14px 14px; }
+.tutorial-info small { color:#9a8566; font-size:12px; }
+.tutorial-info b { color:#4f4330; font-size:15px; font-weight:600; }
+.tutorial-info span { color:#7d6c52; font-size:12.5px; line-height:1.6; }
