@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Icon from "../Icon";
 import { MASTER_TASKS } from "@/lib/mock";
 import { useCrud } from "@/lib/store";
@@ -41,6 +41,14 @@ export function DailyTasks() {
   const [pickTask, setPickTask] = useState<number[]>([]);
   const [times, setTimes] = useState(SHIFT_TIME);
   const [assignErr, setAssignErr] = useState("");
+  const [repeat, setRepeat] = useState(true);
+  const [routineOpen, setRoutineOpen] = useState(false);
+  type Routine = { id: string; resident_name: string; branch_name: string; task_name: string; shift: string; sched_time: string; created_by: string };
+  const [routines, setRoutines] = useState<Routine[]>([]);
+  const loadRoutines = useCallback(() => { fetch("/api/care?op=routines", { cache: "no-store" }).then((r) => r.json()).then((d) => setRoutines(d.routines ?? [])).catch(() => {}); }, []);
+  useEffect(loadRoutines, [loadRoutines]);
+  const stopRoutine = (r: Routine) => confirm({ title: "หยุดทำซ้ำ", message: `หยุดสร้างงาน "${r.task_name}" ของ ${r.resident_name} ทุกวัน ใช่หรือไม่ (งานที่สร้างไปแล้วไม่หาย)`, okLabel: "หยุดทำซ้ำ", danger: true,
+    onOk: async () => { const res = await fetch("/api/care", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "routine_stop", id: r.id }) }); toast(res.ok ? "หยุดทำซ้ำแล้ว" : "หยุดไม่สำเร็จ"); loadRoutines(); } });
 
   const names = useMemo(() => residents.filter((r) => !r.status || r.status.startsWith("เข้าอยู่")).map((r) => r.full_name), [residents]);
   const shown = rows.map((r, k) => ({ r, k })).filter(({ r }) => shift === "ทั้งหมด" || r[4] === shift).sort((a, b) => String(a.r[3]).localeCompare(String(b.r[3])));
@@ -57,15 +65,23 @@ export function DailyTasks() {
     if (!pickRes.length) return setAssignErr("กรุณาเลือกผู้รับบริการอย่างน้อย 1 คน");
     if (!pickTask.length) return setAssignErr("กรุณาเลือกงานจากคลังงานอย่างน้อย 1 งาน");
     let made = 0, skipped = 0;
+    const plan: { resident: string; task: string; ins: string; shift: string; time: string }[] = [];
     for (const who of pickRes) for (const ti of pickTask) {
       const t = master[ti];
       const shifts = t[4] === "ทั้งสองกะ" ? ["กะเช้า", "กะดึก"] : [t[4] === "กะดึก" ? "กะดึก" : "กะเช้า"];
       for (const sh of shifts) {
+        plan.push({ resident: who, task: t[1], ins: t[2], shift: sh, time: times[sh] });
         if (exists(who, t[1], sh)) { skipped++; continue; }
         add(blankRow(who, t[1], times[sh], sh, t[2])); made++;
       }
     }
     setAssign(false); setPickRes([]); setPickTask([]); setAssignErr("");
+    if (repeat && plan.length) {
+      fetch("/api/care", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "routines_add", items: plan }) })
+        .then((r) => r.json()).then((d) => { loadRoutines(); toast(`มอบหมายงานแล้ว ${made} งาน · ตั้งเป็นงานประจำ ${d.added ?? 0} รายการ ระบบจะสร้างให้เองทุกวัน`); })
+        .catch(() => toast("มอบหมายงานวันนี้แล้ว แต่ตั้งงานประจำไม่สำเร็จ"));
+      return;
+    }
     toast(`มอบหมายงานแล้ว ${made} งาน${skipped ? ` (ข้ามงานที่มีอยู่แล้ว ${skipped})` : ""} · ขึ้นใน KinApp ของพนักงานแล้ว`);
   };
 
@@ -96,6 +112,7 @@ export function DailyTasks() {
         title="ตรวจงานประจำวัน (Daily Tasks)"
         sub="มอบหมายงานให้ทีมดูแล งานจะขึ้นใน KinApp ของพนักงาน ส่งงานแล้วกลับมาให้ตรวจที่หน้านี้"
         actions={<>
+          <button className="btn-soft" onClick={() => { loadRoutines(); setRoutineOpen(true); }}><Icon name="refresh" className="h-4 w-4" /> งานประจำ ({routines.length})</button>
           <button className="btn-soft" onClick={copyPrev}><Icon name="files" className="h-4 w-4" /> คัดลอกงานจากวันก่อน</button>
           <button className="btn-soft" onClick={() => setAddOpen(true)}><Icon name="plus" className="h-4 w-4" /> เพิ่มงาน</button>
           <button className="btn-primary" onClick={() => { setAssignErr(""); setAssign(true); }}><Icon name="book" className="h-4 w-4" /> มอบหมายจากคลังงานมาตรฐาน</button>
@@ -145,7 +162,16 @@ export function DailyTasks() {
           <Field label="3. เวลางานกะเช้า"><input type="time" value={times["กะเช้า"]} onChange={(e) => setTimes({ ...times, กะเช้า: e.target.value })} /></Field>
           <Field label="เวลางานกะดึก"><input type="time" value={times["กะดึก"]} onChange={(e) => setTimes({ ...times, กะดึก: e.target.value })} /></Field>
         </div>
+        <label className="repeat-toggle mt-4"><input type="checkbox" checked={repeat} onChange={(e) => setRepeat(e.target.checked)} /><span><b>ทำซ้ำทุกวัน (งานประจำ)</b><small>ระบบสร้างงานชุดนี้ให้เองทุกวัน ไม่ต้องมอบหมายใหม่ทุกเช้า · หยุดได้ที่ปุ่ม &quot;งานประจำ&quot;</small></span></label>
         {assignErr && <p role="alert" className="form-error mt-4"><Icon name="alert" className="h-4 w-4 shrink-0" />{assignErr}</p>}
+      </Modal>
+
+      {/* งานประจำ */}
+      <Modal open={routineOpen} wide title="งานประจำ (ทำซ้ำทุกวัน)" onClose={() => setRoutineOpen(false)} footer={<button className="btn-primary" onClick={() => setRoutineOpen(false)}>ปิด</button>}>
+        <p className="form-intro">งานในรายการนี้ระบบสร้างให้เองทุกวัน ตั้งแต่วันนี้ถึงล่วงหน้า 14 วัน เมื่อมีคนเปิดดูวันนั้นครั้งแรก · เพิ่มงานประจำได้ที่ &quot;มอบหมายจากคลังงานมาตรฐาน&quot; แล้วติ๊ก &quot;ทำซ้ำทุกวัน&quot;</p>
+        <DataTable search={false} columns={["ผู้รับบริการ", "สาขา", "งาน", "กะ", "เวลา", "ตั้งโดย"]} empty="ยังไม่มีงานประจำ"
+          rows={routines.map((r) => [r.resident_name, r.branch_name, r.task_name, r.shift, r.sched_time, r.created_by ?? "-"])}
+          actions={[{ label: "หยุดทำซ้ำ", danger: true, onClick: (i) => stopRoutine(routines[i]) }]} />
       </Modal>
 
       <FormDialog open={addOpen} mode="add" title="เพิ่มงานประจำวัน" fields={ADD_FIELDS} onClose={() => setAddOpen(false)} saveLabel="เพิ่มงาน"

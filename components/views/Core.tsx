@@ -1,5 +1,6 @@
 ﻿"use client";
 import { useState } from "react";
+import { useBranchNames, withBranches } from "@/lib/branches";
 import Link from "next/link";
 import Icon from "../Icon";
 import { APPOINTMENTS, CONTRACTS, DAILY_LIST, RESIDENTS, TASKS, BRANCH_NAMES } from "@/lib/mock";
@@ -76,6 +77,7 @@ function Check({ text }: { text: string }) {
 }
 
 function ContractForm({ onClose, onSave }: { onClose: () => void; onSave: (r: string[]) => void }) {
+  const branchNames = useBranchNames();
   return (
     <Section title="สัญญาปกติ Form">
       <form className="space-y-8" onSubmit={(e) => {
@@ -85,7 +87,7 @@ function ContractForm({ onClose, onSave }: { onClose: () => void; onSave: (r: st
         onSave([g("no") || `CT-2569-${String(Date.now()).slice(-3)}`, g("branch"), g("resident"), g("employer"), g("fee") || "-", "ใช้งานอยู่"]);
       }}>
         <div className="grid gap-4 md:grid-cols-2">
-          <Field label="สาขา (Branch)" required className="md:col-span-2"><Select name="branch" options={BRANCH_NAMES} placeholder="-- กรุณาเลือกสาขา --" /></Field>
+          <Field label="สาขา (Branch)" required className="md:col-span-2"><Select name="branch" options={branchNames} placeholder="-- กรุณาเลือกสาขา --" /></Field>
           <Field label="ชื่อ นามสกุล ผู้จ้าง" required><input name="employer" required /></Field>
           <Field label="เลขที่บัตรประชาชน"><input inputMode="numeric" /></Field>
           <Field label="ที่อยู่" required className="md:col-span-2"><textarea rows={2} /></Field>
@@ -145,6 +147,7 @@ const CONTRACT_COLS = ["เลขที่สัญญา", "สาขา", "ผ
 type Dlg = { mode: "view" | "edit"; i: number } | null;
 
 export function Contracts() {
+  const branchNames = useBranchNames();
   const { rows, add, update, remove } = useCrud("contracts", CONTRACTS);
   const { confirm, toast } = useApp();
   const [creating, setCreating] = useState(false);
@@ -177,7 +180,7 @@ export function Contracts() {
       </Section>
       <FormDialog
         open={!!dlg} mode={dlg?.mode ?? "view"} title={dlg?.mode === "edit" ? "รายละเอียด/แก้ไขสัญญา" : "รายละเอียดสัญญา"}
-        fields={CONTRACT_FIELDS} value={dlg ? rows[dlg.i] : undefined} onClose={() => setDlg(null)}
+        fields={withBranches(CONTRACT_FIELDS, branchNames)} value={dlg ? rows[dlg.i] : undefined} onClose={() => setDlg(null)}
         onSave={(v) => { if (dlg) update(dlg.i, v); setDlg(null); toast("บันทึกการแก้ไขแล้ว"); }} saveLabel="บันทึกการแก้ไข"
       />
       <BlankForm open={sample} title="หนังสือสัญญาว่าจ้างบริการดูแลผู้สูงอายุ (แบบฟอร์มเปล่า)" onClose={() => setSample(false)}
@@ -197,6 +200,7 @@ const RES_FIELDS: FieldDef[] = [
 ];
 
 export function Residents() {
+  const branchNames = useBranchNames();
   const { rows, ids, update, remove } = useCrud("residents", RESIDENTS);
   const { confirm, toast } = useApp();
   const [sample, setSample] = useState(false);
@@ -223,7 +227,7 @@ export function Residents() {
       </Section>
       <FormDialog
         open={!!dlg} mode={dlg?.mode ?? "view"} title={dlg?.mode === "edit" ? "แก้ไขข้อมูลผู้รับบริการ" : "ข้อมูลผู้รับบริการ"}
-        fields={RES_FIELDS} value={dlg ? rows[dlg.i] : undefined} onClose={() => setDlg(null)}
+        fields={withBranches(RES_FIELDS, branchNames)} value={dlg ? rows[dlg.i] : undefined} onClose={() => setDlg(null)}
         onSave={(v) => {
           if (!dlg) return;
           if (!norm(v[0])) return toast("กรุณากรอกชื่อ-นามสกุล");
@@ -242,6 +246,7 @@ export function Residents() {
 const TASK_COLS = ["วันที่", "สาขา", "ผู้รับบริการ", "หมวดหมู่", "ชื่องาน", "ผู้ทำ", "สถานะ", "เวลาที่ส่ง"];
 
 export function TasksTable() {
+  const branchNames = useBranchNames();
   const { rows } = useCrud("tasks_table", TASKS);
   const [branch, setBranch] = useState("");
   const [view, setView] = useState<number | null>(null);
@@ -252,7 +257,7 @@ export function TasksTable() {
         title="ข้อมูลงานรายวัน (Table)"
         sub="ดูข้อมูลงานทั้งหมดในรูปแบบตาราง Excel (สามารถโหลด Excel ได้)"
         actions={<>
-          <div className="min-w-44"><Select options={BRANCH_NAMES} placeholder="รวมทุกสาขา" value={branch} onChange={setBranch} /></div>
+          <div className="min-w-44"><Select options={branchNames} placeholder="รวมทุกสาขา" value={branch} onChange={setBranch} /></div>
           <button className="btn-primary" onClick={() => downloadCsv("ข้อมูลงานรายวัน", TASK_COLS, shown)}><Icon name="download" className="h-4 w-4" /> โหลด CSV</button>
         </>}
       />

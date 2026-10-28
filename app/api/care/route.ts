@@ -13,6 +13,9 @@ export const fetchCache = "force-no-store";
  *  GET  ?op=profile&id=…        ประวัติรายบุคคล: สัญญาณชีพ ยา การให้ยา นัดหมาย งานดูแล ส่งเวร แจ้งเตือน
  *  GET  ?op=alerts              แจ้งเตือนสัญญาณชีพที่ยังไม่มีคนรับทราบ
  *  POST { op: "ack", id, note } รับทราบแจ้งเตือน (บันทึกประวัติการแก้ไข)
+ *  GET  ?op=routines            งานประจำ (ทำซ้ำทุกวัน) ที่ยังใช้อยู่
+ *  POST { op: "routines_add", items: [{ resident, task, ins, shift, time }] }  เพิ่มงานประจำ (ผู้จัดการขึ้นไป)
+ *  POST { op: "routine_stop", id }  หยุดทำซ้ำ
  */
 const bad = (msg: string, status = 400) => NextResponse.json({ error: msg }, { status });
 const scoped = (me: SessionUser) => me.role !== "Global Admin";
@@ -60,6 +63,12 @@ export async function GET(req: NextRequest) {
         if (p === "forbidden") return forbidden("ดูได้เฉพาะผู้รับบริการในสาขาของคุณ");
         return NextResponse.json(p);
       }
+      case "routines": {
+        const rows = await sql(
+          `SELECT id, resident_name, branch_name, task_name, instruction, shift, sched_time, created_by FROM care_routines
+           WHERE active ${scoped(me) ? "AND branch_name = $1" : ""} ORDER BY branch_name, resident_name, sched_time`, scoped(me) ? [me.branch] : []);
+        return NextResponse.json({ routines: rows });
+      }
       case "alerts": {
         const rows = await sql(
           `SELECT id, area, record_id, resident_id, resident_name, branch_name, level, summary, vital_text, created_by,
@@ -81,6 +90,35 @@ export async function POST(req: NextRequest) {
   const me = await currentUser(req);
   if (!me) return unauthorized();
   const b = await req.json().catch(() => ({}));
+  if (b.op === "routines_add" || b.op === "routine_stop") {
+    if (me.role === "Operation") return forbidden("งานประจำตั้งได้เฉพาะผู้จัดการสาขาและผู้บริหาร");
+    if (b.op === "routine_stop") {
+      const [r] = (await sql`SELECT id, branch_name, resident_name, task_name FROM care_routines WHERE id = ${String(b.id)}`) as Record<string, string>[];
+      if (!r) return bad("ไม่พบงานประจำนี้", 404);
+      if (scoped(me) && r.branch_name !== me.branch) return forbidden();
+      await sql`UPDATE care_routines SET active = false WHERE id = ${r.id}`;
+      await audit(req, me, [{ area: "routines", action: "delete", recordId: r.id, summary: `${r.resident_name} · ${r.task_name}`, branch: r.branch_name }]);
+      return NextResponse.json({ ok: true });
+    }
+    const items = (Array.isArray(b.items) ? b.items : []) as { resident: string; task: string; ins?: string; shift: string; time: string }[];
+    const res = (await sql`SELECT id, full_name, branch_name FROM residents`) as Record<string, string>[];
+    const have = (await sql`SELECT resident_id, task_name, shift FROM care_routines WHERE active`) as Record<string, string>[];
+    let added = 0;
+    const logs = [];
+    for (const it of items) {
+      const r = res.find((x) => x.full_name === it.resident && (!scoped(me) || x.branch_name === me.branch));
+      if (!r || !it.task || !it.shift || !/^\d{2}:\d{2}/.test(it.time ?? "")) continue;
+      if (have.some((h) => h.resident_id === r.id && h.task_name === it.task && h.shift === it.shift)) continue;
+      const id = crypto.randomUUID();
+      await sql`INSERT INTO care_routines (id, resident_id, resident_name, branch_name, task_name, instruction, shift, sched_time, created_by)
+                VALUES (${id}, ${r.id}, ${r.full_name}, ${r.branch_name}, ${it.task}, ${it.ins ?? "-"}, ${it.shift}, ${it.time.slice(0, 5)}, ${me.name})`;
+      have.push({ resident_id: r.id, task_name: it.task, shift: it.shift });
+      logs.push({ area: "routines", action: "create", recordId: id, summary: `${r.full_name} · ${it.task} · ${it.shift} ${it.time.slice(0, 5)}`, branch: r.branch_name });
+      added++;
+    }
+    await audit(req, me, logs);
+    return NextResponse.json({ ok: true, added });
+  }
   if (b.op !== "ack") return bad("unknown op");
   const [a] = (await sql`SELECT id, branch_name, resident_name, summary, status FROM care_alerts WHERE id = ${String(b.id)}`) as Record<string, string>[];
   if (!a) return bad("ไม่พบแจ้งเตือนนี้", 404);

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sql } from "@/lib/db";
-import { clearFailures, normEmail, recordFailure, startSession, tooManyAttempts, verifyPassword } from "@/lib/auth";
+import { checkBranch, clearFailures, normEmail, recordFailure, startSession, tooManyAttempts, verifyPassword } from "@/lib/auth";
 import { audit } from "@/lib/audit";
 import type { Role } from "@/lib/roles";
 
@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
   clearFailures(email);
   const user = { id: u.id, name: u.name, email: u.email, role: u.role as Role, branch: u.branch ?? "" };
   await audit(req, user, [{ area: "auth", action: "login", recordId: u.id, summary: email }]);
-  const res = NextResponse.json({ user });
+  const res = NextResponse.json({ user: await checkBranch(user) });
   await startSession(res, u.id);
   return res;
 }

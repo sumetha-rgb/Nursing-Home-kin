@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { sql, validKey } from "@/lib/db";
 import { currentUser, forbidden, unauthorized } from "@/lib/auth";
@@ -73,6 +74,29 @@ async function snapshot(s: Spec, ids: string[]) {
   if (!ids.length) return new Map<string, { rec: Rec; branch: string | null }>();
   const rows = (await sql(`SELECT id, ${s.cols.map(selectExpr).join(", ")}${s.branchCol ? `, ${s.branchCol} AS _branch` : ""} FROM ${s.table} WHERE id = ANY($1)`, [ids])) as Rec[];
   return new Map(rows.map((r) => [r.id as string, { rec: Object.fromEntries(s.cols.map((c) => [c.col, r[c.col] ?? null])) as Rec, branch: (r._branch as string) ?? null }]));
+}
+
+/* ---------- งานประจำ → งานประจำวันอัตโนมัติ ---------- */
+const dayTh = (offset = 0) => new Date(Date.now() + 7 * 3600e3 + offset * 864e5).toISOString().slice(0, 10);
+/**
+ * ครั้งแรกที่มีคนเปิดงานของวันหนึ่ง (วันนี้ถึงล่วงหน้า 14 วัน) สร้างงานจากงานประจำที่ยังใช้อยู่ของทุกสาขา
+ * app_seed กันสร้างซ้ำ · ข้ามผู้รับบริการที่ย้ายออกแล้ว
+ */
+async function generateDaily(key: string, s: Spec) {
+  if (!key.startsWith("daily-") || !s.scope) return;
+  const d = s.scope.value;
+  if (d < dayTh() || d > dayTh(14)) return;
+  const created = await sql`INSERT INTO app_seed (collection) VALUES (${key}) ON CONFLICT DO NOTHING RETURNING collection`;
+  if (!created.length) return;
+  const routines = (await sql`
+    SELECT r.* FROM care_routines r LEFT JOIN residents x ON x.id = r.resident_id
+    WHERE r.active AND (x.status IS NULL OR x.status NOT LIKE 'ย้ายออก%')
+    ORDER BY r.sched_time`) as Record<string, string>[];
+  if (!routines.length) return;
+  const top = Date.now();
+  await sql.transaction(routines.map((r, i) => sql`
+    INSERT INTO daily_tasks (id, sort_order, work_date, branch_name, resident_id, resident_name, task_name, assignee, scheduled_time, shift, status, instruction)
+    VALUES (${randomUUID()}, ${top - i}, ${d}, ${r.branch_name}, ${r.resident_id}, ${r.resident_name}, ${r.task_name}, '-', ${r.sched_time}, ${r.shift}, 'รอทำ', ${r.instruction ?? "-"})`));
 }
 
 async function list(key: string, s: Spec, branch: string | null) {
@@ -202,6 +226,7 @@ async function access(req: NextRequest, key: string) {
 export async function GET(req: NextRequest, { params }: { params: { key: string } }) {
   const a = await access(req, params.key);
   if (!a.s) return a.res;
+  try { await generateDaily(params.key, a.s); } catch (e) { console.error("[generateDaily]", e); }
   return NextResponse.json(await list(params.key, a.s, a.branch));
 }
 

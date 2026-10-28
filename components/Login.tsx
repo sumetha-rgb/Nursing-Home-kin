@@ -1,5 +1,6 @@
 ﻿"use client";
 import { FormEvent, useState } from "react";
+import { useBranchNames } from "@/lib/branches";
 import Image from "next/image";
 import Link from "next/link";
 import Icon from "./Icon";
@@ -11,6 +12,7 @@ import { Modal } from "./ui";
 const ROLE_ICON: Record<Role, string> = { "Global Admin": "grid", "Branch Admin": "building", Operation: "heart" };
 
 export default function Login({ onLogin, staff = false }: { onLogin: (u: SessionUser) => void; staff?: boolean }) {
+  const branchNames = useBranchNames();
   const [mode, setMode] = useState<"login" | "register">("login");
   const [show, setShow] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -69,7 +71,7 @@ export default function Login({ onLogin, staff = false }: { onLogin: (u: Session
           <form onSubmit={submit} noValidate>
             {reg && <div className="mt-4"><label className="label" htmlFor="reg-name">ชื่อ-นามสกุล</label><div className="input-with-icon"><Icon name="user" /><input id="reg-name" value={f.name} onChange={set("name")} placeholder="เช่น สมหญิง ใจดี" autoComplete="name" required /></div></div>}
             <div className="mt-4"><label className="label" htmlFor="login-email">อีเมล</label><div className="input-with-icon"><Icon name="mail" /><input id="login-email" type="email" value={f.email} onChange={set("email")} placeholder="name@kinhomecare.com" autoComplete={reg ? "email" : "username"} required /></div></div>
-            {reg && <div className="mt-4"><label className="label" htmlFor="reg-branch">สาขาที่ปฏิบัติงาน</label><select id="reg-branch" value={f.branch} onChange={set("branch")} required><option value="">-- เลือกสาขา --</option>{BRANCH_NAMES.map((b) => <option key={b}>{b}</option>)}</select></div>}
+            {reg && <div className="mt-4"><label className="label" htmlFor="reg-branch">สาขาที่ปฏิบัติงาน</label><select id="reg-branch" value={f.branch} onChange={set("branch")} required><option value="">-- เลือกสาขา --</option>{branchNames.map((b) => <option key={b}>{b}</option>)}</select></div>}
             <div className="mt-4"><label className="label" htmlFor="login-password">รหัสผ่าน{reg && " (อย่างน้อย 8 ตัวอักษร)"}</label><div className="input-with-icon"><Icon name="lock" /><input id="login-password" type={show ? "text" : "password"} value={f.password} onChange={set("password")} placeholder="กรอกรหัสผ่านของคุณ" autoComplete={reg ? "new-password" : "current-password"} required /><button type="button" className="password-eye" onClick={() => setShow(!show)} aria-pressed={show} aria-label={show ? "ซ่อนรหัสผ่าน" : "แสดงรหัสผ่าน"}><Icon name="eye" /></button></div></div>
             {reg && <div className="mt-4"><label className="label" htmlFor="reg-confirm">ยืนยันรหัสผ่าน</label><div className="input-with-icon"><Icon name="lock" /><input id="reg-confirm" type={show ? "text" : "password"} value={f.confirm} onChange={set("confirm")} placeholder="กรอกรหัสผ่านอีกครั้ง" autoComplete="new-password" required /></div></div>}
 

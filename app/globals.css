@@ -680,3 +680,73 @@ input::placeholder,textarea::placeholder { color:#8a785b; }
 .pick-list label { display:flex; align-items:flex-start; gap:10px; padding:9px 12px; font-size:14px; color:#2f2618; cursor:pointer; }
 .pick-list label:hover { background:#faf5ec; }
 .pick-list input { margin-top:4px; }
+
+/* สาขาที่กำลังดู */
+.branch-badge { display:inline-flex; align-items:center; gap:6px; min-height:36px; max-width:240px; padding:0 12px; border-radius:999px; border:1px solid #e0cfa9; background:#fbf4e4; color:#6b5228; font-size:12.5px; white-space:nowrap; }
+.branch-badge small { font-size:11.5px; color:#8a785b; }
+.branch-badge b { overflow:hidden; text-overflow:ellipsis; font-weight:700; }
+.branch-badge.is-all { background:#8b6e3e; border-color:#8b6e3e; color:#fff; }
+.branch-badge.is-all small { color:#f1e3c4; }
+.branch-badge.is-bad { background:#fdecee; border-color:#f3c0c8; color:#a3213a; }
+.branch-notice { display:flex; align-items:flex-start; gap:12px; margin-bottom:20px; padding:14px 16px; border-radius:14px; border:1px solid; line-height:1.6; animation:notice-in .25s ease-out; }
+.branch-notice.is-ok { background:#fbf4e4; border-color:#e6d4ac; color:#5a4426; }
+.branch-notice.is-warn { background:#fdf3df; border-color:#f0d49a; color:#7d4f0b; }
+.branch-notice.is-bad { background:#fdecee; border-color:#f3c0c8; color:#a3213a; }
+.branch-notice-close { display:grid; place-items:center; width:30px; height:30px; flex-shrink:0; border-radius:8px; opacity:.7; }
+.branch-notice-close:hover { opacity:1; background:#ffffff99; }
+@media (max-width:767px) { .topbar .branch-badge small { display:none; } .topbar .branch-badge { max-width:150px; padding:0 10px; } }
+@media print { .branch-notice,.branch-badge { display:none!important; } }
+
+/* ตัวเลือกทำซ้ำทุกวัน */
+.repeat-toggle { display:flex; align-items:flex-start; gap:12px; padding:12px 14px; border:1px solid #e0cfa9; border-radius:12px; background:#fbf4e4; cursor:pointer; }
+.repeat-toggle input { margin-top:4px; }
+.repeat-toggle b { display:block; font-size:14px; color:#3a2f20; }
+.repeat-toggle small { display:block; margin-top:2px; font-size:12.5px; color:#6b5a3f; line-height:1.6; }
+
+/* ---------- ตารางเวรและเช็คชื่อ ---------- */
+.roster-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px; }
+.roster-head b { font-size:16px; color:#5b4320; }
+.roster-grid { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:4px; }
+.roster-wd { text-align:center; font-size:12px; font-weight:600; color:#8a6a3a; padding:4px 0; }
+.roster-cell { min-height:92px; display:flex; flex-direction:column; align-items:stretch; gap:3px; padding:5px; text-align:left; border:1px solid #eadfcb; border-radius:10px; background:#fff; transition:border-color .15s, box-shadow .15s; }
+.roster-cell:hover { border-color:#c9a86a; box-shadow:0 2px 8px rgba(120,90,40,.12); }
+.roster-cell.is-empty { background:transparent; border-color:transparent; box-shadow:none; }
+.roster-cell.is-today { border-color:#b8893f; box-shadow:inset 0 0 0 1px #b8893f; }
+.roster-cell.is-selected { background:#fbf5e9; border-color:#8a6420; }
+.roster-cell.is-mine .roster-num { background:#8a6420; color:#fff; }
+.roster-num { align-self:flex-start; min-width:22px; height:22px; padding:0 5px; display:grid; place-items:center; border-radius:999px; font-size:12px; font-weight:700; color:#5b4320; }
+.roster-shift { display:flex; flex-wrap:wrap; gap:2px; padding:3px 4px; border-radius:6px; font-size:11px; line-height:1.35; }
+.roster-shift i { font-style:normal; font-weight:700; margin-right:2px; }
+.roster-shift em { font-style:normal; padding:0 4px; border-radius:4px; background:rgba(255,255,255,.7); }
+.roster-shift em.is-me { background:#8a6420; color:#fff; font-weight:600; }
+.roster-shift em.is-in { color:#166534; }
+.roster-shift em.is-me.is-in { color:#fff; }
+.roster-shift.is-day { background:#fdf3d8; color:#7a5510; }
+.roster-shift.is-night { background:#e6e9f5; color:#2f3a66; }
+.roster.is-compact .roster-cell { min-height:58px; padding:3px; }
+.roster.is-compact .roster-shift { font-size:10px; padding:1px 3px; justify-content:center; }
+.roster-legend { display:flex; flex-wrap:wrap; gap:6px 14px; margin-top:10px; font-size:12px; color:#7a6342; }
+.roster-legend span::before { content:""; display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:5px; vertical-align:-1px; background:#d9cbb0; }
+.roster-legend .is-day::before { background:#f5dc9c; }
+.roster-legend .is-night::before { background:#c4cbe6; }
+.roster-legend .is-me::before { background:#8a6420; }
+.roster-legend span:last-child::before { display:none; }
+@media (max-width:640px) { .roster-cell { min-height:64px; } .roster-shift em { display:block; } }
+
+.attend-list { display:grid; gap:8px; }
+.attend-list li { display:flex; align-items:center; gap:12px; padding:8px; border:1px solid #eadfcb; border-radius:12px; background:#fff; }
+.attend-list img, .attend-nophoto { width:64px; height:64px; border-radius:10px; object-fit:cover; background:#f3ead9; display:block; }
+.attend-list div { display:flex; flex-direction:column; font-size:13px; color:#5b4320; }
+.attend-list b { font-size:14px; color:#3d2d14; }
+.is-late { font-style:normal; color:#b91c1c; font-weight:600; }
+
+.checkin-card { border-radius:24px; border:1.5px solid #d9b977; background:linear-gradient(180deg,#fffaf0,#fff); padding:16px; box-shadow:0 6px 18px rgba(120,90,40,.10); }
+.checkin-slot { display:flex; flex-direction:column; padding:10px 12px; border-radius:16px; background:#f7f1e5; color:#7a6342; }
+.checkin-slot b { color:#5b4320; font-size:15px; }
+.checkin-slot.is-done { background:#e8f5ec; color:#166534; }
+.checkin-slot.is-done b { color:#14532d; }
+.checkin-slot em { font-style:normal; color:#b91c1c; font-size:12px; font-weight:600; }
+.checkin-clock { display:flex; align-items:center; gap:8px; margin-bottom:8px; padding:10px 14px; border-radius:12px; background:#3d2d14; color:#fff; font-size:16px; font-weight:600; font-variant-numeric:tabular-nums; }
+.seg { display:inline-flex; padding:3px; border-radius:999px; background:#f3ead9; }
+.seg button { white-space:nowrap; padding:4px 12px; border-radius:999px; font-size:12px; color:#7a6342; }
+.seg button[aria-pressed="true"] { background:#fff; color:#5b4320; font-weight:600; box-shadow:0 1px 3px rgba(0,0,0,.08); }

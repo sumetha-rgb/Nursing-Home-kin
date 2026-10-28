@@ -13,6 +13,7 @@ import { FacilityTasks, MasterTasks, Quotations } from "@/components/views/Tasks
 import { Appointments, Dashboard, Feedbacks, HealthLogs, OfficialDocs } from "@/components/views/Ops";
 import { Branches, Staff } from "@/components/views/Admin";
 import { AuditLog } from "@/components/views/Audit";
+import { Roster } from "@/components/views/Roster";
 
 const VIEWS: Record<ViewId, () => JSX.Element> = {
   careplan: Workflow,
@@ -31,6 +32,7 @@ const VIEWS: Record<ViewId, () => JSX.Element> = {
   master_tasks: MasterTasks,
   quotations: Quotations,
   audit: AuditLog,
+  roster: Roster,
 };
 
 function Splash() {

@@ -18,8 +18,9 @@ for (const stmt of schema) await sql(stmt);
 const DEMO_PASSWORD = "demo1234";
 const DEMOS = [
   ["global@kin.test", "ผู้บริหาร (ทดลอง)", "Global Admin", "ทุกสาขา"],
-  ["branch@kin.test", "ผู้จัดการสาขา (ทดลอง)", "Branch Admin", "กรุงเทพมหานคร"],
-  ["staff@kin.test", "พนักงานดูแล (ทดลอง)", "Operation", "กรุงเทพมหานคร"],
+  ["branch@kin.test", "ผู้จัดการสาขา (ทดลอง)", "Branch Admin", "สุขุมวิท 107"],
+  ["staff@kin.test", "พนักงานดูแล (ทดลอง)", "Operation", "สุขุมวิท 107"],
+  ["branch2@kin.test", "ผู้จัดการสาขาลาดพร้าว 71 (ทดลอง)", "Branch Admin", "ลาดพร้าว 71"],
 ];
 if (process.env.SEED_DEMO !== "false") {
   const { randomBytes, scryptSync, randomUUID } = await import("node:crypto");

@@ -80,8 +80,9 @@ pg_dump --data-only --no-owner "postgresql://...Neon..." | psql "postgresql://..
 | อีเมล | รหัสผ่าน | ระดับ |
 |---|---|---|
 | global@kin.test | demo1234 | Global Admin |
-| branch@kin.test | demo1234 | Branch Admin (กรุงเทพมหานคร) |
-| staff@kin.test | demo1234 | Operation (กรุงเทพมหานคร) |
+| branch@kin.test | demo1234 | Branch Admin (สุขุมวิท 107) |
+| staff@kin.test | demo1234 | Operation (สุขุมวิท 107) |
+| branch2@kin.test | demo1234 | Branch Admin (ลาดพร้าว 71) ใช้เทียบการแยกสาขา |
 
 ก่อนใช้งานจริง: สร้างบัญชี Global Admin จริงจากหน้า "ทีมและสิทธิ์การใช้งาน" แล้วลบบัญชีทดลอง
 

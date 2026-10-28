@@ -14,10 +14,12 @@ import { useResidents } from "@/lib/care";
 import { HEALTH } from "@/lib/mock";
 import { daysLeft, Drug, DRUGS0, iso, MEALS, nowTh, Pack } from "@/lib/pharmacy";
 import AlertsBell from "@/components/care/AlertsBell";
+import BranchNotice from "@/components/BranchNotice";
 import ResidentProfile from "@/components/care/ResidentProfile";
 import VitalsDialog from "@/components/care/VitalsDialog";
 import PhotoPicker from "@/components/PhotoPicker";
 import { OfflineBar, usePwa } from "@/components/Pwa";
+import { CheckInCard, StaffRoster } from "@/components/roster/StaffRoster";
 
 /* ---------- ข้อมูลจำลอง ---------- */
 /** งานวันนี้ใน KinApp (มาจากหน้างานประจำวันของผู้จัดการ) */
@@ -39,11 +41,11 @@ const RESIDENTS0: { id?: string; name: string; room: string; age: number | strin
   { name: "คุณสมศรี พิมพ์ทอง", room: "C-012", age: 76 },
 ];
 const RANK = [
-  { name: "พนักงาน อารี", branch: "กรุงเทพมหานคร", shift: "D", n: 128 },
-  { name: "พนักงาน ลัดดา", branch: "ขอนแก่น", shift: "N", n: 117 },
-  { name: "พนักงาน สมหญิง", branch: "เชียงใหม่", shift: "D", n: 109 },
-  { name: "พยาบาล วิภา", branch: "กรุงเทพมหานคร", shift: "D", n: 98 },
-  { name: "พยาบาล นภา", branch: "เชียงใหม่", shift: "N", n: 91 },
+  { name: "พนักงาน อารี", branch: "สุขุมวิท 107", shift: "D", n: 128 },
+  { name: "พนักงาน ลัดดา", branch: "พัทยา", shift: "N", n: 117 },
+  { name: "พนักงาน สมหญิง", branch: "ราชพฤกษ์", shift: "D", n: 109 },
+  { name: "พยาบาล วิภา", branch: "สุขุมวิท 107", shift: "D", n: 98 },
+  { name: "พยาบาล นภา", branch: "ราชพฤกษ์", shift: "N", n: 91 },
 ];
 const HANDOVER0 = [
   { id: 1, type: "เฝ้าระวังอาการ", who: "คุณมาลี ศรีสุข", text: "แขนขวาอ่อนแรงมากขึ้นเล็กน้อย ให้ตรวจซ้ำทุก 4 ชม.", by: "พยาบาล วิภา", at: "เมื่อวาน 19:10" },
@@ -59,9 +61,10 @@ const reportFor = (name: string, day: string) => [
 ];
 void REPORT;
 
-type Tab = "tasks" | "meds" | "residents" | "team" | "fame";
+type Tab = "tasks" | "roster" | "meds" | "residents" | "team" | "fame";
 const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: "tasks", label: "งานวันนี้", icon: "check" },
+  { id: "roster", label: "ตารางเวร", icon: "calendar" },
   { id: "meds", label: "จ่ายยา", icon: "pill" },
   { id: "residents", label: "ผู้รับบริการ", icon: "user" },
   { id: "team", label: "ผลงานทีม", icon: "grid" },
@@ -148,7 +151,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
       <header className="sticky top-0 z-30 flex items-center justify-between gap-3 border-b border-cream-300/60 bg-white/95 px-4 py-3 backdrop-blur">
         <div className="flex items-center gap-2.5">
           <Image src="/logo-mark.png" alt="KIN" width={44} height={33} className="h-9 w-auto" />
-          <div className="leading-tight"><p className="text-[15px] font-semibold text-gold-800">KinApp</p><p className="text-[10px] tracking-[0.16em] text-gold-500">KIN HOMECARE</p></div>
+          <div className="leading-tight"><p className="text-[15px] font-semibold text-gold-800">KinApp</p><p className="text-[11px] font-medium text-gold-600">สาขา{user.branch || "-"}</p></div>
         </div>
         <div className="flex items-center gap-2">
           <AlertsBell compact />
@@ -174,6 +177,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
       </header>
 
       <main className="space-y-4 px-4 py-5">
+        <BranchNotice user={user} />
         {tab === "tasks" && (
           <>
             <section className="staff-welcome relative overflow-hidden">
@@ -186,6 +190,8 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
                 <div className="rounded-2xl bg-white/15 p-3"><p className="text-xs text-white/75">คะแนนดาวเฉลี่ย</p><p className="mt-1 text-2xl font-semibold">{mine ? "4.8" : "-"}</p></div>
               </div>
             </section>
+
+            <CheckInCard user={user} />
 
             <button onClick={() => open("handover")} className="flex w-full items-center gap-3 rounded-3xl border border-cream-300/70 bg-cream-50 p-4 text-left">
               <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-gold-100 text-gold-700"><Icon name="book" /></span>
@@ -224,6 +230,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
           </>
         )}
 
+        {tab === "roster" && <StaffRoster user={user} />}
         {tab === "meds" && (
           <>
             <Card title="คิวจ่ายยาวันนี้" icon="pill" right={<Link href="/pharmacy?page=dispense" className="btn-soft !min-h-0 !px-3 !py-1.5 text-xs">เปิดแอปจัดยา (Pharmacy Hub)</Link>}>
@@ -308,7 +315,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
               <p className="text-sm text-white/80">{RANK[0].n} งาน · เวรเช้า (D)</p>
             </section>
             <Card title="Top 10" icon="trophy">
-              <ol className="space-y-2">{RANK.filter((r) => scope !== "สาขาเรา" || r.branch === "กรุงเทพมหานคร").map((r, i, arr) => (
+              <ol className="space-y-2">{RANK.filter((r) => scope !== "สาขาเรา" || r.branch === user.branch).map((r, i, arr) => (
                 <li key={r.name} className="rounded-2xl bg-cream-50 p-3">
                   <div className="flex items-center gap-3 text-sm">
                     <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-gold-700 text-xs font-semibold text-white">{i + 1}</span>
@@ -340,10 +347,10 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
       )}
 
       {/* bottom nav */}
-      <nav aria-label="เมนูล่าง" className="fixed bottom-0 left-1/2 z-30 grid w-full max-w-lg -translate-x-1/2 grid-cols-5 border-t border-cream-300/70 bg-white/95 px-2 pb-[env(safe-area-inset-bottom)] pt-1.5 backdrop-blur">
+      <nav aria-label="เมนูล่าง" className="fixed bottom-0 left-1/2 z-30 grid w-full max-w-lg -translate-x-1/2 grid-cols-6 border-t border-cream-300/70 bg-white/95 px-2 pb-[env(safe-area-inset-bottom)] pt-1.5 backdrop-blur">
         {TABS.map((x) => (
-          <button key={x.id} aria-current={tab === x.id ? "page" : undefined} onClick={() => { setTab(x.id); setFab(false); window.scrollTo(0, 0); }} className={`flex flex-col items-center gap-0.5 rounded-xl py-2 text-[11px] ${tab === x.id ? "text-gold-700" : "text-gold-400"}`}>
-            <span className={`grid h-8 w-12 place-items-center rounded-full transition ${tab === x.id ? "bg-gold-100" : ""}`}><Icon name={x.icon} className="h-5 w-5" /></span>{x.label}
+          <button key={x.id} aria-current={tab === x.id ? "page" : undefined} onClick={() => { setTab(x.id); setFab(false); window.scrollTo(0, 0); }} className={`flex flex-col items-center gap-0.5 rounded-xl py-2 text-[10.5px] ${tab === x.id ? "text-gold-700" : "text-gold-400"}`}>
+            <span className={`grid h-8 w-11 place-items-center rounded-full transition ${tab === x.id ? "bg-gold-100" : ""}`}><Icon name={x.icon} className="h-5 w-5" /></span>{x.label}
           </button>
         ))}
       </nav>

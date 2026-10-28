@@ -462,3 +462,55 @@ COMMENT ON TABLE care_alerts IS 'แจ้งเตือนสัญญาณ�
 -- ผู้จัดการมอบหมายงาน (จากคลังงานมาตรฐาน) → พนักงานส่งงานใน KinApp: บันทึกย่อ + ชื่อผู้ส่ง
 ALTER TABLE daily_tasks ADD COLUMN IF NOT EXISTS note text;
 ALTER TABLE daily_tasks ADD COLUMN IF NOT EXISTS done_by text;
+
+-- ---------------------------------------------------------------- งานประจำ (ทำซ้ำทุกวัน)
+-- ผู้จัดการสาขามอบหมายครั้งเดียว ระบบสร้างงานประจำวัน (daily_tasks) ให้เองทุกวันที่เปิดดูครั้งแรก
+CREATE TABLE IF NOT EXISTS care_routines (
+  id            text PRIMARY KEY,
+  resident_id   text REFERENCES residents(id) ON DELETE CASCADE,
+  resident_name text NOT NULL,
+  branch_name   text,
+  task_name     text NOT NULL,
+  instruction   text,
+  shift         text NOT NULL,
+  sched_time    text NOT NULL,
+  active        boolean NOT NULL DEFAULT true,
+  created_by    text,
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS care_routines_active ON care_routines (active, branch_name);
+COMMENT ON TABLE care_routines IS 'งานประจำของผู้รับบริการ สร้างเป็นงานประจำวันอัตโนมัติ';
+
+-- ---------------------------------------------------------------- ตารางเวรและการเช็คชื่อ
+-- เวร: เช้า 07:00–19:00 · ดึก 19:00–07:00 (ตัดกะ 07:00) · 1 คนมีได้ 1 แถวต่อวันต่อเวร
+CREATE TABLE IF NOT EXISTS staff_shifts (
+  id          text PRIMARY KEY,
+  branch_name text NOT NULL,
+  staff_id    text NOT NULL REFERENCES staff_users(id) ON DELETE CASCADE,
+  staff_name  text NOT NULL,
+  shift_date  date NOT NULL,
+  shift       text NOT NULL,
+  created_by  text,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (staff_id, shift_date, shift)
+);
+CREATE INDEX IF NOT EXISTS staff_shifts_branch_date ON staff_shifts (branch_name, shift_date);
+COMMENT ON TABLE staff_shifts IS 'ตารางเวรพนักงาน';
+
+-- เช็คชื่อเข้า/ออกงาน: เวลา at มาจาก server · photo = รูปถ่ายสดย่อขนาด (JPEG data URL ประทับวันเวลาแล้ว)
+CREATE TABLE IF NOT EXISTS attendance (
+  id          text PRIMARY KEY,
+  staff_id    text REFERENCES staff_users(id) ON DELETE SET NULL,
+  staff_name  text NOT NULL,
+  branch_name text,
+  work_date   date NOT NULL,
+  shift       text,
+  kind        text NOT NULL,
+  at          timestamptz NOT NULL DEFAULT now(),
+  late_min    integer,
+  photo       text,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS attendance_branch_date ON attendance (branch_name, work_date);
+CREATE INDEX IF NOT EXISTS attendance_staff_date ON attendance (staff_id, work_date);
+COMMENT ON TABLE attendance IS 'การเช็คชื่อเข้า/ออกงานพร้อมรูปถ่าย';

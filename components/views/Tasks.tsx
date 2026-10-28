@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import { useBranchNames, withBranches } from "@/lib/branches";
 import Icon from "../Icon";
 import { ASSESSMENTS, BRANCH_NAMES, FACILITY_TASKS, MASTER_TASKS } from "@/lib/mock";
 import { downloadCsv, useCrud } from "@/lib/store";
@@ -84,6 +85,7 @@ const MT_FIELDS: FieldDef[] = [
 ];
 
 export function MasterTasks() {
+  const branchNames = useBranchNames();
   const { rows, add, update, remove } = useCrud("master", MASTER_TASKS);
   const { toast, confirm } = useApp();
   const [q, setQ] = useState("");
@@ -122,7 +124,7 @@ export function MasterTasks() {
       </Section>
       <FormDialog
         open={!!dlg} mode={dlg?.mode ?? "add"} title={dlg?.mode === "edit" ? "แก้ไขงานมาตรฐาน" : "เพิ่มงานมาตรฐาน"}
-        fields={MT_FIELDS} value={dlg?.mode === "edit" ? rows[dlg.i] : undefined}
+        fields={withBranches(MT_FIELDS, branchNames)} value={dlg?.mode === "edit" ? rows[dlg.i] : undefined}
         onClose={() => setDlg(null)} saveLabel="บันทึกข้อมูล"
         onSave={(v) => { if (dlg?.mode === "edit") update(dlg.i, v); else add(v); setDlg(null); toast("บันทึกข้อมูลแล้ว"); }}
       />

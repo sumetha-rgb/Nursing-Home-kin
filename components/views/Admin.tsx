@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
+import { reloadBranches, useBranchNames } from "@/lib/branches";
 import Icon from "../Icon";
 import { BRANCHES, BRANCH_NAMES } from "@/lib/mock";
 import { api, SessionUser, UserRow } from "@/lib/session";
@@ -20,7 +21,7 @@ const BRANCH_FIELDS: FieldDef[] = [
   { label: "ประเภทสาขา", options: ["ศูนย์ดูแลผู้สูงอายุ (Nursing Home)", "ศูนย์บริการจัดส่งพนักงาน (Central Services)", "จุดบริการหน้าร้าน (POS/Retail)", "สำนักงานส่วนกลาง (HQ/Backoffice)"] },
   { label: "จุดเด่นของสาขา", area: true },
   { label: "อีเมล", type: "email" },
-  { label: "สถานะ", options: ["เปิด", "ปิด", "ภายใน"], required: true },
+  { label: "สถานะ", options: ["เปิด", "เตรียมเปิด", "ปิด", "ภายใน"], required: true },
   { label: "พิกัด (ละติจูด, ลองจิจูด)" },
   { label: "ลิงก์ภาพสาขา", wide: true },
   { label: "เลขที่ใบอนุญาตประกอบกิจการดูแลผู้สูงอายุ", wide: true },
@@ -46,7 +47,7 @@ export function Branches() {
     <div className="mb-5 flex flex-wrap items-center justify-between gap-4"><h2 className="text-[17px] font-medium text-gold-800">พื้นที่แห่งความใส่ใจ</h2><Tabs tabs={["การ์ดสาขา","ตารางข้อมูล"]} value={layout} onChange={setLayout} /></div>
     {layout==="การ์ดสาขา"?<><div className="table-search mb-5"><Icon name="search" /><input aria-label="ค้นหาสาขา" placeholder="ค้นหาชื่อหรือรหัสสาขา…" value={query} onChange={e=>setQuery(e.target.value)} /></div><div className="branch-grid">{shown.map(({r,i})=><article className="branch-card" key={i}><div className="branch-card-head"><span><Icon name="building" className="h-6 w-6" /></span><StatusBadge value={r[10]} /></div><div className="branch-card-body"><h3>{r[1]}</h3><p className="branch-card-id">KIN HOMECARE · {r[0]}</p><dl><div><dt>รองรับการดูแล</dt><dd>{r[5]} เตียง</dd></div><div><dt>ติดต่อสาขา</dt><dd>{r[3]||"—"}</dd></div><div><dt>ประเภทสาขา</dt><dd>{r[6]||"—"}</dd></div></dl><p className="mb-5 text-xs leading-7 text-gold-500">{r[8]||r[4]}</p><div className="branch-card-footer"><button className="btn-soft" onClick={()=>setDlg({mode:"edit",i})}>รายละเอียดและแก้ไข <Icon name="arrow" className="h-4 w-4" /></button><button className="row-action danger" onClick={()=>deleteBranch(i)}>ลบ</button></div></div></article>)}</div>{!shown.length&&<div className="card empty-state">ไม่พบสาขาที่ค้นหา</div>}</>:<Section title="ทะเบียนสาขา"><DataTable columns={BRANCH_COLS} rows={table} actions={[{label:"แก้ไข",onClick:i=>setDlg({mode:"edit",i})},{label:"ลบ",danger:true,onClick:deleteBranch}]} /></Section>}
     <details className="mt-8 text-xs text-gold-500"><summary className="cursor-pointer">การจัดการข้อมูลขั้นสูง</summary><div className="mt-4 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-red-100 bg-red-50/40 p-5"><p>ลบข้อมูลทุกสาขาออกจากระบบตัวอย่าง</p><button className="btn-danger" onClick={()=>confirm({title:"ล้างสาขาทั้งหมด",message:"ต้องการลบข้อมูลสาขาทั้งหมดใช่หรือไม่",danger:true,okLabel:"ล้างทั้งหมด",onOk:()=>{clear();toast("ล้างข้อมูลเรียบร้อย");}})}>ล้างข้อมูลสาขา</button></div></details>
-    <FormDialog open={!!dlg} mode={dlg?.mode??"add"} title={dlg?.mode==="edit"?"รายละเอียดสาขา":"เพิ่มพื้นที่แห่งการดูแล"} fields={BRANCH_FIELDS} value={dlg?.mode==="edit"?rows[dlg.i]:undefined} onClose={()=>setDlg(null)} onSave={v=>{if(dlg?.mode==="edit")update(dlg.i,v);else add(v);setDlg(null);toast("บันทึกข้อมูลสาขาเรียบร้อย");}} />
+    <FormDialog open={!!dlg} mode={dlg?.mode??"add"} title={dlg?.mode==="edit"?"รายละเอียดสาขา":"เพิ่มพื้นที่แห่งการดูแล"} fields={BRANCH_FIELDS} value={dlg?.mode==="edit"?rows[dlg.i]:undefined} onClose={()=>setDlg(null)} onSave={v=>{if(dlg?.mode==="edit")update(dlg.i,v);else add(v);setDlg(null);setTimeout(reloadBranches,1500);toast("บันทึกข้อมูลสาขาเรียบร้อย");}} />
   </>;
 }
 
@@ -56,6 +57,7 @@ const STATUSES = ["ทำงาน", "รออนุมัติ", "พัก�
 const STAFF_COLS = ["ชื่อ-นามสกุล", "อีเมล", "ประเภทสัญญา", "ระดับสิทธิ์", "สาขา", "สถานะ"];
 
 export function Staff() {
+  const branchNames = useBranchNames();
   const { toast, confirm } = useApp();
   const [users, setUsers] = useState<UserRow[]>([]);
   const [me, setMe] = useState<SessionUser | null>(null);
@@ -78,7 +80,7 @@ export function Staff() {
 
   const global = me?.role === "Global Admin";
   const levels = global ? [...ROLES] : ["Operation"];
-  const branches = global ? ["ทุกสาขา", ...BRANCH_NAMES] : [me?.branch ?? ""];
+  const branches = global ? ["ทุกสาขา", ...branchNames] : [me?.branch ?? ""];
   const fields: FieldDef[] = [
     { label: "ชื่อ-นามสกุล", required: true },
     { label: "อีเมล (ใช้เข้าสู่ระบบ)", type: "email", required: true },

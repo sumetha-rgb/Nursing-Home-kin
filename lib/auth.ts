@@ -53,6 +53,14 @@ export async function currentUser(req: NextRequest): Promise<SessionUser | null>
   return { id: u.id, name: u.full_name, email: u.email, role: u.access_level as Role, branch: u.branch_name ?? "" };
 }
 
+/** ตรวจว่าสาขาของบัญชีมีอยู่ในหน้า "สาขาของเรา" และเปิดให้บริการหรือไม่ */
+export async function checkBranch(u: SessionUser): Promise<SessionUser> {
+  if (u.role === "Global Admin") return { ...u, branchCheck: "all" };
+  const [b] = await sql`SELECT status FROM branches WHERE name = ${u.branch} LIMIT 1`;
+  const st = String(b?.status ?? "");
+  return { ...u, branchCheck: !b ? "missing" : st === "ปิด" ? "closed" : st === "เตรียมเปิด" ? "upcoming" : "ok" };
+}
+
 export const unauthorized = () => NextResponse.json({ error: "กรุณาเข้าสู่ระบบ" }, { status: 401 });
 export const forbidden = (msg = "บัญชีนี้ไม่มีสิทธิ์ทำรายการนี้") => NextResponse.json({ error: msg }, { status: 403 });
 

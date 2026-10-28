@@ -27,15 +27,15 @@ function readFile(f: File) {
  * ช่องแนบรูป: เลือกได้ทั้ง "เปิดกล้อง" (ถ่ายสดผ่านกล้องของเครื่อง ทั้งมือถือและคอม) และ "เลือกรูป" (จากไฟล์/คลังรูป)
  * เครื่องที่เปิดกล้องผ่านเบราว์เซอร์ไม่ได้ ปุ่มกล้องจะใช้กล้องของระบบปฏิบัติการแทน
  */
-export default function PhotoPicker({ value, onChange, label = "แนบรูปภาพ", hint, invalid = false, allowFile = true }: {
-  value: string; onChange: (dataUrl: string) => void; label?: string; hint?: string; invalid?: boolean; allowFile?: boolean;
+export default function PhotoPicker({ value, onChange, label = "แนบรูปภาพ", hint, invalid = false, allowFile = true, front = false }: {
+  value: string; onChange: (dataUrl: string) => void; label?: string; hint?: string; invalid?: boolean; allowFile?: boolean; front?: boolean;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const nativeCam = useRef<HTMLInputElement>(null);
   const video = useRef<HTMLVideoElement>(null);
   const stream = useRef<MediaStream | null>(null);
   const [cam, setCam] = useState(false);
-  const [facing, setFacing] = useState<"environment" | "user">("environment");
+  const [facing, setFacing] = useState<"environment" | "user">(front ? "user" : "environment");
   const [err, setErr] = useState("");
   const [ready, setReady] = useState(false);
 
@@ -86,7 +86,7 @@ export default function PhotoPicker({ value, onChange, label = "แนบรู�
       </div>
       {hint && <p className="mt-1.5 text-xs leading-5 text-gold-500">{hint}</p>}
       <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { pick(e.target.files?.[0]); e.target.value = ""; }} />
-      <input ref={nativeCam} type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => { pick(e.target.files?.[0]); e.target.value = ""; }} />
+      <input ref={nativeCam} type="file" accept="image/*" capture={front ? "user" : "environment"} className="hidden" onChange={(e) => { pick(e.target.files?.[0]); e.target.value = ""; }} />
 
       <Modal open={cam} title="ถ่ายรูป" onClose={() => setCam(false)}
         footer={<>

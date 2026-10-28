@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import { useBranchNames, withBranches } from "@/lib/branches";
 import Icon from "../Icon";
 import { ACTIVITY, APPOINTMENTS, BRANCH_NAMES, COMPLAINTS, DOCS, HEALTH, KPI_ROWS, RESIDENTS } from "@/lib/mock";
 import { downloadCsv, useCrud } from "@/lib/store";
@@ -14,18 +15,19 @@ import { BlankForm, DataTable, Field, FieldDef, FormDialog, Modal, MetricGrid, P
 /* ---------- ผลงาน KPI ---------- */
 const KPI_COLS = ["สาขา", "% สำเร็จ", "% สุ่มตรวจ", "ดาวญาติ", "งาน/คน", "% ความพึงพอใจ", "คอมเพลน", "คะแนนรวม"];
 const KPI_MONTH = [
-  ["กรุงเทพมหานคร", "90%", "44%", "2,310", "6.1", "93%", "1", "260.0"],
-  ["เชียงใหม่", "86%", "39%", "1,742", "5.7", "90%", "2", "231.0"],
-  ["ขอนแก่น", "79%", "33%", "1,260", "5.0", "88%", "1", "186.5"],
+  ["สุขุมวิท 107", "90%", "44%", "2,310", "6.1", "93%", "1", "260.0"],
+  ["ราชพฤกษ์", "86%", "39%", "1,742", "5.7", "90%", "2", "231.0"],
+  ["พัทยา", "79%", "33%", "1,260", "5.0", "88%", "1", "186.5"],
 ];
 const SHIFT: Record<string, { done: [number, number, number]; check: [number, number, number]; m: string; n: string }> = {
   "": { done: [48, 42, 88], check: [42, 30, 71], m: "พนักงาน 8 คน ทำเสร็จ 6 คน", n: "พนักงาน 5 คน ทำเสร็จ 2 คน" },
-  กรุงเทพมหานคร: { done: [20, 19, 95], check: [19, 15, 79], m: "พนักงาน 4 คน ทำเสร็จ 4 คน", n: "พนักงาน 2 คน ทำเสร็จ 1 คน" },
-  เชียงใหม่: { done: [16, 14, 88], check: [14, 10, 71], m: "พนักงาน 2 คน ทำเสร็จ 1 คน", n: "พนักงาน 2 คน ทำเสร็จ 1 คน" },
-  ขอนแก่น: { done: [12, 9, 75], check: [9, 5, 56], m: "พนักงาน 2 คน ทำเสร็จ 1 คน", n: "พนักงาน 1 คน ทำเสร็จ 0 คน" },
+  "สุขุมวิท 107": { done: [20, 19, 95], check: [19, 15, 79], m: "พนักงาน 4 คน ทำเสร็จ 4 คน", n: "พนักงาน 2 คน ทำเสร็จ 1 คน" },
+  "ราชพฤกษ์": { done: [16, 14, 88], check: [14, 10, 71], m: "พนักงาน 2 คน ทำเสร็จ 1 คน", n: "พนักงาน 2 คน ทำเสร็จ 1 คน" },
+  "พัทยา": { done: [12, 9, 75], check: [9, 5, 56], m: "พนักงาน 2 คน ทำเสร็จ 1 คน", n: "พนักงาน 1 คน ทำเสร็จ 0 คน" },
 };
 
 export function Dashboard() {
+  const branchNames = useBranchNames();
   const { toast, confirm } = useApp();
   const [range, setRange] = useState("วันนี้ (รายวัน)");
   const [msg, setMsg] = useState(false);
@@ -88,7 +90,7 @@ export function Dashboard() {
           <button className="btn-soft mt-4 w-full" onClick={() => setMsg(true)}>ส่งกำลังใจให้สาขา</button>
         </Section>
 
-        <Section title="ควบคุมงานประจำวันกะเช้า-ดึก" sub="ติดตามสถานะงานแบบเรียลไทม์ และสัดส่วนการตรวจงาน" actions={<div className="min-w-40"><Select options={BRANCH_NAMES} placeholder="รวมทุกสาขา" value={shiftBranch} onChange={setShiftBranch} /></div>}>
+        <Section title="ควบคุมงานประจำวันกะเช้า-ดึก" sub="ติดตามสถานะงานแบบเรียลไทม์ และสัดส่วนการตรวจงาน" actions={<div className="min-w-40"><Select options={branchNames} placeholder="รวมทุกสาขา" value={shiftBranch} onChange={setShiftBranch} /></div>}>
           <h3 className="mb-3 text-sm font-semibold text-gold-700">สถานะกะการทำงาน</h3>
           <div className="grid gap-4 sm:grid-cols-2">
             {[
@@ -126,7 +128,7 @@ export function Dashboard() {
         }}>ส่งกำลังใจ</button>}
       >
         <div className="space-y-4">
-          <Field label="ส่งข้อความชื่นชมไปยัง"><Select options={BRANCH_NAMES} placeholder="-- เลือกสาขา --" value={to} onChange={setTo} /></Field>
+          <Field label="ส่งข้อความชื่นชมไปยัง"><Select options={branchNames} placeholder="-- เลือกสาขา --" value={to} onChange={setTo} /></Field>
           <textarea rows={4} value={text} onChange={(e) => setText(e.target.value)} />
         </div>
       </Modal>
@@ -176,6 +178,7 @@ export function Appointments() {
 const HEALTH_COLS = ["วัน-เวลา", "ชื่อผู้สูงอายุ", "สัญญาณชีพ (Vital Signs)", "O2 Sat", "DTX", "น้ำหนัก/ส่วนสูง", "ข้อมูลอื่น", "โน้ต / อาการ", "ผู้บันทึก"];
 
 export function HealthLogs() {
+  const branchNames = useBranchNames();
   const { rows, add } = useCrud("health", HEALTH);
   const { toast } = useApp();
   const { user } = useSession();
@@ -195,7 +198,7 @@ export function HealthLogs() {
         actions={<button className="btn-primary" onClick={() => setRecord(true)}><Icon name="plus" className="h-4 w-4" /> บันทึกสัญญาณชีพ</button>} />
       <Section>
         <div className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <Select options={BRANCH_NAMES} placeholder="-- ทุกสาขา --" />
+          <Select options={branchNames} placeholder="-- ทุกสาขา --" />
           <Select options={names} placeholder="-- ทุกคน --" value={person} onChange={setPerson} />
           <div className="flex min-w-0 items-center gap-2 sm:col-span-2 lg:col-span-2">
             <input type="date" aria-label="วันที่เริ่มต้น" className="min-w-0 flex-1" />
@@ -233,6 +236,7 @@ const COMPLAINT_FIELDS: FieldDef[] = [
 ];
 
 export function Feedbacks() {
+  const branchNames = useBranchNames();
   const { rows, update, remove } = useCrud("complaints", COMPLAINTS);
   const { toast, confirm } = useApp();
   const [modal, setModal] = useState<null | "share" | "line" | "survey">(null);
@@ -272,7 +276,7 @@ export function Feedbacks() {
       </Section>
 
       <FormDialog
-        open={row !== null} mode="edit" title="จัดการเรื่องร้องเรียน" fields={COMPLAINT_FIELDS} value={row !== null ? rows[row] : undefined}
+        open={row !== null} mode="edit" title="จัดการเรื่องร้องเรียน" fields={withBranches(COMPLAINT_FIELDS, branchNames)} value={row !== null ? rows[row] : undefined}
         onClose={() => setRow(null)} onSave={(v) => { if (row !== null) update(row, v); setRow(null); toast("อัปเดตสถานะแล้ว"); }}
       />
 
@@ -280,14 +284,14 @@ export function Feedbacks() {
         <p className="mb-5 text-sm text-gold-600">กำหนดค่า LINE Channel Access Token และ LINE Group ID เพื่อให้ระบบสามารถดึงไปใช้ในการส่งแจ้งเตือนหรือบรอดแคสต์แบบประเมินได้ในอนาคต</p>
         <div className="space-y-4">
           <Toggle label="สถานะการใช้งาน LINE Bot" hint="เปิดเพื่ออนุญาตให้หุ่นยนต์ส่งข้อความแจ้งเตือน" />
-          <Field label="เลือกสาขาที่ต้องการตั้งค่า:"><Select options={BRANCH_NAMES} /></Field>
+          <Field label="เลือกสาขาที่ต้องการตั้งค่า:"><Select options={branchNames} /></Field>
           <Field label="1. LINE Channel Access Token" required><input /><p className="mt-1 text-xs text-gold-500">เอามาจากเว็บ LINE Developers (Long-lived token)</p></Field>
           <Field label="2. LINE Group ID (สำหรับกลุ่มผู้บริหารสาขา/แอดมินรับแจ้งเตือน)"><input /><p className="mt-1 text-xs text-gold-500">ไอดีของกลุ่มผู้บริหาร เพื่อรับแจ้งเตือนเวลามีเรื่องร้องเรียนด่วน</p></Field>
         </div>
       </Modal>
 
       <Modal open={modal === "share"} title="สร้างลิงก์และป้าย QR Code" onClose={close}>
-        <Field label="เลือกสาขาที่ต้องการสร้างลิงก์"><Select options={BRANCH_NAMES} placeholder="-- เลือกสาขา --" value={branch} onChange={setBranch} /></Field>
+        <Field label="เลือกสาขาที่ต้องการสร้างลิงก์"><Select options={branchNames} placeholder="-- เลือกสาขา --" value={branch} onChange={setBranch} /></Field>
         <div className="mt-5 space-y-4">
           <div className="rounded-2xl border border-cream-300 bg-cream-50 p-4">
             <p className="font-medium text-gold-800">1. แบบประเมินความพึงพอใจ</p>
@@ -306,7 +310,7 @@ export function Feedbacks() {
       <Modal open={modal === "survey"} title="แบบประเมินความพึงพอใจ" onClose={close} footer={<><button className="btn-soft" onClick={close}>ยกเลิก</button><button className="btn-primary" onClick={() => { close(); toast("ส่งแบบประเมินแล้ว ขอบคุณครับ"); }}>ส่งแบบประเมิน</button></>}>
         <p className="mb-5 text-sm text-gold-600">กรุณากรอกแบบฟอร์มเพื่อประเมินความพึงพอใจในการให้บริการ ข้อมูลของคุณจะถูกนำไปพัฒนาและปรับปรุงคุณภาพต่อไป</p>
         <div className="space-y-4">
-          <Field label="สาขาที่รับบริการ" required><Select options={BRANCH_NAMES} /></Field>
+          <Field label="สาขาที่รับบริการ" required><Select options={branchNames} /></Field>
           <Field label="ชื่อผู้ประเมิน" required><input /></Field>
           <Field label="ความพึงพอใจโดยรวม" required><Select options={["5 (ดีมาก)", "4 (ดี)", "3 (ปานกลาง)", "2 (พอใช้)", "1 (ปรับปรุง)"]} /></Field>
           <Field label="ข้อเสนอแนะเพิ่มเติม"><textarea rows={3} /></Field>

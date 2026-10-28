@@ -3,7 +3,7 @@
 export const ACTION_LABEL: Record<string, string> = {
   create: "เพิ่ม", update: "แก้ไข", delete: "ลบ", clear: "ล้างข้อมูล", replace: "แทนที่ทั้งหมด",
   login: "เข้าสู่ระบบ", login_failed: "เข้าสู่ระบบไม่สำเร็จ", change_password: "เปลี่ยนรหัสผ่าน",
-  register: "สมัครสมาชิก", approve: "อนุมัติบัญชี", reset_password: "รีเซตรหัสผ่าน", acknowledge: "รับทราบแจ้งเตือน",
+  register: "สมัครสมาชิก", approve: "อนุมัติบัญชี", reset_password: "รีเซตรหัสผ่าน", acknowledge: "รับทราบแจ้งเตือน", checkin: "เช็คชื่อเข้างาน", checkout: "เช็คชื่อออกงาน",
 };
 
 /** กลุ่มตัวกรอง → action ที่อยู่ในกลุ่ม */
@@ -11,7 +11,7 @@ export const ACTION_GROUPS: Record<string, string[]> = {
   "เพิ่ม": ["create", "register"],
   "แก้ไข": ["update", "approve", "replace", "acknowledge"],
   "ลบ": ["delete", "clear"],
-  "บัญชีและการเข้าสู่ระบบ": ["login", "login_failed", "change_password", "reset_password"],
+  "บัญชีและการเข้าสู่ระบบ": ["login", "login_failed", "change_password", "reset_password", "checkin", "checkout"],
 };
 
 export const AREA_LABEL: Record<string, string> = {
@@ -20,7 +20,7 @@ export const AREA_LABEL: Record<string, string> = {
   complaints: "เสียงจากครอบครัว", docs: "เอกสารและระเบียบ", branches: "สาขาของเรา", users: "ทีมและสิทธิ์การใช้งาน",
   auth: "การเข้าสู่ระบบ", "pharmacy-master": "แอปจัดยา · ฐานข้อมูลยา", "pharmacy-drugs": "แอปจัดยา · คลังยา",
   "pharmacy-packs": "แอปจัดยา · ซองยา", "staff-tasks": "KinApp · งานวันนี้", "staff-meds": "KinApp · คิวจ่ายยา",
-  "staff-handover": "KinApp · สมุดส่งเวร", alerts: "แจ้งเตือนสัญญาณชีพ",
+  "staff-handover": "KinApp · สมุดส่งเวร", alerts: "แจ้งเตือนสัญญาณชีพ", routines: "งานประจำ (ทำซ้ำทุกวัน)", roster: "ตารางเวร", attendance: "เช็คชื่อเข้า-ออกงาน",
 };
 export function areaLabel(area: string) {
   const d = area.match(/^daily-(\d{4})-(\d{2})-(\d{2})$/);
@@ -48,7 +48,7 @@ export const FIELD_LABEL: Record<string, string> = {
   given: "จ่ายแล้ว", packed_by: "ผู้จัดยา", scheduled_time: "เวลาที่กำหนด", done_time: "เวลาที่ทำเสร็จ",
   medications: "ยา", shortage: "ยาที่ขาด", done: "เสร็จแล้ว", topic_type: "หัวข้อ", detail: "รายละเอียด",
   written_by: "ผู้เขียน", written_at: "เวลาที่เขียน", assignee: "ผู้รับผิดชอบ", submitted_time: "เวลาที่ส่งจริง",
-  contract_type: "ประเภทสัญญาจ้าง", access_level: "ระดับสิทธิ์", given_by: "ผู้ให้ยา", given_at: "เวลาที่ให้ยา", checked_by: "ผู้ตรวจ QA", ack_note: "บันทึกการรับทราบ",
+  contract_type: "ประเภทสัญญาจ้าง", access_level: "ระดับสิทธิ์", staff: "พนักงานเข้าเวร", given_by: "ผู้ให้ยา", given_at: "เวลาที่ให้ยา", checked_by: "ผู้ตรวจ QA", ack_note: "บันทึกการรับทราบ",
 };
 
 /** เทียบค่าแบบหลวม: วันที่/ตัวเลขจากฐานข้อมูลกับจากหน้าเว็บอาจต่างรูปแบบเล็กน้อย */
