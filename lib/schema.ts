@@ -15,9 +15,10 @@ export type Col = { col: string; t: ColType; field?: string };
  * branchCol    : คอลัมน์สาขา ผู้ใช้ที่ไม่ใช่ Global Admin เห็น/แก้เฉพาะสาขาตัวเอง (และเห็นข้อมูลส่วนกลางแบบอ่านอย่างเดียว)
  * hiddenBranch : คอลัมน์สาขาไม่ได้อยู่ใน cols หน้าเว็บไม่เห็น server ใส่ค่าให้ตอนสร้างรายการ
  * adminOnly    : ระดับปฏิบัติงานเข้าไม่ได้
+ * globalWrite  : แก้ไข/เพิ่ม/ลบได้เฉพาะ Global Admin (ระดับอื่นอ่านอย่างเดียว)
  * residentLink : มีคอลัมน์ resident_name → server เก็บ resident_id (รหัสผู้รับบริการ) ให้เอง
  */
-export type Spec = { table: string; kind: "rows" | "object"; cols: Col[]; numericId?: boolean; branchCol?: string; hiddenBranch?: boolean; residentLink?: boolean; adminOnly?: boolean; scope?: { col: string; value: string } };
+export type Spec = { table: string; kind: "rows" | "object"; cols: Col[]; numericId?: boolean; branchCol?: string; hiddenBranch?: boolean; residentLink?: boolean; adminOnly?: boolean; globalWrite?: boolean; scope?: { col: string; value: string } };
 
 /** ค่าสาขาของข้อมูลส่วนกลาง ทุกสาขาเห็นได้ */
 export const SHARED_BRANCHES = ["ทุกสาขา", "ส่วนกลาง"];
@@ -34,7 +35,7 @@ const SPECS: Record<string, Omit<Spec, "scope">> = {
   complaints: { table: "complaints", kind: "rows", branchCol: "branch_name", cols: [c("reported_at", "ts_th"), c("branch_name"), c("issue"), c("contact_phone"), c("status")] },
   docs: { table: "official_documents", kind: "rows", ...own, cols: [c("title"), c("doc_type"), c("doc_date", "date_th"), c("status")] },
   branches: {
-    table: "branches", kind: "rows", branchCol: "name",
+    table: "branches", kind: "rows", branchCol: "name", globalWrite: true,
     cols: [c("branch_code"), c("name"), c("legal_entity"), c("phone"), c("address"), c("bed_count", "int"), c("ownership_type"), c("branch_type"), c("selling_point"), c("email"), c("status"), c("lat_long"), c("image_url"), c("license_no"), c("bank_name"), c("main_account"), c("sub_account")],
   },
   facility: { table: "facility_tasks", kind: "rows", ...own, cols: [c("task_name"), c("category"), c("schedule"), c("dispatch_mode")] },

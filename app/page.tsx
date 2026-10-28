@@ -10,7 +10,10 @@ import { ViewId } from "@/lib/nav";
 import { Contracts, Residents, TasksTable, Workflow } from "@/components/views/Core";
 import { DailyTasks } from "@/components/views/Daily";
 import { FacilityTasks, MasterTasks, Quotations } from "@/components/views/Tasks";
-import { Appointments, Dashboard, Feedbacks, HealthLogs, OfficialDocs } from "@/components/views/Ops";
+import { Appointments, Dashboard, HealthLogs, OfficialDocs } from "@/components/views/Ops";
+import { Feedbacks } from "@/components/views/Feedbacks";
+import { StaffReviews } from "@/components/views/StaffReviews";
+import { StaffKpi } from "@/components/views/StaffKpi";
 import { Branches, Staff } from "@/components/views/Admin";
 import { AuditLog } from "@/components/views/Audit";
 import { Roster } from "@/components/views/Roster";
@@ -33,6 +36,8 @@ const VIEWS: Record<ViewId, () => JSX.Element> = {
   quotations: Quotations,
   audit: AuditLog,
   roster: Roster,
+  reviews: StaffReviews,
+  kpi: StaffKpi,
 };
 
 function Splash() {

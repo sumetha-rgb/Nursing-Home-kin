@@ -11,11 +11,21 @@ const CACHE = "kin-cache:branch-names";
 const listeners = new Set<() => void>();
 let names: string[] = FALLBACK;
 let started = false;
+/** สาขาของผู้ใช้ที่ไม่ใช่ผู้บริหาร: ช่องเลือกสาขาแสดงเฉพาะสาขานี้ (server จำกัดข้อมูลตามสาขาอยู่แล้ว) */
+let scope: string | null = null;
+let scoped: string[] = names;
+const notify = () => { scoped = scope ? [scope] : names; listeners.forEach((l) => l()); };
+
+/** เรียกเมื่อรู้ว่าใครเข้าสู่ระบบ (lib/session) */
+export function setBranchScope(u: { role: string; branch: string | null } | null) {
+  const next = u && u.role !== "Global Admin" && u.branch ? u.branch : null;
+  if (next !== scope) { scope = next; notify(); }
+}
 
 function load() {
   if (started || typeof window === "undefined") return;
   started = true;
-  try { const c = JSON.parse(localStorage.getItem(CACHE) ?? "null"); if (Array.isArray(c) && c.length) { names = c; listeners.forEach((l) => l()); } } catch { /* ignore */ }
+  try { const c = JSON.parse(localStorage.getItem(CACHE) ?? "null"); if (Array.isArray(c) && c.length) { names = c; notify(); } } catch { /* ignore */ }
   fetch("/api/branches", { cache: "no-store" })
     .then((r) => (r.ok ? r.json() : null))
     .then((d: { branches?: { name: string }[] } | null) => {
@@ -23,7 +33,7 @@ function load() {
       if (!list.length) return;
       names = list;
       try { localStorage.setItem(CACHE, JSON.stringify(list)); } catch { /* ignore */ }
-      listeners.forEach((l) => l());
+      notify();
     })
     .catch(() => {});
 }
@@ -31,9 +41,10 @@ function load() {
 /** โหลดรายชื่อสาขาใหม่ (หลังเพิ่ม/แก้สาขา) */
 export function reloadBranches() { started = false; load(); }
 
-export function useBranchNames() {
+/** รายชื่อสาขาสำหรับช่องเลือก · all = ทุกสาขา (หน้าสมัครสมาชิก) ไม่อย่างนั้นผู้จัดการ/พนักงานเห็นเฉพาะสาขาตัวเอง */
+export function useBranchNames({ all = false }: { all?: boolean } = {}) {
   useEffect(load, []);
-  return useSyncExternalStore((l) => { listeners.add(l); return () => { listeners.delete(l); }; }, () => names, () => FALLBACK);
+  return useSyncExternalStore((l) => { listeners.add(l); return () => { listeners.delete(l); }; }, () => (all ? names : scoped), () => FALLBACK);
 }
 
 /** แทนตัวเลือกของช่อง "สาขา" ในฟอร์มด้วยรายชื่อจริง (ช่องที่มี "ส่วนกลาง" / "ทุกสาขา" นำหน้า คงไว้) */

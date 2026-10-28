@@ -514,3 +514,91 @@ CREATE TABLE IF NOT EXISTS attendance (
 CREATE INDEX IF NOT EXISTS attendance_branch_date ON attendance (branch_name, work_date);
 CREATE INDEX IF NOT EXISTS attendance_staff_date ON attendance (staff_id, work_date);
 COMMENT ON TABLE attendance IS 'การเช็คชื่อเข้า/ออกงานพร้อมรูปถ่าย';
+
+-- รูปหลักฐานตอนพนักงานส่งงานจาก KinApp (โหลดแยกเฉพาะตอนเปิดตรวจงาน ไม่รวมในรายการงาน)
+ALTER TABLE daily_tasks ADD COLUMN IF NOT EXISTS photo text;
+ALTER TABLE daily_tasks ADD COLUMN IF NOT EXISTS photo_at timestamptz;
+
+-- แบบประเมินความพึงพอใจจากครอบครัว/ญาติ (ส่งผ่านลิงก์หรือ QR ไม่ต้องเข้าสู่ระบบ)
+CREATE TABLE IF NOT EXISTS satisfaction_surveys (
+  id            text PRIMARY KEY,
+  branch_name   text NOT NULL,
+  rater_name    text,
+  relation      text,
+  resident_name text,
+  score_overall int NOT NULL CHECK (score_overall BETWEEN 1 AND 5),
+  score_care    int CHECK (score_care BETWEEN 1 AND 5),
+  score_staff   int CHECK (score_staff BETWEEN 1 AND 5),
+  score_food    int CHECK (score_food BETWEEN 1 AND 5),
+  score_clean   int CHECK (score_clean BETWEEN 1 AND 5),
+  comment       text,
+  contact_phone text,
+  source_ip     text,
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS satisfaction_surveys_branch ON satisfaction_surveys (branch_name, created_at DESC);
+COMMENT ON TABLE satisfaction_surveys IS 'แบบประเมินความพึงพอใจจากครอบครัว (ลิงก์/QR สาธารณะ)';
+-- เรื่องร้องเรียนที่ส่งจาก QR: ผู้แจ้ง หมวด และ IP (กันส่งซ้ำรัว ๆ)
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS reporter text;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS category text;
+ALTER TABLE complaints ADD COLUMN IF NOT EXISTS source_ip text;
+
+-- ลิงก์รีวิวพนักงานสำหรับครอบครัว: 1 ลิงก์ต่อผู้รับบริการ (รหัสสุ่ม เดาไม่ได้ ยกเลิกได้ หมดอายุได้)
+CREATE TABLE IF NOT EXISTS review_links (
+  id            text PRIMARY KEY,
+  token         text NOT NULL UNIQUE,
+  resident_id   text REFERENCES residents(id) ON DELETE CASCADE,
+  resident_name text NOT NULL,
+  branch_name   text NOT NULL,
+  created_by    text,
+  active        boolean NOT NULL DEFAULT true,
+  expires_at    timestamptz,
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS review_links_resident ON review_links (resident_id);
+COMMENT ON TABLE review_links IS 'ลิงก์รีวิวพนักงานที่ส่งให้ญาติของผู้รับบริการแต่ละคน';
+
+-- รีวิวพนักงานจากครอบครัว (1 แถวต่อพนักงาน 1 คน · ส่งครั้งเดียวรีวิวได้หลายคน)
+CREATE TABLE IF NOT EXISTS staff_reviews (
+  id            text PRIMARY KEY,
+  link_id       text REFERENCES review_links(id) ON DELETE SET NULL,
+  submission_id text NOT NULL,
+  branch_name   text NOT NULL,
+  resident_id   text,
+  resident_name text,
+  staff_id      text NOT NULL,
+  staff_name    text NOT NULL,
+  rating        int NOT NULL CHECK (rating BETWEEN 1 AND 5),
+  tags          text[] NOT NULL DEFAULT '{}',
+  comment       text,
+  rater_name    text,
+  relation      text,
+  source_ip     text,
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS staff_reviews_staff ON staff_reviews (staff_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS staff_reviews_branch ON staff_reviews (branch_name, created_at DESC);
+COMMENT ON TABLE staff_reviews IS 'รีวิวพนักงานจากครอบครัว ใช้คิดคะแนน/KPI ของพนักงาน';
+
+-- สมุดภาพประจำวันของครอบครัว: รูปงานที่พนักงานเลือกแชร์ (ผู้จัดการซ่อนภายหลังได้)
+ALTER TABLE daily_tasks ADD COLUMN IF NOT EXISTS share_family boolean NOT NULL DEFAULT true;
+
+-- ดาวและความเห็นจากผู้จัดการตอนตรวจงาน (ใช้คิด KPI ส่วน "ดาวจากผู้จัดการ")
+ALTER TABLE daily_tasks ADD COLUMN IF NOT EXISTS review_stars int CHECK (review_stars BETWEEN 1 AND 5);
+ALTER TABLE daily_tasks ADD COLUMN IF NOT EXISTS review_note text;
+ALTER TABLE daily_tasks ADD COLUMN IF NOT EXISTS reviewed_by text;
+ALTER TABLE daily_tasks ADD COLUMN IF NOT EXISTS reviewed_at timestamptz;
+
+-- น้ำหนัก KPI พนักงาน (แถวเดียว id = 'default' · ผู้บริหารแก้ได้ · รวมต้องเท่ากับ 100)
+CREATE TABLE IF NOT EXISTS kpi_settings (
+  id            text PRIMARY KEY,
+  w_family      int NOT NULL DEFAULT 40,
+  w_manager     int NOT NULL DEFAULT 30,
+  w_tasks       int NOT NULL DEFAULT 20,
+  w_punctual    int NOT NULL DEFAULT 10,
+  updated_by    text,
+  updated_at    timestamptz NOT NULL DEFAULT now(),
+  CHECK (w_family + w_manager + w_tasks + w_punctual = 100)
+);
+INSERT INTO kpi_settings (id) VALUES ('default') ON CONFLICT DO NOTHING;
+COMMENT ON TABLE kpi_settings IS 'น้ำหนักคะแนน KPI พนักงาน (ดาวครอบครัว/ดาวผู้จัดการ/งานที่ส่ง/มาตรงเวลา)';

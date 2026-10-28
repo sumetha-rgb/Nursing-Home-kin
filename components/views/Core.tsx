@@ -7,6 +7,7 @@ import { APPOINTMENTS, CONTRACTS, DAILY_LIST, RESIDENTS, TASKS, BRANCH_NAMES } f
 import { downloadCsv, useCrud } from "@/lib/store";
 import { useApp } from "@/lib/app";
 import { ViewId } from "@/lib/nav";
+import FamilyLinkDialog from "../care/FamilyLinkDialog";
 import ResidentProfile from "../care/ResidentProfile";
 import { BlankForm, DataTable, Field, FieldDef, FormDialog, Modal, MetricGrid, PageHeader, Section, Select, Upload, Tabs } from "../ui";
 
@@ -206,6 +207,7 @@ export function Residents() {
   const [sample, setSample] = useState(false);
   const [dlg, setDlg] = useState<Dlg>(null);
   const [profile, setProfile] = useState<string | null>(null);
+  const [family, setFamily] = useState<string | null>(null);
   const norm = (x: string) => x.trim().replace(/\s+/g, " ");
   return (
     <>
@@ -220,6 +222,7 @@ export function Residents() {
           rows={rows}
           actions={[
             { label: "ประวัติ", onClick: (i) => setProfile(ids[i]) },
+            { label: "ลิงก์ครอบครัว", onClick: (i) => setFamily(ids[i]) },
             { label: "แก้ไข", onClick: (i) => setDlg({ mode: "edit", i }) },
             { label: "ลบ", danger: true, onClick: (i) => confirm({ title: "ลบข้อมูลผู้รับบริการ", message: `ต้องการลบ ${rows[i][0]} ใช่หรือไม่`, danger: true, okLabel: "ลบ", onOk: () => { remove(i); toast("ลบข้อมูลแล้ว"); } }) },
           ]}
@@ -236,6 +239,7 @@ export function Residents() {
         }} saveLabel="บันทึกการแก้ไข"
       />
       <ResidentProfile id={profile} onClose={() => setProfile(null)} />
+      <FamilyLinkDialog open={!!family} residentId={family ?? ""} onClose={() => setFamily(null)} />
       <BlankForm open={sample} title="แบบประเมินแรกรับ (แบบฟอร์มเปล่า)" onClose={() => setSample(false)}
         lines={["ชื่อ-สกุล ผู้รับบริการ", "สาขา", "วันเข้าอยู่ (รับดูแลเมื่อ)", "อายุ (ปี)", "BT อุณหภูมิ", "PR ชีพจร", "RR การหายใจ", "BP ความดันโลหิต", "O2SAT ออกซิเจน", "DTX น้ำตาล", "น้ำหนัก (ก.ก.)", "ส่วนสูง (ซ.ม.)", "ลงชื่อผู้ประเมิน", "วัน/เดือน/ปี ที่ประเมิน"]} />
     </>
@@ -257,7 +261,7 @@ export function TasksTable() {
         title="ข้อมูลงานรายวัน (Table)"
         sub="ดูข้อมูลงานทั้งหมดในรูปแบบตาราง Excel (สามารถโหลด Excel ได้)"
         actions={<>
-          <div className="min-w-44"><Select options={branchNames} placeholder="รวมทุกสาขา" value={branch} onChange={setBranch} /></div>
+          {branchNames.length > 1 && <div className="min-w-44"><Select options={branchNames} placeholder="รวมทุกสาขา" value={branch} onChange={setBranch} /></div>}
           <button className="btn-primary" onClick={() => downloadCsv("ข้อมูลงานรายวัน", TASK_COLS, shown)}><Icon name="download" className="h-4 w-4" /> โหลด CSV</button>
         </>}
       />

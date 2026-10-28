@@ -12,7 +12,7 @@ import { Modal } from "./ui";
 const ROLE_ICON: Record<Role, string> = { "Global Admin": "grid", "Branch Admin": "building", Operation: "heart" };
 
 export default function Login({ onLogin, staff = false }: { onLogin: (u: SessionUser) => void; staff?: boolean }) {
-  const branchNames = useBranchNames();
+  const branchNames = useBranchNames({ all: true });
   const [mode, setMode] = useState<"login" | "register">("login");
   const [show, setShow] = useState(false);
   const [busy, setBusy] = useState(false);

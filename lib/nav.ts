@@ -1,4 +1,4 @@
-﻿export type ViewId = "careplan"|"contracts"|"residents"|"tasks_table"|"tasks"|"appointments"|"health_logs"|"feedbacks"|"dashboard"|"official-docs"|"branches"|"staff"|"facility_tasks"|"master_tasks"|"quotations"|"audit"|"roster";
+﻿export type ViewId = "careplan"|"contracts"|"residents"|"tasks_table"|"tasks"|"appointments"|"health_logs"|"feedbacks"|"dashboard"|"official-docs"|"branches"|"staff"|"facility_tasks"|"master_tasks"|"quotations"|"audit"|"roster"|"reviews"|"kpi";
 export type NavItem = {kind:"view";id:ViewId;label:string;icon:string;group:0|1|2}|{kind:"link";href:string;label:string;icon:string;group:0|1|2};
 export const NAV:NavItem[]=[
 {kind:"view",id:"careplan",label:"ภาพรวมการดูแล",icon:"grid",group:0},
@@ -13,6 +13,8 @@ export const NAV:NavItem[]=[
 {kind:"view",id:"branches",label:"สาขาของเรา",icon:"building",group:1},
 {kind:"view",id:"staff",label:"ทีมและสิทธิ์การใช้งาน",icon:"id",group:1},
 {kind:"view",id:"feedbacks",label:"เสียงจากครอบครัว",icon:"chat",group:1},
+{kind:"view",id:"reviews",label:"รีวิวพนักงาน",icon:"trophy",group:1},
+{kind:"view",id:"kpi",label:"KPI พนักงาน",icon:"chart",group:1},
 {kind:"view",id:"audit",label:"ประวัติการแก้ไข",icon:"history",group:1},
 {kind:"view",id:"tasks_table",label:"ทะเบียนงาน",icon:"table",group:2},
 {kind:"view",id:"facility_tasks",label:"งานทั่วไปของศูนย์",icon:"building",group:2},

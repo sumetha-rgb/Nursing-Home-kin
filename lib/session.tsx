@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { SessionUser } from "./roles";
 import { clearOfflineData, setOfflineOwner } from "./store";
+import { setBranchScope } from "./branches";
 
 export type { SessionUser };
 
@@ -33,6 +34,7 @@ export function useSession() {
   const [ready, setReady] = useState(false);
   const setUser = useCallback((u: SessionUser | null) => {
     if (u) setOfflineOwner(u.id);
+    setBranchScope(u);
     remember(u);
     setUserState(u);
   }, []);
@@ -40,7 +42,7 @@ export function useSession() {
     fetch("/api/auth/me", { cache: "no-store" })
       .then((r) => r.json())
       .then((d) => setUser(d.user ?? null))
-      .catch(() => setUserState(remembered())) // ออฟไลน์: ใช้ผู้ใช้ล่าสุดในเครื่อง
+      .catch(() => { const u = remembered(); setBranchScope(u); setUserState(u); }) // ออฟไลน์: ใช้ผู้ใช้ล่าสุดในเครื่อง
       .finally(() => setReady(true));
   }, [setUser]);
   const logout = useCallback(async () => {

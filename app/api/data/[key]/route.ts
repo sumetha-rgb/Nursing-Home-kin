@@ -235,6 +235,8 @@ export async function POST(req: NextRequest, { params }: { params: { key: string
   const a = await access(req, key);
   if (!a.s) return a.res;
   const { s, me, branch } = a;
+  // ข้อมูลระดับองค์กร (เช่น สาขา): ผู้จัดการสาขาอ่านได้ แต่เพิ่ม/แก้/ลบได้เฉพาะผู้บริหาร
+  if (s.globalWrite && me.role !== "Global Admin") return forbidden("แก้ไขข้อมูลสาขาได้เฉพาะผู้บริหาร (Global Admin)");
   let body: Body;
   try { body = await req.json(); } catch { return bad("invalid json"); }
   const logs: AuditEntry[] = [];

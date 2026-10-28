@@ -1,8 +1,8 @@
 "use client";
 import { useState } from "react";
-import { useBranchNames, withBranches } from "@/lib/branches";
+import { useBranchNames } from "@/lib/branches";
 import Icon from "../Icon";
-import { ACTIVITY, APPOINTMENTS, BRANCH_NAMES, COMPLAINTS, DOCS, HEALTH, KPI_ROWS, RESIDENTS } from "@/lib/mock";
+import { ACTIVITY, APPOINTMENTS, DOCS, HEALTH, KPI_ROWS, RESIDENTS } from "@/lib/mock";
 import { downloadCsv, useCrud } from "@/lib/store";
 import { useApp } from "@/lib/app";
 import ResidentProfile from "../care/ResidentProfile";
@@ -10,7 +10,7 @@ import VitalsDialog from "../care/VitalsDialog";
 import { useResidents } from "@/lib/care";
 import { useSession } from "@/lib/session";
 import { evaluateVitals, LEVEL_TH, levelOf, parseVitals } from "@/lib/vitals";
-import { BlankForm, DataTable, Field, FieldDef, FormDialog, Modal, MetricGrid, PageHeader, Section, Select, Tabs, Toggle } from "../ui";
+import { BlankForm, DataTable, Field, FieldDef, FormDialog, Modal, MetricGrid, PageHeader, Section, Select, Tabs } from "../ui";
 
 /* ---------- ผลงาน KPI ---------- */
 const KPI_COLS = ["สาขา", "% สำเร็จ", "% สุ่มตรวจ", "ดาวญาติ", "งาน/คน", "% ความพึงพอใจ", "คอมเพลน", "คะแนนรวม"];
@@ -90,7 +90,7 @@ export function Dashboard() {
           <button className="btn-soft mt-4 w-full" onClick={() => setMsg(true)}>ส่งกำลังใจให้สาขา</button>
         </Section>
 
-        <Section title="ควบคุมงานประจำวันกะเช้า-ดึก" sub="ติดตามสถานะงานแบบเรียลไทม์ และสัดส่วนการตรวจงาน" actions={<div className="min-w-40"><Select options={branchNames} placeholder="รวมทุกสาขา" value={shiftBranch} onChange={setShiftBranch} /></div>}>
+        <Section title="ควบคุมงานประจำวันกะเช้า-ดึก" sub="ติดตามสถานะงานแบบเรียลไทม์ และสัดส่วนการตรวจงาน" actions={branchNames.length > 1 ? <div className="min-w-40"><Select options={branchNames} placeholder="รวมทุกสาขา" value={shiftBranch} onChange={setShiftBranch} /></div> : undefined}>
           <h3 className="mb-3 text-sm font-semibold text-gold-700">สถานะกะการทำงาน</h3>
           <div className="grid gap-4 sm:grid-cols-2">
             {[
@@ -198,7 +198,7 @@ export function HealthLogs() {
         actions={<button className="btn-primary" onClick={() => setRecord(true)}><Icon name="plus" className="h-4 w-4" /> บันทึกสัญญาณชีพ</button>} />
       <Section>
         <div className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <Select options={branchNames} placeholder="-- ทุกสาขา --" />
+          {branchNames.length > 1 && <Select options={branchNames} placeholder="-- ทุกสาขา --" />}
           <Select options={names} placeholder="-- ทุกคน --" value={person} onChange={setPerson} />
           <div className="flex min-w-0 items-center gap-2 sm:col-span-2 lg:col-span-2">
             <input type="date" aria-label="วันที่เริ่มต้น" className="min-w-0 flex-1" />
@@ -222,100 +222,6 @@ export function HealthLogs() {
       <FormDialog open={view !== null} mode="view" title="บันทึกสุขภาพ" fields={HEALTH_COLS.map((label) => ({ label }))} value={view !== null ? rows[view] : undefined} onClose={() => setView(null)} onSave={() => {}} />
       <BlankForm open={sample} title="แบบบันทึกสัญญาณชีพ (แบบฟอร์มเปล่า)" onClose={() => setSample(false)}
         lines={["ชื่อผู้สูงอายุ", "วัน-เวลา", "BT อุณหภูมิ", "PR ชีพจร", "RR การหายใจ", "BP ความดันโลหิต", "O2SAT ออกซิเจน", "DTX น้ำตาล", "น้ำหนัก (ก.ก.)", "ส่วนสูง (ซ.ม.)", "โน้ต / อาการ", "ผู้บันทึก"]} />
-    </>
-  );
-}
-
-/* ---------- ประเมินและร้องเรียน ---------- */
-const COMPLAINT_FIELDS: FieldDef[] = [
-  { label: "วันเวลา" },
-  { label: "สาขา", options: BRANCH_NAMES },
-  { label: "ปัญหาที่ร้องเรียน", area: true },
-  { label: "เบอร์ติดต่อกลับ", type: "tel" },
-  { label: "สถานะ", options: ["รอดำเนินการ", "กำลังดำเนินการ", "แก้ไขแล้ว"], required: true },
-];
-
-export function Feedbacks() {
-  const branchNames = useBranchNames();
-  const { rows, update, remove } = useCrud("complaints", COMPLAINTS);
-  const { toast, confirm } = useApp();
-  const [modal, setModal] = useState<null | "share" | "line" | "survey">(null);
-  const [branch, setBranch] = useState("");
-  const [row, setRow] = useState<number | null>(null);
-  const close = () => setModal(null);
-  const url = typeof window !== "undefined" ? `${window.location.origin}/survey?branch=${encodeURIComponent(branch)}` : "";
-  const copy = async () => {
-    if (!branch) { toast("กรุณาเลือกสาขาก่อน"); return; }
-    try { await navigator.clipboard.writeText(url); toast("คัดลอกลิงก์แล้ว"); } catch { toast(url); }
-  };
-  const urgent = rows.filter((r) => r[4] === "รอดำเนินการ").length;
-  return (
-    <>
-      <PageHeader
-        title="เสียงจากครอบครัว"
-        actions={<>
-          <button className="btn-soft" onClick={() => setModal("share")}><Icon name="qr" className="h-4 w-4" /> ป้าย QR ร้องเรียน</button>
-          <button className="btn-soft" onClick={() => setModal("share")}>ลิงก์ประเมินความพึงพอใจ</button>
-          <button className="btn-soft" onClick={() => toast("รีเฟรชข้อมูลแล้ว")}><Icon name="refresh" className="h-4 w-4" /> รีเฟรชข้อมูล</button>
-        </>}
-      />
-      <div className="mb-6 grid gap-4 sm:grid-cols-3">
-        <div className="card p-5"><p className="text-sm text-gold-600">เรื่องร้องเรียนด่วน</p><p className="mt-1 text-3xl font-semibold text-gold-800">{urgent}</p></div>
-        <button className="card p-5 text-left transition hover:border-gold-400" onClick={() => setModal("survey")}><p className="text-sm font-medium text-gold-800">ประเมินความพึงพอใจ</p></button>
-        <button className="card p-5 text-left transition hover:border-gold-400" onClick={() => setModal("line")}><p className="text-sm font-medium text-gold-800">ตั้งค่าระบบ LINE</p></button>
-      </div>
-      <Section>
-        <DataTable
-          columns={["วันเวลา", "สาขา", "ปัญหาที่ร้องเรียน", "เบอร์ติดต่อกลับ", "สถานะ"]}
-          rows={rows}
-          actions={[
-            { label: "ตรวจสอบ", onClick: (i) => setRow(i) },
-            { label: "ลบ", danger: true, onClick: (i) => confirm({ title: "ลบเรื่องร้องเรียน", message: "ต้องการลบรายการนี้ใช่หรือไม่", danger: true, okLabel: "ลบ", onOk: () => { remove(i); toast("ลบรายการแล้ว"); } }) },
-          ]}
-        />
-      </Section>
-
-      <FormDialog
-        open={row !== null} mode="edit" title="จัดการเรื่องร้องเรียน" fields={withBranches(COMPLAINT_FIELDS, branchNames)} value={row !== null ? rows[row] : undefined}
-        onClose={() => setRow(null)} onSave={(v) => { if (row !== null) update(row, v); setRow(null); toast("อัปเดตสถานะแล้ว"); }}
-      />
-
-      <Modal open={modal === "line"} title="ตั้งค่าเชื่อมต่อ LINE Messaging API" onClose={close} footer={<><button className="btn-soft" onClick={close}>ยกเลิก</button><button className="btn-primary" onClick={() => { close(); toast("บันทึกการตั้งค่า LINE แล้ว"); }}>บันทึกการตั้งค่า LINE</button></>}>
-        <p className="mb-5 text-sm text-gold-600">กำหนดค่า LINE Channel Access Token และ LINE Group ID เพื่อให้ระบบสามารถดึงไปใช้ในการส่งแจ้งเตือนหรือบรอดแคสต์แบบประเมินได้ในอนาคต</p>
-        <div className="space-y-4">
-          <Toggle label="สถานะการใช้งาน LINE Bot" hint="เปิดเพื่ออนุญาตให้หุ่นยนต์ส่งข้อความแจ้งเตือน" />
-          <Field label="เลือกสาขาที่ต้องการตั้งค่า:"><Select options={branchNames} /></Field>
-          <Field label="1. LINE Channel Access Token" required><input /><p className="mt-1 text-xs text-gold-500">เอามาจากเว็บ LINE Developers (Long-lived token)</p></Field>
-          <Field label="2. LINE Group ID (สำหรับกลุ่มผู้บริหารสาขา/แอดมินรับแจ้งเตือน)"><input /><p className="mt-1 text-xs text-gold-500">ไอดีของกลุ่มผู้บริหาร เพื่อรับแจ้งเตือนเวลามีเรื่องร้องเรียนด่วน</p></Field>
-        </div>
-      </Modal>
-
-      <Modal open={modal === "share"} title="สร้างลิงก์และป้าย QR Code" onClose={close}>
-        <Field label="เลือกสาขาที่ต้องการสร้างลิงก์"><Select options={branchNames} placeholder="-- เลือกสาขา --" value={branch} onChange={setBranch} /></Field>
-        <div className="mt-5 space-y-4">
-          <div className="rounded-2xl border border-cream-300 bg-cream-50 p-4">
-            <p className="font-medium text-gold-800">1. แบบประเมินความพึงพอใจ</p>
-            <p className="mb-3 text-sm text-gold-600">คัดลอกลิงก์ส่งให้ญาติทาง LINE</p>
-            {branch && <p className="mb-3 break-all rounded-lg bg-white px-3 py-2 text-xs text-gold-700">{url}</p>}
-            <button className="btn-soft w-full sm:w-auto" onClick={copy}>คัดลอกลิงก์</button>
-          </div>
-          <div className="rounded-2xl border border-cream-300 bg-cream-50 p-4">
-            <p className="font-medium text-gold-800">2. ช่องทางร้องเรียนด่วน</p>
-            <p className="mb-3 text-sm text-gold-600">ปริ้นท์เป็นป้ายตั้งโต๊ะไว้ที่ศูนย์</p>
-            <button className="btn-primary w-full sm:w-auto" onClick={() => (branch ? window.print() : toast("กรุณาเลือกสาขาก่อน"))}><Icon name="print" className="h-4 w-4" /> พิมพ์ป้าย QR Code ตั้งโต๊ะ (A4)</button>
-          </div>
-        </div>
-      </Modal>
-
-      <Modal open={modal === "survey"} title="แบบประเมินความพึงพอใจ" onClose={close} footer={<><button className="btn-soft" onClick={close}>ยกเลิก</button><button className="btn-primary" onClick={() => { close(); toast("ส่งแบบประเมินแล้ว ขอบคุณครับ"); }}>ส่งแบบประเมิน</button></>}>
-        <p className="mb-5 text-sm text-gold-600">กรุณากรอกแบบฟอร์มเพื่อประเมินความพึงพอใจในการให้บริการ ข้อมูลของคุณจะถูกนำไปพัฒนาและปรับปรุงคุณภาพต่อไป</p>
-        <div className="space-y-4">
-          <Field label="สาขาที่รับบริการ" required><Select options={branchNames} /></Field>
-          <Field label="ชื่อผู้ประเมิน" required><input /></Field>
-          <Field label="ความพึงพอใจโดยรวม" required><Select options={["5 (ดีมาก)", "4 (ดี)", "3 (ปานกลาง)", "2 (พอใช้)", "1 (ปรับปรุง)"]} /></Field>
-          <Field label="ข้อเสนอแนะเพิ่มเติม"><textarea rows={3} /></Field>
-        </div>
-      </Modal>
     </>
   );
 }

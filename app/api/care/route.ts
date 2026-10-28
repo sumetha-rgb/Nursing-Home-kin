@@ -16,6 +16,12 @@ export const fetchCache = "force-no-store";
  *  GET  ?op=routines            งานประจำ (ทำซ้ำทุกวัน) ที่ยังใช้อยู่
  *  POST { op: "routines_add", items: [{ resident, task, ins, shift, time }] }  เพิ่มงานประจำ (ผู้จัดการขึ้นไป)
  *  POST { op: "routine_stop", id }  หยุดทำซ้ำ
+ *  GET  ?op=surveys[&branch=]       ผลประเมินความพึงพอใจจากครอบครัว (ผู้จัดการขึ้นไป)
+ *  GET  ?op=task_photos&ids=a,b   รูปหลักฐานหลายงาน (ผลงานทีมใน KinApp)
+ *  GET  ?op=task_photo&id=…      รูปหลักฐานของงานประจำวัน (ผู้จัดการเปิดตอนตรวจงาน)
+ *  POST { op: "task_photo", id, photo, share? }  แนบรูปหลักฐานตอนส่งงานจาก KinApp (share = แชร์ให้ครอบครัว)
+ *  POST { op: "task_review", id, stars, note? }  ผู้จัดการให้ดาวตอนตรวจงาน (ใช้คิด KPI)
+ *  POST { op: "task_share", id, share }  ผู้จัดการซ่อน/แสดงรูปในสมุดภาพของครอบครัว
  */
 const bad = (msg: string, status = 400) => NextResponse.json({ error: msg }, { status });
 const scoped = (me: SessionUser) => me.role !== "Global Admin";
@@ -63,6 +69,29 @@ export async function GET(req: NextRequest) {
         if (p === "forbidden") return forbidden("ดูได้เฉพาะผู้รับบริการในสาขาของคุณ");
         return NextResponse.json(p);
       }
+      case "surveys": {
+        // ผลประเมินความพึงพอใจจากครอบครัว (ผู้จัดการขึ้นไป · เห็นเฉพาะสาขาตัวเอง)
+        if (me.role === "Operation") return forbidden();
+        const br = scoped(me) ? me.branch : qs.get("branch") || null;
+        const rows = await sql(
+          `SELECT id, branch_name, rater_name, relation, resident_name, score_overall, score_care, score_staff, score_food, score_clean, comment, contact_phone,
+                  to_char(created_at AT TIME ZONE 'Asia/Bangkok', 'DD/MM/') || (extract(year FROM created_at AT TIME ZONE 'Asia/Bangkok')::int + 543) || to_char(created_at AT TIME ZONE 'Asia/Bangkok', ' HH24:MI') AS at
+           FROM satisfaction_surveys ${br ? "WHERE branch_name = $1" : ""} ORDER BY created_at DESC LIMIT 200`, br ? [br] : []);
+        return NextResponse.json({ surveys: rows });
+      }
+      case "task_photos": {
+        // รูปหลักฐานหลายงานพร้อมกัน (หน้าผลงานทีมใน KinApp) · สูงสุด 50 งาน · เฉพาะสาขาตัวเอง
+        const ids = (qs.get("ids") ?? "").split(",").map((x) => x.trim()).filter(Boolean).slice(0, 50);
+        if (!ids.length) return NextResponse.json({ photos: {} });
+        const rows = (await sql(`SELECT id, photo FROM daily_tasks WHERE id = ANY($1) AND photo IS NOT NULL ${scoped(me) ? "AND branch_name = $2" : ""}`, scoped(me) ? [ids, me.branch] : [ids])) as { id: string; photo: string }[];
+        return NextResponse.json({ photos: Object.fromEntries(rows.map((r) => [r.id, r.photo])) });
+      }
+      case "task_photo": {
+        const [t] = (await sql`SELECT branch_name, photo, share_family AS share, review_stars AS stars, review_note AS rnote, to_char(photo_at AT TIME ZONE 'Asia/Bangkok', 'DD/MM/') || (extract(year FROM photo_at AT TIME ZONE 'Asia/Bangkok')::int + 543) || to_char(photo_at AT TIME ZONE 'Asia/Bangkok', ' HH24:MI') AS at FROM daily_tasks WHERE id = ${qs.get("id") ?? ""}`) as Record<string, string | null>[];
+        if (!t) return bad("ไม่พบงานนี้", 404);
+        if (scoped(me) && t.branch_name !== me.branch) return forbidden();
+        return NextResponse.json({ photo: t.photo, at: t.at, share: t.share, stars: t.stars, note: t.rnote });
+      }
       case "routines": {
         const rows = await sql(
           `SELECT id, resident_name, branch_name, task_name, instruction, shift, sched_time, created_by FROM care_routines
@@ -90,6 +119,39 @@ export async function POST(req: NextRequest) {
   const me = await currentUser(req);
   if (!me) return unauthorized();
   const b = await req.json().catch(() => ({}));
+  if (b.op === "task_photo") {
+    const photo = typeof b.photo === "string" ? b.photo : "";
+    if (!photo.startsWith("data:image/") || photo.length > 600_000) return bad("รูปไม่ถูกต้องหรือมีขนาดใหญ่เกินไป");
+    const [t] = (await sql`SELECT branch_name FROM daily_tasks WHERE id = ${String(b.id)}`) as Record<string, string>[];
+    if (!t) return bad("ไม่พบงานนี้", 404);
+    if (scoped(me) && t.branch_name !== me.branch) return forbidden();
+    // share = แชร์รูปนี้ในสมุดภาพของครอบครัว (พนักงานเลือกตอนส่งงาน ค่าเริ่มต้นแชร์)
+    await sql`UPDATE daily_tasks SET photo = ${photo}, photo_at = now(), share_family = ${b.share !== false} WHERE id = ${String(b.id)}`;
+    return NextResponse.json({ ok: true });
+  }
+  if (b.op === "task_review") {
+    // ผู้จัดการให้ดาวและความเห็นตอนตรวจงาน (KPI ส่วน "ดาวจากผู้จัดการ")
+    if (me.role === "Operation") return forbidden("ตรวจงานได้เฉพาะผู้จัดการสาขาและผู้บริหาร");
+    const stars = Number(b.stars);
+    if (!Number.isInteger(stars) || stars < 1 || stars > 5) return bad("กรุณาให้ดาว 1–5");
+    const [t] = (await sql`SELECT branch_name, resident_name, task_name, done_by FROM daily_tasks WHERE id = ${String(b.id)}`) as Record<string, string>[];
+    if (!t) return bad("ไม่พบงานนี้", 404);
+    if (scoped(me) && t.branch_name !== me.branch) return forbidden();
+    const note = typeof b.note === "string" ? b.note.trim().slice(0, 500) : "";
+    await sql`UPDATE daily_tasks SET review_stars = ${stars}, review_note = ${note || null}, reviewed_by = ${me.name}, reviewed_at = now() WHERE id = ${String(b.id)}`;
+    await audit(req, me, [{ area: "daily", action: "update", recordId: String(b.id), summary: `ตรวจงาน ${stars} ดาว · ${t.done_by ?? "-"} · ${t.resident_name} · ${t.task_name}`, branch: t.branch_name, after: { review_stars: stars, review_note: note || null } }]);
+    return NextResponse.json({ ok: true });
+  }
+  if (b.op === "task_share") {
+    // ผู้จัดการซ่อน/แสดงรูปในสมุดภาพของครอบครัว
+    if (me.role === "Operation") return forbidden("ซ่อนรูปจากครอบครัวได้เฉพาะผู้จัดการสาขาและผู้บริหาร");
+    const [t] = (await sql`SELECT branch_name, resident_name, task_name FROM daily_tasks WHERE id = ${String(b.id)}`) as Record<string, string>[];
+    if (!t) return bad("ไม่พบงานนี้", 404);
+    if (scoped(me) && t.branch_name !== me.branch) return forbidden();
+    await sql`UPDATE daily_tasks SET share_family = ${b.share === true} WHERE id = ${String(b.id)}`;
+    await audit(req, me, [{ area: "family_photos", action: "update", recordId: String(b.id), summary: `${b.share === true ? "แสดง" : "ซ่อน"}รูปในสมุดภาพครอบครัว · ${t.resident_name} · ${t.task_name}`, branch: t.branch_name }]);
+    return NextResponse.json({ ok: true });
+  }
   if (b.op === "routines_add" || b.op === "routine_stop") {
     if (me.role === "Operation") return forbidden("งานประจำตั้งได้เฉพาะผู้จัดการสาขาและผู้บริหาร");
     if (b.op === "routine_stop") {
