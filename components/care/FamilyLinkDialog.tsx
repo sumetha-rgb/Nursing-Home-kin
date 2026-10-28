@@ -5,6 +5,7 @@ import QrCode from "../QrCode";
 import { useApp } from "@/lib/app";
 import { useResidents } from "@/lib/care";
 import { familyUrl, LINK_DAYS, ReviewLink, reviewUrl } from "@/lib/reviews";
+import { openHere } from "@/lib/site";
 import { DataTable, Field, Modal, Select } from "../ui";
 
 async function call<T>(url: string, body?: object): Promise<T> {
@@ -63,7 +64,7 @@ export default function FamilyLinkDialog({ open, onClose, residentId = "" }: { o
                 <div className="flex flex-wrap gap-2">
                   <button type="button" className="btn-soft !py-2" onClick={() => copy(familyUrl(token))}>คัดลอกลิงก์สมุดภาพ</button>
                   <button type="button" className="btn-soft !py-2" onClick={() => copy(reviewUrl(token))}>คัดลอกลิงก์รีวิวอย่างเดียว</button>
-                  <button type="button" className="btn-soft !py-2" onClick={() => window.open(familyUrl(token), "_blank", "noopener")}><Icon name="external" className="h-4 w-4" /> เปิดดูหน้าของญาติ</button>
+                  <button type="button" className="btn-soft !py-2" onClick={() => openHere(familyUrl(token))}><Icon name="external" className="h-4 w-4" /> เปิดดูหน้าของญาติ</button>
                 </div>
               </div>
             </div>

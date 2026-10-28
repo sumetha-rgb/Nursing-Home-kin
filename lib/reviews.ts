@@ -1,3 +1,5 @@
+import { SITE_URL } from "./site";
+
 /** รีวิวพนักงานจากครอบครัว: ค่าที่ใช้ร่วมกันทั้งหน้าแบบฟอร์มสาธารณะ ระบบจัดการ และ API */
 export const REVIEW_TAGS = ["ใส่ใจ อ่อนโยน", "สุภาพ ยิ้มแย้ม", "ตรงเวลา", "สื่อสารกับญาติดี", "ดูแลความสะอาด", "มืออาชีพ"] as const;
 export const RELATIONS = ["บุตร/ธิดา", "คู่สมรส", "หลาน", "ญาติ", "ผู้รับบริการเอง", "อื่น ๆ"] as const;
@@ -13,6 +15,6 @@ export type StaffReview = {
 };
 export type ReviewLink = { id: string; token: string; resident_id: string; resident_name: string; branch_name: string; created_by: string | null; active: boolean; expires: string | null; expired: boolean; reviews: number; at: string };
 
-export const reviewUrl = (token: string) => (typeof window === "undefined" ? "" : `${window.location.origin}/review/${token}`);
+export const reviewUrl = (token: string) => `${SITE_URL}/review/${token}`;
 /** สมุดภาพประจำวันของครอบครัว (ลิงก์เดียวกัน มีปุ่มไปหน้ารีวิว) */
-export const familyUrl = (token: string) => (typeof window === "undefined" ? "" : `${window.location.origin}/family/${token}`);
+export const familyUrl = (token: string) => `${SITE_URL}/family/${token}`;

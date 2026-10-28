@@ -6,6 +6,7 @@ import { useBranchNames, withBranches } from "@/lib/branches";
 import { BRANCH_NAMES, COMPLAINTS } from "@/lib/mock";
 import { useCrud } from "@/lib/store";
 import { useApp } from "@/lib/app";
+import { openHere, SITE_URL } from "@/lib/site";
 import { DataTable, Field, FieldDef, FormDialog, Modal, PageHeader, Section, Select, Toggle } from "../ui";
 
 /* ---------- เสียงจากครอบครัว: ลิงก์/QR ของสาขา · เรื่องร้องเรียน · ผลประเมินความพึงพอใจ ---------- */
@@ -31,7 +32,7 @@ const avg = (list: Survey[], k: keyof Survey) => {
 const starText = (n: number | null) => (n ? `${"★".repeat(n)}${"☆".repeat(5 - n)}` : "-");
 /** ลิงก์สาธารณะของสาขา (หน้า /survey ไม่ต้องเข้าสู่ระบบ) */
 const linkOf = (branch: string, type: Kind) =>
-  typeof window === "undefined" || !branch ? "" : `${window.location.origin}/survey?branch=${encodeURIComponent(branch)}&type=${type}`;
+  !branch ? "" : `${SITE_URL}/survey?branch=${encodeURIComponent(branch)}&type=${type}`;
 
 export function Feedbacks() {
   const branchNames = useBranchNames();
@@ -65,7 +66,7 @@ export function Feedbacks() {
         {links[type] ? <code>{links[type]}</code> : <p className="mt-2 text-gold-500">เลือกสาขาก่อน</p>}
         <div className="flex flex-wrap gap-2">
           <button type="button" className="btn-soft !py-2" onClick={() => copy(links[type])}>คัดลอกลิงก์</button>
-          <button type="button" className="btn-soft !py-2" disabled={!links[type]} onClick={() => window.open(links[type], "_blank", "noopener")}><Icon name="external" className="h-4 w-4" /> เปิดดูหน้าฟอร์ม</button>
+          <button type="button" className="btn-soft !py-2" disabled={!links[type]} onClick={() => openHere(links[type])}><Icon name="external" className="h-4 w-4" /> เปิดดูหน้าฟอร์ม</button>
         </div>
       </div>
     </div>
