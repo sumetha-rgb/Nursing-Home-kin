@@ -3,9 +3,9 @@ import { useState } from "react";
 import Icon from "./Icon";
 import { TUTORIALS, youtubeId } from "@/lib/tutorials";
 
-/** รายการวิดีโอสอนใช้งาน กดแล้วเล่นในหน้าเดียวกัน · only = เลขคลิปที่จะแสดง (ไม่ระบุ = ทุกคลิป) */
+/** รายการวิดีโอสอนใช้งาน กดแล้วเล่นในหน้าเดียวกัน · only = เลขคลิปที่จะแสดงตามลำดับ (ไม่ระบุ = ทุกคลิป) */
 export default function TutorialVideos({ only, compact = false }: { only?: number[]; compact?: boolean }) {
-  const list = TUTORIALS.filter((t) => !only || only.includes(t.no));
+  const list = only ? only.flatMap((n) => TUTORIALS.filter((t) => t.no === n)) : TUTORIALS;
   const [playing, setPlaying] = useState<number | null>(null);
   return (
     <ul className={`tutorials ${compact ? "is-compact" : ""}`}>

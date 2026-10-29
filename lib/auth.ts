@@ -4,6 +4,7 @@ import { promisify } from "node:util";
 import { NextRequest, NextResponse } from "next/server";
 import { sql } from "./db";
 import { ROLES, Role, SessionUser } from "./roles";
+import { permsFor } from "./perms";
 
 const scrypt = promisify(scryptCb) as (pw: string, salt: Buffer, len: number) => Promise<Buffer>;
 export const COOKIE = "kin_session";
@@ -46,11 +47,11 @@ export async function currentUser(req: NextRequest): Promise<SessionUser | null>
   const token = req.cookies.get(COOKIE)?.value;
   if (!token) return null;
   const [u] = await sql`
-    SELECT u.id, u.full_name, u.email, u.access_level, u.branch_name
+    SELECT u.id, u.full_name, u.email, u.access_level, u.branch_name, u.permissions
     FROM sessions s JOIN staff_users u ON u.id = s.user_id
     WHERE s.id = ${tokenId(token)} AND s.expires_at > now() AND u.status = 'ทำงาน'`;
   if (!u || !ROLES.includes(u.access_level as Role)) return null;
-  return { id: u.id, name: u.full_name, email: u.email, role: u.access_level as Role, branch: u.branch_name ?? "" };
+  return { id: u.id, name: u.full_name, email: u.email, role: u.access_level as Role, branch: u.branch_name ?? "", perms: permsFor(u.access_level as Role, u.permissions) };
 }
 
 /** ตรวจว่าสาขาของบัญชีมีอยู่ในหน้า "สาขาของเรา" และเปิดให้บริการหรือไม่ */

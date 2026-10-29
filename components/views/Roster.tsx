@@ -4,6 +4,7 @@ import Icon from "@/components/Icon";
 import { MetricGrid, Modal, PageHeader, Section, Select } from "@/components/ui";
 import RosterCalendar from "@/components/roster/RosterCalendar";
 import { useApp } from "@/lib/app";
+import { ROLE_INFO, Role } from "@/lib/roles";
 import { useBranchNames } from "@/lib/branches";
 import { assignShift, Attendance, dayTitle, fetchDay, fetchMonth, isoDate, Month, SHIFTS, ymOf } from "@/lib/roster";
 
@@ -62,7 +63,8 @@ export function Roster() {
   const todays = shifts.filter((s) => s.date === today);
   const inToday = attendance.filter((a) => a.date === today && a.kind === "in");
   const lateMonth = attendance.filter((a) => a.kind === "in" && (a.late_min ?? 0) > 0).length;
-  const team = data?.team ?? [];
+  // จัดเวรเฉพาะพยาบาล (พนักงานพยาบาลและหัวหน้าพยาบาล)
+  const team = (data?.team ?? []).filter((t) => t.role === "Nurse" || t.role === "Head Nurse");
 
   return (
     <>
@@ -94,8 +96,8 @@ export function Roster() {
           {SHIFTS.map((s) => (
             <div key={s.key}>
               <p className="label">{s.label} <small className="text-gold-500">{s.time} · {pick[s.key]?.length ?? 0} คน</small></p>
-              <ul className="pick-list">{team.map((t) => <li key={t.id}><label><input type="checkbox" checked={pick[s.key]?.includes(t.id) ?? false} onChange={() => toggle(s.key, t.id)} /> <span>{t.name} <small className="text-gold-500">· {t.role}</small></span></label></li>)}</ul>
-              {!team.length && <p className="text-sm text-gold-500">ยังไม่มีพนักงานที่ทำงานอยู่ในสาขานี้</p>}
+              <ul className="pick-list">{team.map((t) => <li key={t.id}><label><input type="checkbox" checked={pick[s.key]?.includes(t.id) ?? false} onChange={() => toggle(s.key, t.id)} /> <span>{t.name} <small className="text-gold-500">· {ROLE_INFO[t.role as Role]?.th ?? t.role}</small></span></label></li>)}</ul>
+              {!team.length && <p className="text-sm text-gold-500">ยังไม่มีพยาบาลที่ทำงานอยู่ในสาขานี้</p>}
             </div>
           ))}
         </div>

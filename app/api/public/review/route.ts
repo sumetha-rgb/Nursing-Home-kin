@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { sql } from "@/lib/db";
 import { RELATIONS, REVIEW_TAGS } from "@/lib/reviews";
 import { FamilyLink, familyLinkOf } from "@/lib/familyLink";
+import { carersOf } from "@/lib/carers";
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
@@ -20,15 +21,9 @@ const PER_DAY = 10;
 
 type Link = FamilyLink;
 const linkOf = familyLinkOf;
-/** พนักงานที่ทำงานอยู่ในสาขา · cared = เคยส่งงานดูแลผู้รับบริการคนนี้ใน 30 วันล่าสุด */
+/** รีวิวได้เฉพาะ "ดูแลโดย" ของผู้รับบริการคนนี้ (lib/carers) */
 async function staffOf(l: Link) {
-  const rows = (await sql`
-    SELECT u.id, u.full_name AS name,
-           EXISTS (SELECT 1 FROM daily_tasks d WHERE d.done_by = u.full_name AND d.work_date > current_date - 30
-                   AND (d.resident_id = ${l.resident_id} OR d.resident_name = ${l.resident_name})) AS cared
-    FROM staff_users u WHERE u.branch_name = ${l.branch_name} AND u.status = 'ทำงาน'
-    ORDER BY cared DESC, u.full_name`) as { id: string; name: string; cared: boolean }[];
-  return rows;
+  return (await carersOf(l.branch_name, l.resident_id, l.resident_name)).list.map((r) => ({ ...r, cared: true }));
 }
 
 export async function GET(req: NextRequest) {

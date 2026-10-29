@@ -15,9 +15,9 @@ export function MetricGrid({items}:{items:{label:string;value:string|number;unit
   return <div className="metrics-grid">{items.map(item=><div key={item.label} className={"metric "+(item.accent?"accent":"")}><div className="metric-top"><span>{item.label}</span><Icon name={item.icon||"chart"} /></div><div className="metric-value">{item.value}<small>{item.unit}</small></div>{item.note&&<p className="metric-note">{item.note}</p>}</div>)}</div>;
 }
 export function StatusBadge({value}:{value:string}) {
-  const success=/^(เพิ่ม|อนุมัติ|สมัครสมาชิก|เข้าสู่ระบบ$|ตรวจแล้ว|เสร็จแล้ว|เสร็จสิ้น|แก้ไขแล้ว|ใช้งานอยู่|ทำงาน|เปิด|เข้าอยู่|สำเร็จ|ตรวจผ่าน|จัดยาแล้ว|จ่ายยาแล้ว|ปกติ)/.test(value);
-  const warning=/^(เฝ้าระวัง|รอ|กำลัง|แอดมิท|แก้ไข$|แทนที่|เปลี่ยนรหัส|รีเซตรหัส)/.test(value);
-  const danger=/^(ผิดปกติ|ลบ|ล้างข้อมูล|เข้าสู่ระบบไม่สำเร็จ|ปิด|ลาออก|สิ้นสุด|พักงาน|งด|ยาหมด|ยางด|แจ้งจัดยาผิด)/.test(value);
+  const success=/^(เพิ่ม|อนุมัติ|สมัครสมาชิก|เข้าสู่ระบบ$|ตรวจแล้ว|เสร็จแล้ว|เสร็จสิ้น|แก้ไขแล้ว|ใช้งานอยู่|ทำงาน|เปิด|เข้าอยู่|สำเร็จ|ตรวจผ่าน|จัดยาแล้ว|จ่ายยาแล้ว|ปกติ|ชำระแล้ว)/.test(value);
+  const warning=/^(เฝ้าระวัง|รอ|กำลัง|แอดมิท|ค้างชำระ|ชำระบางส่วน|มัดจำ|แก้ไข$|แทนที่|เปลี่ยนรหัส|รีเซตรหัส)/.test(value);
+  const danger=/^(ผิดปกติ|ลบ|ล้างข้อมูล|เข้าสู่ระบบไม่สำเร็จ|ปิด|ลาออก|สิ้นสุด|พักงาน|งด|ยาหมด|ยางด|แจ้งจัดยาผิด|ยกเลิก)/.test(value);
   return <span className={"status-badge "+(success?"status-success":warning?"status-warning":danger?"status-danger":"status-neutral")}>{value.replace(/\s*\([^)]*\)/g, "")}</span>;
 }
 
@@ -47,7 +47,7 @@ export function Upload({ text = "คลิกเพื่ออัปโหล�
   );
 }
 
-export type RowAction = { label: string; onClick: (i: number) => void; danger?: boolean };
+export type RowAction = { label: string; onClick: (i: number) => void; danger?: boolean; hidden?: (i: number) => boolean };
 
 /** Table on desktop, stacked label/value cards on mobile. */
 export function DataTable({ columns, rows = [], empty = "ไม่พบข้อมูล", actions, badgeCols = [], search = true }: { columns: string[]; rows?: string[][]; empty?: string; actions?: RowAction[]; badgeCols?: number[]; search?: boolean }) {
@@ -59,13 +59,55 @@ export function DataTable({ columns, rows = [], empty = "ไม่พบข้�
   const current=Math.min(page,pages-1);
   const shown=filtered.slice(current*PAGE_SIZE,(current+1)*PAGE_SIZE);
   const searchId=useId();
-  const button=(x:RowAction,i:number)=><button type="button" key={x.label} onClick={()=>x.onClick(i)} className={"row-action "+(x.danger?"danger":"")}>{x.label}</button>;
+  const button=(x:RowAction,i:number)=>x.hidden?.(i)?null:<button type="button" key={x.label} onClick={()=>x.onClick(i)} className={"row-action "+(x.danger?"danger":"")}>{x.label}</button>;
   const cell=(value:string,col:number)=>columns[col]?.includes("สถานะ")||badgeCols.includes(col)?<StatusBadge value={value} />:value;
   const blank=<div className="empty-state"><Icon name="search" /><p>{query?"ไม่พบรายการที่ตรงกับคำค้นหา":empty}</p>{query&&<button className="mt-3 text-sm text-plum-700" onClick={()=>{setQuery("");setPage(0);}}>ล้างคำค้นหา</button>}</div>;
   return <div className="data-table-container"><div className="table-toolbar">{search?<div className="table-search"><Icon name="search" /><input id={searchId} aria-label="ค้นหาในรายการ" placeholder="ค้นหาในรายการ…" value={query} onChange={e=>{setQuery(e.target.value);setPage(0);}} /></div>:<span />}<span className="table-count" aria-live="polite">{filtered.length} รายการ</span></div><div className="table-scroll hidden md:block"><table className="data-table"><thead><tr>{columns.map((c,i)=><th scope="col" key={i}>{c.replace(/\s*\([^)]*\)/g,"")}</th>)}{actions&&<th scope="col" className="cell-actions">จัดการ</th>}</tr></thead><tbody>{shown.length?shown.map(({r,i})=><tr key={i}>{r.map((c,j)=><td key={j}>{cell(c,j)}</td>)}{actions&&<td className="cell-actions"><div className="row-actions">{actions.map(x=>button(x,i))}</div></td>}</tr>):<tr><td colSpan={columns.length+(actions?1:0)}>{blank}</td></tr>}</tbody></table></div><div className="space-y-3 md:hidden">{shown.length?shown.map(({r,i})=><dl className="mobile-data-row" key={i}>{r.map((c,j)=><div key={j}><dt>{columns[j]?.replace(/\s*\([^)]*\)/g,"")}</dt><dd>{cell(c,j)}</dd></div>)}{actions&&<div className="row-actions border-t border-cream-200 pt-3">{actions.map(x=>button(x,i))}</div>}</dl>):blank}</div><div className="table-pagination"><span>{filtered.length?(current*PAGE_SIZE+1)+"–"+Math.min((current+1)*PAGE_SIZE,filtered.length)+" จาก "+filtered.length+" รายการ":"0 รายการ"}</span><div className="table-pagination-controls"><button type="button" disabled={current===0} aria-label="หน้าก่อนหน้า" onClick={()=>setPage(current-1)}><Icon name="chevron" className="h-3.5 w-3.5 rotate-90" /></button><span>หน้า {current+1} / {pages}</span><button type="button" disabled={current>=pages-1} aria-label="หน้าถัดไป" onClick={()=>setPage(current+1)}><Icon name="chevron" className="h-3.5 w-3.5 -rotate-90" /></button></div></div></div>;
 }
 
-export type FieldDef = { label: string; options?: string[]; type?: string; area?: boolean; required?: boolean; wide?: boolean };
+/** readOnly: ระบบเป็นคนกำหนดค่า (เช่น เลขที่เอกสาร) แสดงอย่างเดียวแม้ในโหมดแก้ไข */
+export type FieldDef = { label: string; options?: string[]; type?: string; area?: boolean; required?: boolean; wide?: boolean; readOnly?: boolean; placeholder?: string; suggest?: string[] };
+
+/** เวลาแบบ 24 ชั่วโมง (เช่น 13:50 น.) ไม่ขึ้นกับภาษา/รูปแบบ AM-PM ของเบราว์เซอร์ · ค่าเป็น "HH:MM" */
+export function TimeInput({ value, required, onChange }: { value: string; required?: boolean; onChange: (v: string) => void }) {
+  const [h, m] = /^\d{2}:\d{2}/.test(value) ? value.slice(0, 5).split(":") : ["", ""];
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const set = (nh: string, nm: string) => onChange(nh || nm ? `${nh || "00"}:${nm || "00"}` : "");
+  return (
+    <div className="flex items-center gap-2">
+      <select value={h} required={required} onChange={(e) => set(e.target.value, m)} aria-label="ชั่วโมง">
+        <option value="">ชม.</option>
+        {Array.from({ length: 24 }, (_, i) => <option key={i} value={pad(i)}>{pad(i)}</option>)}
+      </select>
+      <span className="text-gold-600">:</span>
+      <select value={m} required={required} onChange={(e) => set(h, e.target.value)} aria-label="นาที">
+        <option value="">นาที</option>
+        {Array.from({ length: 60 }, (_, i) => <option key={i} value={pad(i)}>{pad(i)}</option>)}
+      </select>
+      <span className="whitespace-nowrap text-sm text-gold-600">น.</span>
+    </div>
+  );
+}
+
+/** ช่องพิมพ์ค้นหา + รายการให้เลือก (พิมพ์ชื่ออื่นเองได้ เช่น ญาติพาไปเอง) */
+export function SuggestInput({ value, options, placeholder, onChange }: { value: string; options: string[]; placeholder?: string; onChange: (v: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const q = value.trim().toLowerCase();
+  const list = options.filter((o) => !q || o.toLowerCase().includes(q)).slice(0, 30);
+  return (
+    <div className="relative">
+      <input type="text" value={value} placeholder={placeholder} autoComplete="off" onChange={(e) => { onChange(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)} onBlur={() => setTimeout(() => setOpen(false), 150)} />
+      {open && list.length > 0 && (
+        <ul className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-2xl border border-gold-200 bg-white py-1 shadow-lg">
+          {list.map((o) => (
+            <li key={o}><button type="button" className="block w-full px-4 py-2 text-left text-sm hover:bg-cream-50" onMouseDown={(e) => { e.preventDefault(); onChange(o); setOpen(false); }}>{o}</button></li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
 
 /** ฟอร์มเพิ่ม / แก้ไข / ดูรายละเอียด สำหรับหนึ่งรายการ (ค่าเก็บเป็น string[] ตามลำดับ fields) */
 export function FormDialog({ open, mode, title, fields, value, onClose, onSave, saveLabel = "บันทึก" }: {
@@ -88,17 +130,21 @@ export function FormDialog({ open, mode, title, fields, value, onClose, onSave, 
       <form id="form-dialog" onSubmit={(e) => { e.preventDefault(); onSave(v); }} className="form-grid">
         {fields.map((f, i) => (
           <Field key={f.label} label={f.label} required={f.required && !view} className={f.wide || f.area ? "md:col-span-2" : ""}>
-            {view ? (
+            {view || f.readOnly ? (
               <p className="field-view">{v[i] || "-"}</p>
             ) : f.options ? (
               <select value={v[i] ?? ""} required={f.required} onChange={(e) => set(i, e.target.value)}>
                 <option value="">-- เลือก --</option>
                 {f.options.map((o) => <option key={o}>{o}</option>)}
               </select>
+            ) : f.type === "time" ? (
+              <TimeInput value={v[i] ?? ""} required={f.required} onChange={(x) => set(i, x)} />
+            ) : f.suggest ? (
+              <SuggestInput value={v[i] ?? ""} options={f.suggest} placeholder={f.placeholder} onChange={(x) => set(i, x)} />
             ) : f.area ? (
               <textarea rows={2} value={v[i] ?? ""} onChange={(e) => set(i, e.target.value)} />
             ) : (
-              <input type={f.type ?? "text"} value={v[i] ?? ""} required={f.required} onChange={(e) => set(i, e.target.value)} />
+              <input type={f.type ?? "text"} value={v[i] ?? ""} required={f.required} placeholder={f.placeholder} onChange={(e) => set(i, e.target.value)} />
             )}
           </Field>
         ))}

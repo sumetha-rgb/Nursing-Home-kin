@@ -95,8 +95,7 @@
   .auth-alternate { margin-top:16px; padding-top:14px; }
 }
 @media(min-width:1024px) and (max-height:900px) {
-  .auth-symbol,.auth-form-description,.sculpture-caption,.auth-alternate,.auth-top-note,.auth-form .demo-hint { display:none; }
-  .auth-top-link { display:flex; }
+  .auth-symbol,.auth-form-description,.sculpture-caption,.auth-top-note,.auth-form .demo-hint { display:none; }
   .auth-editorial h1 { font-size:clamp(26px,2.2vw,34px); }
   .sculpture-orbit { width:240px; height:240px; left:calc(50% - 120px); }
   .sculpture { transform:scale(.72); transform-origin:bottom center; }
@@ -904,3 +903,210 @@ input::placeholder,textarea::placeholder { color:#8a785b; }
 .tutorial-info small { color:#9a8566; font-size:12px; }
 .tutorial-info b { color:#4f4330; font-size:15px; font-weight:600; }
 .tutorial-info span { color:#7d6c52; font-size:12.5px; line-height:1.6; }
+
+/* ห้องผู้ป่วย: การ์ดห้อง (หน้าห้องผู้ป่วย และขั้นเลือกห้องตอนเปิดสัญญา) */
+.room-grid { display:grid; gap:12px; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); }
+.room-card { display:flex; flex-direction:column; gap:8px; width:100%; text-align:left; border:1px solid #e8dfcd; border-radius:14px; background:white; padding:14px; transition:border-color .15s,box-shadow .15s,background .15s; }
+button.room-card:hover:not(.is-full):not(.is-closed) { border-color:#c9a96a; box-shadow:0 4px 14px -6px #8b6e3e55; }
+.room-card.is-selected { border-color:var(--gold); box-shadow:0 0 0 3px var(--ring); background:#fffaf0; }
+.room-card.is-full { background:#fbf6f4; }
+.room-card.is-closed { background:#f6f3ed; opacity:.75; }
+.room-no { font-size:20px; font-weight:600; line-height:1.2; color:#3a2d1b; }
+.room-meta { font-size:12px; color:#8a7457; }
+.room-meter { display:block; height:6px; overflow:hidden; border-radius:999px; background:#efe8dc; }
+.room-meter>span { display:block; height:100%; border-radius:999px; background:linear-gradient(90deg,#b89560,#8b6e3e); }
+.room-card.is-full .room-meter>span { background:#b3261e; }
+.room-people { display:flex; flex-wrap:wrap; gap:4px; font-size:12px; color:#5c4a30; }
+.room-people>span { display:inline-flex; align-items:center; gap:4px; border-radius:8px; background:#f7f3ec; padding:2px 8px; }
+.room-people button { color:#b3261e; font-size:11px; }
+.room-warn { border:1px solid #e7b4ad; border-radius:12px; background:#fdf2f0; color:#8c2a1f; padding:10px 14px; font-size:14px; }
+.contract-steps { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:20px; }
+.contract-steps>span { display:inline-flex; align-items:center; gap:8px; border-radius:999px; border:1px solid #e8dfcd; background:white; padding:6px 14px; font-size:13px; color:#8a7457; }
+.contract-steps>span b { display:grid; place-items:center; width:22px; height:22px; border-radius:50%; background:#efe8dc; font-size:12px; }
+.contract-steps>span.is-active { border-color:var(--gold); color:#3a2d1b; }
+.contract-steps>span.is-active b { background:var(--gold); color:white; }
+
+/* ใบแจ้งหนี้ / ใบเสร็จรับเงิน (components/billing/BillDoc) · ขาวดำ อ่านชัดตอนพิมพ์ */
+.bill-doc { color:#111; background:#fff; font-size:14px; line-height:1.6; }
+.bill-doc table { width:100%; border-collapse:collapse; }
+.bill-doc th,.bill-doc td { border:1px solid #111; padding:6px 10px; vertical-align:top; }
+.bill-doc th { font-weight:600; text-align:center; }
+.bill-logo { display:inline-flex; align-items:center; gap:8px; }
+.bill-logo img { width:46px; height:auto; }
+.bill-logo span { display:flex; flex-direction:column; font-size:24px; font-weight:700; line-height:1; color:#b07d2b; letter-spacing:.04em; }
+.bill-logo small { margin-top:3px; font-size:8px; font-weight:600; color:#555; letter-spacing:.06em; }
+.bill-head { display:flex; flex-direction:column; align-items:center; text-align:center; gap:2px; }
+.bill-head h2 { margin-top:10px; font-size:22px; font-weight:700; }
+.bill-head p { font-size:14px; }
+.bill-head p:last-child { padding-bottom:6px; border-bottom:1px dashed #555; width:min(100%,640px); }
+.bill-who { display:flex; justify-content:space-between; gap:16px; margin:14px 0 6px; }
+.bill-table td:nth-child(1) { text-align:center; width:60px; }
+.bill-table td:nth-last-child(1) { text-align:right; white-space:nowrap; }
+.bill-table td[colspan="3"] { text-align:right; }
+.bill-table td.bill-words { text-align:center; font-weight:600; }
+.bill-table:not(.bill-table2) td:nth-child(3):not([colspan]) { text-align:center; width:110px; }
+.bill-line { margin-top:8px; display:flex; flex-wrap:wrap; gap:6px 40px; }
+.bill-sign { margin:56px 0 0 auto; width:max-content; max-width:100%; }
+.bill-sign p { display:flex; gap:12px; justify-content:flex-end; }
+.bill-sign p + p { margin-bottom:24px; }
+.bill-sign-name { padding-right:60px; }
+.bill-slip { break-before:page; margin-top:32px; text-align:center; }
+.bill-slip-title { font-weight:700; margin-bottom:8px; }
+.bill-slip img { max-width:100%; max-height:220mm; margin:0 auto; border:1px solid #ddd; }
+.bill-slip-at { margin-top:6px; font-size:13px; }
+.bill-part { text-align:right; margin-bottom:8px; }
+.bill-frame { border:1px solid #111; }
+.bill-head2 { display:grid; grid-template-columns:1fr minmax(260px,auto); gap:8px 24px; padding:14px 0 10px 14px; }
+.bill-company { display:flex; flex-direction:column; font-size:13px; line-height:1.55; }
+.bill-company b { font-size:14px; }
+.bill-meta { display:grid; grid-template-columns:auto auto; gap:2px 14px; font-size:13px; padding-right:10px; grid-row:span 2; }
+.bill-meta dd { max-width:200px; }
+.bill-title2 { display:flex; flex-direction:column; align-items:center; justify-content:flex-end; }
+.bill-title2 b { font-size:18px; }
+.bill-title2 span { font-size:13px; font-weight:600; }
+.bill-table2 { border-left:0; border-right:0; }
+.bill-table2 th:first-child,.bill-table2 td:first-child { border-left:0; }
+.bill-table2 th:last-child,.bill-table2 td:last-child { border-right:0; }
+.bill-table2 td:nth-child(n+3) { text-align:right; white-space:nowrap; width:110px; }
+.bill-table2 tbody td { border-top:0; border-bottom:0; }
+.bill-table2 .bill-filler td { height:200px; border-bottom:1px solid #111; }
+.bill-sum2 { display:flex; justify-content:space-between; gap:12px; padding:8px 10px; border-bottom:1px solid #111; }
+.bill-sum2 div { display:flex; flex-direction:column; }
+.bill-sum2 div:last-child { text-align:right; border-left:1px solid #111; padding-left:14px; }
+.bill-sum2 small { font-size:13px; }
+.bill-pay2 { display:flex; flex-wrap:wrap; gap:6px 30px; padding:8px 10px 12px; border-bottom:1px solid #111; }
+.bill-pay2 span { display:flex; flex-direction:column; }
+.bill-pay2 small { font-size:12px; padding-left:16px; }
+.bill-sign2 { display:grid; grid-template-columns:1fr auto 1fr; gap:16px; align-items:end; padding:36px 14px 14px; text-align:center; }
+.bill-sign2 p { border-bottom:1px solid #111; padding-bottom:4px; }
+.bill-sign2 span { display:block; margin-top:6px; font-size:13px; }
+.bill-seal { font-size:13px; padding-bottom:24px; }
+.bill-items input { min-height:40px; padding:6px 10px; }
+@media (max-width:640px) {
+  .bill-head2 { grid-template-columns:1fr; }
+  .bill-sign2 { grid-template-columns:1fr; }
+}
+@media print {
+  .modal-body:has(.bill-doc) > .print-letterhead, .modal-body:has(.bill-doc) > .print-footer, .bill-switch { display:none!important; }
+  .bill-doc { font-size:11pt; }
+}
+
+/* คำแนะนำใต้ช่องกรอก · ระหว่างพิมพ์แสดงผลจำลอง (เลขบัตร/เบอร์โทร) */
+.field-hint { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 10px; margin-top:6px; font-size:12px; line-height:1.5; color:#8a7457; }
+.field-hint b { font-size:14px; font-weight:600; letter-spacing:.06em; color:#3a2d1b; font-variant-numeric:tabular-nums; }
+.field-hint span { border-radius:999px; padding:0 8px; background:#f3ece0; color:#7a6545; }
+.field-hint.is-ok span { background:#e4f2ea; color:#2f6b4f; }
+.field-hint.is-typing span { background:#fbefd8; color:#85560f; }
+
+/* ช่องที่ระบบกำหนดค่า (แก้ไม่ได้) */
+.field-locked { background:#f3ece0!important; color:#7a6545!important; cursor:not-allowed; border-style:dashed!important; }
+
+/* เตียงในการ์ดห้อง: ช่องมีคน = ทอง · ว่าง = เส้นประ */
+.room-bedrow { display:flex; flex-wrap:wrap; align-items:center; gap:4px; font-size:12px; color:#7a6545; }
+.room-bedrow i { display:grid; place-items:center; width:22px; height:22px; border-radius:6px; border:1.5px dashed #cdbb97; font-style:normal; font-size:11px; font-weight:600; color:#a89368; background:#fff; }
+.room-bedrow i.is-taken { border:1.5px solid #8b6e3e; background:#8b6e3e; color:#fff; }
+.room-bedrow span { margin-left:4px; }
+
+/* แผนผังห้อง 3 มิติเอียง (components/care/RoomMap) */
+.rmap-floor { margin-bottom:18px; }
+.rmap-floor h4 { margin-bottom:6px; font-weight:600; color:#3a2d1b; }
+.rmap-floor h4 small { margin-left:8px; font-weight:400; font-size:12px; color:#8a7457; }
+.rmap-svg { display:block; width:100%; height:auto; margin:0 auto; overflow:visible; }
+.rmap-room { cursor:pointer; outline:none; transition:filter .15s; }
+.rmap-room:hover, .rmap-room:focus-visible { filter:brightness(.96) drop-shadow(0 3px 6px #5a43202e); }
+.rmap-room.is-selected { filter:drop-shadow(0 4px 8px #8b6e3e66); }
+.rmap-no { font-size:17px; font-weight:700; fill:#3a2d1b; paint-order:stroke; stroke:#fff; stroke-width:4px; stroke-linejoin:round; }
+.rmap-sub { font-size:12px; font-weight:600; paint-order:stroke; stroke:#fff; stroke-width:3.5px; stroke-linejoin:round; }
+.rmap-bedtxt { font-size:10px; font-weight:700; fill:#fff; paint-order:stroke; stroke:#6b5338; stroke-width:2.5px; pointer-events:none; }
+.rmap-legend { display:flex; flex-wrap:wrap; gap:6px 16px; margin-bottom:10px; font-size:12px; color:#7a6545; }
+.rmap-legend li { display:flex; align-items:center; gap:6px; }
+.rmap-legend i { display:inline-block; width:14px; height:14px; border-radius:4px; border:1px solid #0002; }
+.rmap-legend i.bed-on { background:#b8955a; border-color:#7a5f33; }
+.rmap-legend i.bed-off { background:#fff; border:1.5px dashed #a89368; }
+.room-layout { display:grid; gap:16px; }
+@media (min-width:1100px) { .room-layout.has-panel { grid-template-columns:minmax(0,1fr) 340px; align-items:start; } .room-panel { position:sticky; top:84px; } }
+.room-panel { border:1px solid #e8dfcd; border-radius:16px; background:#fff; padding:16px; }
+.room-panel h3 { font-size:20px; font-weight:700; color:#3a2d1b; }
+.bed-row { display:flex; align-items:center; gap:10px; padding:8px 0; border-top:1px solid #f0e8d8; font-size:14px; }
+.bed-row b { display:grid; place-items:center; width:28px; height:28px; flex-shrink:0; border-radius:8px; font-size:13px; border:1.5px dashed #cdbb97; color:#a89368; }
+.bed-row.is-taken b { background:#8b6e3e; border:1.5px solid #8b6e3e; color:#fff; }
+.bed-row span { flex:1; min-width:0; overflow-wrap:anywhere; color:#3a2d1b; }
+.bed-row.is-free span { color:#8a7457; }
+.view-switch { display:inline-flex; }
+@media (max-width:767px) { .rmap-only-wide { display:none!important; } }
+.rmap-svg text { font-family:inherit; }
+
+/* แผนผังห้อง 3 มิติ (components/care/RoomScene) */
+.r3d-bar { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px 16px; margin-bottom:10px; }
+.r3d-bar .rmap-legend { margin-bottom:0; }
+.r3d-floors { display:flex; flex-wrap:wrap; gap:6px; }
+.r3d-floors button { border:1px solid #e3d8c3; border-radius:999px; padding:4px 14px; font-size:13px; color:#7a6545; background:#fff; }
+.r3d-floors button.is-on { background:#8b6e3e; border-color:#8b6e3e; color:#fff; }
+.r3d-canvas { position:relative; height:min(68vh, 640px); min-height:380px; overflow:hidden; border-radius:16px; border:1px solid #e8dfcd; background:linear-gradient(180deg,#f7f3ec,#efe8db); touch-action:none; }
+.r3d-canvas canvas { display:block; width:100%!important; height:100%!important; cursor:grab; outline:none; }
+.r3d-canvas canvas:active { cursor:grabbing; }
+.r3d-tools { position:absolute; top:12px; right:12px; display:flex; flex-direction:column; gap:6px; }
+.r3d-tools button { display:grid; place-items:center; width:38px; height:38px; border-radius:10px; border:1px solid #e3d8c3; background:#fffffff2; color:#5b4a2c; box-shadow:0 2px 6px #5a43201a; }
+.r3d-tools button:hover { background:#fff; border-color:#c9a96a; }
+.r3d-tip { position:absolute; left:0; top:0; z-index:2; max-width:280px; padding:6px 10px; border-radius:8px; background:#3a2d1bee; color:#fff; font-size:12px; pointer-events:none; opacity:0; transition:opacity .12s; }
+.r3d-hint { position:absolute; left:12px; bottom:10px; right:60px; font-size:11px; color:#8a7457; pointer-events:none; text-shadow:0 1px 0 #fff; }
+@media (max-width:767px) { .r3d-canvas { height:62vh; } }
+
+/* การ์ดรายละเอียดผู้ป่วย (จิ้มจากแผนผัง 3D) */
+.person-facts { display:grid; gap:0; border:1px solid #efe6d6; border-radius:14px; overflow:hidden; }
+.person-facts div { display:grid; grid-template-columns:150px 1fr; gap:12px; padding:9px 14px; border-top:1px solid #f3ecdf; font-size:14px; }
+.person-facts div:first-child { border-top:0; }
+.person-facts dt { color:#8a7457; }
+.person-facts dd { color:#3a2d1b; overflow-wrap:anywhere; }
+@media (max-width:520px) { .person-facts div { grid-template-columns:1fr; gap:2px; } }
+.bed-row .bed-who { flex:1; min-width:0; text-align:left; color:#3a2d1b; text-decoration:underline; text-decoration-color:#d8c8a6; text-underline-offset:3px; overflow-wrap:anywhere; }
+
+/* แผนผัง 3D โทนขาว-มิ้นต์ · ป้ายลอยเหนือห้อง */
+.r3d-canvas { background:radial-gradient(120% 90% at 50% 35%, #ffffff 0%, #f1f7f5 60%, #e6f0ed 100%)!important; border-color:#d9e8e4!important; }
+.r3d-tags { position:absolute; inset:0; pointer-events:none; overflow:hidden; }
+.r3d-tag { position:absolute; left:0; top:0; display:flex; align-items:center; gap:6px; padding:4px 6px 4px 10px; border-radius:999px; background:#fff; border:1px solid #dfe9e6; box-shadow:0 4px 12px -4px #1e4a4033; pointer-events:auto; white-space:nowrap; cursor:pointer; }
+.r3d-tag::after { content:""; position:absolute; left:50%; bottom:-5px; width:8px; height:8px; background:#fff; border-right:1px solid #dfe9e6; border-bottom:1px solid #dfe9e6; transform:translateX(-50%) rotate(45deg); }
+.r3d-tag b { font-size:15px; font-weight:700; color:#1f3a34; letter-spacing:.01em; }
+.r3d-tag span { border-radius:999px; padding:1px 8px; font-size:12px; font-weight:600; color:#fff; }
+.r3d-tag small { font-size:11px; color:#6d8a83; }
+.r3d-tag.is-free span { background:#2f9e7a; } .r3d-tag.is-part span { background:#d49a2a; } .r3d-tag.is-full span { background:#d0574a; } .r3d-tag.is-closed span { background:#9a948a; }
+.r3d-tag:hover { border-color:#7fcdbd; }
+.r3d-tools button { border-color:#dfe9e6!important; color:#2f5d53!important; }
+.r3d-floors button.is-on { background:#2f9e7a!important; border-color:#2f9e7a!important; }
+
+/* แถบบนบนมือถือ: ปุ่มกดง่าย (ขนาด 40px) แจ้งเตือนเป็นไอคอน+ตัวเลข ชื่อหน้าไม่ถูกบีบ */
+@media (max-width:767px) {
+  .topbar { gap:8px; padding:0 12px; }
+  .topbar > div:first-child { flex:1 1 0; min-width:0; gap:8px; }
+  .topbar > div:last-child { flex:0 0 auto; gap:8px; }
+  .topbar-current { font-size:15px; font-weight:600; }
+  .topbar .icon-button, .topbar .command-trigger { width:40px; height:40px; padding:0; display:grid; place-items:center; flex-shrink:0; }
+  .topbar .branch-badge { min-height:40px; max-width:128px; font-size:12.5px; }
+  .topbar .alerts-bell { white-space:nowrap; width:40px; height:40px; min-height:40px; padding:0; justify-content:center; border-radius:12px; }
+  .topbar .alerts-bell span { display:none; }
+  .topbar .alerts-bell b { position:absolute; top:-6px; right:-6px; }
+}
+
+/* ประวัติการรับชำระของใบแจ้งหนี้ (รับเป็นงวด) */
+.pay-history { display:grid; gap:6px; margin:0; padding:0; list-style:none; font-size:13px; color:var(--text); }
+.pay-history li { padding:8px 12px; border:1px solid var(--border); border-radius:12px; background:#fff; }
+.pay-history li small { color:var(--text-muted); }
+.pay-history li.is-left { background:#fffaf0; border-color:#f0d49a; color:#7d4f0b; }
+@media print { .pay-history { display:none; } }
+
+/* ตารางลิงก์ครอบครัว: พอดีหน้าต่าง ไม่ต้องเลื่อนซ้าย-ขวา · ชื่อผู้สร้างอยู่บรรทัดใต้วันที่ */
+.link-table .data-table { width:100%; min-width:0; font-size:13.5px; }
+.link-table .data-table th { padding:12px 10px; }
+.link-table .data-table td { padding:12px 10px; max-width:none; line-height:1.6; }
+.link-table .data-table td:first-child { white-space:pre-line; }
+.link-table .data-table td:first-child { font-weight:500; }
+.link-table .row-action { padding:6px 10px; }
+
+/* ลิงก์ในกล่อง QR: กดเปิดสมุดภาพได้เลย */
+.qr-link { display:block; text-decoration:none; }
+.qr-link code { display:block; cursor:pointer; text-decoration:underline; text-underline-offset:3px; }
+.qr-link:hover code { background:#fff7e3; }
+
+/* KinApp: งานที่ไม่ใช่ของเรา (มอบหมายให้คนอื่น/ทีมเวรอื่น) แสดงจางลง ส่งได้ผ่านปุ่ม "ทำแทน" เท่านั้น */
+.task-other { background:#f6f2ea; border-style:dashed !important; border-color:#d9ccb3 !important; }
+.task-other .task-owner { background:#e9dfcc; color:#4a3a1f; font-weight:500; }

@@ -9,6 +9,8 @@ import { downloadCsv, useCrud, useRecords } from "@/lib/store";
 import { OfflineBar } from "@/components/Pwa";
 import PhotoPicker from "@/components/PhotoPicker";
 import TutorialVideos from "@/components/TutorialVideos";
+import CashierOnly from "@/components/CashierOnly";
+import { can } from "@/lib/perms";
 import { useResidents } from "@/lib/care";
 import Login from "@/components/Login";
 import { useSession, SessionUser } from "@/lib/session";
@@ -617,5 +619,5 @@ function Manual() {
 export default function PharmacyApp() {
   const { user, ready, setUser, logout } = useSession();
   if (!ready) return <main className="grid min-h-dvh place-items-center text-sm text-gold-500">กำลังตรวจสอบการเข้าสู่ระบบ…</main>;
-  return <AppProvider go={() => {}}>{user ? <App user={user} onLogout={logout} /> : <Login staff onLogin={setUser} />}</AppProvider>;
+  return <AppProvider go={() => {}}>{user && !can(user, "app.pharmacy") ? <CashierOnly name={user.name} app="แอปจัดยา" onLogout={logout} /> : user ? <App user={user} onLogout={logout} /> : <Login staff onLogin={setUser} />}</AppProvider>;
 }

@@ -45,7 +45,7 @@ export function AppProvider({ go, children }: { go: (v: ViewId) => void; childre
           </>
         }
       >
-        <p className="text-sm text-gold-700">{cf?.message}</p>
+        <p className="text-[15px] font-medium leading-relaxed text-gold-900">{cf?.message}</p>
       </Modal>
     </AppCtx.Provider>
   );

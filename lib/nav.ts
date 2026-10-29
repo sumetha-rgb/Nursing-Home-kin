@@ -1,14 +1,16 @@
-﻿export type ViewId = "careplan"|"contracts"|"residents"|"tasks_table"|"tasks"|"appointments"|"health_logs"|"feedbacks"|"dashboard"|"official-docs"|"branches"|"staff"|"facility_tasks"|"master_tasks"|"quotations"|"audit"|"roster"|"reviews"|"kpi"|"tutorials";
+﻿export type ViewId = "careplan"|"contracts"|"residents"|"tasks_table"|"tasks"|"appointments"|"health_logs"|"feedbacks"|"dashboard"|"official-docs"|"branches"|"staff"|"facility_tasks"|"master_tasks"|"quotations"|"audit"|"roster"|"reviews"|"kpi"|"tutorials"|"rooms"|"billing";
 export type NavItem = {kind:"view";id:ViewId;label:string;icon:string;group:0|1|2}|{kind:"link";href:string;label:string;icon:string;group:0|1|2};
 export const NAV:NavItem[]=[
 {kind:"view",id:"careplan",label:"ภาพรวมการดูแล",icon:"grid",group:0},
 {kind:"view",id:"residents",label:"ผู้รับบริการ",icon:"user",group:0},
-{kind:"view",id:"tasks",label:"งานประจำวัน",icon:"check",group:0},
+{kind:"view",id:"rooms",label:"ห้องผู้ป่วย",icon:"bed",group:0},
+{kind:"view",id:"tasks",label:"มอบหมายและตรวจงาน",icon:"check",group:0},
 {kind:"view",id:"roster",label:"ตารางเวร",icon:"calendar",group:0},
 {kind:"view",id:"appointments",label:"ตารางนัดหมาย",icon:"calendar",group:0},
 {kind:"view",id:"health_logs",label:"บันทึกสุขภาพ",icon:"heart",group:0},
 {kind:"view",id:"quotations",label:"แผนดูแลและใบประเมิน",icon:"flow",group:0},
 {kind:"view",id:"contracts",label:"สัญญาบริการ",icon:"doc",group:1},
+{kind:"view",id:"billing",label:"การเงิน",icon:"receipt",group:1},
 {kind:"view",id:"dashboard",label:"ผลการดำเนินงาน",icon:"chart",group:1},
 {kind:"view",id:"branches",label:"สาขาของเรา",icon:"building",group:1},
 {kind:"view",id:"staff",label:"ทีมและสิทธิ์การใช้งาน",icon:"id",group:1},

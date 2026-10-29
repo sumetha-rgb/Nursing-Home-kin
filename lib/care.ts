@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
+import { isIdle } from "./store";
 
 /** ตัวช่วยฝั่งหน้าเว็บสำหรับ /api/care: รายชื่อผู้รับบริการ ประวัติรายบุคคล แจ้งเตือนสัญญาณชีพ */
 export type ResidentLite = { id: string; full_name: string; age: number | null; room: string | null; branch_name: string | null; status: string | null; chronic_diseases: string | null };
@@ -24,11 +25,19 @@ export function useResidents() {
       .catch(() => {})
       .finally(() => setLoaded(true));
   }, []);
-  useEffect(reload, [reload]);
+  // ผู้รับบริการที่ผู้จัดการ/แคชเชียร์เพิ่มหรือย้ายห้อง ให้ KinApp และแอปจัดยาเห็นตามโดยไม่ต้องรีเฟรช
+  useEffect(() => {
+    reload();
+    const t = setInterval(() => { if (document.visibilityState === "visible" && !isIdle()) reload(); }, 30_000);
+    window.addEventListener("focus", reload);
+    return () => { clearInterval(t); window.removeEventListener("focus", reload); };
+  }, [reload]);
   return { residents: list, loaded, reload };
 }
 
 export const fetchProfile = (id: string) => call<Profile>(`/api/care?op=profile&id=${encodeURIComponent(id)}`);
+/** รายชื่อพยาบาลของสาขา (ตัวเลือกผู้ดูแลในนัดหมาย) */
+export const fetchNurses = () => call<{ nurses: string[] }>("/api/care?op=nurses").then((d) => d.nurses);
 export const ackAlert = (id: string, note: string) => call<{ ok: boolean }>("/api/care", { op: "ack", id, note });
 
 /** แจ้งเตือนที่ยังไม่มีคนรับทราบ ดึงใหม่ทุก 1 นาที และเมื่อกลับมาที่หน้านี้ */
@@ -37,7 +46,7 @@ export function useAlerts() {
   const reload = useCallback(() => { call<{ alerts: CareAlert[] }>("/api/care?op=alerts").then((d) => setAlerts(d.alerts)).catch(() => {}); }, []);
   useEffect(() => {
     reload();
-    const t = setInterval(reload, 60_000);
+    const t = setInterval(() => { if (document.visibilityState === "visible" && !isIdle()) reload(); }, 60_000);
     const onFocus = () => reload();
     window.addEventListener("focus", onFocus);
     window.addEventListener("kin-vitals-saved", onFocus);

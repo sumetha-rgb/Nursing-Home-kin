@@ -10,6 +10,11 @@ import { useCallback, useEffect, useSyncExternalStore } from "react";
  *  - การบันทึกทุกครั้งเข้าคิว outbox ที่เก็บในเครื่อง ส่งทีละรายการตามลำดับ
  *    เน็ตหลุด = รอในคิว แล้วส่งต่อเองเมื่อกลับมาออนไลน์ (ปิดแอปแล้วเปิดใหม่ก็ยังอยู่)
  *  - ชุดข้อมูล staff-* / pharmacy-* เก็บสำเนาล่าสุดในเครื่อง เปิดดูได้ตอนออฟไลน์
+ *
+ * ข้อมูลตรงกันทุกเครื่อง (ทุกตำแหน่งเห็นข้อมูลชุดเดียวกัน):
+ *  - ชุดข้อมูลที่หน้าจอกำลังแสดง ดึงใหม่ทุก 20 วินาที (หยุดเมื่อซ่อนแท็บหรือไม่ได้แตะหน้าจอเกิน 5 นาที) เมื่อกลับมาที่แท็บ/แอป และเมื่อเปิดหน้านั้นอีกครั้ง
+ *  - ไม่ดึงทับระหว่างมีรายการรอส่งของชุดนั้น หรือระหว่างเปิดหน้าต่างแก้ไข (กันข้อมูลที่กำลังกรอกหาย/แก้ผิดแถว)
+ *  - ข้อมูลไม่เปลี่ยน = ไม่วาดหน้าจอใหม่
  */
 type Item<T> = { id: string; data: T };
 type Entry = { items: Item<unknown>[]; loaded: boolean; error: boolean };
@@ -31,7 +36,9 @@ const ls = {
   set(k: string, v: unknown) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* เต็มหรือถูกปิด: ใช้ต่อได้แต่ไม่มีสำเนา */ } },
 };
 
-const newId = () => (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+export const newId = () => (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+const fetchedAt = new Map<string, number>();
+const mounted = new Map<string, number>();
 const put = (key: string, e: Partial<Entry>) => {
   const next = { ...(store.get(key) ?? EMPTY), ...e };
   store.set(key, next);
@@ -68,6 +75,7 @@ function load<T>(key: string, initial: () => Item<T>[]) {
       if (!r.seeded) r = await call(key, { op: "seed", items: initial() });
       online = true; setStatus();
       // ยังมีรายการรอส่งของชุดนี้: ใช้ของในเครื่องไปก่อน ผลจากฐานข้อมูลจะมาหลังส่งครบ
+      fetchedAt.set(key, Date.now());
       if (!outbox.some((o) => o.key === key)) put(key, { items: r.items, loaded: true, error: false });
       else put(key, { loaded: true, error: false });
     } catch (e) {
@@ -142,8 +150,60 @@ export function setOfflineOwner(userId: string) {
   ls.set(OWNER, userId);
 }
 
+/** ดึงชุดข้อมูลใหม่จากฐานข้อมูล (ข้อมูลที่คนอื่นเพิ่ม/แก้) · ข้ามถ้ามีรายการรอส่ง กำลังโหลด หรือเปิดหน้าต่างแก้ไขอยู่ */
+const later = new Set<string>(); // ดึงไม่ได้ตอนนี้ (เปิดหน้าต่างแก้ไข/มีรายการรอส่ง) ไว้ดึงทันทีที่ทำได้
+async function refresh(key: string) {
+  if (!isBrowser || !store.get(key)?.loaded) return;
+  if (inflight.has(key) || outbox.some((o) => o.key === key) || document.querySelector(".modal-overlay")) { later.add(key); return; }
+  later.delete(key);
+  const p = (async () => {
+    try {
+      const r = await call(key);
+      fetchedAt.set(key, Date.now());
+      online = true; setStatus();
+      if (outbox.some((o) => o.key === key)) return;
+      const cur = store.get(key);
+      if (JSON.stringify(cur?.items) !== JSON.stringify(r.items)) put(key, { items: r.items, error: false });
+    } catch (e) { if (e instanceof Offline) { online = false; setStatus(); } }
+    finally { inflight.delete(key); }
+  })();
+  inflight.set(key, p);
+  await p;
+}
+/** ผู้ใช้ไม่ได้แตะหน้าจอเกิน 5 นาที = หยุดดึงอัตโนมัติ (ขยับ/แตะอีกครั้งจะดึงทันที) */
+const IDLE_MS = 5 * 60_000;
+let lastTouch = Date.now();
+export const isIdle = () => Date.now() - lastTouch > IDLE_MS;
+const refreshMounted = () => { if (document.visibilityState === "visible" && !isIdle()) { lastPoll = Date.now(); mounted.forEach((n, key) => { if (n > 0) refresh(key); }); } };
+let lastPoll = Date.now();
+if (isBrowser) {
+  setInterval(() => {
+    if (later.size && !document.querySelector(".modal-overlay")) [...later].forEach((k) => refresh(k));
+    if (Date.now() - lastPoll >= 20_000) refreshMounted();
+  }, 3000);
+  const touch = () => {
+    const wasIdle = isIdle();
+    lastTouch = Date.now();
+    if (wasIdle) refreshMounted();
+  };
+  // throttle: บันทึกเวลาไม่เกินวินาทีละครั้ง (mousemove/scroll ยิงถี่)
+  let last = 0;
+  const onAct = () => { const n = Date.now(); if (n - last < 1000 && !isIdle()) return; last = n; touch(); };
+  (["pointerdown", "keydown", "scroll", "touchstart", "mousemove"] as const).forEach((e) => window.addEventListener(e, onAct, { passive: true, capture: true }));
+  window.addEventListener("focus", () => { lastTouch = Date.now(); refreshMounted(); });
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") lastTouch = Date.now(); refreshMounted(); });
+}
+/** ให้หน้าจอสั่งดึงข้อมูลใหม่ทันที (เช่น ปุ่มรีเฟรช) */
+export const refreshData = (key?: string) => (key ? refresh(key) : refreshMounted());
+
 function useEntry<T>(key: string, initial: () => Item<T>[]) {
-  useEffect(() => { load(key, initial); }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    load(key, initial);
+    mounted.set(key, (mounted.get(key) ?? 0) + 1);
+    // เปิดหน้านี้อีกครั้ง: ข้อมูลเก่ากว่า 5 วินาที ดึงใหม่
+    if (store.get(key)?.loaded && Date.now() - (fetchedAt.get(key) ?? 0) > 5000) refresh(key);
+    return () => { mounted.set(key, (mounted.get(key) ?? 1) - 1); };
+  }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
   return useSyncExternalStore(subscribe, () => store.get(key) ?? EMPTY, () => EMPTY) as { items: Item<T>[]; loaded: boolean; error: boolean };
 }
 
@@ -159,7 +219,8 @@ export function useCrud(key: string, initial: string[][]) {
   }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
   return {
     rows, ids: items.map((x) => x.id), loaded, error, set,
-    add: (r: string[]) => { const it = { id: newId(), data: r }; local([it, ...items]); sync(key, { op: "upsert", items: [it] }); },
+    /** คืนรหัสรายการใหม่ (ใช้แนบข้อมูลที่เก็บแยก เช่น รูปบัตรของสัญญา) */
+    add: (r: string[]) => { const it = { id: newId(), data: r }; local([it, ...items]); sync(key, { op: "upsert", items: [it] }); return it.id; },
     update: (i: number, r: string[]) => { const it = { ...items[i], data: r }; local(items.map((x, j) => (j === i ? it : x))); sync(key, { op: "upsert", items: [it] }); },
     remove: (i: number) => { const id = items[i]?.id; local(items.filter((_, j) => j !== i)); if (id) sync(key, { op: "delete", ids: [id] }); },
     clear: () => { local([]); sync(key, { op: "clear" }); },

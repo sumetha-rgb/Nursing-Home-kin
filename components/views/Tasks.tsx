@@ -73,6 +73,8 @@ export function FacilityTasks() {
 }
 
 /* ---------- คลังงานมาตรฐาน ---------- */
+/** วิชาชีพที่งานมาตรฐานนี้เหมาะสม (ข้อความกำกับในรายการเลือกงาน ไม่ผูกกับตำแหน่งสิทธิ์) · ค่าอื่นที่เคยบันทึกไว้ยังแสดงและเลือกได้ */
+const PROFESSIONS = ["พยาบาล", "ผู้ช่วยพยาบาล", "ผู้ดูแล / ผู้ช่วยเหลือคนไข้", "นักกายภาพบำบัด", "นักกิจกรรมบำบัด", "นักโภชนาการ", "แพทย์"];
 const MT_COLS = ["รหัส", "ชื่องาน", "คำสั่งงาน (Instruction)", "หมวด", "กะ", "สาขา"];
 const MT_FIELDS: FieldDef[] = [
   { label: "รหัสงาน" },
@@ -81,7 +83,7 @@ const MT_FIELDS: FieldDef[] = [
   { label: "หมวดหมู่", options: CATEGORIES },
   { label: "กะที่ต้องทำ", options: ["ทั้งสองกะ", "กะเช้า", "กะดึก"] },
   { label: "สาขา", options: ["ส่วนกลาง", ...BRANCH_NAMES] },
-  { label: "วิชาชีพ" },
+  { label: "วิชาชีพ", options: PROFESSIONS },
 ];
 
 export function MasterTasks() {
@@ -124,7 +126,7 @@ export function MasterTasks() {
       </Section>
       <FormDialog
         open={!!dlg} mode={dlg?.mode ?? "add"} title={dlg?.mode === "edit" ? "แก้ไขงานมาตรฐาน" : "เพิ่มงานมาตรฐาน"}
-        fields={withBranches(MT_FIELDS, branchNames)} value={dlg?.mode === "edit" ? rows[dlg.i] : undefined}
+        fields={withBranches(MT_FIELDS, branchNames).map((f) => f.label === "วิชาชีพ" ? { ...f, options: [...new Set([...PROFESSIONS, ...rows.map((r) => r[6]).filter((v) => v && v !== "-")])] } : f)} value={dlg?.mode === "edit" ? rows[dlg.i] : undefined}
         onClose={() => setDlg(null)} saveLabel="บันทึกข้อมูล"
         onSave={(v) => { if (dlg?.mode === "edit") update(dlg.i, v); else add(v); setDlg(null); toast("บันทึกข้อมูลแล้ว"); }}
       />

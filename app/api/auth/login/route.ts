@@ -3,6 +3,7 @@ import { sql } from "@/lib/db";
 import { checkBranch, clearFailures, normEmail, recordFailure, startSession, tooManyAttempts, verifyPassword } from "@/lib/auth";
 import { audit } from "@/lib/audit";
 import type { Role } from "@/lib/roles";
+import { permsFor } from "@/lib/perms";
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
@@ -15,7 +16,7 @@ export async function POST(req: NextRequest) {
   if (tooManyAttempts(email)) return NextResponse.json({ error: "ลองผิดหลายครั้งเกินไป กรุณารอ 10 นาทีแล้วลองใหม่" }, { status: 429 });
 
   const [u] = await sql`
-    SELECT id, password_hash, status, full_name AS name, email, access_level AS role, branch_name AS branch
+    SELECT id, password_hash, status, full_name AS name, email, access_level AS role, branch_name AS branch, permissions
     FROM staff_users WHERE lower(email) = ${email}`;
   if (!u || !(await verifyPassword(password, u.password_hash))) {
     recordFailure(email);
@@ -26,7 +27,7 @@ export async function POST(req: NextRequest) {
   if (u.status !== "ทำงาน") return NextResponse.json({ error: `บัญชีนี้ถูกระงับ (${u.status})` }, { status: 403 });
 
   clearFailures(email);
-  const user = { id: u.id, name: u.name, email: u.email, role: u.role as Role, branch: u.branch ?? "" };
+  const user = { id: u.id, name: u.name, email: u.email, role: u.role as Role, branch: u.branch ?? "", perms: permsFor(u.role as Role, u.permissions) };
   await audit(req, user, [{ area: "auth", action: "login", recordId: u.id, summary: email }]);
   const res = NextResponse.json({ user: await checkBranch(user) });
   await startSession(res, u.id);

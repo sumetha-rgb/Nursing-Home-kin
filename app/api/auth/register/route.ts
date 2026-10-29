@@ -3,12 +3,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { sql } from "@/lib/db";
 import { hashPassword, normEmail, passwordProblem, startSession, validEmail } from "@/lib/auth";
 import { audit } from "@/lib/audit";
+import { permsFor } from "@/lib/perms";
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
 
 /**
- * สมัครสมาชิกเอง: ได้สิทธิ์ระดับปฏิบัติงาน (Operation) เสมอ
+ * สมัครสมาชิกเอง: ได้สิทธิ์พยาบาล (Nurse) เสมอ
  * ค่าเริ่มต้นต้องรอผู้ดูแลอนุมัติก่อนเข้าสู่ระบบ ตั้ง AUTO_APPROVE_SIGNUP=true เพื่อให้เข้าได้ทันที
  */
 export async function POST(req: NextRequest) {
@@ -29,11 +30,11 @@ export async function POST(req: NextRequest) {
   const id = randomUUID();
   await sql`
     INSERT INTO staff_users (id, full_name, email, password_hash, contract_type, access_level, branch_name, status, sort_order)
-    VALUES (${id}, ${name}, ${email}, ${await hashPassword(body.password)}, null, 'Operation', ${branch}, ${auto ? "ทำงาน" : "รออนุมัติ"}, ${Date.now()})`;
-  await audit(req, null, [{ area: "users", action: "register", recordId: id, summary: `${name} (${email})`, branch, after: { full_name: name, email, access_level: "Operation", branch_name: branch, status: auto ? "ทำงาน" : "รออนุมัติ" } }], name);
+    VALUES (${id}, ${name}, ${email}, ${await hashPassword(body.password)}, null, 'Nurse', ${branch}, ${auto ? "ทำงาน" : "รออนุมัติ"}, ${Date.now()})`;
+  await audit(req, null, [{ area: "users", action: "register", recordId: id, summary: `${name} (${email})`, branch, after: { full_name: name, email, access_level: "Nurse", branch_name: branch, status: auto ? "ทำงาน" : "รออนุมัติ" } }], name);
 
   if (!auto) return NextResponse.json({ pending: true });
-  const res = NextResponse.json({ pending: false, user: { id, name, email, role: "Operation", branch } });
+  const res = NextResponse.json({ pending: false, user: { id, name, email, role: "Nurse", branch, perms: permsFor("Nurse") } });
   await startSession(res, id);
   return res;
 }

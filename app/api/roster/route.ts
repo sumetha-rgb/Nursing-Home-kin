@@ -4,13 +4,14 @@ import { sql } from "@/lib/db";
 import { currentUser, forbidden, unauthorized } from "@/lib/auth";
 import { audit } from "@/lib/audit";
 import type { SessionUser } from "@/lib/roles";
+import { can } from "@/lib/perms";
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
 
 /**
  * ตารางเวรและการเช็คชื่อ (เห็นเฉพาะสาขาตัวเอง ยกเว้น Global Admin เลือกสาขาได้)
- *  GET  ?op=month&ym=2026-10[&branch=]  เวรทั้งเดือน + การเช็คชื่อ (ระดับปฏิบัติงานเห็นการเช็คชื่อของตัวเองเท่านั้น) + รายชื่อทีม (ผู้จัดการ)
+ *  GET  ?op=month&ym=2026-10[&branch=]  เวรทั้งเดือน + การเช็คชื่อ (พยาบาลเห็นการเช็คชื่อของตัวเองเท่านั้น) + รายชื่อทีม (ผู้จัดการ)
  *  GET  ?op=day&date=2026-10-28[&branch=] การเช็คชื่อของวันนั้นพร้อมรูป (ผู้จัดการ)
  *  GET  ?op=today                       เวรของฉันวันนี้ + การเช็คชื่อ
  *  POST { op: "assign", date, shift, staffIds, branch? }   ตั้งคนเข้าเวรของวันนั้น (แทนที่ของเดิม) · ผู้จัดการ
@@ -19,7 +20,8 @@ export const fetchCache = "force-no-store";
 const SHIFT_START: Record<string, string> = { เช้า: "07:00", ดึก: "19:00" };
 const LATE_GRACE = 15;
 const bad = (msg: string, status = 400) => NextResponse.json({ error: msg }, { status });
-const isAdmin = (me: SessionUser) => me.role !== "Operation";
+/** จัดเวร/ดูการเช็คชื่อของทีม = มีเมนูตารางเวร (ไม่มี = เห็นเฉพาะของตัวเองใน KinApp) */
+const isAdmin = (me: SessionUser) => can(me, "roster");
 const branchOf = (me: SessionUser, q?: string | null) => (me.role === "Global Admin" ? (q || null) : me.branch);
 const ymOk = (s: string) => /^\d{4}-\d{2}$/.test(s);
 const dateOk = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s);
@@ -94,12 +96,12 @@ export async function POST(req: NextRequest) {
   const b = await req.json().catch(() => ({}));
   try {
     if (b.op === "assign") {
-      if (!isAdmin(me)) return forbidden("จัดเวรได้เฉพาะผู้จัดการสาขาและผู้บริหาร");
+      if (!isAdmin(me)) return forbidden("บัญชีนี้ไม่มีสิทธิ์จัดเวร");
       const br = branchOf(me, b.branch);
       if (!br) return bad("กรุณาเลือกสาขา");
       if (!dateOk(String(b.date)) || !(b.shift in SHIFT_START)) return bad("ข้อมูลเวรไม่ถูกต้อง");
       const ids = (Array.isArray(b.staffIds) ? b.staffIds : []).map(String);
-      const team = (await sql`SELECT id, full_name FROM staff_users WHERE branch_name = ${br} AND id = ANY(${ids})`) as { id: string; full_name: string }[];
+      const team = (await sql`SELECT id, full_name FROM staff_users WHERE branch_name = ${br} AND id = ANY(${ids}) AND access_level IN ('Nurse', 'Head Nurse')`) as { id: string; full_name: string }[];
       const before = (await sql`SELECT staff_name FROM staff_shifts WHERE branch_name = ${br} AND shift_date = ${b.date}::date AND shift = ${b.shift}`) as { staff_name: string }[];
       await sql.transaction([
         sql`DELETE FROM staff_shifts WHERE branch_name = ${br} AND shift_date = ${b.date}::date AND shift = ${b.shift}`,

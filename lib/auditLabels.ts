@@ -1,16 +1,18 @@
+import { ROLE_INFO, Role } from "./roles";
 /** ชื่อภาษาไทยที่ใช้แสดงประวัติการแก้ไข (ใช้ได้ทั้งหน้าเว็บและ server) */
 
 export const ACTION_LABEL: Record<string, string> = {
   create: "เพิ่ม", update: "แก้ไข", delete: "ลบ", clear: "ล้างข้อมูล", replace: "แทนที่ทั้งหมด",
   login: "เข้าสู่ระบบ", login_failed: "เข้าสู่ระบบไม่สำเร็จ", change_password: "เปลี่ยนรหัสผ่าน",
-  register: "สมัครสมาชิก", approve: "อนุมัติบัญชี", reset_password: "รีเซตรหัสผ่าน", acknowledge: "รับทราบแจ้งเตือน", checkin: "เช็คชื่อเข้างาน", checkout: "เช็คชื่อออกงาน",
+  register: "สมัครสมาชิก", approve: "อนุมัติบัญชี", permissions: "กำหนดสิทธิ์", view_idcard: "เปิดดูรูปบัตรประชาชน", reset_password: "รีเซตรหัสผ่าน", acknowledge: "รับทราบแจ้งเตือน", checkin: "เช็คชื่อเข้างาน", checkout: "เช็คชื่อออกงาน",
 };
 
 /** กลุ่มตัวกรอง → action ที่อยู่ในกลุ่ม */
 export const ACTION_GROUPS: Record<string, string[]> = {
   "เพิ่ม": ["create", "register"],
-  "แก้ไข": ["update", "approve", "replace", "acknowledge"],
+  "แก้ไข": ["update", "approve", "replace", "acknowledge", "permissions"],
   "ลบ": ["delete", "clear"],
+  "เปิดดูข้อมูลส่วนบุคคล": ["view_idcard"],
   "บัญชีและการเข้าสู่ระบบ": ["login", "login_failed", "change_password", "reset_password", "checkin", "checkout"],
 };
 
@@ -21,7 +23,7 @@ export const AREA_LABEL: Record<string, string> = {
   auth: "การเข้าสู่ระบบ", "pharmacy-master": "แอปจัดยา · ฐานข้อมูลยา", "pharmacy-drugs": "แอปจัดยา · คลังยา",
   "pharmacy-packs": "แอปจัดยา · ซองยา", "staff-tasks": "KinApp · งานวันนี้", "staff-meds": "KinApp · คิวจ่ายยา",
   "staff-handover": "KinApp · สมุดส่งเวร", alerts: "แจ้งเตือนสัญญาณชีพ", routines: "งานประจำ (ทำซ้ำทุกวัน)", roster: "ตารางเวร", attendance: "เช็คชื่อเข้า-ออกงาน",
-  review_links: "ลิงก์ครอบครัว (สมุดภาพ/รีวิว)", family_photos: "สมุดภาพครอบครัว", kpi: "น้ำหนัก KPI พนักงาน",
+  review_links: "ลิงก์ครอบครัว (สมุดภาพ/รีวิว)", family_photos: "สมุดภาพครอบครัว", kpi: "น้ำหนัก KPI พนักงาน", rooms: "ห้องผู้ป่วย", invoices: "การเงิน (ใบแจ้งหนี้/ใบเสร็จ)",
 };
 export function areaLabel(area: string) {
   const d = area.match(/^daily-(\d{4})-(\d{2})-(\d{2})$/);
@@ -49,7 +51,13 @@ export const FIELD_LABEL: Record<string, string> = {
   given: "จ่ายแล้ว", packed_by: "ผู้จัดยา", scheduled_time: "เวลาที่กำหนด", done_time: "เวลาที่ทำเสร็จ",
   medications: "ยา", shortage: "ยาที่ขาด", done: "เสร็จแล้ว", topic_type: "หัวข้อ", detail: "รายละเอียด",
   written_by: "ผู้เขียน", written_at: "เวลาที่เขียน", assignee: "ผู้รับผิดชอบ", submitted_time: "เวลาที่ส่งจริง",
-  contract_type: "ประเภทสัญญาจ้าง", access_level: "ระดับสิทธิ์", staff: "พนักงานเข้าเวร", given_by: "ผู้ให้ยา", given_at: "เวลาที่ให้ยา", checked_by: "ผู้ตรวจ QA", ack_note: "บันทึกการรับทราบ",
+  contract_type: "ประเภทสัญญาจ้าง", access_level: "ระดับสิทธิ์", permissions: "สิทธิ์ที่ติ๊ก", staff: "พนักงานเข้าเวร", given_by: "ผู้ให้ยา", given_at: "เวลาที่ให้ยา", checked_by: "ผู้ตรวจ QA", ack_note: "บันทึกการรับทราบ",
+  room_no: "เลขห้อง", floor: "ชั้น/โซน", bed: "เตียง", room_type: "ประเภทห้อง", capacity: "จำนวนผู้ป่วยต่อห้อง", monthly_rate: "ค่าห้อง/เดือน",
+  start_date: "วันเริ่มสัญญา", employer_id_no: "เลขบัตรผู้ว่าจ้าง", employer_phone: "โทรศัพท์ผู้ว่าจ้าง", employer_address: "ที่อยู่ผู้ว่าจ้าง",
+  relationship: "ความเกี่ยวข้อง", resident_id_no: "เลขบัตรผู้รับบริการ", resident_age: "อายุผู้รับบริการ", included_services: "บริการในค่าบริการพื้นฐาน",
+  extra_services: "รายการที่มีค่าใช้จ่ายเพิ่ม", extra_fee: "ค่าบริการเพิ่มเติมรายเดือน", extra_package: "แพ็กเกจเสริม", prepaid: "ชำระล่วงหน้า", deposit: "เงินประกัน",
+  hn: "HN", doc_no: "เลขที่เอกสาร", payer_name: "ผู้ชำระ", payer_address: "ที่อยู่ผู้ชำระ", items_json: "รายการในเอกสาร",
+  total: "ยอดรวม", discount: "ส่วนลด", net: "ยอดสุทธิ", pay_cash: "เงินสด", pay_credit: "บัตรเครดิต", pay_transfer: "โอนเงิน", paid_date: "วันที่รับชำระ", cashier: "ผู้รับชำระ",
 };
 
 /** เทียบค่าแบบหลวม: วันที่/ตัวเลขจากฐานข้อมูลกับจากหน้าเว็บอาจต่างรูปแบบเล็กน้อย */
@@ -61,5 +69,8 @@ export function displayValue(v: unknown) {
   if (v === true) return "ใช่";
   if (v === false) return "ไม่";
   const s = normValue(v);
+  // รหัสตำแหน่งในระบบ (Nurse ฯลฯ) แสดงเป็นชื่อไทย
+  if (s === "Operation") return ROLE_INFO.Nurse.th; // ประวัติเก่าก่อนเปลี่ยนรหัสตำแหน่งเป็น Nurse
+  if (s in ROLE_INFO) return ROLE_INFO[s as Role].th;
   return s === "" ? "-" : s;
 }

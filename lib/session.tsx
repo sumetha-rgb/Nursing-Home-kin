@@ -21,7 +21,7 @@ export const api = {
   users: (body?: object) => (body ? post<{ users: UserRow[] }>("/api/users", body) : fetch("/api/users", { cache: "no-store" }).then(async (r) => { const d = await r.json(); if (!r.ok) throw new Error(d.error); return d as { users: UserRow[] }; })),
 };
 
-export type UserRow = { id: string; full_name: string; email: string | null; contract_type: string | null; access_level: string; branch_name: string | null; status: string; last_login_at: string | null };
+export type UserRow = { id: string; full_name: string; email: string | null; contract_type: string | null; access_level: string; branch_name: string | null; status: string; last_login_at: string | null; permissions: string[] | null };
 
 /** ผู้ใช้ล่าสุดที่เข้าสู่ระบบในเครื่องนี้ ใช้เปิดแอปตอนออฟไลน์ (server ยังตรวจ cookie ทุกครั้งที่ส่งข้อมูล) */
 const LAST_USER = "kin-user";

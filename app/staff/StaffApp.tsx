@@ -7,6 +7,9 @@ import Login from "@/components/Login";
 import PasswordDialog from "@/components/PasswordDialog";
 import { useSession, SessionUser } from "@/lib/session";
 import { ROLE_INFO } from "@/lib/roles";
+import { apptIso, upcomingAppts } from "@/lib/appointments";
+import CashierOnly from "@/components/CashierOnly";
+import { can } from "@/lib/perms";
 import Icon from "@/components/Icon";
 import { Field, Modal, Select } from "@/components/ui";
 import { AppProvider, useApp } from "@/lib/app";
@@ -18,6 +21,7 @@ import AlertsBell from "@/components/care/AlertsBell";
 import BranchNotice from "@/components/BranchNotice";
 import ResidentProfile from "@/components/care/ResidentProfile";
 import VitalsDialog from "@/components/care/VitalsDialog";
+import FamilyLinkDialog from "@/components/care/FamilyLinkDialog";
 import PhotoPicker from "@/components/PhotoPicker";
 import { OfflineBar, usePwa } from "@/components/Pwa";
 import { CheckInCard, StaffRoster } from "@/components/roster/StaffRoster";
@@ -29,34 +33,11 @@ import { KPI_PARTS, KpiResp, pointsOf } from "@/lib/kpi";
 /** งานวันนี้ใน KinApp (มาจากหน้างานประจำวันของผู้จัดการ) */
 type Task = { id: number; rid?: string; who: string; title: string; time: string; ins: string; done?: string; note?: string; shift?: string; status?: string; by?: string; owner?: string };
 
-const FLOATING = [
-  { id: 101, title: "ทำความสะอาดห้องโถงส่วนกลาง", time: "09:00" },
-  { id: 102, title: "เช็ดทำความสะอาดโซฟาส่วนกลาง", time: "14:00" },
-];
-const APPTS = [
-  { who: "คุณสุดา วงศ์สวัสดิ์", what: "พบแพทย์ตามนัด", when: "วันนี้ 13:00" },
-  { who: "คุณมาลี ศรีสุข", what: "ตรวจเลือด", when: "พรุ่งนี้ 10:00" },
-];
-/** ใช้เมื่อยังโหลดรายชื่อจริงไม่ได้ (ครั้งแรกที่ออฟไลน์) */
-const RESIDENTS0: { id?: string; name: string; room: string; age: number | string }[] = [
-  { name: "คุณสุดา วงศ์สวัสดิ์", room: "A-101", age: 78 },
-  { name: "คุณมาลี ศรีสุข", room: "A-103", age: 84 },
-  { name: "คุณบุญช่วย แก้วมณี", room: "B-204", age: 81 },
-  { name: "คุณสมศรี พิมพ์ทอง", room: "C-012", age: 76 },
-];
 const HANDOVER0 = [
   { id: 1, type: "เฝ้าระวังอาการ", who: "คุณมาลี ศรีสุข", text: "แขนขวาอ่อนแรงมากขึ้นเล็กน้อย ให้ตรวจซ้ำทุก 4 ชม.", by: "พยาบาล วิภา", at: "เมื่อวาน 19:10" },
   { id: 2, type: "ญาติฝากแจ้ง", who: "คุณสุดา วงศ์สวัสดิ์", text: "ลูกสาวจะมาเยี่ยมบ่ายนี้ ฝากเตรียมเสื้อผ้าชุดใหม่", by: "พนักงาน ลัดดา", at: "วันนี้ 06:40" },
 ];
 const TYPES = ["เฝ้าระวังอาการ", "คำสั่งแพทย์", "ญาติฝากแจ้ง", "งานค้าง/ทั่วไป"];
-const REPORT: Record<string, Record<string, string[][]>> = {};
-const reportFor = (name: string, day: string) => [
-  ["รายงานสุขภาพ (สัญญาณชีพ/อาหาร/ขับถ่าย)", day === "วันนี้" ? "BP 128/80, PR 76, BT 36.6 ทานอาหารเช้าหมด ขับถ่ายปกติ" : "BP 130/82, PR 78, BT 36.7 ทานอาหารได้ 3/4 ขับถ่ายปกติ"],
-  ["การให้ยา", "ได้รับยาครบตามรอบเวลา"],
-  ["เรื่องเฝ้าระวัง", name.includes("มาลี") ? "แขนขวาอ่อนแรง ตรวจซ้ำทุก 4 ชม." : "ไม่มี"],
-  ["โน้ตการทำงาน", "อารมณ์ดี ร่วมกิจกรรมกลุ่มได้"],
-];
-void REPORT;
 
 type Tab = "tasks" | "roster" | "meds" | "residents" | "team" | "fame";
 const TABS: { id: Tab; label: string; icon: string }[] = [
@@ -93,7 +74,7 @@ function PhotoInput({ label, file, onFile }: { label: string; file: string; onFi
 
 /* ---------- แอป ---------- */
 function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
-  const { toast } = useApp();
+  const { toast, confirm } = useApp();
   const pwa = usePwa();
   const [tab, setTab] = useState<Tab>("tasks");
   // งานวันนี้ = งานที่ผู้จัดการมอบหมายในหน้า "ตรวจงานประจำวัน" ของวันนี้ · ส่งงานแล้วสถานะกลับไปให้ผู้จัดการตรวจ
@@ -106,7 +87,13 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   const [drugs] = useRecords<Drug>("pharmacy-drugs", DRUGS0);
   const { add: addHealth } = useCrud("health", HEALTH);
   const { residents: live } = useResidents();
-  const RESIDENTS = live.length ? live.map((r) => ({ id: r.id, name: r.full_name, room: r.room ?? "-", age: r.age ?? "-" })) : RESIDENTS0;
+  // รายชื่อจริงจากทะเบียนผู้รับบริการ (สำเนาในเครื่องใช้ตอนออฟไลน์) · ไม่ใช้ชื่อตัวอย่าง
+  const RESIDENTS = live.map((r) => ({ id: r.id, name: r.full_name, room: r.room ?? "-", age: r.age ?? "-" }));
+  // นัดหมายและงานส่วนกลาง: ชุดข้อมูลเดียวกับที่ผู้จัดการ/หัวหน้าพยาบาลบันทึกในระบบจัดการ
+  const { rows: apptRows } = useCrud("appointments", []);
+  const { rows: facilityRows } = useCrud("facility", []);
+  const tomorrowIso = new Date(Date.now() + 7 * 3600e3 + 864e5).toISOString().slice(0, 10);
+  const appts = upcomingAppts(apptRows).filter(({ r }) => apptIso(r[0]) <= tomorrowIso).map(({ r }) => ({ who: r[2], what: r[3], when: `${apptIso(r[0]) === iso() ? "วันนี้" : "พรุ่งนี้"} ${(r[1] ?? "").slice(0, 5)}`, by: r[4] }));
   const [profile, setProfile] = useState<string | null>(null);
   const [vitalsFor, setVitalsFor] = useState<string | null>(null);
   const todayIso = iso();
@@ -129,14 +116,36 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   const [hoType, setHoType] = useState(TYPES[0]);
   const [rep, setRep] = useState({ who: "", day: "วันนี้" });
   const [praised, setPraised] = useState<string[]>([]);
+  // อัปเดตถึงครอบครัว (ข้อความ/รูป) และลิงก์ให้ญาติ
+  const [fu, setFu] = useState<{ id: string; name: string; text: string; photo: string; busy: boolean } | null>(null);
+  const [linkFor, setLinkFor] = useState<string | null>(null);
+  const sendFamilyUpdate = async () => {
+    if (!fu) return;
+    if (!fu.text.trim() && !fu.photo) return toast("พิมพ์ข้อความหรือแนบรูปอย่างน้อยหนึ่งอย่าง");
+    setFu({ ...fu, busy: true });
+    try {
+      const r = await fetch("/api/care", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "family_update", residentId: fu.id, text: fu.text, photo: fu.photo || undefined }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || "ส่งไม่สำเร็จ");
+      toast(`ส่งอัปเดตของ${fu.name}ให้ครอบครัวแล้ว · ญาติเห็นในสมุดภาพประจำวัน`);
+      setFu(null);
+    } catch (e) { toast((e as Error).message); setFu((x) => (x ? { ...x, busy: false } : x)); }
+  };
 
-  const close = () => { setModal(null); setPhoto(""); setNote(""); setShareFam(true); setCur(null); setMenu(false); };
+  const close = () => { setModal(null); setPhoto(""); setNote(""); setShareFam(true); setCur(null); setMenu(false); setProxyFor(null); };
   const open = (m: NonNullable<typeof modal>, i: number | null = null) => { setCur(i); setPhoto(""); setNote(""); setModal(m); };
   // งานของฉัน = งานที่ระบุชื่อฉัน หรืองานที่ไม่ระบุคนในกะที่ฉันเข้าเวร (จากตารางเวร)
   const [myShift, setMyShift] = useState<string | null | undefined>(undefined);
   useEffect(() => { fetchToday().then((d) => setMyShift(d.shift?.shift ?? null)).catch(() => setMyShift(null)); }, []);
   const isMine = (k: Task) => k.owner === user.name || (!k.owner && !!myShift && k.shift === `กะ${myShift}`);
   const [taskView, setTaskView] = useState<"mine" | "all">("mine");
+  // ส่งงานได้: งานที่ระบุชื่อฉัน · งานกลางของเวรที่ฉันเข้า · หัวหน้าพยาบาล/ผู้ตรวจงาน ส่งงานกลางได้ทุกเวร
+  // งานของคนอื่น (หรืองานกลางของเวรอื่น) ต้องกด "ทำแทน" และยืนยัน ระบบบันทึกว่าใครทำแทนใคร
+  const canSubmit = (k: Task) => k.owner === user.name || (!k.owner && (isMine(k) || can(user, "tasks.review")));
+  const ownerOf = (k: Task) => k.owner || `ทีม${k.shift ?? "เวร"}`;
+  const [proxyFor, setProxyFor] = useState<string | null>(null);
+  const doFor = (k: Task) => confirm({ title: "ทำงานแทน", message: `งาน "${k.title}" ของ${k.who} มอบหมายให้ ${ownerOf(k)} ต้องการส่งงานนี้แทนใช่หรือไม่ ระบบจะบันทึกว่าคุณ (${user.name}) ทำแทน ${ownerOf(k)} และผู้จัดการจะเห็นตอนตรวจงาน`, okLabel: "ทำแทน",
+    onOk: () => { open("task", k.id); setProxyFor(ownerOf(k)); } });
   // รีวิวจากครอบครัวของฉัน (คะแนนเฉลี่ยย้อนหลัง 90 วัน)
   const [myRev, setMyRev] = useState<{ reviews: number; avg: number | null; recent: StaffReview[] } | null>(null);
   useEffect(() => { fetch("/api/reviews?op=mine", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).then(setMyRev).catch(() => {}); }, []);
@@ -156,10 +165,22 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
     if (tab !== "team" || !doneIds) return;
     fetch(`/api/care?op=task_photos&ids=${encodeURIComponent(doneIds)}`, { cache: "no-store" }).then((r) => (r.ok ? r.json() : { photos: {} })).then((d) => setPhotos(d.photos ?? {})).catch(() => {});
   }, [tab, doneIds]);
+  // งานที่ฉันส่งแล้ววันนี้ (ล่าสุดก่อน)
+  const mySent = doneTasks.filter((k) => k.by === user.name).sort((a, b) => String(b.done).localeCompare(String(a.done)));
   const pendingAll = tasks.filter((t) => !t.done);
   const myPending = pendingAll.filter(isMine);
   const waiting = taskView === "mine" ? myPending : pendingAll;
   const t = cur !== null ? tasks.find((x) => x.id === cur) : undefined;
+  const [review, setReview] = useState<{ stars: number | null; note: string | null; by: string | null } | null>(null);
+  useEffect(() => {
+    setReview(null);
+    if (modal !== "viewtask" || !t?.rid) return;
+    fetch(`/api/care?op=task_photo&id=${encodeURIComponent(t.rid)}`, { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).then((d) => {
+      if (!d) return;
+      if (d.photo) setPhotos((p) => ({ ...p, [t.rid!]: d.photo }));
+      setReview({ stars: d.stars ?? null, note: d.note ?? null, by: d.by ?? null });
+    }).catch(() => {});
+  }, [modal, t?.rid]); // eslint-disable-line react-hooks/exhaustive-deps
   const md = cur !== null ? packs.find((x) => x.id === cur) : undefined;
   const unread = handover.length;
   const mine = doneTasks.length + bonus;
@@ -218,9 +239,9 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
             </button>
 
             <Card title="แจ้งเตือนนัดแพทย์ (วันนี้-พรุ่งนี้)" icon="bell">
-              <ul className="space-y-2">{APPTS.map((a) => (
-                <li key={a.who} className="flex items-center justify-between gap-3 rounded-2xl bg-cream-50 px-4 py-3 text-sm"><span><b className="font-medium">{a.who}</b><span className="block text-xs text-gold-600">{a.what}</span></span><span className="shrink-0 text-xs font-medium text-gold-700">{a.when}</span></li>
-              ))}</ul>
+              {appts.length === 0 ? <Empty t="ไม่มีนัดหมายวันนี้และพรุ่งนี้" /> : <ul className="space-y-2">{appts.map((a, k) => (
+                <li key={k} className="flex items-center justify-between gap-3 rounded-2xl bg-cream-50 px-4 py-3 text-sm"><span><b className="font-medium">{a.who}</b><span className="block text-xs text-gold-600">{a.what}</span></span><span className="shrink-0 text-xs font-medium text-gold-700">{a.when}</span></li>
+              ))}</ul>}
             </Card>
 
             <Card title="งานที่รอทำ" icon="check" right={<div className="seg"><button type="button" aria-pressed={taskView === "mine"} onClick={() => setTaskView("mine")}>ของฉัน ({myPending.length})</button><button type="button" aria-pressed={taskView === "all"} onClick={() => setTaskView("all")}>ทั้งหมด ({pendingAll.length})</button></div>}>
@@ -229,25 +250,40 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
               </p>
               {waiting.length === 0 ? <Empty t={taskView === "mine" && pendingAll.length ? "ไม่มีงานของคุณค้างแล้ว · กด \"ทั้งหมด\" เพื่อดูงานของทีม" : tasks.length ? "ไม่มีงานค้างแล้ว เยี่ยมมาก" : "ยังไม่มีงานที่ผู้จัดการมอบหมายสำหรับวันนี้"} /> : (
                 <ul className="space-y-3">{waiting.map((k) => (
-                  <li key={k.id} className="rounded-2xl border border-cream-300/70 p-4">
+                  <li key={k.id} className={`rounded-2xl border border-cream-300/70 p-4 ${canSubmit(k) ? "" : "task-other"}`}>
                     <div className="flex items-start justify-between gap-3">
                       <div><p className="font-medium text-gold-900">{k.title}</p><p className="mt-0.5 text-sm text-gold-600">{k.who}</p>
-                        <p className={`task-owner ${k.owner === user.name ? "is-me" : !k.owner ? "is-team" : ""}`}>{k.owner === user.name ? "งานของคุณ" : k.owner ? `ผู้รับผิดชอบ: ${k.owner}` : `ทีม${k.shift ?? "เวร"} · ใครในเวรก็ทำได้`}</p></div>
+                        <p className={`task-owner ${k.owner === user.name ? "is-me" : !k.owner ? "is-team" : ""}`}>{k.owner === user.name ? "งานของคุณ" : k.owner ? `มอบหมายให้ ${k.owner}` : canSubmit(k) ? `ทีม${k.shift ?? "เวร"} · ใครในเวรก็ทำได้` : `งานของทีม${k.shift ?? "เวร"} · เฉพาะคนที่เข้าเวรนี้`}</p></div>
                       <span className="shrink-0 rounded-full bg-gold-100 px-2.5 py-1 text-xs font-medium text-gold-700">{k.time}{k.shift ? ` · ${k.shift}` : ""}</span>
                     </div>
                     <div className="mt-3 flex gap-2">
                       <button className="btn-soft flex-1 !py-2.5" onClick={() => open("sop", k.id)}>คู่มือปฏิบัติงาน</button>
-                      <button className="btn-primary flex-1 !py-2.5" onClick={() => open("task", k.id)}>ส่งงาน</button>
+                      {canSubmit(k)
+                        ? <button className="btn-primary flex-1 !py-2.5" onClick={() => { open("task", k.id); setProxyFor(null); }}>ส่งงาน</button>
+                        : <button className="btn-soft flex-1 !py-2.5" onClick={() => doFor(k)}>ทำแทน</button>}
                     </div>
                   </li>
                 ))}</ul>
               )}
             </Card>
 
-            <Card title="งานส่วนกลางตามรอบ" icon="building" right={<Count n={FLOATING.length} />}>
-              <ul className="space-y-2">{FLOATING.map((f) => (
-                <li key={f.id} className="flex items-center justify-between gap-3 rounded-2xl bg-cream-50 px-4 py-3 text-sm"><span>{f.title}<span className="block text-xs text-gold-500">{f.time}</span></span><button className="btn-soft !px-3 !py-1.5 text-xs" onClick={() => toast("รับงานส่วนกลางแล้ว")}>รับงาน</button></li>
-              ))}</ul>
+            <Card title="งานที่ฉันส่งแล้ววันนี้" icon="doc" right={<Count n={mySent.length} />}>
+              {mySent.length === 0 ? <Empty t="ยังไม่มีงานที่คุณส่งวันนี้" /> : <ul className="space-y-2">{mySent.map((k) => (
+                <li key={k.id} className="flex items-center gap-3 rounded-2xl border border-cream-300/70 p-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-medium text-gold-900">{k.title}</p>
+                    <p className="text-xs text-gold-600">{k.who} · ส่ง {k.done} น.{(k.note ?? "").startsWith("ทำแทน") ? " · ทำแทน" : ""}</p>
+                    <span className={`mt-1 inline-block rounded-full px-2 py-0.5 text-[11px] font-medium ${k.status === "ตรวจแล้ว" ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-900"}`}>{k.status === "ตรวจแล้ว" ? "ตรวจแล้ว" : "รอหัวหน้าตรวจ"}</span>
+                  </div>
+                  <button className="btn-soft shrink-0 !min-h-0 !px-3 !py-2 text-xs" onClick={() => open("viewtask", k.id)}>ดูรายละเอียด</button>
+                </li>
+              ))}</ul>}
+            </Card>
+
+            <Card title="งานส่วนกลางตามรอบ" icon="building" right={<Count n={facilityRows.length} />}>
+              {facilityRows.length === 0 ? <Empty t="ยังไม่มีงานส่วนกลางของสาขา (ผู้จัดการเพิ่มได้ที่เมนูงานทั่วไปของศูนย์)" /> : <ul className="space-y-2">{facilityRows.map((f, k) => (
+                <li key={k} className="flex items-center justify-between gap-3 rounded-2xl bg-cream-50 px-4 py-3 text-sm"><span>{f[0]}<span className="block text-xs text-gold-500">{[f[1], f[2]].filter((x) => x && x !== "-").join(" · ")}</span></span></li>
+              ))}</ul>}
             </Card>
           </>
         )}
@@ -293,6 +329,8 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
                 <div className="flex shrink-0 flex-col gap-1.5">
                   <button className="btn-primary !min-h-0 !px-3 !py-1.5 text-xs" onClick={() => setVitalsFor(r.name)}>สัญญาณชีพ</button>
                   {r.id && <button className="btn-soft !min-h-0 !px-3 !py-1.5 text-xs" onClick={() => setProfile(r.id!)}>ประวัติ</button>}
+                  {r.id && <button className="btn-soft !min-h-0 !px-3 !py-1.5 text-xs" onClick={() => setFu({ id: r.id!, name: r.name, text: "", photo: "", busy: false })}>ส่งข่าวญาติ</button>}
+                  {r.id && <button className="btn-soft !min-h-0 !px-3 !py-1.5 text-xs" onClick={() => setLinkFor(r.id!)}>ลิงก์ญาติ</button>}
                 </div>
               </li>
             ))}</ul>
@@ -334,7 +372,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
               {rep.who ? (() => {
                 const r = RESIDENTS.find((x) => x.name === rep.who);
                 return r?.id ? <button className="btn-primary w-full" onClick={() => setProfile(r.id!)}><Icon name="doc" className="h-4 w-4" /> เปิดประวัติของ {rep.who}</button>
-                  : <dl className="space-y-2">{reportFor(rep.who, rep.day).map(([k, v]) => <div key={k} className="rounded-2xl bg-cream-50 p-3 text-sm"><dt className="text-xs font-medium text-gold-600">{k}</dt><dd className="mt-0.5">{v}</dd></div>)}</dl>;
+                  : <Empty t="ไม่พบผู้รับบริการคนนี้ในทะเบียน" />;
               })() : <Empty t="กรุณาเลือกผู้รับบริการด้านบนเพื่อดูสรุปสุขภาพและไทม์ไลน์ตอบญาติ" />}
             </Card>
           </>
@@ -417,6 +455,17 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
         ))}
       </nav>
 
+      {/* ส่งอัปเดตให้ครอบครัว */}
+      <Modal open={!!fu} title={fu ? `ส่งข่าวถึงครอบครัวของ${fu.name}` : ""} onClose={() => setFu(null)}
+        footer={<button className="btn-primary w-full" disabled={fu?.busy} onClick={sendFamilyUpdate}>{fu?.busy ? "กำลังส่ง…" : "ส่งให้ครอบครัว"}</button>}>
+        {fu && <div className="space-y-4">
+          <p className="rounded-2xl bg-cream-50 p-3 text-xs text-gold-600">ข้อความและรูปนี้จะขึ้นในสมุดภาพประจำวันที่ญาติเปิดผ่านลิงก์ (กดปุ่ม "ลิงก์ญาติ" เพื่อคัดลอกส่งทาง LINE) · ไม่ต้องใส่ข้อมูลสุขภาพที่ละเอียดอ่อน</p>
+          <Field label="ข้อความ"><textarea rows={4} maxLength={1000} value={fu.text} onChange={(e) => setFu({ ...fu, text: e.target.value })} placeholder="ตัวอย่าง: วันนี้คุณยายทานข้าวหมดจาน อารมณ์ดี ทำกายภาพบำบัดได้ 20 นาที" /></Field>
+          <PhotoInput label="แตะเพื่อถ่ายรูป หรือเลือกรูป (ไม่บังคับ)" file={fu.photo} onFile={(p) => setFu((x) => (x ? { ...x, photo: p } : x))} />
+        </div>}
+      </Modal>
+      <FamilyLinkDialog open={!!linkFor} residentId={linkFor ?? ""} onClose={() => setLinkFor(null)} />
+
       {/* ส่งงาน */}
       <Modal open={modal === "task"} title="ส่งงาน (Proof of Work)" onClose={close}
         footer={<button className="btn-primary w-full" onClick={() => {
@@ -424,7 +473,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
           const k = (cur as number) - 1;
           const row = [...drows[k]]; while (row.length < 11) row.push("-");
           const now = new Date();
-          row[5] = "เสร็จแล้ว"; row[8] = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`; row[9] = note.trim() || "-"; row[10] = user.name;
+          row[5] = "เสร็จแล้ว"; row[8] = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`; row[9] = [proxyFor ? `ทำแทน ${proxyFor}` : "", note.trim()].filter(Boolean).join(" · ") || "-"; row[10] = user.name;
           updDaily(k, row);
           // รูปหลักฐาน: ประทับวันเวลา ผู้รับบริการ และชื่องาน แล้วเก็บแยกให้ผู้จัดการเปิดดูตอนตรวจงาน
           const id = dids[k];
@@ -432,10 +481,11 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
             .then((p) => fetch("/api/care", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "task_photo", id, photo: p, share: shareFam }) }))
             .then((r) => { if (!r.ok) throw new Error(); })
             .catch(() => toast("ส่งงานแล้ว แต่อัปโหลดรูปไม่สำเร็จ กรุณาตรวจอินเทอร์เน็ต"));
-          close(); toast("ส่งงานเรียบร้อย");
+          close(); toast(proxyFor ? `ส่งงานแทน ${proxyFor} เรียบร้อย` : "ส่งงานเรียบร้อย"); setProxyFor(null);
         }}>ยืนยันการส่งงาน</button>}>
         {t && <div className="space-y-4">
           <div className="rounded-2xl bg-cream-50 p-4 text-sm"><p className="font-semibold text-gold-900">{t.title}</p><p className="text-gold-600">{t.who} · เวลา: {t.time}</p></div>
+          {proxyFor && <p className="rounded-2xl bg-amber-50 px-4 py-2 text-sm font-medium text-amber-900">คุณกำลังส่งงานนี้แทน {proxyFor}</p>}
           <PhotoInput label="แตะเพื่อเปิดกล้องถ่ายรูป" file={photo} onFile={setPhoto} />
           <label className="share-toggle"><input type="checkbox" checked={shareFam} onChange={(e) => setShareFam(e.target.checked)} />
             <span><b>แชร์รูปนี้ให้ครอบครัวเห็น</b><small>ขึ้นในสมุดภาพประจำวันของ{t.who} · เอาติ๊กออกถ้ารูปติดผู้รับบริการคนอื่น หรือเห็นร่างกายส่วนที่ไม่ควรเปิดเผย</small></span></label>
@@ -452,7 +502,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
           // eslint-disable-next-line @next/next/no-img-element
           <img src={photos[t.rid]} alt={`รูปหลักฐาน ${t.title}`} className="mb-4 w-full rounded-2xl" />
         )}
-        {t && <dl className="space-y-3 text-sm">{[["ผู้รับบริการ", t.who], ["ชื่องาน", t.title], ["คำสั่งงาน", t.ins], ["ผู้ปฏิบัติงาน", t.by ?? user.name], ["เวลาที่ส่งจริง", t.done ?? "-"], ["บันทึกย่อ", t.note || "-"], ["สถานะ", t.status === "ตรวจแล้ว" ? "ผู้จัดการตรวจแล้ว" : "รอผู้จัดการตรวจ"]].map(([k, v]) => <div key={k}><dt className="text-xs text-gold-500">{k}</dt><dd className="font-medium">{v}</dd></div>)}</dl>}
+        {t && <dl className="space-y-3 text-sm">{[["ผู้รับบริการ", t.who], ["ชื่องาน", t.title], ["คำสั่งงาน", t.ins], ["ผู้ปฏิบัติงาน", t.by ?? user.name], ["เวลาที่ส่งจริง", t.done ?? "-"], ["บันทึกย่อ", t.note || "-"], ["สถานะ", t.status === "ตรวจแล้ว" ? `ตรวจแล้ว${review?.by ? ` โดย ${review.by}` : ""}` : "รอผู้จัดการหรือหัวหน้าพยาบาลตรวจ"], ...(review?.stars ? [["ดาวจากผู้ตรวจ", `${"★".repeat(review.stars)}${"☆".repeat(Math.max(0, 5 - review.stars))} (${review.stars}/5)`]] : []), ...(review?.note ? [["ความเห็นผู้ตรวจ", review.note]] : [])].map(([k, v]) => <div key={k}><dt className="text-xs text-gold-500">{k}</dt><dd className="font-medium">{v}</dd></div>)}</dl>}
       </Modal>
 
       {/* ผลงานพิเศษ */}
@@ -516,7 +566,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
         </div>
       </Modal>
 
-      <Modal open={modal === "manual"} title="วิดีโอสอนใช้งาน" onClose={close} footer={<button className="btn-soft w-full" onClick={close}>ปิดหน้าต่าง</button>}><TutorialVideos only={[4, 5]} compact /></Modal>
+      <Modal open={modal === "manual"} title="วิดีโอสอนใช้งาน" onClose={close} footer={<button className="btn-soft w-full" onClick={close}>ปิดหน้าต่าง</button>}><TutorialVideos only={[4, 5, 2, 3, 6, 1]} compact /></Modal>
 
       <PasswordDialog open={modal === "pwd"} onClose={close} />
     </div>
@@ -526,5 +576,5 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
 /* ---------- หน้าเข้าสู่ระบบแอปพนักงาน ---------- */
 export default function StaffApp() {
  const { user, ready, setUser, logout } = useSession();
- return <AppProvider go={()=>{}}>{!ready?<main className="grid min-h-dvh place-items-center text-sm text-gold-500">กำลังตรวจสอบการเข้าสู่ระบบ…</main>:user?<App user={user} onLogout={logout} />:<Login staff onLogin={setUser} />}</AppProvider>;
+ return <AppProvider go={()=>{}}>{!ready?<main className="grid min-h-dvh place-items-center text-sm text-gold-500">กำลังตรวจสอบการเข้าสู่ระบบ…</main>:user&&!can(user,"app.staff")?<CashierOnly name={user.name} app="KinApp" onLogout={logout} />:user?<App user={user} onLogout={logout} />:<Login staff onLogin={setUser} />}</AppProvider>;
 }

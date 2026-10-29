@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { sql } from "@/lib/db";
 import { currentUser, forbidden, unauthorized } from "@/lib/auth";
 import { audit } from "@/lib/audit";
+import { can } from "@/lib/perms";
 import { DEFAULT_WEIGHTS, KPI_PARTS, KpiRow, totalOf, Weights } from "@/lib/kpi";
 
 export const dynamic = "force-dynamic";
@@ -48,7 +49,7 @@ export async function GET(req: NextRequest) {
     const taskOf = (s: { name: string; branch: string }) => tasks.find((t) => t.name === s.name && t.branch === s.branch);
     const maxTasks = new Map<string, number>();
     for (const t of tasks) maxTasks.set(t.branch, Math.max(maxTasks.get(t.branch) ?? 0, t.n));
-    const isAdmin = me.role !== "Operation";
+    const isAdmin = can(me, "kpi");
     let rows: KpiRow[] = staff.map((s) => {
       const f = fam.find((x) => x.staff_id === s.id);
       const t = taskOf(s);

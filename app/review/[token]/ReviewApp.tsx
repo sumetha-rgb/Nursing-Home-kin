@@ -95,7 +95,8 @@ export default function ReviewApp({ token }: { token: string }) {
           </div>
 
           <div>
-            <p className="label">1. เลือกพนักงาน {cared.length > 0 && <small className="text-gold-500">· ขึ้นก่อน = ดูแล{info.resident}ในช่วง 30 วันล่าสุด</small>}</p>
+            <p className="label">1. เลือกพนักงาน {cared.length > 0 && <small className="text-gold-500">· พนักงานที่ดูแล{info.resident}</small>}</p>
+            {info.staff.length === 0 && <p className="rounded-2xl bg-cream-50 px-4 py-6 text-center text-sm text-gold-600">ยังไม่มีบันทึกว่าพนักงานคนใดดูแล{info.resident} กรุณาติดต่อสาขา</p>}
             <div className="staff-pick">
               {list.map((s) => (
                 <button key={s.id} type="button" aria-pressed={!!picked[s.id]} onClick={() => toggle(s.id)}>

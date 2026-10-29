@@ -9,7 +9,7 @@ import { api, SessionUser } from "@/lib/session";
 import { DEMO_ACCOUNTS, DEMO_PASSWORD, ROLE_INFO, ROLES, Role, SHOW_DEMO } from "@/lib/roles";
 import { Modal } from "./ui";
 
-const ROLE_ICON: Record<Role, string> = { "Global Admin": "grid", "Branch Admin": "building", Operation: "heart" };
+const ROLE_ICON: Record<Role, string> = { "Global Admin": "grid", "Branch Admin": "building", "Head Nurse": "pill", Cashier: "receipt", Nurse: "heart" };
 
 export default function Login({ onLogin, staff = false }: { onLogin: (u: SessionUser) => void; staff?: boolean }) {
   const branchNames = useBranchNames({ all: true });
@@ -61,7 +61,7 @@ export default function Login({ onLogin, staff = false }: { onLogin: (u: Session
           <span className="auth-symbol"><Icon name={staff ? "heart" : "grid"} className="h-6 w-6" /></span>
           <p className="kicker mt-5">{staff ? "KIN CARE TEAM" : "KIN CARE MANAGEMENT"}</p>
           <h2>{reg ? "สมัครสมาชิก" : staff ? "พร้อมดูแลวันนี้" : "ยินดีต้อนรับ"}</h2>
-          <p className="auth-form-description">{reg ? "สร้างบัญชีสำหรับทีมดูแล (ระดับปฏิบัติงาน)" : staff ? "เข้าสู่พื้นที่ทำงานของทีมดูแล" : "เข้าสู่พื้นที่ทำงานของคุณ"}</p>
+          <p className="auth-form-description">{reg ? "สร้างบัญชีสำหรับทีมดูแล (พยาบาล)" : staff ? "เข้าสู่พื้นที่ทำงานของทีมดูแล" : "เข้าสู่พื้นที่ทำงานของคุณ"}</p>
 
           <div className="segmented-tabs mt-6" role="tablist" aria-label="เลือกการเข้าใช้งาน">
             <button type="button" role="tab" aria-selected={!reg} className={!reg ? "is-selected flex-1" : "flex-1"} onClick={() => switchMode("login")}>เข้าสู่ระบบ</button>
@@ -79,16 +79,16 @@ export default function Login({ onLogin, staff = false }: { onLogin: (u: Session
             {notice && <p role="status" className="mt-4 rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-800">{notice}</p>}
             <button className="btn-primary auth-submit" disabled={busy}>{busy ? "กำลังตรวจสอบ…" : reg ? "สมัครสมาชิก" : "เข้าสู่ระบบ"} <Icon name="arrow" className="h-5 w-5" /></button>
           </form>
-          {reg && <p className="demo-note"><span /> บัญชีที่สมัครเองได้สิทธิ์ระดับปฏิบัติงาน และต้องรอผู้ดูแลอนุมัติก่อนใช้งาน</p>}
+          {reg && <p className="demo-note"><span /> บัญชีที่สมัครเองได้สิทธิ์พยาบาล และต้องรอผู้ดูแลอนุมัติก่อนใช้งาน</p>}
 
           <div className="mt-5 rounded-2xl border border-cream-200 bg-cream-50/60 px-4 py-3">
             <p className="text-sm font-medium text-gold-800">{SHOW_DEMO ? "บัญชีทดลองตามตำแหน่ง" : "ระดับสิทธิ์การใช้งาน"}</p>
             <p className="demo-hint mt-0.5 text-xs leading-6 text-gold-500">{SHOW_DEMO ? "เลือกตำแหน่งเพื่อดูรหัสทดลองและสิ่งที่มองเห็นได้" : "เลือกตำแหน่งเพื่อดูว่าเข้าถึงอะไรได้บ้าง"}</p>
-            <div className="mt-2.5 grid grid-cols-3 gap-2">
+            <div className="mt-2.5 grid grid-cols-5 gap-1.5">
               {ROLES.slice().reverse().map((role) => (
                 <button key={role} type="button" onClick={() => { setCopied(""); setDemo(role); }} className="flex min-w-0 flex-col items-center gap-1 rounded-xl border border-cream-200 bg-white px-2 py-2 text-center transition hover:border-gold-300 hover:bg-cream-50">
                   <span className="grid h-8 w-8 place-items-center rounded-full bg-cream-100 text-gold-600"><Icon name={ROLE_ICON[role]} className="h-[18px] w-[18px]" /></span>
-                  <span className="text-xs font-medium leading-5 text-gold-800">{ROLE_INFO[role].th}</span>
+                  <span className="text-[11px] font-medium leading-4 text-gold-800">{ROLE_INFO[role].th}</span>
                 </button>
               ))}
             </div>
@@ -102,7 +102,7 @@ export default function Login({ onLogin, staff = false }: { onLogin: (u: Session
                 <div><p className="text-xs tracking-wider text-gold-500">ACCESS LEVEL · {demo.toUpperCase()}</p><p className="mt-1 text-sm leading-7 text-gold-700">{ROLE_INFO[demo].sees}</p></div>
               </div>
               {demoAcc && <dl className="divide-y divide-cream-200 rounded-2xl border border-cream-200">
-                {[["อีเมล", demoAcc.email], ["รหัสผ่าน", DEMO_PASSWORD], ["สาขา", demoAcc.branch], ["เปิดใช้งานที่", demo === "Operation" ? "KinApp และแอปจัดยา" : "ระบบจัดการ"]].map(([k, v]) => (
+                {[["อีเมล", demoAcc.email], ["รหัสผ่าน", DEMO_PASSWORD], ["สาขา", demoAcc.branch], ["เปิดใช้งานที่", demo === "Nurse" ? "KinApp และแอปจัดยา" : demo === "Cashier" ? "ระบบจัดการ (สัญญาบริการ การเงิน ห้องผู้ป่วย)" : demo === "Head Nurse" ? "ระบบจัดการ (งานดูแล ห้องผู้ป่วย) · KinApp · แอปจัดยา" : "ระบบจัดการ"]].map(([k, v]) => (
                   <div key={k} className="flex items-center justify-between gap-3 px-4 py-3 text-sm">
                     <dt className="shrink-0 text-gold-500">{k}</dt>
                     <dd className="flex min-w-0 items-center gap-2"><span className={`truncate ${k === "อีเมล" || k === "รหัสผ่าน" ? "font-mono" : ""} text-gold-800`}>{v}</span>

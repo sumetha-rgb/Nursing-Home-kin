@@ -9,17 +9,19 @@ const sql = neon(url);
 
 // ตัดคอมเมนต์ แล้วแยกทีละคำสั่ง
 const schema = readFileSync(new URL("../db/schema.sql", import.meta.url), "utf8")
-  .split("\n").map((l) => l.replace(/--.*$/, "")).join("\n")
+  .split(/\r?\n/).map((l) => l.replace(/--.*$/, "")).join("\n")
   .split(";").map((s) => s.trim()).filter(Boolean);
 for (const stmt of schema) await sql(stmt);
 
-// บัญชีทดลอง 3 ระดับ (ข้อมูลตรงกับ lib/roles.ts) ปิดได้ด้วย SEED_DEMO=false
+// บัญชีทดลองทุกระดับ (ข้อมูลตรงกับ lib/roles.ts) ปิดได้ด้วย SEED_DEMO=false
 // รหัสผ่านเก็บแบบ scrypt รูปแบบเดียวกับ lib/auth.ts
 const DEMO_PASSWORD = "demo1234";
 const DEMOS = [
   ["global@kin.test", "ผู้บริหาร (ทดลอง)", "Global Admin", "ทุกสาขา"],
   ["branch@kin.test", "ผู้จัดการสาขา (ทดลอง)", "Branch Admin", "สุขุมวิท 107"],
-  ["staff@kin.test", "พนักงานดูแล (ทดลอง)", "Operation", "สุขุมวิท 107"],
+  ["staff@kin.test", "พนักงานดูแล (ทดลอง)", "Nurse", "สุขุมวิท 107"],
+  ["cashier@kin.test", "แคชเชียร์ (ทดลอง)", "Cashier", "สุขุมวิท 107"],
+  ["nurse@kin.test", "หัวหน้าพยาบาล (ทดลอง)", "Head Nurse", "สุขุมวิท 107"],
   ["branch2@kin.test", "ผู้จัดการสาขาลาดพร้าว 71 (ทดลอง)", "Branch Admin", "ลาดพร้าว 71"],
 ];
 if (process.env.SEED_DEMO !== "false") {

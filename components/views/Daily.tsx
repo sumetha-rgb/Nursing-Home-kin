@@ -4,21 +4,25 @@ import Icon from "../Icon";
 import { MASTER_TASKS } from "@/lib/mock";
 import { useCrud } from "@/lib/store";
 import { useApp } from "@/lib/app";
-import { useResidents } from "@/lib/care";
+import { fetchNurses, useResidents } from "@/lib/care";
 import { fetchMonth, Month } from "@/lib/roster";
-import { DataTable, Field, FieldDef, FormDialog, MetricGrid, Modal, PageHeader, Section, Select, Tabs } from "../ui";
+import { staying } from "@/lib/rooms";
+import { DataTable, Field, FieldDef, FormDialog, MetricGrid, Modal, PageHeader, Section, Select, Tabs, TimeInput } from "../ui";
 
 /**
  * งานประจำวัน: ผู้จัดการมอบหมายงาน → ขึ้นใน "งานวันนี้" ของ KinApp → พนักงานส่งงาน → ผู้จัดการตรวจ
  * แถวของชุดข้อมูล daily-YYYY-MM-DD:
  * [ผู้รับบริการ, ชื่องาน, ผู้รับผิดชอบ, เวลา, กะ, สถานะ, คำสั่งงาน, สัญญาณชีพ, เวลาที่ส่งจริง, บันทึกจากผู้ทำ, ผู้ส่งงาน]
  */
-const COLS = ["ผู้รับบริการ", "ชื่องาน", "ผู้รับผิดชอบ", "เวลา", "กะ", "สถานะ"];
+const COLS = ["มอบหมายเมื่อ", "ผู้รับบริการ", "ชื่องาน", "ผู้รับผิดชอบ", "เวลา", "กะ", "สถานะ"];
 /** ผู้รับผิดชอบว่าง ("-") = ใครก็ได้ในเวรนั้น */
 const ANYONE = "ทุกคนในเวร (ไม่ระบุคน)";
 const owner = (r: string[]) => (r[10] && r[10] !== "-" ? `${r[10]} (ส่งแล้ว)` : r[2] && r[2] !== "-" ? r[2] : `ทีม${r[4] || "เวร"}`);
 const SHIFTS = ["ทั้งหมด", "กะเช้า", "กะดึก"];
 const SHIFT_TIME: Record<string, string> = { กะเช้า: "08:00", กะดึก: "20:00" };
+/** เวลาที่มอบหมาย (ระบบบันทึกเอง) · "dd/mm/yyyy HH:MM" → เทียบเรียงด้วย yyyy-mm-dd HH:MM */
+const stamp = (r: string[]) => { const m = String(r[11] ?? "").match(/^(\d{2})\/(\d{2})\/(\d{4}) (\d{2}:\d{2})/); return m ? `${m[3]}-${m[2]}-${m[1]} ${m[4]}` : "9999"; };
+const assignedAt = (r: string[]) => { const m = String(r[11] ?? "").match(/^(\d{2})\/(\d{2})\/\d{4} (\d{2}:\d{2})/); return m ? `${m[1]}/${m[2]} ${m[3]} น.` : "เพิ่งมอบหมาย"; };
 const blankRow = (who: string, task: string, time: string, shift: string, ins: string, by = "-") => [who, task, by, time, shift, "รอทำ", ins || "-", "-", "-", "-", "-"];
 
 const isoOf = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -57,11 +61,20 @@ export function DailyTasks() {
   // ตารางเวรของวันที่เลือก: ใช้เลือกคนรับผิดชอบงาน (คนที่เข้าเวรนั้นขึ้นก่อน)
   const [roster, setRoster] = useState<Month | null>(null);
   useEffect(() => { fetchMonth(date.slice(0, 7)).then(setRoster).catch(() => setRoster(null)); }, [date]);
-  const onDuty = (sh: string) => (roster?.shifts ?? []).filter((x) => x.date === date && `กะ${x.shift}` === sh).map((x) => x.staff_name);
-  const people = (sh: string) => { const d = onDuty(sh); return [...d, ...(roster?.team ?? []).map((t) => t.name).filter((n) => !d.includes(n))]; };
+  // ผู้รับผิดชอบเลือกได้เฉพาะพยาบาล (พนักงานพยาบาลและหัวหน้าพยาบาล) · ผู้จัดการ แคชเชียร์ ไม่อยู่ในรายการ
+  // ผู้บริหาร (ทุกสาขา) ไม่มีรายชื่อทีมจากตารางเวร: ใช้รายชื่อพยาบาลที่ทำงานอยู่ของทุกสาขาแทน
+  const [allNurses, setAllNurses] = useState<string[]>([]);
+  useEffect(() => { fetchNurses().then(setAllNurses).catch(() => setAllNurses([])); }, []);
+  const teamNurses = (roster?.team ?? []).filter((t) => t.role === "Nurse" || t.role === "Head Nurse").map((t) => t.name);
+  const pool = roster?.team?.length ? teamNurses : allNurses;
+  const isNurse = (n: string) => pool.includes(n);
+  const onDuty = (sh: string) => (roster?.shifts ?? []).filter((x) => x.date === date && `กะ${x.shift}` === sh && isNurse(x.staff_name)).map((x) => x.staff_name);
+  const people = (sh: string) => { const d = onDuty(sh); return [...new Set([...d, ...pool])]; };
   const [who, setWho] = useState<{ k: number; v: string } | null>(null);
-  const names = useMemo(() => residents.filter((r) => !r.status || r.status.startsWith("เข้าอยู่")).map((r) => r.full_name), [residents]);
-  const shown = rows.map((r, k) => ({ r, k })).filter(({ r }) => shift === "ทั้งหมด" || r[4] === shift).sort((a, b) => String(a.r[3]).localeCompare(String(b.r[3])));
+  const names = useMemo(() => residents.filter((r) => staying(r.status ?? "")).map((r) => r.full_name), [residents]);
+  const shown = rows.map((r, k) => ({ r, k })).filter(({ r }) => shift === "ทั้งหมด" || r[4] === shift)
+    // มอบหมายล่าสุดอยู่บนสุด (งานที่ยังไม่บันทึกขึ้นระบบ = เพิ่งมอบหมาย) · มอบหมายพร้อมกันเรียงตามเวลางาน
+    .sort((a, b) => stamp(b.r).localeCompare(stamp(a.r)) || String(a.r[3]).localeCompare(String(b.r[3])));
   const checked = shown.filter(({ r }) => r[5] === "ตรวจแล้ว").length;
   const pending = shown.filter(({ r }) => r[5] === "เสร็จแล้ว").length;
   const waiting = shown.filter(({ r }) => r[5] === "รอทำ").length;
@@ -132,12 +145,12 @@ export function DailyTasks() {
   return (
     <>
       <PageHeader
-        title="ตรวจงานประจำวัน (Daily Tasks)"
+        title="มอบหมายและตรวจงาน"
         sub="มอบหมายงานให้ทีมดูแล งานจะขึ้นใน KinApp ของพนักงาน ส่งงานแล้วกลับมาให้ตรวจที่หน้านี้"
         actions={<>
           <button className="btn-soft" onClick={() => { loadRoutines(); setRoutineOpen(true); }}><Icon name="refresh" className="h-4 w-4" /> งานประจำ ({routines.length})</button>
           <button className="btn-soft" onClick={copyPrev}><Icon name="files" className="h-4 w-4" /> คัดลอกงานจากวันก่อน</button>
-          <button className="btn-soft" onClick={() => setAddOpen(true)}><Icon name="plus" className="h-4 w-4" /> เพิ่มงาน</button>
+          <button className="btn-soft" onClick={() => setAddOpen(true)}><Icon name="plus" className="h-4 w-4" /> มอบหมายงาน</button>
           <button className="btn-primary" onClick={() => { setAssignErr(""); setAssign(true); }}><Icon name="book" className="h-4 w-4" /> มอบหมายจากคลังงานมาตรฐาน</button>
         </>}
       />
@@ -156,7 +169,7 @@ export function DailyTasks() {
         <Section title="รายการงาน" actions={<Tabs tabs={SHIFTS.map((s) => `${s} (${count(s)})`)} value={`${shift} (${count(shift)})`} onChange={(t) => setShift(t.split(" (")[0])} />}>
           <DataTable
             columns={COLS}
-            rows={shown.map(({ r }) => [r[0], r[1], owner(r), r[3], r[4], r[5]])}
+            rows={shown.map(({ r }) => [assignedAt(r), r[0], r[1], owner(r), r[3], r[4], r[5]])}
             empty="ยังไม่มีงานของวันนี้ · กด &quot;มอบหมายจากคลังงานมาตรฐาน&quot; หรือ &quot;คัดลอกงานจากวันก่อน&quot;"
             actions={[
               { label: "ตรวจงาน", onClick: (n) => { setI(shown[n].k); setStar("5"); setNote(""); } },
@@ -183,8 +196,8 @@ export function DailyTasks() {
           </div>
         </div>
         <div className="mt-5 grid grid-cols-2 gap-3">
-          <Field label="3. เวลางานกะเช้า"><input type="time" value={times["กะเช้า"]} onChange={(e) => setTimes({ ...times, กะเช้า: e.target.value })} /></Field>
-          <Field label="เวลางานกะดึก"><input type="time" value={times["กะดึก"]} onChange={(e) => setTimes({ ...times, กะดึก: e.target.value })} /></Field>
+          <Field label="3. เวลางานกะเช้า"><TimeInput value={times["กะเช้า"]} onChange={(v) => setTimes({ ...times, กะเช้า: v })} /></Field>
+          <Field label="เวลางานกะดึก"><TimeInput value={times["กะดึก"]} onChange={(v) => setTimes({ ...times, กะดึก: v })} /></Field>
         </div>
         <label className="repeat-toggle mt-4"><input type="checkbox" checked={repeat} onChange={(e) => setRepeat(e.target.checked)} /><span><b>ทำซ้ำทุกวัน (งานประจำ)</b><small>ระบบสร้างงานชุดนี้ให้เองทุกวัน ไม่ต้องมอบหมายใหม่ทุกเช้า · หยุดได้ที่ปุ่ม &quot;งานประจำ&quot;</small></span></label>
         {assignErr && <p role="alert" className="form-error mt-4"><Icon name="alert" className="h-4 w-4 shrink-0" />{assignErr}</p>}
@@ -198,12 +211,12 @@ export function DailyTasks() {
           actions={[{ label: "หยุดทำซ้ำ", danger: true, onClick: (i) => stopRoutine(routines[i]) }]} />
       </Modal>
 
-      <FormDialog open={addOpen} mode="add" title="เพิ่มงานประจำวัน" fields={ADD_FIELDS} onClose={() => setAddOpen(false)} saveLabel="เพิ่มงาน"
+      <FormDialog open={addOpen} mode="add" title="มอบหมายงานประจำวัน" fields={ADD_FIELDS} onClose={() => setAddOpen(false)} saveLabel="มอบหมายงาน"
         onSave={(v) => {
           if (!v[0] || !v[1].trim() || !v[2]) return toast("กรุณากรอกผู้รับบริการ ชื่องาน และเวลา");
           const sh = shiftOf(v[2]);
           if (exists(v[0], v[1].trim(), sh)) return toast("มีงานนี้ของผู้รับบริการคนนี้ในกะนี้แล้ว");
-          add(blankRow(v[0], v[1].trim(), v[2], sh, v[3], v[4] && v[4] !== ANYONE ? v[4] : "-")); setAddOpen(false); toast(`เพิ่มงานแล้ว (${sh}) · ขึ้นใน KinApp ของพนักงานแล้ว`);
+          add(blankRow(v[0], v[1].trim(), v[2], sh, v[3], v[4] && v[4] !== ANYONE ? v[4] : "-")); setAddOpen(false); toast(`มอบหมายงานแล้ว (${sh}) · ขึ้นใน KinApp ของพนักงานแล้ว`);
         }} />
 
       <Modal open={!!who} title="มอบหมายผู้รับผิดชอบ" onClose={() => setWho(null)}

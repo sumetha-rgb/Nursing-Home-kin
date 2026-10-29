@@ -5,6 +5,8 @@ import { currentUser, forbidden, unauthorized } from "@/lib/auth";
 import { audit } from "@/lib/audit";
 import { LINK_DAYS, SCORE_DAYS } from "@/lib/reviews";
 import type { SessionUser } from "@/lib/roles";
+import { can } from "@/lib/perms";
+import { carersOf } from "@/lib/carers";
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
@@ -13,13 +15,18 @@ export const fetchCache = "force-no-store";
  * รีวิวพนักงานจากครอบครัว (ต้องเข้าสู่ระบบ · เห็นเฉพาะสาขาตัวเอง ยกเว้น Global Admin)
  *  GET  ?op=scores[&branch=]        คะแนนเฉลี่ยรายพนักงาน (KPI) ย้อนหลัง SCORE_DAYS วัน + รีวิวล่าสุด · ผู้จัดการขึ้นไป
  *  GET  ?op=mine                    คะแนนและรีวิวของฉัน (พนักงานทุกระดับ)
+ *  GET  ?op=all_links              ลิงก์ครอบครัวทั้งหมดของสาขา (ผู้จัดการ/หัวหน้าพยาบาล) ล่าสุด 300 ลิงก์
  *  GET  ?op=links&resident=…        ลิงก์รีวิวของผู้รับบริการคนนี้ · ผู้จัดการขึ้นไป
  *  POST { op: "create", residentId } สร้างลิงก์ใหม่ (รหัสสุ่ม หมดอายุใน LINK_DAYS วัน)
+ *  POST { op: "purge", resident? }   ลบลิงก์ที่ยกเลิก/หมดอายุแล้วออกจากระบบ (ผู้จัดการ/หัวหน้าพยาบาล) · รีวิวที่ได้รับแล้วยังอยู่ครบ
  *  POST { op: "revoke", id }         ยกเลิกลิงก์
  */
 const bad = (msg: string, status = 400) => NextResponse.json({ error: msg }, { status });
 const scoped = (me: SessionUser) => me.role !== "Global Admin";
-const isAdmin = (me: SessionUser) => me.role !== "Operation";
+/** ดูรีวิว/สร้างลิงก์ครอบครัว: เมนูรีวิวพนักงาน หรือเมนูผู้รับบริการ (ปุ่มลิงก์ครอบครัว) */
+const isAdmin = (me: SessionUser) => can(me, "reviews") || can(me, "residents");
+/** พยาบาลใน KinApp สร้าง/เปิดลิงก์ครอบครัวเพื่อส่งให้ญาติได้ (ยกเลิกลิงก์ = ผู้จัดการขึ้นไป) */
+const canLink = (me: SessionUser) => isAdmin(me) || can(me, "app.staff");
 const TH_AT = (col: string) => `to_char(${col} AT TIME ZONE 'Asia/Bangkok', 'DD/MM/') || (extract(year FROM ${col} AT TIME ZONE 'Asia/Bangkok')::int + 543) || to_char(${col} AT TIME ZONE 'Asia/Bangkok', ' HH24:MI')`;
 const REVIEW_COLS = `id, staff_id, staff_name, branch_name, resident_name, rating, tags, comment, rater_name, relation, ${TH_AT("created_at")} AS at`;
 
@@ -48,15 +55,27 @@ export async function GET(req: NextRequest) {
         const recent = await sql(`SELECT ${REVIEW_COLS} FROM staff_reviews WHERE staff_id = $1 ORDER BY created_at DESC LIMIT 20`, [me.id]);
         return NextResponse.json({ reviews: s.reviews, avg: s.avg, recent, days: SCORE_DAYS });
       }
-      case "links": {
+      case "all_links": {
         if (!isAdmin(me)) return forbidden();
+        const rows = await sql(`
+          SELECT l.id, l.token, l.resident_id, l.resident_name, l.branch_name, l.created_by, l.active,
+                 ${TH_AT("l.expires_at")} AS expires, (l.expires_at IS NOT NULL AND l.expires_at < now()) AS expired, ${TH_AT("l.created_at")} AS at,
+                 (SELECT count(DISTINCT submission_id) FROM staff_reviews r WHERE r.link_id = l.id)::int AS reviews
+          FROM review_links l ${scoped(me) ? "WHERE l.branch_name = $1" : ""} ORDER BY l.created_at DESC LIMIT 300`, scoped(me) ? [me.branch] : []);
+        return NextResponse.json({ links: rows });
+      }
+      case "links": {
+        if (!canLink(me)) return forbidden();
         const rid = qs.get("resident") ?? "";
         const rows = await sql(`
           SELECT l.id, l.token, l.resident_id, l.resident_name, l.branch_name, l.created_by, l.active,
                  ${TH_AT("l.expires_at")} AS expires, (l.expires_at IS NOT NULL AND l.expires_at < now()) AS expired, ${TH_AT("l.created_at")} AS at,
                  (SELECT count(DISTINCT submission_id) FROM staff_reviews r WHERE r.link_id = l.id)::int AS reviews
           FROM review_links l WHERE l.resident_id = $1 ${scoped(me) ? "AND l.branch_name = $2" : ""} ORDER BY l.created_at DESC`, scoped(me) ? [rid, me.branch] : [rid]);
-        return NextResponse.json({ links: rows });
+        // ดูแลโดย: พนักงานที่ดูแลผู้รับบริการคนนี้จริง (เป็นกลุ่มที่ญาติรีวิวได้)
+        const [res] = (await sql`SELECT full_name, branch_name FROM residents WHERE id = ${rid}`) as { full_name: string; branch_name: string }[];
+        const carers = res ? (await carersOf(res.branch_name, rid, res.full_name)).list.map((c) => c.name) : [];
+        return NextResponse.json({ links: rows.map((r) => ({ ...r, carers })) });
       }
       default:
         return bad("unknown op");
@@ -70,7 +89,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const me = await currentUser(req);
   if (!me) return unauthorized();
-  if (!isAdmin(me)) return forbidden("สร้างลิงก์รีวิวได้เฉพาะผู้จัดการสาขาและผู้บริหาร");
+  if (!canLink(me)) return forbidden("บัญชีนี้ไม่มีสิทธิ์สร้างลิงก์รีวิว");
   const b = await req.json().catch(() => ({}));
   try {
     if (b.op === "create") {
@@ -84,6 +103,15 @@ export async function POST(req: NextRequest) {
                 VALUES (${id}, ${token}, ${r.id}, ${r.full_name}, ${r.branch_name}, ${me.name}, now() + make_interval(days => ${LINK_DAYS}))`;
       await audit(req, me, [{ area: "review_links", action: "create", recordId: id, summary: `ลิงก์รีวิวพนักงาน · ${r.full_name}`, branch: r.branch_name }]);
       return NextResponse.json({ ok: true, id, token });
+    }
+    if (b.op === "purge") {
+      if (!isAdmin(me)) return forbidden("ล้างลิงก์เก่าได้เฉพาะผู้จัดการขึ้นไป");
+      const rid = typeof b.resident === "string" && b.resident ? b.resident : null;
+      const gone = (await sql(`DELETE FROM review_links WHERE (NOT active OR (expires_at IS NOT NULL AND expires_at < now()))
+        ${scoped(me) ? "AND branch_name = $1" : ""} ${rid ? `AND resident_id = $${scoped(me) ? 2 : 1}` : ""} RETURNING id, branch_name`,
+        [...(scoped(me) ? [me.branch] : []), ...(rid ? [rid] : [])])) as { id: string; branch_name: string }[];
+      if (gone.length) await audit(req, me, [{ area: "review_links", action: "delete", recordId: "purge", summary: `ล้างลิงก์ครอบครัวที่ยกเลิก/หมดอายุ ${gone.length} ลิงก์`, branch: scoped(me) ? me.branch : gone[0].branch_name }]);
+      return NextResponse.json({ ok: true, count: gone.length });
     }
     if (b.op === "revoke") {
       const [l] = (await sql`SELECT id, resident_name, branch_name FROM review_links WHERE id = ${String(b.id ?? "")}`) as Record<string, string>[];

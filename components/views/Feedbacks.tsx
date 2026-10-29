@@ -1,4 +1,5 @@
 "use client";
+import FamilyHub from "../care/FamilyHub";
 import { useCallback, useEffect, useState } from "react";
 import Icon from "../Icon";
 import QrCode from "../QrCode";
@@ -6,7 +7,7 @@ import { useBranchNames, withBranches } from "@/lib/branches";
 import { BRANCH_NAMES, COMPLAINTS } from "@/lib/mock";
 import { useCrud } from "@/lib/store";
 import { useApp } from "@/lib/app";
-import { openHere, SITE_URL } from "@/lib/site";
+import { openHere, siteUrl } from "@/lib/site";
 import { DataTable, Field, FieldDef, FormDialog, Modal, PageHeader, Section, Select, Toggle } from "../ui";
 
 /* ---------- เสียงจากครอบครัว: ลิงก์/QR ของสาขา · เรื่องร้องเรียน · ผลประเมินความพึงพอใจ ---------- */
@@ -32,7 +33,7 @@ const avg = (list: Survey[], k: keyof Survey) => {
 const starText = (n: number | null) => (n ? `${"★".repeat(n)}${"☆".repeat(5 - n)}` : "-");
 /** ลิงก์สาธารณะของสาขา (หน้า /survey ไม่ต้องเข้าสู่ระบบ) */
 const linkOf = (branch: string, type: Kind) =>
-  !branch ? "" : `${SITE_URL}/survey?branch=${encodeURIComponent(branch)}&type=${type}`;
+  !branch ? "" : `${siteUrl()}/survey?branch=${encodeURIComponent(branch)}&type=${type}`;
 
 export function Feedbacks() {
   const branchNames = useBranchNames();
@@ -43,6 +44,7 @@ export function Feedbacks() {
   const [row, setRow] = useState<number | null>(null);
   const [surveys, setSurveys] = useState<Survey[]>([]);
   const [open, setOpen] = useState<Survey | null>(null);
+  const [hub, setHub] = useState(false);
   const close = () => setModal(null);
   // ผู้จัดการสาขามีสาขาเดียว: เลือกให้เลย
   useEffect(() => { if (branchNames.length === 1) setBranch(branchNames[0]); }, [branchNames]);
@@ -79,6 +81,7 @@ export function Feedbacks() {
         sub="ญาติสแกน QR หรือเปิดลิงก์ของสาขา เพื่อประเมินความพึงพอใจหรือแจ้งเรื่อง โดยไม่ต้องสมัครสมาชิก · เรื่องที่แจ้งเข้าตารางด้านล่างทันที"
         actions={<>
           <button className="btn-primary" onClick={() => setModal("share")}><Icon name="qr" className="h-4 w-4" /> ลิงก์และป้าย QR</button>
+          <button className="btn-soft" onClick={() => setHub(true)}><Icon name="chat" className="h-4 w-4" /> ข่าวและลิงก์ญาติ</button>
           <button className="btn-soft" onClick={() => { loadSurveys(); toast("รีเฟรชข้อมูลแล้ว"); }}><Icon name="refresh" className="h-4 w-4" /> รีเฟรชข้อมูล</button>
         </>}
       />
@@ -106,6 +109,7 @@ export function Feedbacks() {
         />
       </Section>
 
+      <FamilyHub open={hub} onClose={() => setHub(false)} />
       <FormDialog
         open={row !== null} mode="edit" title="จัดการเรื่องร้องเรียน" fields={withBranches(COMPLAINT_FIELDS, branchNames)} value={row !== null ? rows[row] : undefined}
         onClose={() => setRow(null)} onSave={(v) => { if (row !== null) update(row, v); setRow(null); toast("อัปเดตสถานะแล้ว"); }}

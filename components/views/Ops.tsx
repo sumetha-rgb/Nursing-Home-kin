@@ -1,5 +1,6 @@
 "use client";
-import { useState } from "react";
+import Occupancy from "../care/Occupancy";
+import { useEffect, useMemo, useState } from "react";
 import { useBranchNames } from "@/lib/branches";
 import Icon from "../Icon";
 import { ACTIVITY, APPOINTMENTS, DOCS, HEALTH, KPI_ROWS, RESIDENTS } from "@/lib/mock";
@@ -7,8 +8,10 @@ import { downloadCsv, useCrud } from "@/lib/store";
 import { useApp } from "@/lib/app";
 import ResidentProfile from "../care/ResidentProfile";
 import VitalsDialog from "../care/VitalsDialog";
-import { useResidents } from "@/lib/care";
+import { fetchNurses, useResidents } from "@/lib/care";
 import { useSession } from "@/lib/session";
+import { staying } from "@/lib/rooms";
+import { apptIso, apptKey, apptTh, nowTh } from "@/lib/appointments";
 import { evaluateVitals, LEVEL_TH, levelOf, parseVitals } from "@/lib/vitals";
 import { BlankForm, DataTable, Field, FieldDef, FormDialog, Modal, MetricGrid, PageHeader, Section, Select, Tabs } from "../ui";
 
@@ -40,7 +43,8 @@ export function Dashboard() {
 
   return (
     <>
-      <PageHeader title="ผลการดำเนินงาน" sub="มองเห็นความก้าวหน้า ร่วมพัฒนาคุณภาพการดูแลของทุกสาขา" /><MetricGrid items={[{label:"งานที่สั่งทั้งหมด",value:sh.done[0],unit:"งาน",accent:true,icon:"check"},{label:"ดำเนินการแล้ว",value:sh.done[1],unit:"งาน",icon:"check"},{label:"อัตรางานสำเร็จ",value:sh.done[2]+"%",note:"ตามสาขาที่เลือกในสรุปกะ",icon:"chart"},{label:"อัตราการตรวจงาน",value:sh.check[2]+"%",note:"งานที่ผ่านการตรวจของผู้จัดการ",icon:"search"}]} />
+      <PageHeader title="ผลการดำเนินงาน" sub="มองเห็นความก้าวหน้า ร่วมพัฒนาคุณภาพการดูแลของทุกสาขา" />
+      <Occupancy /><MetricGrid items={[{label:"งานที่สั่งทั้งหมด",value:sh.done[0],unit:"งาน",accent:true,icon:"check"},{label:"ดำเนินการแล้ว",value:sh.done[1],unit:"งาน",icon:"check"},{label:"อัตรางานสำเร็จ",value:sh.done[2]+"%",note:"ตามสาขาที่เลือกในสรุปกะ",icon:"chart"},{label:"อัตราการตรวจงาน",value:sh.check[2]+"%",note:"งานที่ผ่านการตรวจของผู้จัดการ",icon:"search"}]} />
 
       <Section
         title="คุณภาพการดูแลของแต่ละสาขา"
@@ -137,38 +141,73 @@ export function Dashboard() {
 }
 
 /* ---------- ระบบตารางนัดหมาย ---------- */
-const APPT_FIELDS: FieldDef[] = [
-  { label: "วันที่ (วว/ดด/ปปปป)", type: "text", required: true },
+/** ช่องในฟอร์มนัดหมาย · รายชื่อผู้รับบริการมาจากทะเบียนจริง (เฉพาะคนที่ยังไม่ย้ายออก) */
+const apptFields = (names: string[], nurses: string[]): FieldDef[] => [
+  { label: "วันที่", type: "date", required: true },
   { label: "เวลา", type: "time", required: true },
-  { label: "ผู้รับบริการ", options: RESIDENTS.map((r) => r[0]), required: true },
-  { label: "รายการ", required: true },
-  { label: "ผู้ดูแล" },
+  { label: "ผู้รับบริการ", options: names, required: true },
+  { label: "รายการ", required: true, placeholder: "เช่น พบแพทย์อายุรกรรม รพ.ศิริราช, ทำกายภาพ, ตรวจเลือด" },
+  { label: "ผู้ดูแล / ผู้พาไป", suggest: nurses, placeholder: "พิมพ์ค้นหาชื่อพยาบาล หรือพิมพ์เอง เช่น ญาติพาไปเอง" },
 ];
+const APPT_TABS = ["ทั้งหมด", "กำลังจะมาถึง", "ผ่านมาแล้ว"];
 
 export function Appointments() {
   const { rows, add, update, remove } = useCrud("appointments", APPOINTMENTS);
+  const res = useCrud("residents", RESIDENTS);
   const { toast, confirm } = useApp();
   const [dlg, setDlg] = useState<{ mode: "add" | "edit"; i: number } | null>(null);
+  const [tab, setTab] = useState(APPT_TABS[0]);
+  const [nurses, setNurses] = useState<string[]>([]);
+  useEffect(() => { fetchNurses().then(setNurses).catch(() => {}); }, []);
+  const active = res.rows.filter((r) => staying(r[5] ?? ""));
+  const residentOf = (name: string) => res.rows.find((r) => r[0] === name);
+  // คนที่ย้ายออกแล้วแต่มีนัดเดิม ยังแสดงในช่องเลือกตอนแก้ไขนัดนั้น
+  const editName = dlg?.mode === "edit" ? rows[dlg.i]?.[2] : undefined;
+  const names = [...new Set([...active.map((r) => r[0]), ...(editName ? [editName] : [])])];
+  const now = nowTh(), today = now.slice(0, 10);
+  const week = new Date(Date.now() + 7 * 3600e3 + 7 * 864e5).toISOString().slice(0, 10);
+  const all = rows.map((r, i) => ({ r, i, k: apptKey(r) }));
+  const shown = (tab === APPT_TABS[1] ? all.filter((x) => x.k >= now) : tab === APPT_TABS[2] ? all.filter((x) => x.k < now) : all)
+    .sort((a, b) => (tab === APPT_TABS[2] ? b.k.localeCompare(a.k) : a.k.localeCompare(b.k)));
+  const who = (name: string) => { const p = residentOf(name); return p ? [p[6], p[2] && p[2] !== "-" ? `ห้อง ${p[2]}${p[7] ? ` เตียง ${p[7]}` : ""}` : ""].filter(Boolean).join(" · ") || "-" : "ไม่พบในทะเบียน"; };
+  const formValue = useMemo(() => {
+    if (!dlg) return undefined;
+    if (dlg.mode === "edit") { const r = rows[dlg.i]; return [apptIso(r[0]), (r[1] ?? "").slice(0, 5), r[2], r[3], r[4] === "-" ? "" : r[4]]; }
+    return [today, "", "", "", ""];
+  }, [dlg]); // eslint-disable-line react-hooks/exhaustive-deps
+  const save = (v: string[]) => {
+    if (!v[0] || !v[1]) return toast("กรุณาระบุวันที่และเวลานัด");
+    if (!names.includes(v[2])) return toast("กรุณาเลือกผู้รับบริการจากทะเบียน");
+    if (!v[3].trim()) return toast("กรุณากรอกรายการนัดหมาย");
+    const row = [apptTh(v[0]), v[1], v[2], v[3].trim(), v[4].trim() || "-"];
+    if (dlg?.mode === "edit") update(dlg.i, row); else add(row);
+    setDlg(null); toast("บันทึกนัดหมายแล้ว");
+  };
   return (
     <div>
-      <PageHeader title="ตารางนัดหมาย" sub="วางแผนการพบแพทย์และธุระสำคัญ ให้ทุกการดูแลเป็นไปอย่างต่อเนื่อง" actions={<button className="btn-primary" onClick={()=>setDlg({mode:"add",i:-1})}><Icon name="plus" className="h-4 w-4" />เพิ่มนัดหมาย</button>} />
-      <div className="mb-5 flex items-center gap-3 rounded-xl border border-cream-200 bg-cream-100/50 px-5 py-3 text-xs text-gold-600"><Icon name="calendar" className="h-4 w-4" />โหมดตัวอย่าง · ทดลองเพิ่มและจัดการนัดหมายได้ ข้อมูลจะเริ่มต้นใหม่เมื่อรีเฟรช</div>
-      <div className="mt-6 text-left">
-        <Section title="ตัวอย่างตารางนัดหมาย" actions={<button className="btn-soft" onClick={() => setDlg({ mode: "add", i: -1 })}><Icon name="plus" className="h-4 w-4" /> เพิ่มนัดหมาย</button>}>
-          <DataTable
-            columns={["วันที่", "เวลา", "ผู้รับบริการ", "รายการ", "ผู้ดูแล"]}
-            rows={rows}
-            actions={[
-              { label: "แก้ไข", onClick: (i) => setDlg({ mode: "edit", i }) },
-              { label: "ลบ", danger: true, onClick: (i) => confirm({ title: "ลบนัดหมาย", message: `ต้องการลบนัดหมาย "${rows[i][3]}" ใช่หรือไม่`, danger: true, okLabel: "ลบ", onOk: () => { remove(i); toast("ลบนัดหมายแล้ว"); } }) },
-            ]}
-          />
-        </Section>
-      </div>
+      <PageHeader title="ตารางนัดหมาย" sub="นัดพบแพทย์ ตรวจ และธุระสำคัญของผู้รับบริการแต่ละคน ให้ทุกการดูแลต่อเนื่อง"
+        actions={<button className="btn-primary" onClick={() => setDlg({ mode: "add", i: -1 })}><Icon name="plus" className="h-4 w-4" /> เพิ่มนัดหมาย</button>} />
+      <MetricGrid items={[
+        { label: "นัดวันนี้", value: all.filter((x) => x.k.startsWith(today)).length, unit: "นัด", icon: "calendar", accent: true },
+        { label: "7 วันข้างหน้า", value: all.filter((x) => x.k >= now && x.k.slice(0, 10) <= week).length, unit: "นัด", icon: "check" },
+        { label: "นัดที่ยังไม่ถึง", value: all.filter((x) => x.k >= now).length, unit: "นัด", icon: "history" },
+        { label: "ผู้รับบริการที่มีนัด", value: new Set(all.filter((x) => x.k >= now).map((x) => x.r[2])).size, unit: "คน", icon: "user" },
+      ]} />
+      <Section title="นัดหมายของผู้รับบริการ" actions={<Tabs tabs={APPT_TABS} value={tab} onChange={setTab} />}>
+        {!active.length && <p className="mb-4 rounded-xl bg-cream-50 px-4 py-3 text-sm text-gold-600">ยังไม่มีผู้รับบริการในทะเบียน เพิ่มผู้รับบริการ (หรือเปิดสัญญา) ก่อนจึงจะลงนัดหมายได้</p>}
+        <DataTable
+          columns={["วันที่", "เวลา", "ผู้รับบริการ", "HN · ห้อง", "รายการ", "ผู้ดูแล"]}
+          rows={shown.map(({ r }) => [`${r[0]}${apptIso(r[0]) === today ? " (วันนี้)" : ""}`, (r[1] ?? "").slice(0, 5), r[2], who(r[2]), r[3], r[4]])}
+          empty={tab === APPT_TABS[1] ? "ไม่มีนัดหมายที่กำลังจะมาถึง" : "ไม่พบข้อมูล"}
+          actions={[
+            { label: "แก้ไข", onClick: (k) => setDlg({ mode: "edit", i: shown[k].i }) },
+            { label: "ลบ", danger: true, onClick: (k) => confirm({ title: "ลบนัดหมาย", message: `ต้องการลบนัดหมาย "${shown[k].r[3]}" ของ ${shown[k].r[2]} ใช่หรือไม่`, danger: true, okLabel: "ลบ", onOk: () => { remove(shown[k].i); toast("ลบนัดหมายแล้ว"); } }) },
+          ]}
+        />
+      </Section>
       <FormDialog
-        open={!!dlg} mode={dlg?.mode ?? "add"} title={dlg?.mode === "edit" ? "แก้ไขนัดหมาย" : "เพิ่มนัดหมาย (ทดสอบ)"}
-        fields={APPT_FIELDS} value={dlg?.mode === "edit" ? rows[dlg.i] : undefined} onClose={() => setDlg(null)}
-        onSave={(v) => { if (dlg?.mode === "edit") update(dlg.i, v); else add(v); setDlg(null); toast("บันทึกนัดหมายแล้ว"); }}
+        open={!!dlg} mode={dlg?.mode ?? "add"} title={dlg?.mode === "edit" ? "แก้ไขนัดหมาย" : "เพิ่มนัดหมาย"}
+        fields={apptFields(names, nurses)} value={formValue} onClose={() => setDlg(null)} onSave={save}
       />
     </div>
   );

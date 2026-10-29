@@ -79,8 +79,8 @@ export const BRANCHES = [
 export const STAFF = [
   ["สมชาย ใจดี", "B (NJY GROUP)", "Global Admin", "ทุกสาขา", "ทำงาน"],
   ["วิภา สุขใจ", "B (NJY GROUP)", "Branch Admin", "สุขุมวิท 107", "ทำงาน"],
-  ["ธนา ศรีทอง", "F (Franchise)", "Operation", "ราชพฤกษ์", "ทำงาน"],
-  ["ลัดดา พรมมา", "F (Franchise)", "Operation", "พัทยา", "พักงาน"],
+  ["ธนา ศรีทอง", "F (Franchise)", "Nurse", "ราชพฤกษ์", "ทำงาน"],
+  ["ลัดดา พรมมา", "F (Franchise)", "Nurse", "พัทยา", "พักงาน"],
 ];
 
 export const DOCS = [

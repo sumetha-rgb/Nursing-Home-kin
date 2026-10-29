@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { sql } from "@/lib/db";
 import { currentUser, forbidden, unauthorized } from "@/lib/auth";
 import { ACTION_GROUPS } from "@/lib/auditLabels";
+import { can } from "@/lib/perms";
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
@@ -12,13 +13,13 @@ const PAGE = 50;
  * ประวัติการแก้ไข
  *  Global Admin : ทุกสาขา (กรองตามสาขาได้) รวมข้อมูลส่วนกลาง
  *  Branch Admin : เฉพาะรายการของสาขาตัวเอง (ข้อมูลที่เป็นของสาขา หรือผู้ทำรายการอยู่สาขานี้และไม่ระบุสาขาของข้อมูล)
- *  Operation    : ไม่มีสิทธิ์
+ *  Nurse / Cashier : ไม่มีสิทธิ์
  * ตัวกรอง: ?group= &area= &branch= &q= &date=YYYY-MM-DD &before=<id>
  */
 export async function GET(req: NextRequest) {
   const me = await currentUser(req);
   if (!me) return unauthorized();
-  if (me.role === "Operation") return forbidden();
+  if (!can(me, "audit")) return forbidden();
   const q = req.nextUrl.searchParams;
 
   const parts: string[] = [];

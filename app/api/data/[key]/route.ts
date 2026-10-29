@@ -3,8 +3,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { sql, validKey } from "@/lib/db";
 import { currentUser, forbidden, unauthorized } from "@/lib/auth";
 import { audit, AuditEntry } from "@/lib/audit";
+import { can } from "@/lib/perms";
 import { normValue } from "@/lib/auditLabels";
-import { fromDb, RESIDENT_TABLES, selectExpr, SHARED_BRANCHES, specFor, Spec, toDb } from "@/lib/schema";
+import { accessOf, fromDb, RESIDENT_TABLES, selectExpr, SHARED_BRANCHES, specFor, Spec, toDb } from "@/lib/schema";
 import { evaluateVitals, flagText, levelOf, parseVitals } from "@/lib/vitals";
 import { RESIDENTS } from "@/lib/mock";
 import type { SessionUser } from "@/lib/roles";
@@ -52,6 +53,10 @@ function values(s: Spec, data: unknown): unknown[] {
   return s.cols.map((c) => toDb(c.t, obj[c.field!]));
 }
 
+/** คอลัมน์ที่หน้าเว็บบันทึกได้ (ไม่รวมคอลัมน์ ro ที่ server ใส่เอง) */
+const writable = (s: Spec) => s.cols.filter((c) => !c.ro);
+const writeValues = (s: Spec, data: unknown) => values(s, data).filter((_, i) => !s.cols[i].ro);
+
 /** ค่าสาขาของรายการที่ส่งมา (ใช้ตรวจว่า Branch Admin ไม่ได้บันทึกข้ามสาขา) */
 function branchOf(s: Spec, data: unknown) {
   const i = s.cols.findIndex((c) => c.col === s.branchCol);
@@ -61,7 +66,7 @@ function branchOf(s: Spec, data: unknown) {
 /* ---------- ประวัติการแก้ไข ---------- */
 type Rec = Record<string, unknown>;
 /** ค่าของรายการตามชื่อคอลัมน์ในฐานข้อมูล */
-const asRec = (s: Spec, vals: unknown[]): Rec => Object.fromEntries(s.cols.map((c, i) => [c.col, vals[i] ?? null]));
+const asRec = (s: Spec, vals: unknown[]): Rec => Object.fromEntries(s.cols.map((c, i) => [c.col, vals[i] ?? null] as const).filter((_, i) => !s.cols[i].ro));
 const LABEL_COLS = ["contract_no", "resident_name", "full_name", "name", "plan_name", "task_name", "title", "drug_name", "purpose", "issue", "topic_type", "meal"];
 function labelOf(rec: Rec) {
   const parts = LABEL_COLS.map((c) => rec[c]).filter((v) => v !== null && v !== undefined && v !== "").slice(0, 2);
@@ -127,16 +132,16 @@ const extraCols = (x: Extra) => Object.keys(x).filter((k) => k !== "_" && x[k]);
 /** INSERT ... ON CONFLICT (id) DO UPDATE — รายการใหม่อยู่บนสุดตามลำดับที่ส่งมา (ไม่เปลี่ยนสาขาเจ้าของของรายการเดิม) */
 function upsertQueries(s: Spec, items: Item[], extra: Extra = {}, top = Date.now()) {
   const ex = extraCols(extra);
-  const cols = [...(s.scope ? [s.scope.col] : []), ...ex, ...s.cols.map((c) => c.col)];
+  const cols = [...(s.scope ? [s.scope.col] : []), ...ex, ...writable(s).map((c) => c.col)];
   const ph = ["$1", "$2", ...cols.map((_, i) => `$${i + 3}`)].join(", ");
-  const upd = [...s.cols.map((c) => c.col), ...ex.filter((c) => c !== s.branchCol)].map((c) => `${c} = EXCLUDED.${c}`).join(", ");
+  const upd = [...writable(s).map((c) => c.col), ...ex.filter((c) => c !== s.branchCol)].map((c) => `${c} = EXCLUDED.${c}`).join(", ");
   const text = `INSERT INTO ${s.table} (id, sort_order, ${cols.join(", ")}) VALUES (${ph}) ON CONFLICT (id) DO UPDATE SET ${upd}, updated_at = now()`;
-  return items.map((it, i) => sql(text, [it.id, top - i, ...(s.scope ? [s.scope.value] : []), ...ex.map((c) => extra[c]![i]), ...values(s, it.data)]));
+  return items.map((it, i) => sql(text, [it.id, top - i, ...(s.scope ? [s.scope.value] : []), ...ex.map((c) => extra[c]![i]), ...writeValues(s, it.data)]));
 }
 function updateQueries(s: Spec, items: Item[], extra: Extra = {}) {
   const ex = extraCols(extra).filter((c) => c !== s.branchCol);
-  const set = [...s.cols.map((c) => c.col), ...ex].map((c, i) => `${c} = $${i + 2}`).join(", ");
-  return items.map((it, i) => sql(`UPDATE ${s.table} SET ${set}, updated_at = now() WHERE id = $1`, [it.id, ...values(s, it.data), ...ex.map((c) => extra[c]![i])]));
+  const set = [...writable(s).map((c) => c.col), ...ex].map((c, i) => `${c} = $${i + 2}`).join(", ");
+  return items.map((it, i) => sql(`UPDATE ${s.table} SET ${set}, updated_at = now() WHERE id = $1`, [it.id, ...writeValues(s, it.data), ...ex.map((c) => extra[c]![i])]));
 }
 
 /* ---------- รหัสผู้รับบริการ ---------- */
@@ -187,6 +192,38 @@ function residentSyncQueries(s: Spec, items: Item[], prev?: Map<string, { rec: R
   return q;
 }
 
+/* ---------- เลขที่ออกโดย server ---------- */
+/** วันนี้ตามเวลาไทย เป็น พ.ศ. 2 หลัก + เดือน (+ วัน) เช่น 691029 */
+const thaiStamp = (withDay: boolean) => {
+  const d = new Date(Date.now() + 7 * 3600e3);
+  const yy = String((d.getUTCFullYear() + 543) % 100).padStart(2, "0");
+  return yy + String(d.getUTCMonth() + 1).padStart(2, "0") + (withDay ? String(d.getUTCDate()).padStart(2, "0") : "");
+};
+/** HN (IPD) ของผู้รับบริการใหม่: KN + ปีเดือน + ลำดับ 5 หลัก เช่น KN691000031 */
+const hnQueries = (ids: string[]) => ids.map((id) => sql(
+  `UPDATE residents SET hn = 'KN' || $2 || lpad(nextval('hn_seq')::text, 5, '0') WHERE id = $1 AND (hn IS NULL OR hn = '')`, [id, thaiStamp(false)]));
+/** เลขที่ใบแจ้งหนี้/ใบเสร็จ: KN-IV + ปีเดือนวัน + ลำดับของวัน 4 หลัก เช่น KN-IV6910290001 */
+async function numberInvoices(ids: string[]) {
+  const prefix = "KN-IV" + thaiStamp(true);
+  for (const id of ids) {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        await sql(`UPDATE invoices SET doc_no = $2 || lpad((SELECT count(*) + 1 FROM invoices WHERE doc_no LIKE $2 || '%')::text, 4, '0')
+                   WHERE id = $1 AND doc_no IS NULL`, [id, prefix]);
+        break;
+      } catch (e) { if (attempt === 4) throw e; } // เลขชนกับอีกเครื่อง (unique) ลองใหม่
+    }
+  }
+}
+
+/** เลขที่สัญญา: CT-ปี พ.ศ.-ลำดับของปี 4 หลัก เช่น CT-2569-0007 (นับต่อจากเลขสูงสุดของปีนั้นทุกสาขา) */
+async function numberContracts(ids: string[]) {
+  const prefix = `CT-${new Date(Date.now() + 7 * 3600e3).getUTCFullYear() + 543}-`;
+  for (const id of ids)
+    await sql(`UPDATE contracts SET contract_no = $2 || lpad((SELECT coalesce(max(substring(contract_no from '^' || $2 || '([0-9]+)$')::int), 0) + 1 FROM contracts)::text, 4, '0')
+               WHERE id = $1 AND (contract_no IS NULL OR contract_no = '')`, [id, prefix]);
+}
+
 /* ---------- แจ้งเตือนสัญญาณชีพ ---------- */
 /** ชุดข้อมูลที่มีสัญญาณชีพ: บันทึกสุขภาพ และงานประจำวัน */
 const vitalsOf = (key: string, rec: Rec) =>
@@ -213,14 +250,15 @@ function alertQueries(key: string, s: Spec, me: SessionUser, rows: { id: string;
   return q;
 }
 
-/** ตรวจสิทธิ์: ต้องล็อกอิน · ระดับปฏิบัติงานใช้ได้เฉพาะข้อมูลแอปพนักงาน/แอปจัดยา · ทุกระดับยกเว้น Global Admin เห็นเฉพาะสาขาตัวเอง */
+/** ตรวจสิทธิ์: ต้องล็อกอิน · สิทธิ์ที่ติ๊กไว้ (lib/schema accessOf) · ทุกระดับยกเว้น Global Admin เห็นเฉพาะสาขาตัวเอง */
 async function access(req: NextRequest, key: string) {
   const s = validKey(key) ? specFor(key) : null;
   if (!s) return { res: bad("unknown collection") };
   const me = await currentUser(req);
   if (!me) return { res: unauthorized() };
-  if (s.adminOnly && me.role === "Operation") return { res: forbidden() };
-  return { s, me, branch: me.role !== "Global Admin" && s.branchCol ? me.branch : null };
+  const level = accessOf(me, key);
+  if (level === "none") return { res: forbidden() };
+  return { s, me, level, branch: me.role !== "Global Admin" && s.branchCol ? me.branch : null };
 }
 
 export async function GET(req: NextRequest, { params }: { params: { key: string } }) {
@@ -235,10 +273,13 @@ export async function POST(req: NextRequest, { params }: { params: { key: string
   const a = await access(req, key);
   if (!a.s) return a.res;
   const { s, me, branch } = a;
-  // ข้อมูลระดับองค์กร (เช่น สาขา): ผู้จัดการสาขาอ่านได้ แต่เพิ่ม/แก้/ลบได้เฉพาะผู้บริหาร
-  if (s.globalWrite && me.role !== "Global Admin") return forbidden("แก้ไขข้อมูลสาขาได้เฉพาะผู้บริหาร (Global Admin)");
   let body: Body;
   try { body = await req.json(); } catch { return bad("invalid json"); }
+  // อ่านอย่างเดียว: ข้อมูลตั้งต้นให้ผู้มีสิทธิ์แก้เป็นคนใส่ ตอบรายการปัจจุบันกลับไป
+  if (a.level === "read") return body.op === "seed" ? NextResponse.json(await list(key, s, branch)) : forbidden("บัญชีนี้ดูข้อมูลส่วนนี้ได้อย่างเดียว");
+  if (key === "contracts" && body.op === "delete" && !can(me, "contracts.delete")) return forbidden("บัญชีนี้ไม่มีสิทธิ์ลบสัญญา");
+  // ข้อมูลระดับองค์กร (เช่น สาขา): ผู้จัดการสาขาอ่านได้ แต่เพิ่ม/แก้/ลบได้เฉพาะผู้บริหาร
+  if (s.globalWrite && me.role !== "Global Admin") return forbidden("แก้ไขข้อมูลสาขาได้เฉพาะผู้บริหาร (Global Admin)");
   const logs: AuditEntry[] = [];
 
   try {
@@ -250,6 +291,8 @@ export async function POST(req: NextRequest, { params }: { params: { key: string
           const owners = await ownerBranches(s, body.items, me, true);
           const rids = await residentIds(s, body.items, owners ?? body.items.map((it) => branchOf(s, it.data) as string | null));
           await sql.transaction([...upsertQueries(s, body.items, { [s.branchCol ?? "_"]: owners, resident_id: rids }), ...(key === "residents" ? residentSyncQueries(s, body.items) : [])]);
+          if (key === "residents") await sql.transaction(hnQueries(body.items.map((x) => x.id)));
+          if (key === "contracts") await numberContracts(body.items.map((x) => x.id));
         }
         break;
       }
@@ -278,6 +321,15 @@ export async function POST(req: NextRequest, { params }: { params: { key: string
           ]),
         ];
         if (queries.length) await sql.transaction(queries);
+        if (key === "residents" && fresh.length) await sql.transaction(hnQueries(fresh.map((x) => x.id)));
+        if (key === "contracts" && fresh.length) await numberContracts(fresh.map((x) => x.id));
+        if (key === "invoices" && fresh.length) await numberInvoices(fresh.map((x) => x.id));
+        // ใบแจ้งหนี้ที่ยังไม่มี HN (เช่น ออกพร้อมสัญญาก่อน server ออก HN ให้ผู้รับบริการ) เติมจากทะเบียนผู้รับบริการ
+        if (key === "invoices") await sql(`UPDATE invoices i SET hn = r.hn FROM residents r WHERE i.id = ANY($1) AND r.id = i.resident_id AND (i.hn IS NULL OR i.hn = '')`, [body.items.map((x) => x.id)]);
+        // ใบแจ้งหนี้ที่ออกพร้อมสัญญาใหม่ (ตอนนั้นยังไม่มีเลขที่สัญญา) ใช้เลขของสัญญาล่าสุดของผู้รับบริการคนนี้
+        if (key === "invoices") await sql(`UPDATE invoices i SET contract_no = c.contract_no
+          FROM (SELECT DISTINCT ON (resident_id) resident_id, contract_no FROM contracts WHERE resident_id IS NOT NULL ORDER BY resident_id, created_at DESC) c
+          WHERE i.id = ANY($1) AND c.resident_id = i.resident_id AND (i.contract_no IS NULL OR i.contract_no = '')`, [body.items.map((x) => x.id)]);
         fresh.forEach((it, i) => {
           const after = asRec(s, values(s, it.data));
           logs.push({ area: key, action: "create", recordId: it.id, summary: labelOf(after), branch: owners?.[i] ?? (branchOf(s, it.data) as string | null) ?? me.branch, after });

@@ -69,8 +69,8 @@ pg_dump --data-only --no-owner "postgresql://...Neon..." | psql "postgresql://..
 ## บัญชีผู้ใช้และสิทธิ์
 
 - บัญชีอยู่ในตาราง `staff_users` (อีเมล + `password_hash` แบบ scrypt) · การล็อกอินอยู่ในตาราง `sessions` (cookie `kin_session` แบบ httpOnly อายุ 7 วัน)
-- `access_level`: **Operation** ใช้ KinApp/แอปจัดยา · **Branch Admin** ระบบจัดการเฉพาะสาขาตัวเอง · **Global Admin** ทุกอย่าง
-- สมัครเองจากหน้าเข้าสู่ระบบ ได้ระดับ Operation สถานะ `รออนุมัติ` จนกว่าผู้ดูแลจะกดอนุมัติในหน้า "ทีมและสิทธิ์การใช้งาน"
+- `access_level`: **Nurse** ใช้ KinApp/แอปจัดยา · **Branch Admin** ระบบจัดการเฉพาะสาขาตัวเอง · **Global Admin** ทุกอย่าง
+- สมัครเองจากหน้าเข้าสู่ระบบ ได้ระดับ Nurse สถานะ `รออนุมัติ` จนกว่าผู้ดูแลจะกดอนุมัติในหน้า "ทีมและสิทธิ์การใช้งาน"
   (ตั้ง `AUTO_APPROVE_SIGNUP=true` เพื่อให้เข้าได้ทันที)
 
 ### การแยกข้อมูลตามสาขา
@@ -97,7 +97,7 @@ pg_dump --data-only --no-owner "postgresql://...Neon..." | psql "postgresql://..
 |---|---|---|
 | global@kin.test | demo1234 | Global Admin |
 | branch@kin.test | demo1234 | Branch Admin (สุขุมวิท 107) |
-| staff@kin.test | demo1234 | Operation (สุขุมวิท 107) |
+| staff@kin.test | demo1234 | Nurse (สุขุมวิท 107) |
 | branch2@kin.test | demo1234 | Branch Admin (ลาดพร้าว 71) ใช้เทียบการแยกสาขา |
 
 ก่อนใช้งานจริง: สร้างบัญชี Global Admin จริงจากหน้า "ทีมและสิทธิ์การใช้งาน" แล้วลบบัญชีทดลอง

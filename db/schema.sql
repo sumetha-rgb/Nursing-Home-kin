@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS staff_users (
   id            text PRIMARY KEY,
   full_name     text NOT NULL,
   contract_type text,           -- B / MF / F
-  access_level  text,           -- Operation / Branch Admin / Global Admin
+  access_level  text,           -- Nurse / Cashier / Head Nurse / Branch Admin / Global Admin
   branch_name   text,
   status        text,           -- ทำงาน / ลาออก / พักงาน
   sort_order    double precision NOT NULL DEFAULT 0,
@@ -312,7 +312,7 @@ CREATE TABLE IF NOT EXISTS medication_rounds (
 COMMENT ON TABLE medication_rounds IS 'คิวจ่ายยาของพนักงาน (แอป CG2)';
 
 -- ---------------------------------------------------------------- บัญชีผู้ใช้และการเข้าสู่ระบบ
--- staff_users เป็นทั้งรายชื่อทีมและบัญชีล็อกอิน (access_level = Operation / Branch Admin / Global Admin)
+-- staff_users เป็นทั้งรายชื่อทีมและบัญชีล็อกอิน (access_level = Nurse / Branch Admin / Global Admin)
 -- status: ทำงาน = เข้าสู่ระบบได้ · รออนุมัติ = สมัครเองรอผู้ดูแลอนุมัติ · พักงาน / ลาออก = เข้าไม่ได้
 ALTER TABLE staff_users ADD COLUMN IF NOT EXISTS email         text;
 ALTER TABLE staff_users ADD COLUMN IF NOT EXISTS password_hash text;   -- scrypt$salt$hash (ไม่เก็บรหัสผ่านจริง)
@@ -602,3 +602,133 @@ CREATE TABLE IF NOT EXISTS kpi_settings (
 );
 INSERT INTO kpi_settings (id) VALUES ('default') ON CONFLICT DO NOTHING;
 COMMENT ON TABLE kpi_settings IS 'น้ำหนักคะแนน KPI พนักงาน (ดาวครอบครัว/ดาวผู้จัดการ/งานที่ส่ง/มาตรงเวลา)';
+
+-- ---------------------------------------------------------------- ห้องผู้ป่วยและรายละเอียดสัญญา
+-- capacity = จำนวนผู้รับบริการที่พักในห้องได้ · คนในห้องนับจาก residents.room (สถานะที่ยังไม่ย้ายออก)
+CREATE TABLE IF NOT EXISTS rooms (
+  id            text PRIMARY KEY,
+  room_no       text NOT NULL,
+  branch_name   text,
+  room_type     text,           -- ห้องเดี่ยว / ห้องคู่ / ห้องรวม / ห้องพิเศษ (VIP)
+  capacity      integer NOT NULL DEFAULT 1,
+  monthly_rate  numeric(12,2),
+  status        text,           -- พร้อมใช้งาน / ปิดปรับปรุง
+  note          text,
+  sort_order    double precision NOT NULL DEFAULT 0,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  updated_at    timestamptz NOT NULL DEFAULT now()
+);
+COMMENT ON TABLE rooms IS 'ห้องผู้ป่วยของแต่ละสาขา';
+
+-- ข้อมูลจากฟอร์มเปิดสัญญา (ยังไม่เก็บรูปบัตรประชาชน)
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS room               text;
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS start_date         date;
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS employer_id_no     text;
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS employer_phone     text;
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS employer_address   text;
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS relationship       text;
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS resident_id_no     text;
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS resident_age       integer;
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS included_services  text;
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS extra_services     text;
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS extra_fee          text;
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS extra_package      text;
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS prepaid            numeric(12,2);
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS deposit            numeric(12,2);
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS note               text;
+
+-- ---------------------------------------------------------------- HN (IPD) และการเงิน
+-- HN ออกโดย server ตอนเพิ่มผู้รับบริการ: KN + ปี พ.ศ. 2 หลัก + เดือน + ลำดับ 5 หลัก (บรรทัด UPDATE เติมให้รายชื่อเดิม รันซ้ำได้)
+CREATE SEQUENCE IF NOT EXISTS hn_seq;
+ALTER TABLE residents ADD COLUMN IF NOT EXISTS hn text;
+UPDATE residents SET hn = 'KN' || lpad(((extract(year from created_at)::int + 543) % 100)::text, 2, '0') || to_char(created_at, 'MM') || lpad(nextval('hn_seq')::text, 5, '0') WHERE hn IS NULL OR hn = '';
+CREATE UNIQUE INDEX IF NOT EXISTS residents_hn ON residents (hn);
+
+-- ใบแจ้งหนี้ / ใบเสร็จรับเงิน (status ค้างชำระ = ใบแจ้งหนี้ · ชำระแล้ว = ใบเสร็จ · ยกเลิก)
+-- doc_no ออกโดย server: KN-IV + ปีเดือนวัน + ลำดับของวัน · items_json = รายการ [{desc, qty, price, discount}]
+-- slip = รูปหลักฐานการโอน (data URL) เก็บแยก ไม่ส่งไปกับรายการ (ดูผ่าน /api/billing)
+CREATE TABLE IF NOT EXISTS invoices (
+  id             text PRIMARY KEY,
+  doc_no         text,
+  doc_date       date,
+  branch_name    text,
+  resident_id    text REFERENCES residents(id) ON DELETE SET NULL,
+  resident_name  text,
+  hn             text,
+  payer_name     text,
+  payer_address  text,
+  category       text,
+  contract_no    text,
+  items_json     text,
+  total          numeric(12,2),
+  discount       numeric(12,2),
+  net            numeric(12,2),
+  status         text,
+  pay_cash       numeric(12,2),
+  pay_credit     numeric(12,2),
+  pay_transfer   numeric(12,2),
+  paid_date      date,
+  cashier        text,
+  note           text,
+  has_slip       boolean NOT NULL DEFAULT false,
+  slip           text,
+  slip_at        timestamptz,
+  sort_order     double precision NOT NULL DEFAULT 0,
+  created_at     timestamptz NOT NULL DEFAULT now(),
+  updated_at     timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS invoices_doc_no ON invoices (doc_no);
+COMMENT ON TABLE invoices IS 'ใบแจ้งหนี้และใบเสร็จรับเงิน';
+
+-- ---------------------------------------------------------------- สิทธิ์รายบุคคล
+-- permissions = รายการสิทธิ์ที่ติ๊กในหน้า "ทีมและสิทธิ์การใช้งาน" (lib/perms) · NULL = ใช้ค่าเริ่มต้นของตำแหน่ง
+ALTER TABLE staff_users ADD COLUMN IF NOT EXISTS permissions text[];
+
+-- รูปถ่ายบัตรประชาชนในสัญญา (data URL · เก็บแยก ไม่ส่งไปกับทะเบียนสัญญา · ดูผ่าน /api/idcards)
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS employer_id_photo text;
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS resident_id_photo text;
+
+-- เตียงรายเตียง: residents.bed = ป้ายเตียงในห้อง (A, B, C…) · rooms.floor = ชั้น/โซน ใช้จัดวางในแผนผังห้อง
+ALTER TABLE residents ADD COLUMN IF NOT EXISTS bed text;
+ALTER TABLE rooms ADD COLUMN IF NOT EXISTS floor text;
+
+-- อัปเดตจากพยาบาลถึงครอบครัว (ข้อความ + รูป) แสดงในสมุดภาพประจำวันของญาติ
+CREATE TABLE IF NOT EXISTS family_updates (
+  id            text PRIMARY KEY,
+  resident_id   text REFERENCES residents(id) ON DELETE CASCADE,
+  resident_name text NOT NULL,
+  branch_name   text NOT NULL,
+  body          text,
+  photo         text,
+  posted_by     text,
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS family_updates_resident ON family_updates (resident_id, created_at DESC);
+COMMENT ON TABLE family_updates IS 'อัปเดตจากพยาบาลถึงครอบครัว ข้อความและรูป';
+
+-- รับชำระเป็นงวด: ใบแจ้งหนี้ 1 ใบรับได้หลายครั้ง (ค้างชำระ → ชำระบางส่วน → ชำระแล้ว) · แต่ละครั้งมีใบรับเงินและสลิปของตัวเอง
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS paid_total numeric(12,2) NOT NULL DEFAULT 0;
+CREATE TABLE IF NOT EXISTS invoice_payments (
+  id          text PRIMARY KEY,
+  invoice_id  text NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+  pay_date    date,
+  cash        numeric(12,2) NOT NULL DEFAULT 0,
+  credit      numeric(12,2) NOT NULL DEFAULT 0,
+  transfer    numeric(12,2) NOT NULL DEFAULT 0,
+  amount      numeric(12,2) NOT NULL DEFAULT 0,
+  cashier     text,
+  note        text,
+  slip        text,
+  slip_at     timestamptz,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS invoice_payments_invoice ON invoice_payments (invoice_id, created_at);
+COMMENT ON TABLE invoice_payments IS 'รายการรับชำระของใบแจ้งหนี้ (รับได้หลายงวด)';
+-- ใบที่ชำระแล้วจากเดิม (รับครั้งเดียว) ย้ายเข้าเป็นงวดที่ 1
+UPDATE invoices SET paid_total = net WHERE status = 'ชำระแล้ว' AND paid_total = 0;
+INSERT INTO invoice_payments (id, invoice_id, pay_date, cash, credit, transfer, amount, cashier, slip, slip_at)
+  SELECT 'p-' || i.id, i.id, i.paid_date, coalesce(i.pay_cash, 0), coalesce(i.pay_credit, 0), coalesce(i.pay_transfer, 0), i.net, i.cashier, i.slip, i.slip_at
+  FROM invoices i WHERE i.status = 'ชำระแล้ว' AND NOT EXISTS (SELECT 1 FROM invoice_payments p WHERE p.invoice_id = i.id);
+
+-- เปลี่ยนรหัสตำแหน่ง "พยาบาล" จาก Operation เป็น Nurse (ชื่อที่แสดงยังเป็น "พยาบาล") · รันซ้ำได้
+UPDATE staff_users SET access_level = 'Nurse' WHERE access_level = 'Operation';
