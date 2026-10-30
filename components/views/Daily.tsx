@@ -113,11 +113,11 @@ export function DailyTasks() {
     setAssign(false); setPickRes([]); setPickTask([]); setAssignErr("");
     if (repeat && plan.length) {
       fetch("/api/care", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "routines_add", items: plan }) })
-        .then((r) => r.json()).then((d) => { loadRoutines(); toast(`มอบหมายงานแล้ว ${made} งาน · ตั้งเป็นงานประจำ ${d.added ?? 0} รายการ ระบบจะสร้างให้เองทุกวัน`); })
+        .then((r) => r.json()).then((d) => { loadRoutines(); toast(`ตั้งงานประจำแล้ว ${d.added ?? 0} รายการ · ระบบสร้างงานให้เองทุกวัน`); })
         .catch(() => toast("มอบหมายงานวันนี้แล้ว แต่ตั้งงานประจำไม่สำเร็จ"));
       return;
     }
-    toast(`มอบหมายงานแล้ว ${made} งาน${skipped ? ` (ข้ามงานที่มีอยู่แล้ว ${skipped})` : ""} · ขึ้นใน KinApp ของพนักงานแล้ว`);
+    toast(`มอบหมายงานแล้ว ${made} งาน · ขึ้นใน KinApp แล้ว${skipped ? ` · ข้ามงานที่มีอยู่แล้ว ${skipped} งาน` : ""}`);
   };
 
   /** คัดลอกงานของวันก่อนหน้า (สถานะกลับเป็นรอทำ) */
@@ -174,7 +174,7 @@ export function DailyTasks() {
             actions={[
               { label: "ตรวจงาน", onClick: (n) => { setI(shown[n].k); setStar("5"); setNote(""); } },
               { label: "มอบหมายคน", onClick: (n) => { const r = rows[shown[n].k]; setWho({ k: shown[n].k, v: r[2] && r[2] !== "-" ? r[2] : ANYONE }); } },
-              { label: "ลบ", danger: true, onClick: (n) => { const k = shown[n].k; confirm({ title: "ลบงาน", message: `ลบงาน "${rows[k][1]}" ของ ${rows[k][0]} ใช่หรือไม่`, danger: true, okLabel: "ลบ", onOk: () => { remove(k); toast("ลบงานแล้ว"); } }); } },
+              { label: "ลบ", danger: true, onClick: (n) => { const k = shown[n].k; confirm({ title: "ลบงาน", message: `ลบงาน "${rows[k][1]}" ของ ${rows[k][0]} ใช่หรือไม่`, danger: true, okLabel: "ลบ", onOk: () => { const r = rows[k]; remove(k); toast(`ลบงานแล้ว · ${r[1]} · ${r[0]}`); } }); } },
             ]}
           />
         </Section>
@@ -216,7 +216,7 @@ export function DailyTasks() {
           if (!v[0] || !v[1].trim() || !v[2]) return toast("กรุณากรอกผู้รับบริการ ชื่องาน และเวลา");
           const sh = shiftOf(v[2]);
           if (exists(v[0], v[1].trim(), sh)) return toast("มีงานนี้ของผู้รับบริการคนนี้ในกะนี้แล้ว");
-          add(blankRow(v[0], v[1].trim(), v[2], sh, v[3], v[4] && v[4] !== ANYONE ? v[4] : "-")); setAddOpen(false); toast(`มอบหมายงานแล้ว (${sh}) · ขึ้นใน KinApp ของพนักงานแล้ว`);
+          add(blankRow(v[0], v[1].trim(), v[2], sh, v[3], v[4] && v[4] !== ANYONE ? v[4] : "-")); setAddOpen(false); toast(`มอบหมายงานแล้ว · ${v[1].trim()} · ${v[0]} · ${sh} ${v[2]} น. · ขึ้นใน KinApp แล้ว`);
         }} />
 
       <Modal open={!!who} title="มอบหมายผู้รับผิดชอบ" onClose={() => setWho(null)}

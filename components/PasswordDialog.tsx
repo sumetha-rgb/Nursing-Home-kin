@@ -14,7 +14,7 @@ export default function PasswordDialog({ open, onClose }: { open: boolean; onClo
     if (p.next.length < 8) return toast("รหัสผ่านใหม่ต้องมีอย่างน้อย 8 ตัวอักษร");
     if (p.next !== p.confirm) return toast("รหัสผ่านใหม่ทั้งสองช่องไม่ตรงกัน");
     setBusy(true);
-    try { await api.changePassword(p.current, p.next); done(); toast("เปลี่ยนรหัสผ่านเรียบร้อย"); }
+    try { await api.changePassword(p.current, p.next); done(); toast("เปลี่ยนรหัสผ่านแล้ว · ใช้รหัสใหม่ในการเข้าสู่ระบบครั้งถัดไป"); }
     catch (e) { toast((e as Error).message); }
     finally { setBusy(false); }
   };

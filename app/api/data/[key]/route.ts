@@ -224,6 +224,14 @@ async function numberContracts(ids: string[]) {
                WHERE id = $1 AND (contract_no IS NULL OR contract_no = '')`, [id, prefix]);
 }
 
+/** เลขที่ใบเสนอราคา: QT-ปี พ.ศ.-ลำดับของปี 4 หลัก เช่น QT-2569-0012 */
+async function numberQuotes(ids: string[]) {
+  const prefix = `QT-${new Date(Date.now() + 7 * 3600e3).getUTCFullYear() + 543}-`;
+  for (const id of ids)
+    await sql(`UPDATE care_assessments SET doc_no = $2 || lpad((SELECT coalesce(max(substring(doc_no from '^' || $2 || '([0-9]+)$')::int), 0) + 1 FROM care_assessments)::text, 4, '0')
+               WHERE id = $1 AND (doc_no IS NULL OR doc_no = '')`, [id, prefix]);
+}
+
 /* ---------- แจ้งเตือนสัญญาณชีพ ---------- */
 /** ชุดข้อมูลที่มีสัญญาณชีพ: บันทึกสุขภาพ และงานประจำวัน */
 const vitalsOf = (key: string, rec: Rec) =>
@@ -323,6 +331,7 @@ export async function POST(req: NextRequest, { params }: { params: { key: string
         if (queries.length) await sql.transaction(queries);
         if (key === "residents" && fresh.length) await sql.transaction(hnQueries(fresh.map((x) => x.id)));
         if (key === "contracts" && fresh.length) await numberContracts(fresh.map((x) => x.id));
+        if (key === "assessments") await numberQuotes(body.items.map((x) => x.id));
         if (key === "invoices" && fresh.length) await numberInvoices(fresh.map((x) => x.id));
         // ใบแจ้งหนี้ที่ยังไม่มี HN (เช่น ออกพร้อมสัญญาก่อน server ออก HN ให้ผู้รับบริการ) เติมจากทะเบียนผู้รับบริการ
         if (key === "invoices") await sql(`UPDATE invoices i SET hn = r.hn FROM residents r WHERE i.id = ANY($1) AND r.id = i.resident_id AND (i.hn IS NULL OR i.hn = '')`, [body.items.map((x) => x.id)]);

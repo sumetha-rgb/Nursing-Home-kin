@@ -101,7 +101,12 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   const ready = queue.filter((p) => p.qa === "ตรวจผ่าน" && !p.given);
   const lowFor = (who: string) => drugs.filter((x) => x.who === who && !x.hold && (daysLeft(x) ?? 99) <= 2);
   const [handover, setHandover] = useRecords("staff-handover", HANDOVER0);
-  const [bonus, setBonus] = useState(0);
+  // ผลงานพิเศษ คำชม และกำลังใจของสาขา (บันทึกจริง เห็นทุกเครื่อง)
+  type Feed = { kudos: { task_title: string; resident_name: string | null; given_by: string; at: string }[]; cheers: { message: string; sent_by: string; at: string }[]; bonusToday: number };
+  const [feed, setFeed] = useState<Feed>({ kudos: [], cheers: [], bonusToday: 0 });
+  const loadFeed = () => { fetch("/api/ops?op=feed", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).then((d) => d && setFeed(d)).catch(() => {}); };
+  useEffect(loadFeed, []);
+  const bonus = feed.bonusToday;
   const [menu, setMenu] = useState(false);
   const [fab, setFab] = useState(false);
   const [modal, setModal] = useState<null | "task" | "sop" | "bonus" | "dispense" | "metrics" | "handover" | "write" | "pwd" | "manual" | "viewtask">(null);
@@ -127,7 +132,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
       const r = await fetch("/api/care", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "family_update", residentId: fu.id, text: fu.text, photo: fu.photo || undefined }) });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d.error || "ส่งไม่สำเร็จ");
-      toast(`ส่งอัปเดตของ${fu.name}ให้ครอบครัวแล้ว · ญาติเห็นในสมุดภาพประจำวัน`);
+      toast(`ส่งข่าวถึงญาติแล้ว · ${fu.name} · ขึ้นในสมุดภาพประจำวัน`);
       setFu(null);
     } catch (e) { toast((e as Error).message); setFu((x) => (x ? { ...x, busy: false } : x)); }
   };
@@ -202,7 +207,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
                 <div className="border-b border-cream-300/60 px-4 py-3"><p className="text-sm font-medium">{user.name}</p><p className="text-xs text-gold-500">{ROLE_INFO[user.role].th} · {user.branch}</p></div>
                 {!pwa.installed && <button className="flex w-full items-center gap-2 px-4 py-3 text-sm font-medium text-gold-800 hover:bg-cream-100" onClick={async () => {
                   setMenu(false);
-                  if (pwa.canInstall) { if (await pwa.install()) toast("ติดตั้ง KinApp แล้ว เปิดได้จากหน้าจอโทรศัพท์"); }
+                  if (pwa.canInstall) { if (await pwa.install()) toast("ติดตั้ง KinApp แล้ว · เปิดได้จากหน้าจอโทรศัพท์"); }
                   else toast(pwa.iosHint ? "กดปุ่มแชร์ของ Safari แล้วเลือก \"เพิ่มไปยังหน้าจอโฮม\"" : "เปิดเมนูของเบราว์เซอร์ (⋮) แล้วเลือก \"ติดตั้งแอป\" หรือ \"เพิ่มลงในหน้าจอหลัก\"");
                 }}><Icon name="download" className="h-4 w-4" /> ติดตั้ง KinApp บนเครื่อง</button>}
                 <button className="flex w-full items-center gap-2 px-4 py-3 text-sm hover:bg-cream-100" onClick={() => open("manual")}><Icon name="book" className="h-4 w-4" /> คู่มือผู้ใช้งาน</button>
@@ -339,6 +344,12 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
 
         {tab === "team" && (
           <>
+            {(feed.cheers.length > 0 || feed.kudos.length > 0) && <Card title="คำชมและกำลังใจ" icon="heart">
+              <ul className="space-y-2">
+                {feed.cheers.map((c, k) => <li key={`c${k}`} className="rounded-2xl bg-gold-50 p-3 text-sm"><p className="text-gold-900">{c.message}</p><p className="mt-1 text-xs text-gold-500">กำลังใจถึงสาขา · {c.sent_by} · {c.at}</p></li>)}
+                {feed.kudos.map((c, k) => <li key={`k${k}`} className="rounded-2xl bg-cream-50 p-3 text-sm"><p className="text-gold-900"><b>{c.given_by}</b> ชื่นชมคุณ · {c.task_title}{c.resident_name ? ` · ${c.resident_name}` : ""}</p><p className="mt-1 text-xs text-gold-500">{c.at}</p></li>)}
+              </ul>
+            </Card>}
             <Card title="ผลงานของทีมวันนี้" icon="grid">
               <div className="grid grid-cols-2 gap-3 text-center">
                 <div className="rounded-2xl bg-cream-50 p-3"><p className="text-2xl font-semibold text-gold-700">{mine}</p><p className="text-xs text-gold-600">งานที่ทำเสร็จ</p></div>
@@ -418,7 +429,11 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
                           <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-gold-700 text-xs font-semibold text-white">{r.rank}</span>
                           <span className="min-w-0 flex-1"><b className="font-medium">{r.name}{r.id === user.id ? " (ฉัน)" : ""}</b></span>
                           <span className="font-semibold text-gold-700">{r.total}</span>
-                          {r.id !== user.id && <button className={`rounded-lg px-2.5 py-1 text-xs ${praised.includes(r.name) ? "bg-gold-700 text-white" : "bg-white text-gold-700"}`} onClick={() => { setPraised(praised.includes(r.name) ? praised.filter((x) => x !== r.name) : [...praised, r.name]); }}>ชื่นชม</button>}
+                          {r.id !== user.id && <button disabled={praised.includes(r.name)} className={`rounded-lg px-2.5 py-1 text-xs ${praised.includes(r.name) ? "bg-gold-700 text-white" : "bg-white text-gold-700"}`} onClick={() => {
+                            fetch("/api/ops", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "kudos_peer", staff: r.name }) })
+                              .then(async (x) => { const j = await x.json().catch(() => ({})); if (!x.ok) throw new Error(j.error); setPraised([...praised, r.name]); toast(`ชื่นชมแล้ว · ${r.name} · เพื่อนเห็นใน KinApp`); })
+                              .catch((e) => toast((e as Error).message || "ชื่นชมไม่สำเร็จ"));
+                          }}>{praised.includes(r.name) ? "ชื่นชมแล้ว" : "ชื่นชม"}</button>}
                         </div>
                         <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-cream-300"><div className="h-full rounded-full bg-gold-500" style={{ width: `${r.total ?? 0}%` }} /></div>
                       </li>
@@ -481,7 +496,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
             .then((p) => fetch("/api/care", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "task_photo", id, photo: p, share: shareFam }) }))
             .then((r) => { if (!r.ok) throw new Error(); })
             .catch(() => toast("ส่งงานแล้ว แต่อัปโหลดรูปไม่สำเร็จ กรุณาตรวจอินเทอร์เน็ต"));
-          close(); toast(proxyFor ? `ส่งงานแทน ${proxyFor} เรียบร้อย` : "ส่งงานเรียบร้อย"); setProxyFor(null);
+          close(); toast(`${proxyFor ? `ส่งงานแทน ${proxyFor} แล้ว` : "ส่งงานแล้ว"} · ${row[1]} · ${row[0]}${shareFam ? " · แชร์รูปให้ญาติแล้ว" : ""}`); setProxyFor(null);
         }}>ยืนยันการส่งงาน</button>}>
         {t && <div className="space-y-4">
           <div className="rounded-2xl bg-cream-50 p-4 text-sm"><p className="font-semibold text-gold-900">{t.title}</p><p className="text-gold-600">{t.who} · เวลา: {t.time}</p></div>
@@ -511,7 +526,12 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
           if (!bonusWho) return toast("กรุณาเลือกผู้รับบริการ");
           if (!bonusText.trim()) return toast("กรุณากรอกรายละเอียดงาน");
           if (!photo) return toast("กรุณาถ่ายภาพผลงาน");
-          setBonus(bonus + 1); close(); toast("ส่งงานพิเศษเรียบร้อย");
+          const body = JSON.stringify({ op: "bonus", title: `${bonusText.trim()} · ${bonusWho}`, photo });
+          close();
+          fetch("/api/ops", { method: "POST", headers: { "Content-Type": "application/json" }, body }).then(async (r) => {
+            const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error);
+            toast(`ส่งงานพิเศษแล้ว · ${bonusText.trim()} · ${bonusWho}`); loadFeed();
+          }).catch((e) => toast((e as Error).message || "ส่งงานพิเศษไม่สำเร็จ กรุณาลองใหม่"));
         }}>ยืนยันส่งงานพิเศษ</button>}>
         <div className="space-y-4">
           <Field label="ผู้รับบริการ (Resident)"><Select options={RESIDENTS.map((r) => r.name)} placeholder="-- เลือกผู้รับบริการ --" value={bonusWho} onChange={setBonusWho} /></Field>
@@ -525,7 +545,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
       <Modal open={modal === "dispense"} title="ยืนยันการจ่ายยา" onClose={close}
         footer={<><button className="btn-soft" onClick={close}>ยกเลิก</button><button className="btn-primary" onClick={() => {
           if (!photo) return toast("กรุณาถ่ายรูปยืนยันการให้ยาก่อน (แตะช่องกล้องด้านบน)");
-          setPacks(packs.map((m) => (m.id === cur ? { ...m, given: true, gby: user.name, gat: nowTh() } : m))); close(); toast("บันทึกการให้ยาแล้ว ห้องยาเห็นสถานะนี้ทันที");
+          setPacks(packs.map((m) => (m.id === cur ? { ...m, given: true, gby: user.name, gat: nowTh() } : m))); close(); toast(`ให้ยาแล้ว · ${md?.who ?? ""} มื้อ${md?.meal ?? ""} · ห้องยาเห็นสถานะนี้ทันที`);
         }}>ยืนยันว่าจ่ายแล้ว</button></>}>
         {md && <div className="space-y-4">
           <div className="rounded-2xl bg-cream-50 p-4"><p className="font-semibold text-gold-900">{md.who}</p><p className="text-sm text-gold-600">มื้อ{md.meal} · จัดโดย {md.by}{md.qby ? ` · ตรวจ QA โดย ${md.qby}` : ""}</p></div>
@@ -548,7 +568,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
             <li key={i} className="rounded-2xl border border-cream-300/70 p-4 text-sm">
               <div className="flex items-center justify-between gap-2"><span className="rounded-full bg-gold-100 px-2.5 py-0.5 text-xs font-medium text-gold-700">{h.type}</span><span className="text-xs text-gold-500">{h.at}</span></div>
               <p className="mt-2 font-medium">{h.who}</p><p className="mt-0.5 text-gold-700">{h.text}</p>
-              <div className="mt-3 flex items-center justify-between"><span className="text-xs text-gold-500">โดย {h.by}</span><button className="btn-soft !px-3 !py-1.5 text-xs" onClick={() => { setHandover(handover.filter((_, j) => j !== i)); toast("รับทราบและปิดเรื่องแล้ว"); }}>รับทราบ</button></div>
+              <div className="mt-3 flex items-center justify-between"><span className="text-xs text-gold-500">โดย {h.by}</span><button className="btn-soft !px-3 !py-1.5 text-xs" onClick={() => { setHandover(handover.filter((_, j) => j !== i)); toast(`รับทราบส่งเวรแล้ว · ${h.who || h.type}`); }}>รับทราบ</button></div>
             </li>
           ))}</ul>
         )}
@@ -557,7 +577,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
       <Modal open={modal === "write"} title="บันทึกส่งเวร" onClose={() => setModal("handover")}
         footer={<button className="btn-primary w-full" onClick={() => {
           if (!hoWho || !hoText.trim()) return toast("กรุณาเลือกผู้ป่วยและกรอกรายละเอียด");
-          setHandover([{ id: Date.now(), type: hoType, who: hoWho, text: hoText, by: user.name, at: "เมื่อสักครู่" }, ...handover]); setModal("handover"); toast("บันทึกส่งเวรแล้ว");
+          setHandover([{ id: Date.now(), type: hoType, who: hoWho, text: hoText, by: user.name, at: nowTh() }, ...handover]); setModal("handover"); toast(`บันทึกส่งเวรแล้ว · ${hoType}${hoWho ? ` · ${hoWho}` : ""}`);
         }}>บันทึกส่งเวร</button>}>
         <div className="space-y-4">
           <Field label="1. ระบุผู้ป่วย"><Select options={RESIDENTS.map((r) => r.name)} placeholder="-- เลือก --" value={hoWho} onChange={setHoWho} /></Field>

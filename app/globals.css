@@ -1110,3 +1110,86 @@ button.room-card:hover:not(.is-full):not(.is-closed) { border-color:#c9a96a; box
 /* KinApp: งานที่ไม่ใช่ของเรา (มอบหมายให้คนอื่น/ทีมเวรอื่น) แสดงจางลง ส่งได้ผ่านปุ่ม "ทำแทน" เท่านั้น */
 .task-other { background:#f6f2ea; border-style:dashed !important; border-color:#d9ccb3 !important; }
 .task-other .task-owner { background:#e9dfcc; color:#4a3a1f; font-weight:500; }
+
+/* ---------- แจ้งเตือนการทำรายการ (components/Toaster) ---------- */
+.toast-stack { position:fixed; top:calc(16px + env(safe-area-inset-top,0px)); right:calc(16px + env(safe-area-inset-right,0px)); z-index:120; display:grid; gap:10px; width:min(380px, calc(100vw - 32px)); pointer-events:none; }
+.kin-toast { --c:#1f7a4d; --b:#e9f6ee; --l:#bfe3cd; position:relative; overflow:hidden; display:grid; grid-template-columns:36px 1fr auto; gap:12px; align-items:start; padding:14px 14px 16px; border-radius:14px; background:linear-gradient(var(--b),var(--b)) #fffdf8; border:1px solid var(--l); box-shadow:0 12px 32px -12px #3b2f1c40,0 2px 6px -2px #3b2f1c1f; pointer-events:auto; animation:kin-toast-in .22s ease-out; }
+.kin-toast.is-edit { --c:#8b6e3e; --b:#fbf3e2; --l:#ead6ae; }
+.kin-toast.is-del { --c:#a3213a; --b:#fdeef1; --l:#f3c6cf; }
+.kin-toast.is-warn, .kin-toast.is-off { --c:#8a5a00; --b:#fff6df; --l:#f1d79a; }
+.kin-toast.is-busy { --c:#8b6e3e; --b:#f7f1e6; --l:#e9e1d4; }
+.kin-toast-icon { width:36px; height:36px; border-radius:10px; display:grid; place-items:center; background:var(--c); color:#fff; }
+.kin-toast-icon svg { width:18px; height:18px; }
+.kin-toast.is-busy .kin-toast-icon svg { animation:kin-spin 1s linear infinite; }
+.kin-toast-body { min-width:0; }
+.kin-toast-title { margin:0; display:flex; gap:6px; align-items:baseline; font-size:14.5px; font-weight:600; line-height:1.35; color:#3b2f1c; }
+.kin-toast-count { font-size:11px; font-weight:600; color:var(--c); background:#fff; border:1px solid var(--l); border-radius:99px; padding:0 7px; }
+.kin-toast-detail { margin:2px 0 0; font-size:13px; line-height:1.5; color:#6b5a3f; overflow-wrap:anywhere; }
+.kin-toast-btn { margin-top:8px; font-size:12.5px; font-weight:600; padding:4px 12px; border-radius:8px; border:1px solid var(--l); background:#fff; color:var(--c); }
+.kin-toast-close { width:28px; height:28px; border-radius:8px; border:1px solid #e9e1d4; background:#fff; color:#7d6b4d; display:grid; place-items:center; }
+.kin-toast-close svg { width:14px; height:14px; }
+.kin-toast-btn:focus-visible, .kin-toast-close:focus-visible { outline:2px solid var(--c); outline-offset:2px; }
+.kin-toast-bar { position:absolute; left:0; bottom:0; height:3px; width:100%; background:var(--c); transform-origin:left; animation:kin-toast-bar linear forwards; }
+.kin-toast:hover .kin-toast-bar, .kin-toast:focus-within .kin-toast-bar, .kin-toast:active .kin-toast-bar { animation-play-state:paused; }
+.kin-toast.is-out { animation:kin-toast-out .18s ease-in forwards; }
+@keyframes kin-toast-in { from { opacity:0; transform:translateY(-8px) scale(.98); } }
+@keyframes kin-toast-out { to { opacity:0; transform:translateX(16px); } }
+@keyframes kin-toast-bar { from { transform:scaleX(1); } to { transform:scaleX(0); } }
+@keyframes kin-spin { to { transform:rotate(360deg); } }
+@media (max-width:640px) { .toast-stack { top:auto; bottom:calc(16px + env(safe-area-inset-bottom,0px)); left:16px; right:16px; width:auto; } }
+@media (prefers-reduced-motion:reduce) { .kin-toast, .kin-toast.is-out { animation:none; } .kin-toast.is-busy .kin-toast-icon svg { animation:none; } }
+@media print { .toast-stack { display:none!important; } }
+
+/* ---------- เอกสารทางการ (components/print/Docs) · A4 · Sarabun ---------- */
+.doc-stage { display:grid; justify-items:center; gap:16px; background:#ece6da; margin:-21px; padding:20px 12px; border-radius:0 0 12px 12px; }
+.doc-paper { width:100%; max-width:794px; background:#fff; color:#1f1a12; font-family:"Sarabun","Noto Sans Thai",sans-serif; font-size:15px; line-height:1.75; padding:clamp(20px,5vw,56px) clamp(16px,5.5vw,62px); box-shadow:0 14px 34px -18px #00000055,0 2px 6px #0000001a; }
+.doc-paper.is-half { max-width:560px; }
+.doc-head { display:grid; grid-template-columns:auto 1fr auto; gap:16px; align-items:center; padding-bottom:12px; border-bottom:2px solid #8b6e3e; }
+.doc-logo { width:auto; height:52px; max-width:90px; object-fit:contain; }
+.doc-co b { display:block; font-size:1.1em; }
+.doc-co span { display:block; font-size:.84em; color:#5d5241; line-height:1.5; }
+.doc-ref { margin:0; display:grid; gap:2px; text-align:right; font-size:.84em; color:#5d5241; }
+.doc-ref div { display:flex; gap:6px; justify-content:flex-end; } .doc-ref dd { margin:0; color:#1f1a12; font-weight:700; font-variant-numeric:tabular-nums; }
+.doc-title { text-align:center; margin:24px 0 2px; font-size:1.42em; font-weight:700; text-wrap:balance; }
+.doc-copy { display:inline-block; margin-left:8px; font-size:.6em; font-weight:600; padding:1px 10px; border:1px solid #cbbd9f; border-radius:99px; color:#8b6e3e; vertical-align:middle; }
+.doc-sub { text-align:center; margin:0 0 18px; color:#5d5241; font-size:.92em; }
+.doc-paper p { margin:0 0 8px; }
+.doc-indent { text-indent:2.5em; text-align:justify; }
+.doc-fill { font-weight:600; border-bottom:1px dotted #cbbd9f; padding:0 4px; }
+.doc-h { margin:18px 0 8px; font-size:1.02em; font-weight:700; display:flex; gap:10px; align-items:baseline; }
+.doc-h::after { content:""; flex:1; border-bottom:1px solid #e3d9c6; }
+.doc-kv { margin:0; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:3px 26px; }
+.doc-kv div { display:grid; grid-template-columns:9em 1fr; gap:8px; } .doc-kv div.is-wide { grid-column:1/-1; }
+.doc-kv dt { color:#5d5241; } .doc-kv dd { margin:0; font-weight:500; min-width:0; overflow-wrap:anywhere; }
+.doc-big { font-size:1.12em; }
+.doc-tbl { overflow-x:auto; }
+.doc-tbl table { width:100%; border-collapse:collapse; font-size:.95em; }
+.doc-tbl th,.doc-tbl td { border:1px solid #cbbd9f; padding:5px 10px; text-align:left; vertical-align:top; }
+.doc-tbl th { background:#f6efe1; font-weight:600; } .doc-tbl .n { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
+.doc-tbl tfoot td { font-weight:700; }
+.doc-clauses { margin:0; padding-left:1.6em; display:grid; gap:4px; text-align:justify; }
+.doc-note { color:#5d5241; font-size:.9em; }
+.doc-box { border:1px solid #cbbd9f; border-radius:6px; padding:8px 14px; background:#fcfaf5; }
+.doc-checks { display:flex; flex-wrap:wrap; gap:4px 22px; }
+.doc-sign { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:26px 32px; margin-top:36px; text-align:center; break-inside:avoid; }
+.doc-sign .line { display:block; border-bottom:1px solid #1f1a12; height:32px; margin-bottom:6px; }
+.doc-sign b { display:block; font-weight:500; } .doc-sign small { color:#5d5241; font-size:.84em; }
+.doc-foot { margin-top:30px; padding-top:8px; border-top:1px solid #e3d9c6; display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; font-size:.78em; color:#5d5241; }
+@media (max-width:560px) { .doc-kv { grid-template-columns:1fr; } .doc-head { grid-template-columns:auto 1fr; } .doc-ref { grid-column:1/-1; text-align:left; } .doc-ref div { justify-content:flex-start; } }
+@media print {
+  @page { size:A4; margin:14mm 14mm 12mm; }
+  body:has(.doc-stage) .modal-overlay:not(:has(.doc-stage)) { display:none!important; }
+  .doc-stage { background:none; margin:0; padding:0; display:block; }
+  .doc-paper { box-shadow:none; max-width:none; padding:0; font-size:14.5px; }
+  .doc-paper.is-half { max-width:none; }
+  .doc-sign,.doc-tbl tr { break-inside:avoid; }
+}
+
+/* ใบเสนอราคา: บรรทัดรายการ (รายการ · จำนวน · หน่วย · ราคา · ลบ) */
+.quote-line { display:grid; grid-template-columns:minmax(0,1fr) 80px 100px 120px auto; gap:8px; align-items:center; padding:10px; border:1px solid #e9e1d4; border-radius:12px; }
+@media (max-width:640px) { .quote-line { grid-template-columns:1fr 1fr; } .quote-line > input:first-child { grid-column:1/-1; } }
+
+/* ใบแจ้งหนี้: บรรทัดรายการ (รายการ · จำนวน · ราคา · ส่วนลดบาท · ส่วนลด % · ลบ) */
+.bill-line { display:grid; gap:8px; padding:12px; border:1px solid #efe9df; border-radius:12px; grid-template-columns:minmax(0,1fr) 76px 110px 104px 88px auto; align-items:end; }
+.bill-line-sum { grid-column:1/-1; margin:0; font-size:12.5px; color:#6b5a3f; text-align:right; }
+@media (max-width:760px) { .bill-line { grid-template-columns:1fr 1fr; } .bill-line > :first-child { grid-column:1/-1; } }

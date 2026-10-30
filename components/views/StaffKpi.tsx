@@ -50,7 +50,7 @@ export function StaffKpi() {
     const r = await fetch("/api/kpi", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(edit) });
     const d = await r.json().catch(() => ({}));
     if (!r.ok) return setWerr(d.error || "บันทึกไม่สำเร็จ");
-    setEdit(null); toast("บันทึกน้ำหนัก KPI แล้ว · คะแนนทุกคนคำนวณใหม่ตามน้ำหนักนี้"); load();
+    setEdit(null); toast("แก้ไขน้ำหนัก KPI แล้ว · คะแนนทุกคนคำนวณใหม่ตามน้ำหนักนี้"); load();
   };
   const csv = () => downloadCsv(`KPI พนักงาน ${month}`, ["อันดับ", "พนักงาน", "สาขา", "คะแนนรวม", ...KPI_PARTS.map((p) => `${p.label} (${w?.[p.key]}%)`)],
     rows.map((r) => [r.rank ? String(r.rank) : "-", r.name, r.branch, fmt(r.total), ...KPI_PARTS.map((p) => cell(r, p.key))]));

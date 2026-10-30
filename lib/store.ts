@@ -222,7 +222,19 @@ export function useCrud(key: string, initial: string[][]) {
     /** คืนรหัสรายการใหม่ (ใช้แนบข้อมูลที่เก็บแยก เช่น รูปบัตรของสัญญา) */
     add: (r: string[]) => { const it = { id: newId(), data: r }; local([it, ...items]); sync(key, { op: "upsert", items: [it] }); return it.id; },
     update: (i: number, r: string[]) => { const it = { ...items[i], data: r }; local(items.map((x, j) => (j === i ? it : x))); sync(key, { op: "upsert", items: [it] }); },
-    remove: (i: number) => { const id = items[i]?.id; local(items.filter((_, j) => j !== i)); if (id) sync(key, { op: "delete", ids: [id] }); },
+    /** คืนฟังก์ชันกู้คืน (ปุ่ม "เลิกทำ" ในแจ้งเตือน): ใส่รายการเดิมกลับที่ตำแหน่งเดิมด้วยรหัสเดิม */
+    remove: (i: number) => {
+      const it = items[i];
+      local(items.filter((_, j) => j !== i));
+      if (it) sync(key, { op: "delete", ids: [it.id] });
+      return () => {
+        if (!it) return;
+        const cur = (store.get(key)?.items ?? []) as Item<string[]>[];
+        if (cur.some((x) => x.id === it.id)) return;
+        local([...cur.slice(0, i), it, ...cur.slice(i)]);
+        sync(key, { op: "upsert", items: [it] });
+      };
+    },
     clear: () => { local([]); sync(key, { op: "clear" }); },
   };
 }

@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import Icon from "../Icon";
 import PhotoPicker from "../PhotoPicker";
 import BillDoc, { Branch, DocFormat } from "../billing/BillDoc";
-import { balanceOf, BILL_KINDS, BillItem, docDate, Invoice, isOpen, money, PAID, PARTIAL, Payment, todayIso, totals, UNPAID, VOID } from "@/lib/billing";
+import { balanceOf, BILL_KINDS, BillItem, docDate, Invoice, isOpen, lineAmount, lineDiscount, money, PAID, PARTIAL, Payment, todayIso, totals, UNPAID, VOID } from "@/lib/billing";
 import { CONTRACTS, RESIDENTS } from "@/lib/mock";
 import { newId, useCrud, useRecords, downloadCsv, refreshData } from "@/lib/store";
 import { useApp } from "@/lib/app";
@@ -12,7 +12,7 @@ import { can } from "@/lib/perms";
 import { staying } from "@/lib/rooms";
 import { DataTable, Field, MetricGrid, Modal, PageHeader, Section, Tabs } from "../ui";
 
-const blankItem = (): BillItem => ({ desc: "", qty: 1, price: 0, discount: 0 });
+const blankItem = (): BillItem => ({ desc: "", qty: 1, price: 0, discount: 0, pct: 0 });
 const num = (x: string) => Number(String(x).replace(/,/g, "")) || 0;
 
 /** ข้อมูลหัวกระดาษของสาขา จากหน้า "สาขาของเรา" (แถว: รหัส, ชื่อ, นิติบุคคล, โทร, ที่อยู่, ...) */
@@ -60,8 +60,25 @@ export function Billing() {
     setForm({ id: newId(), date: todayIso(), who: "", hn: "", payer: "", address: "", kind: BILL_KINDS[1], contract: "", items: "[]", total: 0, discount: 0, net: 0, status: UNPAID, note: "" });
     setLines([blankItem()]);
   };
+  // เวชภัณฑ์ที่เบิกแล้วยังไม่เรียกเก็บ ของผู้รับบริการที่เลือก (ดึงเข้าใบแจ้งหนี้ได้ในคลิกเดียว)
+  const [unbilled, setUnbilled] = useState<{ id: string; item_name: string; unit: string; qty: number; price: number; at: string; course?: boolean; med?: boolean }[]>([]);
+  const [pulled, setPulled] = useState<string[]>([]);
+  const loadUnbilled = (name: string) => {
+    setUnbilled([]); setPulled([]);
+    const k = res.rows.findIndex((r) => r[0] === name);
+    if (k < 0) return;
+    fetch(`/api/clinic?op=unbilled&resident=${encodeURIComponent(res.ids[k])}`).then((r) => (r.ok ? r.json() : { items: [] })).then((d) => setUnbilled([...(d.meds ?? []).map((m: { id: string; name: string; unit: string; qty: number; price: number; at: string }) => ({ id: m.id, item_name: m.name, unit: m.unit, qty: m.qty, price: m.price, at: m.at, med: true })), ...(d.courses ?? []).map((c: { id: string; name: string; total: number; price: number; at: string }) => ({ id: c.id, item_name: `คอร์ส${c.name.startsWith("กายภาพ") ? "" : "กายภาพ "}${c.name} ${c.total} ครั้ง`, unit: "คอร์ส", qty: 1, price: c.price, at: c.at, course: true })), ...(d.items ?? [])])).catch(() => {});
+  };
+  const pullSupplies = () => {
+    const add = unbilled.filter((x) => !pulled.includes(x.id));
+    if (!add.length) return;
+    setLines([...lines.filter((l) => l.desc.trim()), ...add.map((x) => ({ desc: x.course ? `${x.item_name} (ซื้อ ${x.at.slice(0, 10)})` : x.med ? `ยา: ${x.item_name} ${x.qty} ${x.unit} (จ่าย ${x.at.slice(0, 10)})` : `เวชภัณฑ์: ${x.item_name} (เบิก ${x.at.slice(0, 10)})`, qty: x.qty, price: x.price, discount: 0 }))]);
+    setPulled([...pulled, ...add.map((x) => x.id)]);
+    if (form && form.kind === BILL_KINDS[1]) setForm({ ...form, kind: (add.every((x) => x.course) ? BILL_KINDS.find((k) => k.startsWith("คอร์ส")) : BILL_KINDS.find((k) => k.startsWith("เวชภัณฑ์"))) ?? form.kind });
+  };
   const pickResident = (name: string) => {
     if (!form) return;
+    loadUnbilled(name);
     const r = residentOf(name), c = contractOf(name);
     setForm({ ...form, who: name, hn: r?.[6] ?? "", payer: c?.[3] ?? form.payer, address: c?.[10] ?? form.address, contract: c?.[0] ?? "" });
     if (c && lines.length === 1 && !lines[0].desc && form.kind === BILL_KINDS[1] && c[4] !== "-") setLines([{ desc: `ค่าบริการรายเดือน ${c[6] && c[6] !== "-" ? `ห้อง ${c[6]}` : ""}`.trim(), qty: 1, price: num(c[4]), discount: 0 }]);
@@ -73,10 +90,12 @@ export function Billing() {
     if (!form.who) return toast("กรุณาเลือกผู้รับบริการ");
     if (!form.payer.trim()) return toast("กรุณากรอกชื่อผู้ชำระ");
     if (!items.length) return toast("กรุณาเพิ่มรายการอย่างน้อย 1 รายการ");
-    if (items.some((l) => l.qty <= 0 || l.price < 0 || l.discount < 0 || l.discount > l.qty * l.price)) return toast("กรุณาตรวจจำนวน ราคา และส่วนลดของแต่ละรายการ");
+    if (items.some((l) => l.qty <= 0 || l.price < 0 || l.discount < 0 || (l.pct ?? 0) < 0 || (l.pct ?? 0) > 100 || lineDiscount(l) > l.qty * l.price)) return toast("กรุณาตรวจจำนวน ราคา และส่วนลดของแต่ละรายการ");
     setList([{ ...form, items: JSON.stringify(items), ...totals(items) }, ...list]);
+    // เวชภัณฑ์ที่ดึงเข้าใบนี้: ทำเครื่องหมายว่าเรียกเก็บแล้ว (ไม่ดึงซ้ำในใบถัดไป)
+    if (pulled.length) fetch("/api/clinic", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "supply_bill", ids: pulled.filter((id) => { const x = unbilled.find((y) => y.id === id); return x && !x.course && !x.med; }), medIds: pulled.filter((id) => unbilled.find((x) => x.id === id)?.med), courseIds: pulled.filter((id) => unbilled.find((x) => x.id === id)?.course), invoiceId: form.id }) }).catch(() => {});
     setForm(null); setTab(UNPAID);
-    toast("บันทึกใบแจ้งหนี้แล้ว · ระบบออกเลขที่เอกสารให้อัตโนมัติ");
+    toast(`ออกใบแจ้งหนี้แล้ว · ${form.who} · ${money(totals(items).net)} บาท · ระบบออกเลขที่เอกสารให้`);
   };
 
   const openPay = (x: Invoice) => { setPay(x); setSlip(""); setAmt({ cash: "", credit: "", transfer: String(balanceOf(x)), date: todayIso() }); };
@@ -98,7 +117,7 @@ export function Billing() {
       if (!r.ok) throw new Error(d.error || "รับชำระไม่สำเร็จ");
       setPay(null);
       refreshData("invoices");
-      toast(d.status === PAID ? `รับชำระครบแล้ว · ${pay.no ?? ""} เป็นใบเสร็จรับเงิน` : `รับชำระ ${money(now)} บาท · คงเหลือ ${money(left - now)} บาท (ชำระบางส่วน)`);
+      toast(d.status === PAID ? `รับชำระครบแล้ว · ${pay.no ?? ""} · ${pay.who} · ออกเป็นใบเสร็จรับเงิน` : `รับชำระบางส่วนแล้ว · ${pay.no ?? ""} · รับ ${money(now)} บาท · คงเหลือ ${money(left - now)} บาท`);
       setTab(d.status === PAID ? PAID : UNPAID);
     } catch (e) { toast((e as Error).message); }
     finally { setBusy(false); }
@@ -133,7 +152,7 @@ export function Billing() {
           actions={[
             { label: "ดู/พิมพ์", onClick: (k) => { setFormat("customer"); setCopy(false); setView(shown[k]); } },
             { label: "รับชำระ", onClick: (k) => isOpen(shown[k]) ? openPay(shown[k]) : toast("ไม่สามารถรับชำระได้ เอกสารนี้ชำระครบแล้วหรือถูกยกเลิก") },
-            ...(admin ? [{ label: "ยกเลิก", danger: true, onClick: (k: number) => { const x = shown[k]; if (x.status === VOID) return; confirm({ title: "ยกเลิกเอกสาร", message: `ต้องการยกเลิก ${x.no ?? ""} (${money(x.net)} บาท) ใช่หรือไม่ เอกสารยังเก็บไว้ในระบบพร้อมสถานะยกเลิก`, danger: true, okLabel: "ยกเลิกเอกสาร", onOk: () => { setList(list.map((y) => (y.id === x.id ? { ...x, status: VOID } : y))); toast("ยกเลิกเอกสารแล้ว"); } }); } }] : []),
+            ...(admin ? [{ label: "ยกเลิก", danger: true, onClick: (k: number) => { const x = shown[k]; if (x.status === VOID) return; confirm({ title: "ยกเลิกเอกสาร", message: `ต้องการยกเลิก ${x.no ?? ""} (${money(x.net)} บาท) ใช่หรือไม่ เอกสารยังเก็บไว้ในระบบพร้อมสถานะยกเลิก`, danger: true, okLabel: "ยกเลิกเอกสาร", onOk: () => { setList(list.map((y) => (y.id === x.id ? { ...x, status: VOID } : y))); toast(`ยกเลิกเอกสารแล้ว · ${x.no ?? ""} · ${x.who}`); } }); } }] : []),
           ]} />
       </Section>
 
@@ -151,17 +170,23 @@ export function Billing() {
             <Field label="วันที่"><input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></Field>
             <Field label="ที่อยู่ผู้ชำระ" className="md:col-span-2"><textarea rows={2} value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} /></Field>
           </div>
+          {unbilled.length > 0 && unbilled.some((x) => !pulled.includes(x.id)) && <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            <span>มียา เวชภัณฑ์ หรือคอร์สกายภาพที่ยังไม่เรียกเก็บ {unbilled.filter((x) => !pulled.includes(x.id)).length} รายการ · {money(unbilled.filter((x) => !pulled.includes(x.id)).reduce((n, x) => n + x.qty * x.price, 0))} บาท</span>
+            <button type="button" className="btn-soft !py-1.5" onClick={pullSupplies}>ดึงเข้าใบแจ้งหนี้นี้</button>
+          </div>}
           {form.who && <p className="text-xs text-gold-500">HN {form.hn || "(ออกให้เมื่อบันทึกผู้รับบริการ)"}{form.contract ? ` · สัญญา ${form.contract}` : ""}</p>}
           <div className="bill-items">
             <div className="mb-2 flex items-center justify-between"><h3 className="font-medium text-gold-800">รายการ</h3><button type="button" className="row-action" onClick={() => setLines([...lines, blankItem()])}>+ เพิ่มรายการ</button></div>
             <div className="space-y-3">{lines.map((l, i) => {
               const set = (p: Partial<BillItem>) => setLines(lines.map((x, j) => (j === i ? { ...x, ...p } : x)));
-              return <div key={i} className="grid gap-2 rounded-xl border border-cream-200 p-3 sm:grid-cols-[1fr_80px_120px_110px_auto] sm:items-end">
+              return <div key={i} className="bill-line">
                 <Field label="รายการ"><input value={l.desc} placeholder="เช่น ค่าบริการรายเดือน พ.ย. 2569" onChange={(e) => set({ desc: e.target.value })} /></Field>
                 <Field label="จำนวน"><input type="number" min={0} value={l.qty} onChange={(e) => set({ qty: num(e.target.value) })} /></Field>
                 <Field label="ราคา/หน่วย"><input type="number" min={0} value={l.price} onChange={(e) => set({ price: num(e.target.value) })} /></Field>
-                <Field label="ส่วนลด"><input type="number" min={0} value={l.discount} onChange={(e) => set({ discount: num(e.target.value) })} /></Field>
+                <Field label="ส่วนลด (บาท)"><input type="number" min={0} value={l.discount} onChange={(e) => set({ discount: num(e.target.value) })} /></Field>
+                <Field label="ส่วนลด (%)"><input type="number" min={0} max={100} step="0.5" value={l.pct ?? 0} onChange={(e) => set({ pct: Math.min(100, num(e.target.value)) })} /></Field>
                 <button type="button" className="row-action danger" disabled={lines.length === 1} onClick={() => setLines(lines.filter((_, j) => j !== i))}>ลบ</button>
+                {lineDiscount(l) > 0 && <p className="bill-line-sum">ยอด {money(lineAmount(l))} · ลด {money(lineDiscount(l))}{l.pct ? ` (รวม ${l.pct}%)` : ""} · <b>สุทธิ {money(Math.max(0, lineAmount(l) - lineDiscount(l)))}</b>{lineDiscount(l) > lineAmount(l) ? <span className="text-red-700"> · ส่วนลดเกินยอด</span> : null}</p>}
               </div>;
             })}</div>
             <p className="mt-3 text-right text-sm text-gold-700">รวม {money(sum.total)} · ส่วนลด {money(sum.discount)} · <b className="text-base text-gold-800">สุทธิ {money(sum.net)} บาท</b></p>

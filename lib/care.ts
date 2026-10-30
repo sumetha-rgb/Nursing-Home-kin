@@ -61,6 +61,8 @@ type Row = Record<string, unknown>;
 export type Profile = {
   resident: ResidentLite;
   health: Row[]; daily: Row[]; meds: Row[]; packs: Row[]; appts: Row[]; tasks: Row[]; handovers: Row[]; alerts: Row[]; contracts: Row[]; plans: Row[];
+  /** ยาที่เบิกจากคลังกลางของศูนย์ */
+  stockMeds?: Row[];
 };
 
 /* ---------- รูปแบบวันที่ ---------- */

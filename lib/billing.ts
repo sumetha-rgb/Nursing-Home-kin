@@ -1,13 +1,14 @@
 /** ใบแจ้งหนี้ / ใบเสร็จรับเงิน (ชุดข้อมูล "invoices") ใช้ได้ทั้งหน้าเว็บและ server */
 
-export type BillItem = { desc: string; qty: number; price: number; discount: number };
+/** discount = ส่วนลดเป็นบาท · pct = ส่วนลดเป็น % ของยอดบรรทัด (ใช้ได้ทั้งสองอย่างพร้อมกัน) */
+export type BillItem = { desc: string; qty: number; price: number; discount: number; pct?: number };
 export type Invoice = {
   id: string; no?: string; date: string; who: string; hn: string; payer: string; address: string;
   kind: string; contract: string; items: string; total: number; discount: number; net: number;
   status: string; paid?: number; cash?: number; credit?: number; transfer?: number; paidDate?: string; cashier?: string; note?: string; slip?: boolean;
 };
 
-export const BILL_KINDS = ["มัดจำ / แรกเข้า", "ค่าบริการรายเดือน", "ค่าหัตถการ", "คอร์สกายภาพ", "เวชภัณฑ์และอื่น ๆ"];
+export const BILL_KINDS = ["มัดจำ / แรกเข้า", "ค่าบริการรายเดือน", "ค่าหัตถการ", "คอร์สกายภาพ", "เวชภัณฑ์และอื่น ๆ", "สรุปค่าใช้จ่ายก่อนกลับบ้าน (D/C)"];
 export const UNPAID = "ค้างชำระ", PARTIAL = "ชำระบางส่วน", PAID = "ชำระแล้ว", VOID = "ยกเลิก";
 /** ยังเก็บเงินไม่ครบ (ยังไม่ได้รับชำระ หรือรับแล้วบางส่วน) */
 export const isOpen = (x: { status: string }) => x.status === UNPAID || x.status === PARTIAL;
@@ -17,13 +18,15 @@ export const balanceOf = (x: { net: number; paid?: number }) => Math.max(0, Math
 export type Payment = { id: string; n: number; date: string; cash: number; credit: number; transfer: number; amount: number; cashier: string; note: string; slip: string | null; slipAt: string | null; paidBefore: number };
 
 export const parseItems = (json: string): BillItem[] => {
-  try { const x = JSON.parse(json || "[]"); return Array.isArray(x) ? x.map((i) => ({ desc: String(i.desc ?? ""), qty: Number(i.qty) || 0, price: Number(i.price) || 0, discount: Number(i.discount) || 0 })) : []; }
+  try { const x = JSON.parse(json || "[]"); return Array.isArray(x) ? x.map((i) => ({ desc: String(i.desc ?? ""), qty: Number(i.qty) || 0, price: Number(i.price) || 0, discount: Number(i.discount) || 0, pct: Number(i.pct) || 0 })) : []; }
   catch { return []; }
 };
 export const lineAmount = (i: BillItem) => i.qty * i.price;
+/** ส่วนลดรวมของบรรทัด = บาท + % ของยอดบรรทัด (ปัดเป็นสตางค์) */
+export const lineDiscount = (i: BillItem) => Math.round((i.discount + (lineAmount(i) * (i.pct ?? 0)) / 100) * 100) / 100;
 export function totals(items: BillItem[]) {
   const total = items.reduce((n, i) => n + lineAmount(i), 0);
-  const discount = items.reduce((n, i) => n + i.discount, 0);
+  const discount = items.reduce((n, i) => n + lineDiscount(i), 0);
   return { total, discount, net: Math.max(0, total - discount) };
 }
 

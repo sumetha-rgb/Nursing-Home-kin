@@ -44,7 +44,7 @@ export function Roster() {
     setBusy(true);
     try {
       for (const s of SHIFTS) await assignShift(day, s.key, pick[s.key] ?? [], data.branch ?? undefined);
-      toast(`บันทึกเวรวันที่ ${Number(day.slice(8))} แล้ว · พนักงานเห็นใน KinApp ทันที`);
+      toast(`บันทึกเวรแล้ว · วันที่ ${Number(day.slice(8))} · พยาบาลเห็นใน KinApp ทันที`);
       setDay(null); load();
     } catch (e) { toast((e as Error).message); }
     finally { setBusy(false); }

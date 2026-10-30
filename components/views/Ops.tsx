@@ -1,9 +1,12 @@
 "use client";
 import Occupancy from "../care/Occupancy";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useBranchNames } from "@/lib/branches";
 import Icon from "../Icon";
-import { ACTIVITY, APPOINTMENTS, DOCS, HEALTH, KPI_ROWS, RESIDENTS } from "@/lib/mock";
+import { APPOINTMENTS, DOCS, HEALTH, RESIDENTS } from "@/lib/mock";
+import { ApptSlip, longDate, PrintModal } from "../print/Docs";
+import { docDate } from "@/lib/billing";
+import { useBranchInfo } from "./Billing";
 import { downloadCsv, useCrud } from "@/lib/store";
 import { useApp } from "@/lib/app";
 import ResidentProfile from "../care/ResidentProfile";
@@ -15,125 +18,132 @@ import { apptIso, apptKey, apptTh, nowTh } from "@/lib/appointments";
 import { evaluateVitals, LEVEL_TH, levelOf, parseVitals } from "@/lib/vitals";
 import { BlankForm, DataTable, Field, FieldDef, FormDialog, Modal, MetricGrid, PageHeader, Section, Select, Tabs } from "../ui";
 
-/* ---------- ผลงาน KPI ---------- */
-const KPI_COLS = ["สาขา", "% สำเร็จ", "% สุ่มตรวจ", "ดาวญาติ", "งาน/คน", "% ความพึงพอใจ", "คอมเพลน", "คะแนนรวม"];
-const KPI_MONTH = [
-  ["สุขุมวิท 107", "90%", "44%", "2,310", "6.1", "93%", "1", "260.0"],
-  ["ราชพฤกษ์", "86%", "39%", "1,742", "5.7", "90%", "2", "231.0"],
-  ["พัทยา", "79%", "33%", "1,260", "5.0", "88%", "1", "186.5"],
-];
-const SHIFT: Record<string, { done: [number, number, number]; check: [number, number, number]; m: string; n: string }> = {
-  "": { done: [48, 42, 88], check: [42, 30, 71], m: "พนักงาน 8 คน ทำเสร็จ 6 คน", n: "พนักงาน 5 คน ทำเสร็จ 2 คน" },
-  "สุขุมวิท 107": { done: [20, 19, 95], check: [19, 15, 79], m: "พนักงาน 4 คน ทำเสร็จ 4 คน", n: "พนักงาน 2 คน ทำเสร็จ 1 คน" },
-  "ราชพฤกษ์": { done: [16, 14, 88], check: [14, 10, 71], m: "พนักงาน 2 คน ทำเสร็จ 1 คน", n: "พนักงาน 2 คน ทำเสร็จ 1 คน" },
-  "พัทยา": { done: [12, 9, 75], check: [9, 5, 56], m: "พนักงาน 2 คน ทำเสร็จ 1 คน", n: "พนักงาน 1 คน ทำเสร็จ 0 คน" },
-};
+/* ---------- ผลการดำเนินงาน (ข้อมูลจริงจาก /api/ops) ---------- */
+type DashBranch = { branch: string; total: number; done: number; checked: number; donePct: number; checkPct: number; mstars: number | null; famStars: number | null; famN: number; satPct: number | null; satN: number; complaints: number; residents: number; perResident: number; score: number };
+type DashShift = { shift: string; total: number; done: number; checked: number; staff: number; active: number; names: string[] };
+type DashAct = { id: string; who: string; task: string; resident: string; branch: string; at: string | null; date: string; praised: boolean };
+type Dash = { range: string; from: string; branches: DashBranch[]; shifts: DashShift[]; activity: DashAct[] };
+const KPI_COLS = ["สาขา", "งานที่สั่ง", "% สำเร็จ", "% ตรวจงาน", "ดาวญาติ", "งาน/ผู้รับบริการ", "% ความพึงพอใจ", "คอมเพลน", "คะแนนรวม"];
+const stars = (v: number | null, n?: number) => (v === null ? "-" : `${v.toFixed(1)}${n ? ` (${n})` : ""}`);
 
 export function Dashboard() {
   const branchNames = useBranchNames();
-  const { toast, confirm } = useApp();
+  const { user } = useSession();
+  const { toast, go } = useApp();
   const [range, setRange] = useState("วันนี้ (รายวัน)");
+  const [shiftBranch, setShiftBranch] = useState("");
+  const [d, setD] = useState<Dash | null>(null);
+  const [err, setErr] = useState("");
   const [msg, setMsg] = useState(false);
   const [to, setTo] = useState("");
   const [text, setText] = useState("");
-  const [praised, setPraised] = useState<string[]>([]);
-  const [shiftBranch, setShiftBranch] = useState("");
-  const kpi = range.startsWith("วันนี้") ? KPI_ROWS : KPI_MONTH;
-  const sh = SHIFT[shiftBranch];
+  const global = user?.role === "Global Admin";
+  const load = useCallback(() => {
+    const q = new URLSearchParams({ op: "dashboard", range: range.startsWith("วันนี้") ? "today" : "month", ...(shiftBranch ? { branch: shiftBranch } : {}) });
+    fetch(`/api/ops?${q}`, { cache: "no-store" }).then(async (r) => { const j = await r.json(); if (!r.ok) throw new Error(j.error); setD(j); setErr(""); }).catch((e) => setErr((e as Error).message || "โหลดข้อมูลไม่สำเร็จ"));
+  }, [range, shiftBranch]);
+  useEffect(() => { load(); const t = setInterval(() => { if (document.visibilityState === "visible") load(); }, 60_000); return () => clearInterval(t); }, [load]);
+
+  const sum = (k: "total" | "done" | "checked") => (d?.branches ?? []).reduce((n, b) => n + b[k], 0);
+  const total = sum("total"), done = sum("done"), checked = sum("checked");
+  const rows = (d?.branches ?? []).map((b) => [b.branch, String(b.total), `${b.donePct}%`, `${b.checkPct}%`, stars(b.famStars, b.famN), String(b.perResident), b.satPct === null ? "-" : `${b.satPct}%`, String(b.complaints), b.score.toFixed(1)]);
+  const praise = async (a: DashAct) => {
+    try {
+      const r = await fetch("/api/ops", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "kudos", taskId: a.id }) });
+      const j = await r.json(); if (!r.ok) throw new Error(j.error);
+      toast(`ชื่นชมแล้ว · ${a.who} · ${a.task} · พนักงานเห็นใน KinApp`); load();
+    } catch (e) { toast((e as Error).message); }
+  };
+  const cheer = async () => {
+    const branch = global ? to : user?.branch ?? "";
+    if (!branch || !text.trim()) return toast("กรุณาเลือกสาขาและพิมพ์ข้อความ");
+    try {
+      const r = await fetch("/api/ops", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "cheer", branch, message: text }) });
+      const j = await r.json(); if (!r.ok) throw new Error(j.error);
+      setMsg(false); setText(""); toast(`ส่งกำลังใจแล้ว · สาขา${branch} · ทีมเห็นใน KinApp`);
+    } catch (e) { toast((e as Error).message); }
+  };
 
   return (
     <>
-      <PageHeader title="ผลการดำเนินงาน" sub="มองเห็นความก้าวหน้า ร่วมพัฒนาคุณภาพการดูแลของทุกสาขา" />
-      <Occupancy /><MetricGrid items={[{label:"งานที่สั่งทั้งหมด",value:sh.done[0],unit:"งาน",accent:true,icon:"check"},{label:"ดำเนินการแล้ว",value:sh.done[1],unit:"งาน",icon:"check"},{label:"อัตรางานสำเร็จ",value:sh.done[2]+"%",note:"ตามสาขาที่เลือกในสรุปกะ",icon:"chart"},{label:"อัตราการตรวจงาน",value:sh.check[2]+"%",note:"งานที่ผ่านการตรวจของผู้จัดการ",icon:"search"}]} />
-
-      <Section
-        title="คุณภาพการดูแลของแต่ละสาขา"
-        sub="เป้าหมายความสำเร็จและคุณภาพบริการของแต่ละสาขา"
+      <PageHeader title="ผลการดำเนินงาน" sub="ตัวเลขทุกช่องมาจากงานจริงในระบบ อัปเดตทุก 1 นาที"
         actions={<>
-          <button className="btn-primary" onClick={() => confirm({ title: "จ่ายงานอัตโนมัติเช้านี้", message: "ต้องการจ่ายงานอัตโนมัติให้พนักงานทุกคนในทุกสาขา ใช่หรือไม่", okLabel: "จ่ายงาน", onOk: () => toast("จ่ายงานอัตโนมัติเรียบร้อย 48 งาน") })}><Icon name="cpu" className="h-4 w-4" /> จ่ายงานอัตโนมัติเช้านี้ (ทุกคน/ทุกสาขา)</button>
-          <button className="btn-soft" onClick={() => downloadCsv("KPI-" + range, KPI_COLS, kpi)}><Icon name="download" className="h-4 w-4" /> โหลด Excel</button>
-        </>}
-      >
-        <div className="mb-4"><Tabs tabs={["วันนี้ (รายวัน)", "เดือนนี้ (รายเดือน)"]} value={range} onChange={setRange} /></div>
+          {branchNames.length > 1 && <div className="min-w-44"><Select options={branchNames} placeholder="รวมทุกสาขา" value={shiftBranch} onChange={setShiftBranch} /></div>}
+          <button className="btn-soft" onClick={() => setMsg(true)}><Icon name="heart" className="h-4 w-4" /> ส่งกำลังใจให้สาขา</button>
+        </>} />
+      {err && <p role="alert" className="mb-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{err}</p>}
+      <Occupancy />
+      <MetricGrid items={[
+        { label: range.startsWith("วันนี้") ? "งานที่สั่งวันนี้" : "งานที่สั่งเดือนนี้", value: total, unit: "งาน", accent: true, icon: "check" },
+        { label: "ทำเสร็จแล้ว", value: done, unit: "งาน", icon: "check" },
+        { label: "อัตรางานสำเร็จ", value: `${total ? Math.round((done / total) * 100) : 0}%`, icon: "chart" },
+        { label: "อัตราการตรวจงาน", value: `${done ? Math.round((checked / done) * 100) : 0}%`, note: "งานที่หัวหน้าตรวจแล้ว", icon: "search" },
+      ]} />
 
+      <Section title="คุณภาพการดูแลของแต่ละสาขา" sub={d ? `ข้อมูลตั้งแต่ ${longDate(d.from, true)} ถึงวันนี้` : "กำลังโหลด…"}
+        actions={<>
+          <Tabs tabs={["วันนี้ (รายวัน)", "เดือนนี้ (รายเดือน)"]} value={range} onChange={setRange} />
+          <button className="btn-soft" onClick={() => downloadCsv("KPI-สาขา-" + range, KPI_COLS, rows)}><Icon name="download" className="h-4 w-4" /> โหลด Excel</button>
+        </>}>
         <details className="group mb-5 rounded-xl border border-cream-300 bg-cream-50">
           <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-medium text-gold-700">
-            คำอธิบายวิธีอ่านค่าและคำนวณคะแนน KPI (คลิกเพื่อดูรายละเอียด)
+            วิธีอ่านค่าและคำนวณคะแนน (กดเพื่อดู)
             <Icon name="chevron" className="h-4 w-4 transition group-open:rotate-180" />
           </summary>
           <ul className="space-y-2 border-t border-cream-300 px-4 py-4 text-sm text-gold-700">
-            <li><b>% งานสำเร็จ:</b> งานที่ทำเสร็จ หารด้วย งานที่ถูกสั่งทั้งหมด</li>
-            <li><b>% สุ่มตรวจงาน:</b> งานที่แอดมิน กดสุ่มตรวจแล้ว หารด้วย งานที่ทำเสร็จทั้งหมด</li>
-            <li><b>ดาวญาติ:</b> รวมดาวจากแอปญาติทั้งหมดที่กดชื่นชมพนักงาน</li>
-            <li><b>งานเฉลี่ย/คน:</b> งานที่ทำเสร็จ หารด้วย จำนวนผู้สูงอายุในสาขา</li>
-            <li><b>% ความพึงพอใจ:</b> ประเมินความพึงพอใจ (คลิกที่หัวตารางเพื่อเปิดแบบฟอร์ม)</li>
-            <li><b>คอมเพลน:</b> จำนวนข้อร้องเรียน (ระบบในอนาคต)</li>
-            <li className="rounded-lg bg-gold-100 px-3 py-2 font-medium">สูตรคำนวณคะแนนรวม = (% สำเร็จ x 1) + (% สุ่มตรวจ x 0.5) + (รวมดาว x 10)</li>
+            <li><b>% สำเร็จ:</b> งานที่พยาบาลส่งแล้ว หารด้วยงานที่มอบหมายทั้งหมด</li>
+            <li><b>% ตรวจงาน:</b> งานที่หัวหน้าตรวจแล้ว หารด้วยงานที่ส่งแล้ว</li>
+            <li><b>ดาวญาติ:</b> ดาวเฉลี่ยจากรีวิวพนักงานของครอบครัว (วงเล็บ = จำนวนรีวิว)</li>
+            <li><b>งาน/ผู้รับบริการ:</b> งานที่ทำเสร็จ หารด้วยจำนวนผู้รับบริการที่ยังพักอยู่</li>
+            <li><b>% ความพึงพอใจ:</b> คะแนนแบบประเมินจากครอบครัว เทียบเต็ม 5</li>
+            <li><b>คอมเพลน:</b> เรื่องร้องเรียนในช่วงเวลานี้</li>
+            <li className="rounded-lg bg-gold-100 px-3 py-2 font-medium">คะแนนรวม = % สำเร็จ + (% ตรวจงาน × 0.5) + (ดาวญาติ × 10) + (% ความพึงพอใจ × 0.5) − (คอมเพลน × 5)</li>
           </ul>
         </details>
-
-        <DataTable columns={KPI_COLS} rows={kpi} />
+        <DataTable columns={KPI_COLS} rows={rows} empty={d ? "ยังไม่มีข้อมูลในช่วงเวลานี้" : "กำลังโหลด…"} />
       </Section>
 
       <div className="mt-6 grid gap-6 xl:grid-cols-2">
-        <Section title="ความใส่ใจจากทีมของเรา" sub="ติดตามงานที่เพิ่งทำเสร็จของพนักงานในทีม และกดชื่นชมเพื่อเป็นกำลังใจ">
-          <ul className="divide-y divide-cream-300/70 rounded-xl border border-cream-300/70">
-            {ACTIVITY.map((a) => {
-              const on = praised.includes(a.t);
-              return (
-                <li key={a.t} className="flex items-center justify-between gap-3 px-4 py-3 text-sm">
-                  <span className="min-w-0"><b className="font-medium">{a.who}</b> <span className="text-gold-600">{a.what}</span><span className="ml-2 text-xs text-gold-500">{a.t}</span></span>
-                  <button
-                    className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium transition ${on ? "bg-gold-700 text-white" : "bg-cream-200 text-gold-700 hover:bg-cream-300"}`}
-                    onClick={() => { setPraised(on ? praised.filter((x) => x !== a.t) : [...praised, a.t]); if (!on) toast(`ชื่นชม ${a.who} แล้ว`); }}
-                  >{on ? "ชื่นชมแล้ว" : "ชื่นชม"}</button>
+        <Section title="งานที่ทีมเพิ่งส่ง" sub="กดชื่นชมเป็นกำลังใจ พนักงานเห็นคำชมใน KinApp">
+          {!d?.activity.length ? <p className="rounded-xl bg-cream-50 px-4 py-6 text-center text-sm text-gold-600">ยังไม่มีงานที่ส่งในเมื่อวานและวันนี้</p> :
+            <ul className="divide-y divide-cream-300/70 rounded-xl border border-cream-300/70">
+              {d.activity.map((a) => (
+                <li key={a.id} className="flex items-center justify-between gap-3 px-4 py-3 text-sm">
+                  <span className="min-w-0"><b className="font-medium">{a.who}</b> <span className="text-gold-600">{a.task} · {a.resident}</span><span className="ml-2 text-xs text-gold-500">{a.at ? `${a.at} น.` : ""}{global ? ` · ${a.branch}` : ""}</span></span>
+                  <button disabled={a.praised} className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium transition ${a.praised ? "bg-gold-700 text-white" : "bg-cream-200 text-gold-700 hover:bg-cream-300"}`} onClick={() => praise(a)}>{a.praised ? "ชื่นชมแล้ว" : "ชื่นชม"}</button>
                 </li>
-              );
-            })}
-          </ul>
-          <button className="btn-soft mt-4 w-full" onClick={() => setMsg(true)}>ส่งกำลังใจให้สาขา</button>
+              ))}
+            </ul>}
         </Section>
 
-        <Section title="ควบคุมงานประจำวันกะเช้า-ดึก" sub="ติดตามสถานะงานแบบเรียลไทม์ และสัดส่วนการตรวจงาน" actions={branchNames.length > 1 ? <div className="min-w-40"><Select options={branchNames} placeholder="รวมทุกสาขา" value={shiftBranch} onChange={setShiftBranch} /></div> : undefined}>
-          <h3 className="mb-3 text-sm font-semibold text-gold-700">สถานะกะการทำงาน</h3>
+        <Section title="สถานะกะวันนี้" sub="งานของแต่ละกะ และพยาบาลในเวรที่ส่งงานแล้ว" actions={<button className="btn-soft" onClick={() => go("tasks")}>ไปที่มอบหมายและตรวจงาน</button>}>
           <div className="grid gap-4 sm:grid-cols-2">
-            {[
-              { t: "สัดส่วนการทำเสร็จ", a: "สั่งงานรวม", b: "ทำเสร็จแล้ว", v: sh.done },
-              { t: "สัดส่วนการตรวจงาน", a: "พนักงานทำเสร็จ", b: "ผจก.ตรวจแล้ว", v: sh.check },
-            ].map((c) => (
-              <div key={c.t} className="rounded-2xl border border-cream-300 bg-cream-50 p-4">
-                <p className="mb-3 text-sm font-medium text-gold-800">{c.t}</p>
-                <div className="flex items-end justify-between text-sm">
-                  <div><p className="text-gold-500">{c.a}</p><p className="text-lg font-semibold">{c.v[0]}</p></div>
-                  <div><p className="text-gold-500">{c.b}</p><p className="text-lg font-semibold">{c.v[1]}</p></div>
-                  <p className="text-xl font-semibold text-gold-700">{c.v[2]} %</p>
+            {(d?.shifts ?? []).map((s) => {
+              const p = s.total ? Math.round((s.done / s.total) * 100) : 0;
+              return (
+                <div key={s.shift} className="rounded-2xl border border-cream-300 bg-cream-50 p-4">
+                  <p className="mb-3 text-sm font-medium text-gold-800">กะ{s.shift}</p>
+                  <div className="flex items-end justify-between text-sm">
+                    <div><p className="text-gold-500">สั่งงาน</p><p className="text-lg font-semibold">{s.total}</p></div>
+                    <div><p className="text-gold-500">ส่งแล้ว</p><p className="text-lg font-semibold">{s.done}</p></div>
+                    <div><p className="text-gold-500">ตรวจแล้ว</p><p className="text-lg font-semibold">{s.checked}</p></div>
+                    <p className="text-xl font-semibold text-gold-700">{p}%</p>
+                  </div>
+                  <div className="mt-3 h-2 overflow-hidden rounded-full bg-cream-300"><div className="h-full rounded-full bg-gold-600" style={{ width: `${p}%` }} /></div>
+                  <p className="mt-3 text-xs text-gold-600">{s.staff ? `พยาบาลในเวร ${s.staff} คน · ส่งงานแล้ว ${s.active} คน` : "ยังไม่ได้จัดเวรกะนี้"}</p>
                 </div>
-                <div className="mt-3 h-2 overflow-hidden rounded-full bg-cream-300"><div className="h-full rounded-full bg-gold-600" style={{ width: `${c.v[2]}%` }} /></div>
-              </div>
-            ))}
-          </div>
-          <h3 className="mb-3 mt-6 text-sm font-semibold text-gold-700">สถานะรายบุคคล</h3>
-          <div className="grid gap-3 sm:grid-cols-2">
-            {[["เช้า", sh.m], ["ดึก", sh.n]].map(([s, t]) => (
-              <div key={s} className="rounded-xl border border-cream-300 p-4 text-sm">
-                <p className="font-medium text-gold-800">{s}</p>
-                <p className="mt-1 text-gold-600">{t}</p>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </Section>
       </div>
 
-      <Modal
-        open={msg} title="ส่งกำลังใจให้สาขา" onClose={() => setMsg(false)}
-        footer={<button className="btn-primary" onClick={() => {
-          if (!to || !text.trim()) { toast("กรุณาเลือกสาขาและพิมพ์ข้อความ"); return; }
-          setMsg(false); setText(""); toast(`ส่งกำลังใจไปยังสาขา${to}แล้ว`);
-        }}>ส่งกำลังใจ</button>}
-      >
+      <Modal open={msg} title="ส่งกำลังใจให้สาขา" onClose={() => setMsg(false)}
+        footer={<><button className="btn-soft" onClick={() => setMsg(false)}>ยกเลิก</button><button className="btn-primary" onClick={cheer}>ส่งกำลังใจ</button></>}>
         <div className="space-y-4">
-          <Field label="ส่งข้อความชื่นชมไปยัง"><Select options={branchNames} placeholder="-- เลือกสาขา --" value={to} onChange={setTo} /></Field>
-          <textarea rows={4} value={text} onChange={(e) => setText(e.target.value)} />
+          {global ? <Field label="ส่งถึงสาขา"><Select options={branchNames} placeholder="-- เลือกสาขา --" value={to} onChange={setTo} /></Field> : <p className="text-sm text-gold-700">ส่งถึงทีมสาขา{user?.branch}</p>}
+          <Field label="ข้อความ"><textarea rows={4} value={text} onChange={(e) => setText(e.target.value)} placeholder="เช่น ขอบคุณทีมกะดึกที่ดูแลคุณสมชายอย่างใกล้ชิดเมื่อคืน" /></Field>
+          <p className="text-xs text-gold-500">ข้อความขึ้นในแท็บผลงานทีมของ KinApp นาน 7 วัน</p>
         </div>
       </Modal>
     </>
@@ -148,6 +158,7 @@ const apptFields = (names: string[], nurses: string[]): FieldDef[] => [
   { label: "ผู้รับบริการ", options: names, required: true },
   { label: "รายการ", required: true, placeholder: "เช่น พบแพทย์อายุรกรรม รพ.ศิริราช, ทำกายภาพ, ตรวจเลือด" },
   { label: "ผู้ดูแล / ผู้พาไป", suggest: nurses, placeholder: "พิมพ์ค้นหาชื่อพยาบาล หรือพิมพ์เอง เช่น ญาติพาไปเอง" },
+  { label: "การเตรียมตัว", placeholder: "เช่น งดน้ำและอาหารหลังเที่ยงคืน นำสมุดยาไปด้วย (พิมพ์ในใบนัด)" },
 ];
 const APPT_TABS = ["ทั้งหมด", "กำลังจะมาถึง", "ผ่านมาแล้ว"];
 
@@ -159,6 +170,9 @@ export function Appointments() {
   const [tab, setTab] = useState(APPT_TABS[0]);
   const [nurses, setNurses] = useState<string[]>([]);
   useEffect(() => { fetchNurses().then(setNurses).catch(() => {}); }, []);
+  const { user } = useSession();
+  const branchInfo = useBranchInfo();
+  const [slip, setSlip] = useState<number | null>(null);
   const active = res.rows.filter((r) => staying(r[5] ?? ""));
   const residentOf = (name: string) => res.rows.find((r) => r[0] === name);
   // คนที่ย้ายออกแล้วแต่มีนัดเดิม ยังแสดงในช่องเลือกตอนแก้ไขนัดนั้น
@@ -172,16 +186,16 @@ export function Appointments() {
   const who = (name: string) => { const p = residentOf(name); return p ? [p[6], p[2] && p[2] !== "-" ? `ห้อง ${p[2]}${p[7] ? ` เตียง ${p[7]}` : ""}` : ""].filter(Boolean).join(" · ") || "-" : "ไม่พบในทะเบียน"; };
   const formValue = useMemo(() => {
     if (!dlg) return undefined;
-    if (dlg.mode === "edit") { const r = rows[dlg.i]; return [apptIso(r[0]), (r[1] ?? "").slice(0, 5), r[2], r[3], r[4] === "-" ? "" : r[4]]; }
-    return [today, "", "", "", ""];
+    if (dlg.mode === "edit") { const r = rows[dlg.i]; return [apptIso(r[0]), (r[1] ?? "").slice(0, 5), r[2], r[3], r[4] === "-" ? "" : r[4], r[5] && r[5] !== "-" ? r[5] : ""]; }
+    return [today, "", "", "", "", ""];
   }, [dlg]); // eslint-disable-line react-hooks/exhaustive-deps
   const save = (v: string[]) => {
     if (!v[0] || !v[1]) return toast("กรุณาระบุวันที่และเวลานัด");
     if (!names.includes(v[2])) return toast("กรุณาเลือกผู้รับบริการจากทะเบียน");
     if (!v[3].trim()) return toast("กรุณากรอกรายการนัดหมาย");
-    const row = [apptTh(v[0]), v[1], v[2], v[3].trim(), v[4].trim() || "-"];
+    const row = [apptTh(v[0]), v[1], v[2], v[3].trim(), v[4].trim() || "-", (v[5] ?? "").trim() || "-"];
     if (dlg?.mode === "edit") update(dlg.i, row); else add(row);
-    setDlg(null); toast("บันทึกนัดหมายแล้ว");
+    const edit = dlg?.mode === "edit"; setDlg(null); toast({ type: edit ? "edit" : "ok", title: edit ? "แก้ไขนัดหมายแล้ว" : "บันทึกนัดหมายแล้ว", detail: `${row[2]} · ${row[0]} ${row[1].slice(0, 5)} น. ${row[3]}` });
   };
   return (
     <div>
@@ -200,8 +214,9 @@ export function Appointments() {
           rows={shown.map(({ r }) => [`${r[0]}${apptIso(r[0]) === today ? " (วันนี้)" : ""}`, (r[1] ?? "").slice(0, 5), r[2], who(r[2]), r[3], r[4]])}
           empty={tab === APPT_TABS[1] ? "ไม่มีนัดหมายที่กำลังจะมาถึง" : "ไม่พบข้อมูล"}
           actions={[
+            { label: "ใบนัด", onClick: (k) => setSlip(shown[k].i) },
             { label: "แก้ไข", onClick: (k) => setDlg({ mode: "edit", i: shown[k].i }) },
-            { label: "ลบ", danger: true, onClick: (k) => confirm({ title: "ลบนัดหมาย", message: `ต้องการลบนัดหมาย "${shown[k].r[3]}" ของ ${shown[k].r[2]} ใช่หรือไม่`, danger: true, okLabel: "ลบ", onOk: () => { remove(shown[k].i); toast("ลบนัดหมายแล้ว"); } }) },
+            { label: "ลบ", danger: true, onClick: (k) => confirm({ title: "ลบนัดหมาย", message: `ต้องการลบนัดหมาย "${shown[k].r[3]}" ของ ${shown[k].r[2]} ใช่หรือไม่`, danger: true, okLabel: "ลบ", onOk: () => { const r = shown[k].r; const undo = remove(shown[k].i); toast({ type: "del", title: "ลบนัดหมายแล้ว", detail: `${r[2]} · ${r[0]} ${(r[1] ?? "").slice(0, 5)} ${r[3]}`, action: { label: "เลิกทำ", run: () => { undo(); toast(`กู้คืนนัดหมายแล้ว · ${r[2]}`); } } }); } }) },
           ]}
         />
       </Section>
@@ -209,6 +224,10 @@ export function Appointments() {
         open={!!dlg} mode={dlg?.mode ?? "add"} title={dlg?.mode === "edit" ? "แก้ไขนัดหมาย" : "เพิ่มนัดหมาย"}
         fields={apptFields(names, nurses)} value={formValue} onClose={() => setDlg(null)} onSave={save}
       />
+      <PrintModal open={slip !== null && !!rows[slip]} title="ใบนัดหมาย" onClose={() => setSlip(null)}>
+        {slip !== null && rows[slip] && <ApptSlip resident={rows[slip][2]} hn={residentOf(rows[slip][2])?.[6]} date={apptIso(rows[slip][0])} time={(rows[slip][1] ?? "").slice(0, 5)}
+          purpose={rows[slip][3]} caregiver={rows[slip][4]} prep={rows[slip][5]} branch={branchInfo(residentOf(rows[slip][2])?.[3] ?? user?.branch ?? "")} by={user?.name} />}
+      </PrintModal>
     </div>
   );
 }
@@ -224,29 +243,41 @@ export function HealthLogs() {
   const { residents } = useResidents();
   const [record, setRecord] = useState(false);
   const [profile, setProfile] = useState<string | null>(null);
-  const names = residents.length ? residents.map((r) => r.full_name) : RESIDENTS.map((r) => r[0]);
+  const names = residents.map((r) => r.full_name);
+  // ตัวกรอง: สาขา (ของผู้รับบริการ) · ผู้รับบริการ · ช่วงวันที่ · กด "ดูข้อมูล" แล้วจึงกรอง
+  const [branch, setBranch] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [applied, setApplied] = useState({ person: "", branch: "", from: "", to: "" });
+  const isoOf = (th: string) => { const m = th.match(/^(\d{2})\/(\d{2})\/(\d{4})/); return m ? `${Number(m[3]) - 543}-${m[2]}-${m[1]}` : ""; };
+  const branchOf = (name: string) => residents.find((x) => x.full_name === name)?.branch_name ?? "";
   const levelCol = (r: string[]) => LEVEL_TH[levelOf(evaluateVitals(parseVitals(r[2], r[3], r[4])))];
   const [person, setPerson] = useState("");
-  const [applied, setApplied] = useState("");
   const [sample, setSample] = useState(false);
   const [view, setView] = useState<number | null>(null);
-  const shown = rows.filter((r) => !applied || r[1] === applied);
+  const shown = rows.filter((r) => {
+    const d = isoOf(r[0] ?? "");
+    return (!applied.person || r[1] === applied.person) && (!applied.branch || branchOf(r[1]) === applied.branch)
+      && (!applied.from || (d && d >= applied.from)) && (!applied.to || (d && d <= applied.to));
+  });
   return (
     <>
       <PageHeader title="รายงานข้อมูลสุขภาพ (Health Logs)" sub="ดูบันทึกสัญญาณชีพและการประเมินต่างๆ ของผู้สูงอายุ · ค่าที่เกินเกณฑ์ระบบแจ้งเตือนพยาบาลให้เอง"
         actions={<button className="btn-primary" onClick={() => setRecord(true)}><Icon name="plus" className="h-4 w-4" /> บันทึกสัญญาณชีพ</button>} />
       <Section>
         <div className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {branchNames.length > 1 && <Select options={branchNames} placeholder="-- ทุกสาขา --" />}
-          <Select options={names} placeholder="-- ทุกคน --" value={person} onChange={setPerson} />
+          {branchNames.length > 1 && <Select options={branchNames} placeholder="-- ทุกสาขา --" value={branch} onChange={setBranch} />}
+          <Select options={names.filter((n) => !branch || branchOf(n) === branch)} placeholder="-- ทุกคน --" value={person} onChange={setPerson} />
           <div className="flex min-w-0 items-center gap-2 sm:col-span-2 lg:col-span-2">
-            <input type="date" aria-label="วันที่เริ่มต้น" className="min-w-0 flex-1" />
+            <input type="date" aria-label="วันที่เริ่มต้น" className="min-w-0 flex-1" value={from} onChange={(e) => setFrom(e.target.value)} />
             <span className="shrink-0 text-sm text-gold-600">ถึง</span>
-            <input type="date" aria-label="วันที่สิ้นสุด" className="min-w-0 flex-1" />
+            <input type="date" aria-label="วันที่สิ้นสุด" className="min-w-0 flex-1" value={to} onChange={(e) => setTo(e.target.value)} />
           </div>
         </div>
         <div className="mb-5 flex flex-wrap items-center gap-2">
-          <button className="btn-primary sm:ml-auto" onClick={() => { setApplied(person); toast("อัปเดตข้อมูลแล้ว"); }}>ดูข้อมูล</button>
+          {(applied.person || applied.branch || applied.from || applied.to) && <span className="text-sm text-gold-600">แสดง {shown.length} จาก {rows.length} รายการ</span>}
+          <button className="btn-soft sm:ml-auto" onClick={() => { setBranch(""); setPerson(""); setFrom(""); setTo(""); setApplied({ person: "", branch: "", from: "", to: "" }); }}>ล้างตัวกรอง</button>
+          <button className="btn-primary" onClick={() => setApplied({ person, branch, from, to })}>ดูข้อมูล</button>
           <button className="btn-soft" onClick={() => window.print()}><Icon name="print" className="h-4 w-4" /> พิมพ์</button>
           <button className="btn-soft" onClick={() => setSample(true)}>ตัวอย่าง สบส. (แบบฟอร์มเปล่า)</button>
         </div>
@@ -265,32 +296,77 @@ export function HealthLogs() {
   );
 }
 
-/* ---------- เอกสารระเบียบราชการ ---------- */
+/* ---------- เอกสารระเบียบ (แนบไฟล์รูปหรือ PDF ได้) ---------- */
+const DOC_TYPES = ["ระเบียบภายใน", "แบบฟอร์ม", "คู่มือ", "ใบอนุญาต / เอกสารราชการ", "ประกาศ", "อื่น ๆ"];
+const DOC_STATUS = ["เผยแพร่แล้ว", "ฉบับร่าง", "ยกเลิกใช้"];
+type DocForm = { i: number | null; title: string; type: string; date: string; status: string; note: string; file: string; fileName: string };
 export function OfficialDocs() {
-  const { rows, remove } = useCrud("docs", DOCS);
+  const { rows, ids, add, update, remove } = useCrud("docs", DOCS);
   const { toast, confirm } = useApp();
-  const [view, setView] = useState<number | null>(null);
+  const [f, setF] = useState<DocForm | null>(null);
+  const [busy, setBusy] = useState(false);
+  const today = new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10);
+  const isoOf = (th?: string) => { const m = String(th ?? "").match(/^(\d{2})\/(\d{2})\/(\d{4})/); return m ? `${Number(m[3]) - 543}-${m[2]}-${m[1]}` : today; };
+  const open = (i: number | null) => { const r = i !== null ? rows[i] : null; setF({ i, title: r?.[0] ?? "", type: r?.[1] ?? DOC_TYPES[0], date: r ? isoOf(r[2]) : today, status: r?.[3] ?? DOC_STATUS[0], note: r?.[4] && r[4] !== "-" ? r[4] : "", file: "", fileName: "" }); };
+  const pick = (file?: File) => {
+    if (!f || !file) return;
+    if (file.size > 4 * 1024 * 1024) return toast("ไฟล์ใหญ่เกิน 4 MB · ลดขนาดหรือแยกไฟล์ก่อนแนบ");
+    const rd = new FileReader(); rd.onload = () => setF({ ...f, file: String(rd.result), fileName: file.name }); rd.readAsDataURL(file);
+  };
+  /** แนบไฟล์หลังบันทึกรายการ · รายการใหม่อาจยังส่งไม่ถึงฐานข้อมูล ลองซ้ำ */
+  const upload = async (id: string, name: string, data: string) => {
+    for (let k = 0; k < 6; k++) {
+      const r = await fetch("/api/clinic", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "doc_file", id, name, data }) }).catch(() => null);
+      if (r?.ok) return true;
+      if (r && r.status !== 404) { const j = await r.json().catch(() => ({})); toast(j.error || "แนบไฟล์ไม่สำเร็จ"); return false; }
+      await new Promise((x) => setTimeout(x, 1500));
+    }
+    toast("แนบไฟล์ไม่สำเร็จ · ลองแนบใหม่อีกครั้ง"); return false;
+  };
+  const save = async () => {
+    if (!f || busy) return;
+    if (!f.title.trim()) return toast("กรุณากรอกชื่อเอกสาร");
+    const row = [f.title.trim(), f.type, docDate(f.date).replace(/-/g, "/"), f.status, f.note.trim() || "-", f.i !== null ? rows[f.i][5] ?? "" : ""];
+    setBusy(true);
+    const id = f.i !== null ? ids[f.i] : (add(row) as string);
+    if (f.i !== null) update(f.i, row);
+    if (f.file) await upload(id, f.fileName, f.file);
+    setBusy(false); setF(null);
+    toast(`${f.i !== null ? "แก้ไขเอกสารแล้ว" : "เพิ่มเอกสารแล้ว"} · ${row[0]}${f.file ? " · แนบไฟล์แล้ว" : ""}`);
+  };
+  const view = async (i: number) => {
+    const r = await fetch(`/api/clinic?op=doc_file&id=${encodeURIComponent(ids[i])}`).then((x) => (x.ok ? x.json() : null)).catch(() => null);
+    if (!r?.data) return toast("เอกสารนี้ยังไม่มีไฟล์แนบ · กดแก้ไขเพื่อแนบไฟล์");
+    const blob = await fetch(r.data).then((x) => x.blob());
+    window.open(URL.createObjectURL(blob), "_blank", "noopener");
+  };
   return (
     <>
-      <PageHeader title="เอกสารระเบียบราชการ" sub="ระบบจัดการเอกสารและระเบียบต่างๆ" />
-      <div className="card mx-auto max-w-xl p-10 text-center">
-        <span className="mx-auto grid h-16 w-16 place-items-center rounded-2xl bg-gold-100 text-gold-600"><Icon name="files" className="h-8 w-8" /></span>
-        <h2 className="mt-5 text-lg font-semibold text-gold-800">กำลังอยู่ระหว่างการพัฒนา</h2>
-        <p className="mt-2 text-sm text-gold-600">เมนูเอกสารระเบียบราชการ จะเปิดให้ใช้งานในเร็วๆ นี้ครับ</p>
-      </div>
-      <div className="mt-6">
-        <Section title="ตัวอย่างรายการเอกสาร">
-          <DataTable
-            columns={["ชื่อเอกสาร", "ประเภท", "วันที่", "สถานะ"]}
-            rows={rows}
-            actions={[
-              { label: "ดู", onClick: (i) => setView(i) },
-              { label: "ลบ", danger: true, onClick: (i) => confirm({ title: "ลบเอกสาร", message: `ต้องการลบ "${rows[i][0]}" ใช่หรือไม่`, danger: true, okLabel: "ลบ", onOk: () => { remove(i); toast("ลบเอกสารแล้ว"); } }) },
-            ]}
-          />
-        </Section>
-      </div>
-      <FormDialog open={view !== null} mode="view" title="รายละเอียดเอกสาร" fields={["ชื่อเอกสาร", "ประเภท", "วันที่", "สถานะ"].map((label) => ({ label }))} value={view !== null ? rows[view] : undefined} onClose={() => setView(null)} onSave={() => {}} />
+      <PageHeader title="เอกสารระเบียบ" sub="เก็บระเบียบ แบบฟอร์ม คู่มือ และใบอนุญาตของศูนย์ แนบไฟล์รูปหรือ PDF ได้"
+        actions={<button className="btn-primary" onClick={() => open(null)}><Icon name="plus" className="h-4 w-4" /> เพิ่มเอกสาร</button>} />
+      <Section>
+        <DataTable columns={["ชื่อเอกสาร", "ประเภท", "วันที่", "สถานะ", "ไฟล์แนบ"]}
+          rows={rows.map((r) => [r[0], r[1], r[2], r[3], r[5] && r[5] !== "-" ? r[5] : "-"])}
+          empty="ยังไม่มีเอกสาร · กด เพิ่มเอกสาร"
+          actions={[
+            { label: "เปิดไฟล์", hidden: (i) => !rows[i][5] || rows[i][5] === "-", onClick: (i) => view(i) },
+            { label: "แก้ไข", onClick: (i) => open(i) },
+            { label: "ลบ", danger: true, onClick: (i) => confirm({ title: "ลบเอกสาร", message: `ต้องการลบ "${rows[i][0]}" พร้อมไฟล์แนบใช่หรือไม่`, danger: true, okLabel: "ลบ", onOk: () => { const n = rows[i][0]; remove(i); toast(`ลบเอกสารแล้ว · ${n}`); } }) },
+          ]} />
+      </Section>
+      <Modal open={!!f} title={f?.i !== null && f ? "แก้ไขเอกสาร" : "เพิ่มเอกสาร"} onClose={() => setF(null)}
+        footer={<><button className="btn-soft" onClick={() => setF(null)}>ยกเลิก</button><button className="btn-primary" disabled={busy} onClick={save}>{busy ? "กำลังบันทึก…" : "บันทึกเอกสาร"}</button></>}>
+        {f && <div className="form-grid">
+          <Field label="ชื่อเอกสาร" required className="md:col-span-2"><input value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} placeholder="เช่น ใบอนุญาตประกอบกิจการสถานดูแลผู้สูงอายุ" /></Field>
+          <Field label="ประเภท"><select value={f.type} onChange={(e) => setF({ ...f, type: e.target.value })}>{DOC_TYPES.map((x) => <option key={x}>{x}</option>)}</select></Field>
+          <Field label="สถานะ"><select value={f.status} onChange={(e) => setF({ ...f, status: e.target.value })}>{DOC_STATUS.map((x) => <option key={x}>{x}</option>)}</select></Field>
+          <Field label="วันที่"><input type="date" value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} /></Field>
+          <Field label="ไฟล์แนบ (รูปหรือ PDF ไม่เกิน 4 MB)"><input type="file" accept="image/png,image/jpeg,image/webp,application/pdf" onChange={(e) => pick(e.target.files?.[0])} />
+            {f.fileName && <small className="mt-1 block text-gold-600">เลือกแล้ว: {f.fileName}</small>}
+            {!f.fileName && f.i !== null && rows[f.i][5] && rows[f.i][5] !== "-" && <small className="mt-1 block text-gold-600">ไฟล์เดิม: {rows[f.i][5]} (เลือกไฟล์ใหม่เพื่อแทน)</small>}</Field>
+          <Field label="หมายเหตุ" className="md:col-span-2"><textarea rows={2} value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} placeholder="เช่น หมดอายุ 31/12/2570 ต้องต่ออายุก่อน 30 วัน" /></Field>
+        </div>}
+      </Modal>
     </>
   );
 }

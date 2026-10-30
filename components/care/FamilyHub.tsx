@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Icon from "../Icon";
 import { useApp } from "@/lib/app";
 import { familyUrl, ReviewLink } from "@/lib/reviews";
+import { openHere } from "@/lib/site";
 import { DataTable, Modal, Tabs } from "../ui";
 
 type Upd = { id: string; resident_id: string; resident_name: string; branch_name: string; body: string | null; has_photo: boolean; posted_by: string | null; at: string };
@@ -46,12 +47,12 @@ export default function FamilyHub({ open, onClose }: { open: boolean; onClose: (
     catch (e) { setPhoto(null); toast((e as Error).message); }
   };
   const removeUpd = (u: Upd) => confirm({ title: "ลบข่าวที่ส่งถึงญาติ", message: `ลบข่าวของ ${u.resident_name} ที่ ${u.posted_by ?? "ทีมดูแล"} ส่งเมื่อ ${u.at} ใช่หรือไม่ ญาติจะไม่เห็นข่าวนี้ในสมุดภาพอีก`, danger: true, okLabel: "ลบข่าว",
-    onOk: async () => { try { await call("/api/care", { op: "family_update_delete", id: u.id }); load(); toast("ลบข่าวแล้ว"); } catch (e) { toast((e as Error).message); } } });
+    onOk: async () => { try { await call("/api/care", { op: "family_update_delete", id: u.id }); load(); toast(`ลบข่าวถึงญาติแล้ว · ${u.resident_name} · ${u.at}`); } catch (e) { toast((e as Error).message); } } });
   const revoke = (l: Link) => confirm({ title: "ยกเลิกลิงก์", message: `ยกเลิกลิงก์ครอบครัวของ ${l.resident_name} ใช่หรือไม่ ญาติจะเปิดสมุดภาพและหน้ารีวิวจากลิงก์นี้ไม่ได้อีก`, danger: true, okLabel: "ยกเลิกลิงก์",
-    onOk: async () => { try { await call("/api/reviews", { op: "revoke", id: l.id }); load(); toast("ยกเลิกลิงก์แล้ว"); } catch (e) { toast((e as Error).message); } } });
+    onOk: async () => { try { await call("/api/reviews", { op: "revoke", id: l.id }); load(); toast(`ยกเลิกลิงก์แล้ว · ${l.resident_name} · ญาติเปิดลิงก์นี้ไม่ได้อีก`); } catch (e) { toast((e as Error).message); } } });
   const purge = () => confirm({ title: "ล้างลิงก์เก่า", message: `ลบลิงก์ที่ยกเลิกหรือหมดอายุแล้ว ${hidden} ลิงก์ ออกจากระบบถาวร ลิงก์เหล่านี้ใช้งานไม่ได้อยู่แล้ว ส่วนรีวิวพนักงานที่เคยได้รับและคะแนน KPI ยังอยู่ครบ`, danger: true, okLabel: "ลบลิงก์เก่า",
-    onOk: async () => { try { const d = await call<{ count: number }>("/api/reviews", { op: "purge" }); load(); toast(`ลบลิงก์เก่า ${d.count} ลิงก์แล้ว`); } catch (e) { toast((e as Error).message); } } });
-  const copy = async (l: Link) => { const u = familyUrl(l.token); try { await navigator.clipboard.writeText(u); toast("คัดลอกลิงก์แล้ว"); } catch { toast(u); } };
+    onOk: async () => { try { const d = await call<{ count: number }>("/api/reviews", { op: "purge" }); load(); toast(`ล้างลิงก์เก่าแล้ว · ${d.count} ลิงก์ · รีวิวที่ได้รับยังอยู่ครบ`); } catch (e) { toast((e as Error).message); } } });
+  const copy = async (l: Link) => { const u = familyUrl(l.token); try { await navigator.clipboard.writeText(u); toast(`คัดลอกลิงก์แล้ว · ${l.resident_name} · ส่งให้ญาติทาง LINE ได้เลย`); } catch { toast(u); } };
 
   return (
     <>
@@ -80,6 +81,7 @@ export default function FamilyHub({ open, onClose }: { open: boolean; onClose: (
                   rows={shownLinks.map((l) => [`${l.at}${l.created_by ? `\nสร้างโดย ${l.created_by}` : ""}`, l.resident_name, l.expires ?? "-", !l.active ? "ยกเลิกแล้ว" : l.expired ? "หมดอายุ" : "ใช้งานได้", `${l.reviews} ครั้ง`])}
                   badgeCols={[3]} empty={loaded ? "ไม่มีลิงก์ที่ใช้งานอยู่" : "กำลังโหลด…"}
                   actions={[
+                    { label: "ดู", hidden: (i) => !(shownLinks[i].active && !shownLinks[i].expired), onClick: (i) => openHere(familyUrl(shownLinks[i].token)) },
                     { label: "คัดลอก", hidden: (i) => !(shownLinks[i].active && !shownLinks[i].expired), onClick: (i) => copy(shownLinks[i]) },
                     { label: "ยกเลิกลิงก์", danger: true, hidden: (i) => !shownLinks[i].active, onClick: (i) => revoke(shownLinks[i]) },
                   ]} />

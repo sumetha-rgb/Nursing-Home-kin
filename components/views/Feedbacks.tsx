@@ -55,7 +55,7 @@ export function Feedbacks() {
   const links = { survey: linkOf(branch, "survey"), complaint: linkOf(branch, "complaint") };
   const copy = async (u: string) => {
     if (!u) { toast("กรุณาเลือกสาขาก่อน"); return; }
-    try { await navigator.clipboard.writeText(u); toast("คัดลอกลิงก์แล้ว ส่งให้ญาติทาง LINE ได้เลย"); } catch { toast(u); }
+    try { await navigator.clipboard.writeText(u); toast("คัดลอกลิงก์แล้ว · ส่งให้ญาติทาง LINE ได้เลย"); } catch { toast(u); }
   };
   const urgent = rows.filter((r) => r[4] === "รอดำเนินการ").length;
 
@@ -104,7 +104,7 @@ export function Feedbacks() {
           badgeCols={[4]}
           actions={[
             { label: "ตรวจสอบ", onClick: (i) => setRow(i) },
-            { label: "ลบ", danger: true, onClick: (i) => confirm({ title: "ลบเรื่องร้องเรียน", message: "ต้องการลบรายการนี้ใช่หรือไม่", danger: true, okLabel: "ลบ", onOk: () => { remove(i); toast("ลบรายการแล้ว"); } }) },
+            { label: "ลบ", danger: true, onClick: (i) => confirm({ title: "ลบเรื่องร้องเรียน", message: "ต้องการลบรายการนี้ใช่หรือไม่", danger: true, okLabel: "ลบ", onOk: () => { remove(i); toast("ลบเรื่องร้องเรียนแล้ว"); } }) },
           ]}
         />
       </Section>
@@ -112,7 +112,7 @@ export function Feedbacks() {
       <FamilyHub open={hub} onClose={() => setHub(false)} />
       <FormDialog
         open={row !== null} mode="edit" title="จัดการเรื่องร้องเรียน" fields={withBranches(COMPLAINT_FIELDS, branchNames)} value={row !== null ? rows[row] : undefined}
-        onClose={() => setRow(null)} onSave={(v) => { if (row !== null) update(row, v); setRow(null); toast("อัปเดตสถานะแล้ว"); }}
+        onClose={() => setRow(null)} onSave={(v) => { if (row !== null) update(row, v); setRow(null); toast(`แก้ไขสถานะเรื่องร้องเรียนแล้ว · ${v[4] ?? ""}`); }}
       />
 
       <Modal open={modal === "line"} title="ตั้งค่าเชื่อมต่อ LINE Messaging API" onClose={close} footer={<><button className="btn-soft" onClick={close}>ยกเลิก</button><button className="btn-primary" onClick={() => { close(); toast("บันทึกการตั้งค่า LINE แล้ว"); }}>บันทึกการตั้งค่า LINE</button></>}>

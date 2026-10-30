@@ -1,7 +1,13 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import Icon from "@/components/Icon";
-import { DataTable, Modal, StatusBadge, Tabs } from "@/components/ui";
+import { DataTable, Field, Modal, StatusBadge, Tabs } from "@/components/ui";
+import ClinicalPanel, { ClinicalTab, useClinic } from "./Clinical";
+import { PrintModal, ProfileDoc, ReferralDoc } from "@/components/print/Docs";
+import { MedPhotoModal } from "@/components/pharmacy/MedPhotos";
+import { useBranchInfo } from "@/components/views/Billing";
+import { useSession } from "@/lib/session";
+import { ADMISSION_FIELDS } from "@/lib/clinic";
 import { fetchProfile, Profile, thDate, thWhen } from "@/lib/care";
 import { evaluateVitals, LEVEL_TH, levelOf, LIMITS, parseVitals, Vitals } from "@/lib/vitals";
 
@@ -49,13 +55,20 @@ const limitLines = (k: keyof Vitals) => {
   return out;
 };
 
-const TABS = ["ภาพรวม", "สัญญาณชีพ", "ยาและการให้ยา", "งานดูแลและนัดหมาย", "สมุดส่งเวร"];
+const TABS = ["ภาพรวม", "แรกรับ/ประเมิน", "บันทึกพยาบาล", "สัญญาณชีพ", "ยาและการให้ยา", "กายภาพ", "เวชภัณฑ์", "งานดูแลและนัดหมาย", "สมุดส่งเวร"];
+const CLINICAL: Record<string, ClinicalTab> = { "แรกรับ/ประเมิน": "admission", "บันทึกพยาบาล": "nursing", "กายภาพ": "physio", "เวชภัณฑ์": "supplies" };
 
 /** ประวัติรายบุคคล: กดชื่อผู้รับบริการแล้วเห็นทุกอย่างในหน้าเดียว (พิมพ์เป็นเอกสารได้) */
 export default function ResidentProfile({ id, onClose }: { id: string | null; onClose: () => void }) {
   const [p, setP] = useState<Profile | null>(null);
   const [err, setErr] = useState("");
   const [tab, setTab] = useState(TABS[0]);
+  const { c, reload } = useClinic(id);
+  const { user } = useSession();
+  const branchInfo = useBranchInfo();
+  const [doc, setDoc] = useState<null | "profile" | "referral">(null);
+  const [packPic, setPackPic] = useState<{ id: string; title: string } | null>(null);
+  const [ref, setRef] = useState({ to: "", reason: "", summary: "" });
   useEffect(() => {
     if (!id) return;
     setP(null); setErr(""); setTab(TABS[0]);
@@ -80,8 +93,9 @@ export default function ResidentProfile({ id, onClose }: { id: string | null; on
   const nextAppt = (p?.appts ?? []).filter((a) => String(a.date ?? "") >= today).sort((a, b) => String(a.date).localeCompare(String(b.date)))[0];
 
   return (
+    <>
     <Modal open={!!id} wide title={r ? `ประวัติผู้รับบริการ · ${r.full_name}` : "ประวัติผู้รับบริการ"} onClose={onClose}
-      footer={<><button className="btn-soft" onClick={() => window.print()}><Icon name="print" className="h-4 w-4" /> พิมพ์ประวัติ</button><button className="btn-primary" onClick={onClose}>ปิด</button></>}>
+      footer={<><button className="btn-soft" disabled={!p} onClick={() => setDoc("referral")}><Icon name="send" className="h-4 w-4" /> ใบส่งต่อ</button><button className="btn-soft" disabled={!p} onClick={() => setDoc("profile")}><Icon name="print" className="h-4 w-4" /> พิมพ์สรุปประวัติ</button><button className="btn-primary" onClick={onClose}>ปิด</button></>}>
       {err && <p role="alert" className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{err}</p>}
       {!p && !err && <p className="py-10 text-center text-sm text-gold-500">กำลังโหลดประวัติ…</p>}
       {p && r && (
@@ -129,7 +143,7 @@ export default function ResidentProfile({ id, onClose }: { id: string | null; on
             </div>
           )}
 
-          {tab === TABS[1] && (
+          {tab === "สัญญาณชีพ" && (
             <div className="space-y-4">
               {!vitals.length && <p className="rounded-xl bg-cream-50 px-4 py-6 text-center text-sm text-gold-500">ยังไม่มีบันทึกสัญญาณชีพ</p>}
               {vitals.length > 0 && <>
@@ -147,18 +161,22 @@ export default function ResidentProfile({ id, onClose }: { id: string | null; on
             </div>
           )}
 
-          {tab === TABS[2] && (
+          {tab === "ยาและการให้ยา" && (
             <div className="space-y-5">
               <div><h4 className="profile-sub">รายการยาประจำตัว</h4>
                 <DataTable search={false} columns={["ชื่อยา", "ข้อบ่งใช้", "ขนาด", "มื้อ", "คงเหลือ", "สถานะ"]} empty="ไม่มีรายการยา"
-                  rows={p.meds.map((m) => [str(m.drug_name), str(m.indication), `${num(m.dose)} ${str(m.unit)}`, str(m.meals), `${num(m.stock)} ${str(m.unit)}`, m.on_hold ? "งดชั่วคราว" : str(m.status ?? "ปกติ")])} /></div>
+                  rows={p.meds.map((m) => [`${str(m.drug_name)}${m.source === "คลังศูนย์" ? " · [คลังศูนย์]" : " · [ญาตินำมา]"}`, str(m.indication), `${num(m.dose)} ${str(m.unit)}`, str(m.meals), `${num(m.stock)} ${str(m.unit)}`, m.on_hold ? "งดชั่วคราว" : str(m.status ?? "ปกติ")])} /></div>
               <div><h4 className="profile-sub">บันทึกการให้ยา (MAR)</h4>
                 <DataTable search={false} badgeCols={[6]} columns={["วันที่", "มื้อ", "รายการยา", "จัดโดย", "ตรวจ QA", "ผู้ให้ยา / เวลา", "สถานะ"]} empty="ยังไม่มีประวัติการจัดยา"
+                  actions={[{ label: "ดูรูปซอง", onClick: (i) => setPackPic({ id: String(p.packs[i].id), title: `รูปซองยา · มื้อ${str(p.packs[i].meal)} · ${thDate(p.packs[i].date as string, false)}` }) }]}
                   rows={p.packs.map((k) => [thDate(k.date, false), str(k.meal), str(k.items), str(k.packed_by), str(k.checked_by), k.given ? `${str(k.given_by)} · ${thDate(k.given_at)}` : "-", k.given ? "จ่ายยาแล้ว" : k.qa_status === "ตรวจผ่าน" ? "รอจ่าย" : str(k.qa_status)])} /></div>
+              <div><h4 className="profile-sub">ยาที่เบิกจากคลังกลาง</h4>
+                <DataTable search={false} columns={["วันเวลา", "ชื่อยา", "จำนวน", "ผู้เบิก", "หมายเหตุ", "สถานะเงิน"]} empty="ยังไม่เคยเบิกยาจากคลังกลาง"
+                  rows={(p.stockMeds ?? []).map((m) => [str(m.at), str(m.name), `${num(m.qty)} ${str(m.unit)}`, str(m.moved_by), [m.basket ? "เข้าตะกร้า" : "", str(m.note) === "-" ? "" : str(m.note)].filter(Boolean).join(" · ") || "-", !m.priced ? "ไม่คิดเงิน" : m.billed ? "เรียกเก็บแล้ว" : "ยังไม่เรียกเก็บ"])} /></div>
             </div>
           )}
 
-          {tab === TABS[3] && (
+          {tab === "งานดูแลและนัดหมาย" && (
             <div className="space-y-5">
               <div><h4 className="profile-sub">นัดหมาย</h4>
                 <DataTable search={false} columns={["วันที่", "เวลา", "วัตถุประสงค์", "ผู้ดูแล"]} empty="ไม่มีนัดหมาย"
@@ -170,12 +188,44 @@ export default function ResidentProfile({ id, onClose }: { id: string | null; on
             </div>
           )}
 
-          {tab === TABS[4] && (
+          {CLINICAL[tab] && id && <ClinicalPanel id={id} tab={CLINICAL[tab]} c={c} reload={reload} />}
+
+          {tab === "สมุดส่งเวร" && (
             <DataTable search={false} columns={["หัวข้อ", "รายละเอียด", "ผู้เขียน", "เวลา"]} empty="ไม่มีบันทึกส่งเวร"
               rows={p.handovers.map((h) => [str(h.topic_type), str(h.detail), str(h.written_by), str(h.written_at)])} />
           )}
         </div>
       )}
+      {p && r && (() => {
+        const adm = c?.admission?.data ?? {};
+        const vit = [...vitals].reverse().slice(0, 5).map((x) => [thDate(x.at), str(x.row.vital_signs), str(x.row.o2_sat), str(x.row.dtx), str(x.row.recorded_by ?? x.row.done_by ?? x.src)]);
+        const mar = p.packs.slice(0, 6).map((k) => [thDate(k.date, false), str(k.meal), str(k.items), k.given ? `${str(k.given_by)} ${thDate(k.given_at)}` : "รอให้ยา"]);
+        const nn = (c?.notes ?? []).filter((n) => n.kind === "nurse").slice(0, 5).map((n) => [n.at, `${n.title ? `${n.title} · ` : ""}${n.body ?? ""}`, n.author ?? "-"]);
+        const probs = (c?.notes ?? []).filter((n) => n.kind === "problem" && n.status !== "Resolved").map((n) => `${n.title}${n.body ? ` · ${n.body}` : ""}`);
+        const contact = adm.emergency_name ? `${adm.emergency_name}${adm.emergency_relation ? ` (${adm.emergency_relation})` : ""}${adm.emergency_phone ? ` ${adm.emergency_phone}` : ""}` : p.contracts[0] ? `${str(p.contracts[0].employer_name)}${p.contracts[0].employer_phone ? ` ${str(p.contracts[0].employer_phone)}` : ""}` : undefined;
+        const admItems = ADMISSION_FIELDS.filter((f) => ["diagnosis", "allergy_drug", "mobility", "fall_risk", "diet_type", "diet_note", "devices"].includes(f.key) && adm[f.key]).map((f) => [f.label, adm[f.key]] as [string, string]);
+        const lastText = last ? `${thDate(last.at)} · ${str(last.row.vital_signs)}${last.row.o2_sat ? ` · O₂ ${last.row.o2_sat}` : ""}${last.row.dtx && last.row.dtx !== "-" ? ` · DTX ${last.row.dtx}` : ""}` : undefined;
+        const meds = activeMeds.map((m) => `${str(m.drug_name)} ${num(m.dose)} ${str(m.unit)} · ${str(m.meals)}`);
+        const hn = String((r as Record<string, unknown>).hn ?? "") || undefined;
+        return <>
+          <PrintModal open={doc === "profile"} title="สรุปประวัติการดูแล" onClose={() => setDoc(null)}>
+            <ProfileDoc name={r.full_name} hn={hn} age={r.age ? String(r.age) : undefined} room={r.room ?? undefined} branch={branchInfo(r.branch_name ?? "")} chronic={r.chronic_diseases ?? undefined}
+              contact={contact} admission={admItems} vitals={vit} mar={mar} notes={nn} problems={probs} by={user?.name} />
+          </PrintModal>
+          <PrintModal open={doc === "referral"} title="ใบส่งต่อผู้รับบริการ" onClose={() => setDoc(null)}>
+            <div className="mb-4 grid w-full max-w-[794px] gap-3 rounded-xl bg-white p-4 print-hide sm:grid-cols-2">
+              <Field label="ส่งต่อไปยัง"><input value={ref.to} onChange={(e) => setRef({ ...ref, to: e.target.value })} placeholder="เช่น ห้องฉุกเฉิน รพ.ศิริราช" /></Field>
+              <Field label="เหตุผลการส่งต่อ"><input value={ref.reason} onChange={(e) => setRef({ ...ref, reason: e.target.value })} placeholder="เช่น ไข้สูง 39.2 °C หายใจเหนื่อย" /></Field>
+              <Field label="สรุปอาการและการดูแลที่ผ่านมา" className="sm:col-span-2"><textarea rows={2} value={ref.summary} onChange={(e) => setRef({ ...ref, summary: e.target.value })} /></Field>
+            </div>
+            <ReferralDoc name={r.full_name} hn={hn} age={r.age ? String(r.age) : undefined} branch={branchInfo(r.branch_name ?? "")} to={ref.to || "................................................"}
+              reason={ref.reason || "-"} chronic={r.chronic_diseases ?? undefined} allergy={[adm.allergy_drug, adm.allergy_food].filter(Boolean).join(" · ") || undefined}
+              diagnosis={adm.diagnosis} vitals={lastText} meds={meds} devices={adm.devices} summary={ref.summary || undefined} by={user?.name} />
+          </PrintModal>
+        </>;
+      })()}
     </Modal>
+    <MedPhotoModal open={!!packPic} title={packPic?.title ?? ""} items={packPic ? [{ kind: "pack", id: packPic.id, title: "รูปซองยาที่จัดเสร็จ" }] : []} onClose={() => setPackPic(null)} />
+    </>
   );
 }

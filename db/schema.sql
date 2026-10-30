@@ -732,3 +732,206 @@ INSERT INTO invoice_payments (id, invoice_id, pay_date, cash, credit, transfer, 
 
 -- เปลี่ยนรหัสตำแหน่ง "พยาบาล" จาก Operation เป็น Nurse (ชื่อที่แสดงยังเป็น "พยาบาล") · รันซ้ำได้
 UPDATE staff_users SET access_level = 'Nurse' WHERE access_level = 'Operation';
+
+-- ======================================================================
+-- กลุ่มที่ 2: ข้อมูลจริงแทนข้อมูลจำลอง
+-- ======================================================================
+-- ผู้จัดการกดชื่นชมงานที่พนักงานส่ง (แสดงในแดชบอร์ดและ KinApp)
+CREATE TABLE IF NOT EXISTS kudos (
+  id            text PRIMARY KEY,
+  branch_name   text,
+  staff_name    text NOT NULL,
+  task_id       text,
+  task_title    text,
+  resident_name text,
+  given_by      text,
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS kudos_staff ON kudos (staff_name, created_at DESC);
+-- ข้อความกำลังใจถึงสาขา
+CREATE TABLE IF NOT EXISTS branch_cheers (
+  id          text PRIMARY KEY,
+  branch_name text NOT NULL,
+  message     text NOT NULL,
+  sent_by     text,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS branch_cheers_branch ON branch_cheers (branch_name, created_at DESC);
+-- ผลงานพิเศษที่พนักงานส่งจาก KinApp
+CREATE TABLE IF NOT EXISTS staff_bonus (
+  id          text PRIMARY KEY,
+  branch_name text,
+  staff_name  text NOT NULL,
+  title       text NOT NULL,
+  note        text,
+  photo       text,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS staff_bonus_staff ON staff_bonus (staff_name, created_at DESC);
+-- ใบเสนอราคา: เลขที่ วันที่ ระยะยืนราคา รายการ และสัญญาที่เปิดจากใบนี้
+ALTER TABLE care_assessments ADD COLUMN IF NOT EXISTS doc_no text;
+ALTER TABLE care_assessments ADD COLUMN IF NOT EXISTS quote_date date;
+ALTER TABLE care_assessments ADD COLUMN IF NOT EXISTS valid_days int;
+ALTER TABLE care_assessments ADD COLUMN IF NOT EXISTS payer_name text;
+ALTER TABLE care_assessments ADD COLUMN IF NOT EXISTS care_level text;
+ALTER TABLE care_assessments ADD COLUMN IF NOT EXISTS items_json text;
+ALTER TABLE care_assessments ADD COLUMN IF NOT EXISTS contract_no text;
+-- เอกสารระเบียบ: แนบไฟล์ได้
+ALTER TABLE official_documents ADD COLUMN IF NOT EXISTS note text;
+ALTER TABLE official_documents ADD COLUMN IF NOT EXISTS file_name text;
+ALTER TABLE official_documents ADD COLUMN IF NOT EXISTS file_data text;
+-- นัดหมาย: การเตรียมตัว (พิมพ์ในใบนัด)
+ALTER TABLE appointments ADD COLUMN IF NOT EXISTS prep text;
+
+-- ======================================================================
+-- กลุ่มที่ 3: งานพยาบาลและกายภาพ
+-- ======================================================================
+-- ประวัติและประเมินแรกรับ (1 แถวต่อผู้รับบริการ · ช่องเก็บเป็น JSON ตามแบบฟอร์ม)
+CREATE TABLE IF NOT EXISTS resident_admissions (
+  resident_id text PRIMARY KEY REFERENCES residents(id) ON DELETE CASCADE,
+  branch_name text,
+  data        jsonb NOT NULL DEFAULT '{}'::jsonb,
+  assessed_by text,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now()
+);
+-- บันทึกทางคลินิก: nurse = Nurse Note · problem = Problem list · insulin = ฉีดอินซูลิน · physio = กายภาพ (ประเมิน/Progress note) · referral = ใบส่งต่อ
+CREATE TABLE IF NOT EXISTS clinical_notes (
+  id            text PRIMARY KEY,
+  resident_id   text REFERENCES residents(id) ON DELETE CASCADE,
+  resident_name text,
+  branch_name   text,
+  kind          text NOT NULL,
+  title         text,
+  body          text,
+  data          jsonb NOT NULL DEFAULT '{}'::jsonb,
+  status        text,
+  author        text,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  updated_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS clinical_notes_resident ON clinical_notes (resident_id, kind, created_at DESC);
+-- คอร์สกายภาพแบบนับครั้ง
+CREATE TABLE IF NOT EXISTS physio_courses (
+  id            text PRIMARY KEY,
+  resident_id   text REFERENCES residents(id) ON DELETE CASCADE,
+  resident_name text,
+  branch_name   text,
+  name          text NOT NULL,
+  total         int NOT NULL,
+  used          int NOT NULL DEFAULT 0,
+  price         numeric(12,2),
+  status        text NOT NULL DEFAULT 'ใช้งานอยู่',
+  created_by    text,
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS physio_courses_resident ON physio_courses (resident_id);
+-- เวชภัณฑ์: รายการในคลังของสาขา และการเบิกให้ผู้รับบริการ (เรียกเก็บเงินได้)
+CREATE TABLE IF NOT EXISTS supply_items (
+  id          text PRIMARY KEY,
+  branch_name text,
+  name        text NOT NULL,
+  unit        text,
+  price       numeric(12,2) NOT NULL DEFAULT 0,
+  stock       int NOT NULL DEFAULT 0,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS supply_issues (
+  id            text PRIMARY KEY,
+  branch_name   text,
+  resident_id   text REFERENCES residents(id) ON DELETE CASCADE,
+  resident_name text,
+  item_id       text,
+  item_name     text,
+  unit          text,
+  qty           int NOT NULL,
+  price         numeric(12,2) NOT NULL DEFAULT 0,
+  issued_by     text,
+  invoice_id    text,
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS supply_issues_resident ON supply_issues (resident_id, created_at DESC);
+-- ข้อความในเอกสารที่ตั้งได้ (เช่น ข้อสัญญา) · ใช้กับทุกสาขา
+CREATE TABLE IF NOT EXISTS doc_settings (
+  key        text PRIMARY KEY,
+  value      text,
+  updated_by text,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+-- ใบเสนอราคาเดิมที่ยังไม่มีเลขที่: ออกเลขให้ตามลำดับที่สร้าง (รันซ้ำได้)
+WITH n AS (SELECT id, row_number() OVER (ORDER BY created_at, id) AS k FROM care_assessments WHERE doc_no IS NULL OR doc_no = '')
+UPDATE care_assessments c SET doc_no = 'QT-' || (extract(year FROM c.created_at AT TIME ZONE 'Asia/Bangkok')::int + 543) || '-' ||
+    lpad(((SELECT coalesce(max(substring(doc_no from '([0-9]+)$')::int), 0) FROM care_assessments WHERE doc_no LIKE 'QT-%') + n.k)::text, 4, '0'),
+  quote_date = coalesce(c.quote_date, (c.created_at AT TIME ZONE 'Asia/Bangkok')::date)
+FROM n WHERE c.id = n.id;
+-- คอร์สกายภาพ: ออกใบแจ้งหนี้แล้วหรือยัง (ดึงเข้าใบแจ้งหนี้ได้แบบเดียวกับเวชภัณฑ์)
+ALTER TABLE physio_courses ADD COLUMN IF NOT EXISTS invoice_id text;
+-- ยาน้ำนับเป็นปริมาตร: ขนาดบรรจุต่อขวด (เช่น 1000 ml) · สต็อกและขนาดต่อครั้งเก็บเป็น ml
+ALTER TABLE resident_medications ADD COLUMN IF NOT EXISTS pack_size numeric(12,2);
+-- ยอดที่รับเข้าครั้งแรก (ใช้คำนวณ "ใช้ไปแล้ว" = รับเข้า − คงเหลือ)
+ALTER TABLE resident_medications ADD COLUMN IF NOT EXISTS received_total numeric(12,2);
+-- ยาที่รับเข้าก่อนมีช่องนี้: เริ่มนับการใช้ตั้งแต่ยอดคงเหลือปัจจุบัน (รันซ้ำได้)
+UPDATE resident_medications SET received_total = stock WHERE received_total IS NULL;
+
+-- ======================================================================
+-- คลังยากลางของศูนย์ (ยาที่ศูนย์ซื้อเอง แยกจากยาของผู้ป่วย)
+-- ======================================================================
+-- รายการยา: ชื่อ หน่วย และราคาขายเดียวทุกสาขา (ผู้บริหารตั้ง)
+CREATE TABLE IF NOT EXISTS stock_drugs (
+  id         text PRIMARY KEY,
+  name       text NOT NULL,
+  unit       text NOT NULL DEFAULT 'เม็ด',
+  form       text,
+  price      numeric(12,2),
+  min_qty    int NOT NULL DEFAULT 10,
+  note       text,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS stock_drugs_name ON stock_drugs (lower(name));
+-- ล็อตในคลังของแต่ละสาขา (เลขล็อต วันหมดอายุ จำนวนคงเหลือ)
+CREATE TABLE IF NOT EXISTS stock_lots (
+  id          text PRIMARY KEY,
+  branch_name text NOT NULL,
+  drug_id     text NOT NULL REFERENCES stock_drugs(id) ON DELETE CASCADE,
+  lot         text,
+  expiry      date,
+  qty         numeric(12,2) NOT NULL DEFAULT 0,
+  cost        numeric(12,2),
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS stock_lots_branch ON stock_lots (branch_name, drug_id, expiry);
+-- ทุกการเพิ่มลด: รับเข้า · เบิกให้ผู้ป่วย · ตรวจนับ · หมดอายุ/เสีย (ใคร เมื่อไร เท่าไร)
+CREATE TABLE IF NOT EXISTS stock_moves (
+  id            text PRIMARY KEY,
+  branch_name   text NOT NULL,
+  drug_id       text NOT NULL REFERENCES stock_drugs(id) ON DELETE CASCADE,
+  lot_id        text,
+  delta         numeric(12,2) NOT NULL,
+  reason        text NOT NULL,
+  resident_id   text REFERENCES residents(id) ON DELETE SET NULL,
+  resident_name text,
+  price         numeric(12,2),
+  invoice_id    text,
+  note          text,
+  moved_by      text,
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS stock_moves_drug ON stock_moves (branch_name, drug_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS stock_moves_resident ON stock_moves (resident_id) WHERE invoice_id IS NULL;
+-- ยาในตะกร้าผู้ป่วยที่เบิกจากคลังกลาง: ที่มา (คลังศูนย์ / ญาตินำมา) + ยาคลังกลางที่ผูกไว้ (กดเติมจากคลังได้)
+ALTER TABLE resident_medications ADD COLUMN IF NOT EXISTS source text;
+ALTER TABLE resident_medications ADD COLUMN IF NOT EXISTS stock_drug_id text REFERENCES stock_drugs(id) ON DELETE SET NULL;
+-- การเบิกที่เข้าตะกร้า: ผูกกับรายการยาในตะกร้า
+ALTER TABLE stock_moves ADD COLUMN IF NOT EXISTS med_id text;
+CREATE INDEX IF NOT EXISTS stock_moves_res ON stock_moves (resident_id, created_at DESC);
+-- รูปของแอปจัดยา: label = รูปฉลาก/กล่องยาตอนรับเข้า (ref = resident_medications.id) · pack = รูปซองยาที่จัดเสร็จ (ref = medication_packs.id)
+-- แยกจากตารางหลัก เพื่อไม่ให้รูปติดไปกับข้อมูลที่ดึงอัตโนมัติทุก 20 วินาที
+CREATE TABLE IF NOT EXISTS med_photos (
+  kind        text NOT NULL,
+  ref_id      text NOT NULL,
+  branch_name text,
+  photo       text NOT NULL,
+  taken_by    text,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (kind, ref_id)
+);

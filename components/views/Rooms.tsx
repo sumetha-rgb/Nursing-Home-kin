@@ -101,11 +101,11 @@ export function Rooms() {
     const taken = room.beds.find((x) => x.label === b)?.who;
     if (taken && taken !== name) return toast(`ไม่สามารถเลือกเตียง ${b} ได้ มี ${taken} พักอยู่`);
     setRoom(i, room.no, b);
-    toast(`จัด ${name} เข้าห้อง ${room.no} เตียง ${b} แล้ว`);
+    toast(`เพิ่มผู้ป่วยเข้าห้องแล้ว · ${name} · ห้อง ${room.no} เตียง ${b}`);
     setAssign(null); setPlace(null); setWho("");
   };
-  const moveOut = (name: string, r: RoomInfo) => confirm({ title: "ย้ายออกจากห้อง", message: `ย้าย ${name} ออกจากห้อง ${r.no} ใช่หรือไม่ (ข้อมูลผู้รับบริการยังอยู่ เพิ่มเข้าห้องใหม่ได้ภายหลัง)`, okLabel: "ย้ายออก", onOk: () => { const i = res.rows.findIndex((x) => x[0] === name && x[3] === r.branch); if (i >= 0) { setRoom(i, "-"); toast(`ย้าย ${name} ออกจากห้อง ${r.no} แล้ว`); } } });
-  const removeRoom = (r: RoomInfo) => r.people.length ? confirm({ title: `ลบห้อง ${r.no} ไม่ได้`, message: `ห้องนี้ยังมีผู้พักอยู่ ${r.people.length} คน (${r.beds.filter((b) => b.who).map((b) => `${b.who} เตียง ${b.label}`).join(", ")}) กรุณาย้ายผู้รับบริการออกจากห้องนี้ก่อน แล้วจึงลบห้องได้`, okLabel: "เปิดห้องเพื่อย้ายผู้ป่วย", onOk: () => setSel(r.i) }) : confirm({ title: "ลบห้อง", message: `ต้องการลบห้อง ${r.no} (${r.branch}) ใช่หรือไม่`, danger: true, okLabel: "ลบ", onOk: () => { rooms.remove(r.i); setSel(null); toast("ลบห้องแล้ว"); } });
+  const moveOut = (name: string, r: RoomInfo) => confirm({ title: "ย้ายออกจากห้อง", message: `ย้าย ${name} ออกจากห้อง ${r.no} ใช่หรือไม่ (ข้อมูลผู้รับบริการยังอยู่ เพิ่มเข้าห้องใหม่ได้ภายหลัง)`, okLabel: "ย้ายออก", onOk: () => { const i = res.rows.findIndex((x) => x[0] === name && x[3] === r.branch); if (i >= 0) { setRoom(i, "-"); toast(`ย้ายผู้ป่วยออกจากห้องแล้ว · ${name} · ห้อง ${r.no} ว่าง 1 เตียง`); } } });
+  const removeRoom = (r: RoomInfo) => r.people.length ? confirm({ title: `ลบห้อง ${r.no} ไม่ได้`, message: `ห้องนี้ยังมีผู้พักอยู่ ${r.people.length} คน (${r.beds.filter((b) => b.who).map((b) => `${b.who} เตียง ${b.label}`).join(", ")}) กรุณาย้ายผู้รับบริการออกจากห้องนี้ก่อน แล้วจึงลบห้องได้`, okLabel: "เปิดห้องเพื่อย้ายผู้ป่วย", onOk: () => setSel(r.i) }) : confirm({ title: "ลบห้อง", message: `ต้องการลบห้อง ${r.no} (${r.branch}) ใช่หรือไม่`, danger: true, okLabel: "ลบ", onOk: () => { rooms.remove(r.i); setSel(null); toast(`ลบห้องแล้ว · ห้อง ${r.no} · ${r.branch}`); } });
 
   const fields: FieldDef[] = [
     { label: "เลขห้อง", required: true, placeholder: "เช่น 101" },
@@ -140,8 +140,8 @@ export function Rooms() {
       rooms.update(editing.i, row);
       // เปลี่ยนเลขห้อง: ผู้ที่พักอยู่ย้ายตามเลขใหม่ (เตียงเดิม)
       if (roomKey(editing.no) !== roomKey(no)) res.rows.forEach((r, i) => { if (editing.people.includes(r[0]) && r[3] === editing.branch) setRoom(i, no, r[7] ?? ""); });
-      toast("บันทึกห้องแล้ว");
-    } else { rooms.add(row); toast(`สร้างห้อง ${no} แล้ว`); }
+      toast({ type: "edit", title: "แก้ไขห้องแล้ว", detail: `ห้อง ${no} · ${v[1]} · ${cap} เตียง` });
+    } else { rooms.add(row); toast(`สร้างห้องแล้ว · ห้อง ${no} · ${v[1]} · ${cap} เตียง`); }
     setDlg(null);
   };
 

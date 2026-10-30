@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { useBranchNames, withBranches } from "@/lib/branches";
 import Icon from "../Icon";
-import { ASSESSMENTS, BRANCH_NAMES, FACILITY_TASKS, MASTER_TASKS } from "@/lib/mock";
+import { BRANCH_NAMES, FACILITY_TASKS, MASTER_TASKS } from "@/lib/mock";
 import { downloadCsv, useCrud } from "@/lib/store";
 import { useApp } from "@/lib/app";
 import { DataTable, FieldDef, FormDialog, Modal, PageHeader, Section, SearchBox, Select, Tabs, Field } from "../ui";
@@ -54,7 +54,7 @@ export function FacilityTasks() {
           rows={shown.map((x) => x.r)}
           actions={[
             { label: "แก้ไข", onClick: (n) => setDlg({ mode: "edit", i: shown[n].i }) },
-            { label: "ลบ", danger: true, onClick: (n) => confirm({ title: "ลบงานทั่วไป", message: `ต้องการลบ "${shown[n].r[0]}" ใช่หรือไม่`, danger: true, okLabel: "ลบ", onOk: () => { remove(shown[n].i); toast("ลบงานแล้ว"); } }) },
+            { label: "ลบ", danger: true, onClick: (n) => confirm({ title: "ลบงานทั่วไป", message: `ต้องการลบ "${shown[n].r[0]}" ใช่หรือไม่`, danger: true, okLabel: "ลบ", onOk: () => { const r = shown[n].r; const undo = remove(shown[n].i); toast({ type: "del", title: "ลบงานทั่วไปแล้ว", detail: r[0], action: { label: "เลิกทำ", run: () => { undo(); toast(`กู้คืนงานแล้ว · ${r[0]}`); } } }); } }) },
           ]}
         />
       </Section>
@@ -65,7 +65,7 @@ export function FacilityTasks() {
         onSave={(v) => {
           const r = toRow(v).slice(0, 4);
           if (dlg?.mode === "edit") update(dlg.i, r); else add(r);
-          setDlg(null); toast("บันทึกข้อมูลแล้ว");
+          const edit = dlg?.mode === "edit"; setDlg(null); toast({ type: edit ? "edit" : "ok", title: edit ? "แก้ไขงานทั่วไปแล้ว" : "เพิ่มงานทั่วไปแล้ว", detail: r[0] });
         }}
       />
     </>
@@ -120,7 +120,7 @@ export function MasterTasks() {
           rows={shown.map((x) => x.r.slice(0, 6))}
           actions={[
             { label: "แก้ไข", onClick: (n) => setDlg({ mode: "edit", i: shown[n].i }) },
-            { label: "ลบ", danger: true, onClick: (n) => confirm({ title: "ลบงานมาตรฐาน", message: `ต้องการลบ "${shown[n].r[1]}" ใช่หรือไม่`, danger: true, okLabel: "ลบ", onOk: () => { remove(shown[n].i); toast("ลบงานแล้ว"); } }) },
+            { label: "ลบ", danger: true, onClick: (n) => confirm({ title: "ลบงานมาตรฐาน", message: `ต้องการลบ "${shown[n].r[1]}" ใช่หรือไม่`, danger: true, okLabel: "ลบ", onOk: () => { const r = shown[n].r; const undo = remove(shown[n].i); toast({ type: "del", title: "ลบงานมาตรฐานแล้ว", detail: `${r[0]} ${r[1]}`, action: { label: "เลิกทำ", run: () => { undo(); toast(`กู้คืนงานแล้ว · ${r[1]}`); } } }); } }) },
           ]}
         />
       </Section>
@@ -128,7 +128,7 @@ export function MasterTasks() {
         open={!!dlg} mode={dlg?.mode ?? "add"} title={dlg?.mode === "edit" ? "แก้ไขงานมาตรฐาน" : "เพิ่มงานมาตรฐาน"}
         fields={withBranches(MT_FIELDS, branchNames).map((f) => f.label === "วิชาชีพ" ? { ...f, options: [...new Set([...PROFESSIONS, ...rows.map((r) => r[6]).filter((v) => v && v !== "-")])] } : f)} value={dlg?.mode === "edit" ? rows[dlg.i] : undefined}
         onClose={() => setDlg(null)} saveLabel="บันทึกข้อมูล"
-        onSave={(v) => { if (dlg?.mode === "edit") update(dlg.i, v); else add(v); setDlg(null); toast("บันทึกข้อมูลแล้ว"); }}
+        onSave={(v) => { const edit = dlg?.mode === "edit"; if (edit) update(dlg!.i, v); else add(v); setDlg(null); toast({ type: edit ? "edit" : "ok", title: edit ? "แก้ไขงานมาตรฐานแล้ว" : "เพิ่มงานมาตรฐานแล้ว", detail: [v[0], v[1]].filter(Boolean).join(" ") }); }}
       />
       <Modal
         open={group} title="สร้างกลุ่มงานใหม่" onClose={() => setGroup(false)}
@@ -146,80 +146,6 @@ export function MasterTasks() {
             </div>
           </Field>
         </div>
-      </Modal>
-    </>
-  );
-}
-
-/* ---------- ประเมินภาวะและเสนอแผนดูแล ---------- */
-const AS_COLS = ["ชื่อแผนการดูแล (Plan Name)", "ชื่อผู้สูงอายุ (Resident Name)", "โรคประจำตัว (Chronic Diseases)", "เบอร์โทรติดต่อญาติ (Relative Phone)", "ราคาประเมินรวม (บาท)"];
-const AS_FIELDS: FieldDef[] = [
-  { label: "ชื่อแผนการดูแล (Plan Name)", required: true },
-  { label: "ชื่อผู้สูงอายุ (Resident Name)", required: true },
-  { label: "โรคประจำตัว (Chronic Diseases)", area: true },
-  { label: "เบอร์โทรติดต่อญาติ (Relative Phone)", type: "tel" },
-  { label: "ราคาประเมินรวม (บาท)", type: "number" },
-  { label: "หมายเหตุ / เงื่อนไขเพิ่มเติม", area: true },
-];
-
-export function Quotations() {
-  const { rows, add, update, remove } = useCrud("assessments", ASSESSMENTS);
-  const { toast, confirm } = useApp();
-  const [q, setQ] = useState("");
-  const [applied, setApplied] = useState("");
-  const [dlg, setDlg] = useState<Dlg>(null);
-  const [print, setPrint] = useState<number | null>(null);
-  const shown = rows.map((r, i) => ({ r, i })).filter(({ r }) => !applied || r[1].includes(applied) || r[0].includes(applied));
-  return (
-    <>
-      <PageHeader
-        title="ระบบประเมินภาวะและเสนอแผนดูแล (Assessments & Care Plan)"
-        sub="ประเมินภาวะผู้รับบริการ จัดกลุ่มงาน และออกใบเสนอแผนการดูแล"
-        actions={<button className="btn-primary" onClick={() => setDlg({ mode: "add", i: -1 })}><Icon name="plus" className="h-4 w-4" /> สร้างใบประเมิน</button>}
-      />
-      <p className="mb-4 rounded-xl bg-gold-100/70 px-4 py-2.5 text-sm text-gold-700">ข้อมูลยึดตามรอบเวร (ตัดกะ 07:00 น.)</p>
-      <Section>
-        <form className="mb-4 flex flex-col gap-3 sm:flex-row" onSubmit={(e) => { e.preventDefault(); setApplied(q); }}>
-          <div className="flex-1" onChange={(e) => setQ((e.target as HTMLInputElement).value)}><SearchBox placeholder="ค้นหาชื่อลูกค้า/ผู้สูงอายุ" /></div>
-          <button className="btn-primary">ค้นหา</button>
-          <button type="button" className="btn-soft" onClick={() => downloadCsv("ใบประเมินภาวะ", AS_COLS, rows.map((r) => r.slice(0, 5)))}><Icon name="download" className="h-4 w-4" /> ดาวน์โหลด CSV</button>
-        </form>
-        <DataTable
-          columns={AS_COLS}
-          rows={shown.map((x) => x.r.slice(0, 5))}
-          actions={[
-            { label: "ใบเสนอราคา", onClick: (n) => setPrint(shown[n].i) },
-            { label: "แก้ไข", onClick: (n) => setDlg({ mode: "edit", i: shown[n].i }) },
-            { label: "ลบ", danger: true, onClick: (n) => confirm({ title: "ลบใบประเมิน", message: `ต้องการลบ "${shown[n].r[0]}" ใช่หรือไม่`, danger: true, okLabel: "ลบ", onOk: () => { remove(shown[n].i); toast("ลบใบประเมินแล้ว"); } }) },
-          ]}
-        />
-      </Section>
-      <FormDialog
-        open={!!dlg} mode={dlg?.mode ?? "add"} title={dlg?.mode === "edit" ? "แก้ไขใบประเมิน" : "ประเมินภาวะและแผนการดูแล"}
-        fields={AS_FIELDS} value={dlg?.mode === "edit" ? rows[dlg.i] : undefined}
-        onClose={() => setDlg(null)} saveLabel="บันทึกใบประเมินและแผน"
-        onSave={(v) => { if (dlg?.mode === "edit") update(dlg.i, v); else add(v); setDlg(null); toast("บันทึกใบประเมินแล้ว"); }}
-      />
-      <Modal open={print !== null} wide title="แผนการดูแล (ใบเสนอราคา)" onClose={() => setPrint(null)} footer={<><button className="btn-soft" onClick={() => setPrint(null)}>ปิด</button><button className="btn-primary" onClick={() => window.print()}>สั่งพิมพ์</button></>}>
-        {print !== null && (
-          <div className="space-y-4 text-sm">
-            <dl className="grid gap-3 rounded-xl bg-cream-50 p-4 sm:grid-cols-3">
-              <div><dt className="text-gold-500">ชื่อผู้สูงอายุ</dt><dd className="font-medium">{rows[print][1]}</dd></div>
-              <div><dt className="text-gold-500">โรคประจำตัว</dt><dd className="font-medium">{rows[print][2] || "-"}</dd></div>
-              <div><dt className="text-gold-500">เบอร์ติดต่อญาติ</dt><dd className="font-medium">{rows[print][3] || "-"}</dd></div>
-            </dl>
-            <div className="flex items-center justify-between rounded-xl border border-cream-300 p-4">
-              <span className="font-medium">{rows[print][0]} <span className="text-gold-500">(ราคาประเมิน)</span></span>
-              <b className="text-lg text-gold-700">{rows[print][4]} บาท</b>
-            </div>
-            <p className="text-xs text-gold-600">หมายเหตุ: รายการและราคาข้างต้นเป็นการประเมินเบื้องต้นตามแพ็กเกจมาตรฐาน อาจมีการปรับเปลี่ยนตามอาการและแผนการรักษารายบุคคล</p>
-            <div className="grid gap-6 pt-6 sm:grid-cols-2">
-              {["ผู้เสนอราคา", "ลูกค้า/ผู้รับบริการ (ผู้พิจารณา)"].map((t) => (
-                <div key={t} className="text-center"><div className="border-b border-dashed border-gold-400 pt-8" /><p className="mt-2 text-gold-600">{t}</p></div>
-              ))}
-            </div>
-          </div>
-        )}
       </Modal>
     </>
   );

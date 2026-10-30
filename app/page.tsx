@@ -19,7 +19,7 @@ const Workflow = view(() => import("@/components/views/Core").then((m) => m.Work
 const DailyTasks = view(() => import("@/components/views/Daily").then((m) => m.DailyTasks));
 const FacilityTasks = view(() => import("@/components/views/Tasks").then((m) => m.FacilityTasks));
 const MasterTasks = view(() => import("@/components/views/Tasks").then((m) => m.MasterTasks));
-const Quotations = view(() => import("@/components/views/Tasks").then((m) => m.Quotations));
+const Quotations = view(() => import("@/components/views/Quotations").then((m) => m.Quotations));
 const Appointments = view(() => import("@/components/views/Ops").then((m) => m.Appointments));
 const Dashboard = view(() => import("@/components/views/Ops").then((m) => m.Dashboard));
 const HealthLogs = view(() => import("@/components/views/Ops").then((m) => m.HealthLogs));

@@ -39,15 +39,15 @@ const isFamilyAdmin = (me: SessionUser) => can(me, "residents") || can(me, "revi
 const MINE = `(resident_id = $1 OR (resident_id IS NULL AND resident_name = $2))`;
 
 async function profile(me: SessionUser, id: string) {
-  const [r] = (await sql`SELECT id, full_name, age, room, branch_name, chronic_diseases, status FROM residents WHERE id = ${id}`) as Record<string, unknown>[];
+  const [r] = (await sql`SELECT id, full_name, age, room, branch_name, chronic_diseases, status, hn FROM residents WHERE id = ${id}`) as Record<string, unknown>[];
   if (!r) return null;
   if (scoped(me) && r.branch_name !== me.branch) return "forbidden";
   const p = [r.id, r.full_name];
   const q = (text: string) => sql(text, p) as Promise<Record<string, unknown>[]>;
-  const [health, daily, meds, packs, appts, tasks, handovers, alerts, contracts, plans] = await Promise.all([
+  const [health, daily, meds, packs, appts, tasks, handovers, alerts, contracts, plans, stockMeds] = await Promise.all([
     q(`SELECT id, recorded_at::text AS at, vital_signs, o2_sat, dtx, weight_height, note, recorded_by FROM health_logs WHERE ${MINE} ORDER BY recorded_at DESC NULLS LAST LIMIT 90`),
     q(`SELECT id, work_date::text AS work_date, scheduled_time::text AS time, task_name, assignee, shift, status, vital_signs FROM daily_tasks WHERE ${MINE} ORDER BY work_date DESC, scheduled_time DESC LIMIT 40`),
-    q(`SELECT id, drug_name, indication, dose, unit, timing, meals, stock, on_hold, status, warnings, needs_fridge FROM resident_medications WHERE ${MINE} ORDER BY on_hold, drug_name`),
+    q(`SELECT id, drug_name, indication, dose, unit, timing, meals, stock, on_hold, status, warnings, needs_fridge, source FROM resident_medications WHERE ${MINE} ORDER BY on_hold, drug_name`),
     q(`SELECT id, pack_date::text AS date, meal, items, qa_status, given, given_by, given_at::text AS given_at, packed_by, checked_by FROM medication_packs WHERE ${MINE} ORDER BY pack_date DESC, created_at DESC LIMIT 40`),
     q(`SELECT id, appt_date::text AS date, appt_time::text AS time, purpose, caregiver FROM appointments WHERE ${MINE} ORDER BY appt_date DESC NULLS LAST LIMIT 20`),
     q(`SELECT id, work_date::text AS date, category, task_name, performed_by, status, submitted_at::text AS time FROM task_logs WHERE ${MINE} ORDER BY work_date DESC NULLS LAST LIMIT 20`),
@@ -56,8 +56,13 @@ async function profile(me: SessionUser, id: string) {
     // สัญญาและแผนดูแล (มีราคา) เฉพาะผู้จัดการขึ้นไป
     !can(me, "contracts") ? Promise.resolve([]) : q(`SELECT id, contract_no, employer_name, monthly_fee, status, start_date::text AS start_date FROM contracts WHERE ${MINE} ORDER BY created_at DESC`),
     !can(me, "quotations") ? Promise.resolve([]) : q(`SELECT id, plan_name, relative_phone, estimated_price, note FROM care_assessments WHERE ${MINE}`),
+    // ยาที่เบิกจากคลังกลางของศูนย์ (การเบิกครั้งเดียวกันหลายล็อตรวมเป็นแถวเดียว)
+    sql(`SELECT d.name, d.unit, (-sum(m.delta))::float AS qty, m.moved_by, m.note, m.med_id IS NOT NULL AS basket, bool_and(m.invoice_id IS NOT NULL) AS billed, max(m.price) IS NOT NULL AS priced,
+        to_char(m.created_at AT TIME ZONE 'Asia/Bangkok', 'DD/MM/') || (extract(year FROM m.created_at AT TIME ZONE 'Asia/Bangkok')::int + 543) || to_char(m.created_at AT TIME ZONE 'Asia/Bangkok', ' HH24:MI') AS at
+      FROM stock_moves m JOIN stock_drugs d ON d.id = m.drug_id WHERE m.resident_id = $1 AND m.reason = 'เบิกให้ผู้ป่วย'
+      GROUP BY m.created_at, d.name, d.unit, m.moved_by, m.note, m.med_id ORDER BY m.created_at DESC LIMIT 60`, [r.id]) as Promise<Record<string, unknown>[]>,
   ]);
-  return { resident: r, health, daily, meds, packs, appts, tasks, handovers, alerts, contracts, plans };
+  return { resident: r, health, daily, meds, packs, appts, tasks, handovers, alerts, contracts, plans, stockMeds };
 }
 
 export async function GET(req: NextRequest) {

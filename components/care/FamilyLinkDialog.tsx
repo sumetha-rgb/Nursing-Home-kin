@@ -40,15 +40,15 @@ export default function FamilyLinkDialog({ open, onClose, residentId = "" }: { o
   const name = residents.find((r) => r.id === resId)?.full_name ?? "";
   const create = async () => {
     if (!resId) return toast("กรุณาเลือกผู้รับบริการก่อน");
-    try { const d = await call<{ token: string }>("/api/reviews", { op: "create", residentId: resId }); setFresh(d.token); load(resId); toast("สร้างลิงก์แล้ว คัดลอกส่งให้ญาติทาง LINE ได้เลย"); }
+    try { const d = await call<{ token: string }>("/api/reviews", { op: "create", residentId: resId }); setFresh(d.token); load(resId); toast(`สร้างลิงก์ครอบครัวแล้ว · ${name} · กดคัดลอกแล้วส่งให้ญาติทาง LINE`); }
     catch (e) { toast((e as Error).message); }
   };
   const revoke = (l: ReviewLink) => confirm({ title: "ยกเลิกลิงก์", message: `ยกเลิกลิงก์ครอบครัวของ ${l.resident_name} ใช่หรือไม่ ญาติจะเปิดสมุดภาพและหน้ารีวิวจากลิงก์นี้ไม่ได้อีก`, danger: true, okLabel: "ยกเลิกลิงก์",
-    onOk: async () => { try { await call("/api/reviews", { op: "revoke", id: l.id }); if (fresh === l.token) setFresh(null); load(resId); toast("ยกเลิกลิงก์แล้ว"); } catch (e) { toast((e as Error).message); } } });
+    onOk: async () => { try { await call("/api/reviews", { op: "revoke", id: l.id }); if (fresh === l.token) setFresh(null); load(resId); toast(`ยกเลิกลิงก์แล้ว · ${l.resident_name} · ญาติเปิดลิงก์นี้ไม่ได้อีก`); } catch (e) { toast((e as Error).message); } } });
   const dead = links.filter((l) => !l.active || l.expired).length;
   const purge = () => confirm({ title: "ล้างลิงก์เก่า", message: `ลบลิงก์ที่ยกเลิกหรือหมดอายุแล้ว ${dead} ลิงก์ของ ${name} ออกจากระบบถาวร ส่วนรีวิวพนักงานที่เคยได้รับและคะแนน KPI ยังอยู่ครบ`, danger: true, okLabel: "ลบลิงก์เก่า",
-    onOk: async () => { try { const d = await call<{ count: number }>("/api/reviews", { op: "purge", resident: resId }); load(resId); toast(`ลบลิงก์เก่า ${d.count} ลิงก์แล้ว`); } catch (e) { toast((e as Error).message); } } });
-  const copy = async (u: string) => { try { await navigator.clipboard.writeText(u); toast("คัดลอกลิงก์แล้ว ส่งให้ญาติทาง LINE ได้เลย"); } catch { toast(u); } };
+    onOk: async () => { try { const d = await call<{ count: number }>("/api/reviews", { op: "purge", resident: resId }); load(resId); toast(`ล้างลิงก์เก่าแล้ว · ${d.count} ลิงก์ของ ${name} · รีวิวที่ได้รับยังอยู่ครบ`); } catch (e) { toast((e as Error).message); } } });
+  const copy = async (u: string) => { try { await navigator.clipboard.writeText(u); toast("คัดลอกลิงก์แล้ว · ส่งให้ญาติทาง LINE ได้เลย"); } catch { toast(u); } };
   const live = links.filter((l) => l.active && !l.expired);
   const listed = old ? links : live;
   const token = fresh ?? live[0]?.token ?? null;

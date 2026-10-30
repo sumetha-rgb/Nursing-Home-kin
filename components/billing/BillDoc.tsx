@@ -1,5 +1,5 @@
 "use client";
-import { bahtText, docDate, Invoice, lineAmount, money, PAID, PARTIAL, parseItems, Payment } from "@/lib/billing";
+import { bahtText, docDate, Invoice, lineAmount, lineDiscount, money, PAID, PARTIAL, parseItems, Payment } from "@/lib/billing";
 import { COMPANY } from "../ui";
 
 export type Branch = { name: string; legal: string; address: string; phone: string };
@@ -67,7 +67,7 @@ export default function BillDoc({ inv, branch, format, copy, slips = [], payment
         <table className="bill-table bill-table2">
           <thead><tr><th>ลำดับ<br />NO.</th><th>รายการ<br />DESCRIPTION</th><th>จำนวนเงิน<br />AMOUNT</th><th>ส่วนลด<br />DISCOUNT</th><th>คงเหลือ<br />NET AMOUNT</th></tr></thead>
           <tbody>
-            {items.map((i, k) => <tr key={k}><td>{k + 1}</td><td>{i.desc}{i.qty !== 1 ? ` · ${i.qty} หน่วย` : ""}{inv.who ? ` — ผู้รับบริการ: ${inv.who}` : ""}</td><td>{money(lineAmount(i))}</td><td>{money(i.discount)}</td><td>{money(lineAmount(i) - i.discount)}</td></tr>)}
+            {items.map((i, k) => <tr key={k}><td>{k + 1}</td><td>{i.desc}{i.qty !== 1 ? ` · ${i.qty} หน่วย` : ""}{inv.who ? ` — ผู้รับบริการ: ${inv.who}` : ""}</td><td>{money(lineAmount(i))}</td><td>{money(lineDiscount(i))}{i.pct ? <small> ({i.pct}%{i.discount ? ` + ${money(i.discount)}` : ""})</small> : null}</td><td>{money(lineAmount(i) - lineDiscount(i))}</td></tr>)}
             <tr className="bill-filler"><td /><td /><td /><td /><td /></tr>
           </tbody>
         </table>

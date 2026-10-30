@@ -5,13 +5,32 @@ export type Drug = {
   id: number; who: string; name: string; use: string; how: string; store: string; form: string;
   bulk: boolean; dose: number; timing: string; meals: string[]; days: string[]; warn: string[];
   stock: number; unit: string; fridge: boolean; hold: boolean; status: string;
+  /** ยาน้ำ: ขนาดบรรจุต่อขวด (ml) · สต็อกและขนาดต่อครั้งเป็น ml เช่น ขวด 1000 ml ให้ครั้งละ 200 ml → เหลือ 800 ml */
+  pack?: number;
+  /** จำนวนที่รับเข้าครั้งแรก (ใช้ไปแล้ว = received − stock) · ยาที่บันทึกก่อนมีช่องนี้ = ไม่ทราบ */
+  received?: number;
+  /** ที่มา: "คลังศูนย์" = เบิกจากคลังกลาง (คิดเงินแล้ว) · ว่าง = ญาติ/โรงพยาบาลนำมา · sdid = ยาคลังกลางที่ผูกไว้ (กดเติมได้) */
+  src?: string;
+  sdid?: string;
 };
+const fmt = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 1 });
+/** รวมยอดตามหน่วย เช่น "1,850 ml · 20 เม็ด" */
+export const sumByUnit = (list: { n: number; unit: string }[]) => {
+  const m = new Map<string, number>();
+  for (const x of list) m.set(x.unit, (m.get(x.unit) ?? 0) + x.n);
+  return [...m].map(([u, n]) => `${fmt(n)} ${u}`).join(" · ") || "-";
+};
+/** ยาที่นับเป็นปริมาตร (ml) */
+export const isLiquid = (x: { unit: string }) => x.unit.trim().toLowerCase() === "ml";
+/** "1,600 ml (≈ 1.6 ขวด)" · ยาอื่น "20 เม็ด" */
+export const stockText = (x: { stock: number; unit: string; pack?: number }) =>
+  `${x.stock.toLocaleString("en-US", { maximumFractionDigits: 1 })} ${x.unit}${isLiquid(x) && x.pack ? ` (≈ ${(x.stock / x.pack).toLocaleString("en-US", { maximumFractionDigits: 1 })} ขวด)` : ""}`;
 export type Pack = {
   id: number; date: string; who: string; meal: string; items: string[]; qa: "รอตรวจ" | "ตรวจผ่าน" | "แจ้งจัดยาผิด"; reason?: string; given: boolean; by: string;
   /** ผู้ตรวจ QA · ผู้ให้ยา · เวลาที่ให้ยา (วว/ดด/ปปปป HH:MM) */
   qby?: string; gby?: string; gat?: string;
 };
-export type Page = "dashboard" | "inventory" | "master" | "templates" | "audit" | "dispense" | "qa" | "report" | "manual";
+export type Page = "dashboard" | "central" | "inventory" | "master" | "templates" | "audit" | "dispense" | "qa" | "report" | "manual";
 
 export const MEALS = ["เช้า", "กลางวัน", "เย็น", "ก่อนนอน"];
 export const DAYS = ["จ.", "อ.", "พ.", "พฤ.", "ศ.", "ส.", "อา."];

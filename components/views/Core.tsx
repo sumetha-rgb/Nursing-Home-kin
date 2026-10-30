@@ -1,12 +1,16 @@
 ﻿"use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useBranchNames, withBranches } from "@/lib/branches";
 import Link from "next/link";
 import Icon from "../Icon";
-import { APPOINTMENTS, CONTRACTS, DAILY_LIST, RESIDENTS, TASKS, BRANCH_NAMES } from "@/lib/mock";
+import { APPOINTMENTS, CONTRACTS, DAILY_LIST, RESIDENTS, BRANCH_NAMES } from "@/lib/mock";
 import { downloadCsv, useCrud, useRecords } from "@/lib/store";
 import { balanceOf, docDate, Invoice, isOpen, money, todayIso, UNPAID, VOID } from "@/lib/billing";
-import { contractInvoice } from "./Billing";
+import { contractInvoice, useBranchInfo } from "./Billing";
+import { ContractDoc, DcData, DEFAULT_TERMS, DischargeDoc, PrintModal, RenewDoc } from "../print/Docs";
+import { clinic, fetchDocSettings } from "@/lib/clinic";
+import { fetchProfile } from "@/lib/care";
+import { handoff, QuoteHandoff } from "@/lib/handoff";
 import { apptIso, TH_MONTHS, upcomingAppts } from "@/lib/appointments";
 import { useApp } from "@/lib/app";
 import { ViewId } from "@/lib/nav";
@@ -22,29 +26,32 @@ import { findRoom, freeBed, RoomInfo, roomInfos, roomKey, roomProblem, staying, 
 import { BlankForm, DataTable, Field, FieldDef, FormDialog, Modal, MetricGrid, PageHeader, PrintSignatures, Section, Select, Tabs } from "../ui";
 
 /* ---------- ขั้นตอนการทำงาน ---------- */
-type Step = { t: string; d: string; link: string; href?: string; go?: ViewId };
+/** link ว่าง = ขั้นที่ไม่มีเมนูให้ไป (เช่น กระดิ่งแจ้งเตือนมุมขวาบน) */
+type Step = { t: string; d: string; link?: string; href?: string; go?: ViewId };
 
 const ADMISSION: Step[] = [
-  { t: "ทำใบเสนอราคาและสัญญา", d: "สร้างใบเสนอราคาใหม่ และกดปุ่มอัปเกรดเป็นสัญญาเพื่อรับผู้รับบริการ", link: "ระบบสัญญา", go: "contracts" },
-  { t: "นำเข้าประวัติและวิเคราะห์ความเสี่ยง", d: "เปิดโปรไฟล์ผู้รับบริการใหม่ และกดปุ่มให้ AI วิเคราะห์ความเสี่ยงจากโรคและยา", link: "ข้อมูลผู้สูงอายุ", go: "residents" },
-  { t: "นำเข้ายา (Pharmacy Hub)", d: "บันทึกข้อมูลยาทั้งหมดที่ญาตินำมาให้ เพื่อจ่ายยาให้ตรงรอบเวลา", link: "เปิด Pharmacy Hub", href: "/pharmacy?page=inventory" },
-  { t: "สร้างแผนการดูแล 24 ชม.", d: "ใช้ AI Careplan Designer ร่างตารางงานตลอด 24 ชั่วโมง", link: "หน้าจัดแผนดูแล", go: "quotations" },
-  { t: "อนุมัติและกระจายงาน", d: "กดปุ่ม \"เปิดใช้ระบบจ่ายงานทั้งหมด\" เพื่อยิงตารางงานไปที่แอปพนักงาน (KinApp)", link: "อนุมัติกระจายงาน", go: "tasks" },
+  { t: "ประเมินและเสนอราคา", d: "ทำใบประเมินระดับการดูแลและใบเสนอราคา พิมพ์ให้ญาติพิจารณา", link: "แผนดูแลและใบประเมิน", go: "quotations" },
+  { t: "เปิดสัญญา", d: "กด \"เปิดสัญญา\" จากใบเสนอราคา ข้อมูลผู้รับบริการและราคาตามไปให้ ไม่ต้องกรอกซ้ำ", link: "สัญญาบริการ", go: "contracts" },
+  { t: "เพิ่มผู้ป่วยเข้าห้อง", d: "เลือกห้องและเตียงที่ว่าง แล้วกด \"เพิ่มผู้ป่วยเข้าห้อง\"", link: "ห้องผู้ป่วย", go: "rooms" },
+  { t: "แรกรับและประเมิน", d: "เปิดประวัติผู้รับบริการ แท็บ \"แรกรับ/ประเมิน\" บันทึกอาการแรกรับ โรคประจำตัว และความเสี่ยง", link: "ผู้รับบริการ", go: "residents" },
+  { t: "นำยาเข้าตะกร้า", d: "ยาที่ญาตินำมา ถ่ายรูปฉลากแล้วกรอกมื้อยา · ยาของศูนย์ เลือกเบิกจากคลังกลาง", link: "เปิดแอปจัดยา", href: "/pharmacy?page=inventory" },
+  { t: "ตั้งงานประจำ", d: "เพิ่มงานดูแลที่ทำซ้ำทุกวัน ระบบส่งเข้า KinApp ของพยาบาลให้เองทุกวัน", link: "มอบหมายและตรวจงาน", go: "tasks" },
 ];
 
 const DAILY: Step[] = [
-  { t: "ตรวจปรับปรุงประวัติและวิเคราะห์ความเสี่ยง", d: "ตรวจสอบความถูกต้องของข้อมูลผู้รับบริการและประเมินความเสี่ยง", link: "ข้อมูลผู้สูงอายุ", go: "residents" },
-  { t: "อัปเดตแผนการดูแล", d: "จัดการแผนการดูแลผู้รับบริการรายบุคคล", link: "หน้ารายชื่อผู้สูงอายุ", go: "residents" },
-  { t: "ตรวจสอบอัปเดตระบบยา", d: "นำเข้าข้อมูลการกินยา หรือจัดการยาประจำตัวของผู้รับบริการ", link: "เปิด Pharmacy Hub", href: "/pharmacy" },
-  { t: "กระจายงานให้แอปพนักงาน (KinApp)", d: "กดปุ่มนี้ทุกเช้า เพื่อส่งงานทั้งหมดประจำวันเข้าสู่มือถือพนักงาน", link: "เปิดแอปพนักงาน (KinApp)", href: "cg2.html" },
-  { t: "ตรวจสอบความคืบหน้าของงาน ตรวจงาน", d: "ดูสถานะว่าพนักงานทำภารกิจสำเร็จกี่เปอร์เซ็นต์ หรือมีปัญหาอะไรไหม", link: "ผลงาน KPI (Dashboard)", go: "dashboard" },
-  { t: "ตรวจสอบงานทั่วไปรายวัน", d: "จัดการงานที่ได้รับมอบหมายอื่นๆ นอกเหนือจากงานประจำวัน เช่น การซ่อมบำรุง หรือทำความสะอาดทั่วไป", link: "งานทั่วไปประจำศูนย์", go: "facility_tasks" },
-  { t: "สรุปผลการประเมินผู้ดูแลและ KPI", d: "ติดตามคะแนนประเมินคุณภาพของแต่ละสาขาจากแบบสอบถามความพึงพอใจของลูกค้าและครอบครัว", link: "ผลงาน KPI (Dashboard)", go: "dashboard" },
+  { t: "เช็คเวรและการเข้างาน", d: "ดูว่าใครอยู่เวร ใครเช็คชื่อแล้ว ใครสายหรือยังไม่มา", link: "ตารางเวร", go: "roster" },
+  { t: "ดูแจ้งเตือน", d: "กดกระดิ่งมุมขวาบน: สัญญาณชีพผิดปกติ และยาคลังกลางใกล้หมดหรือใกล้หมดอายุ" },
+  { t: "มอบหมายงานเพิ่ม", d: "งานเฉพาะวันนี้นอกจากงานประจำ (งานประจำส่งเข้า KinApp เองแล้ว ไม่ต้องกดส่ง)", link: "มอบหมายและตรวจงาน", go: "tasks" },
+  { t: "ทีมทำงานใน KinApp", d: "พยาบาลทำงานดูแล ให้ยา วัดสัญญาณชีพ ส่งเวร และส่งข่าวญาติจากมือถือ", link: "เปิด KinApp", href: "/staff" },
+  { t: "ตรวจงานที่ส่งมา", d: "ดูรูปหลักฐานและรายละเอียดงานที่พยาบาลส่ง แล้วให้ดาว", link: "มอบหมายและตรวจงาน", go: "tasks" },
+  { t: "ติดตามผล", d: "ความเห็นจากครอบครัวอยู่ที่เมนูเสียงจากครอบครัว · คะแนนรายคนรายเดือนอยู่ที่ KPI พนักงาน", link: "KPI พนักงาน", go: "kpi" },
 ];
 
 function Steps({title,steps}:{title:string;steps:Step[]}) {
-  const {go,toast}=useApp();
-  return <Section title={title} sub="แนวทางสำหรับทีม เพื่อให้การดูแลครบถ้วนในทุกขั้นตอน"><ol className="workflow-list">{steps.map((s,i)=><li key={s.t} className="workflow-step"><span className="step-number">{String(i+1).padStart(2,"0")}</span><div><h3>{s.t}</h3><p>{s.d}</p><button className="step-link" onClick={()=>s.go?go(s.go):s.href?.startsWith("/")?window.location.assign(s.href):toast(`“${s.link}” ยังไม่เชื่อมต่อในระบบตัวอย่าง`)}>{s.link}<Icon name="arrow" className="h-3.5 w-3.5" /></button></div></li>)}</ol></Section>;
+  const {go}=useApp();
+  const {user}=useSession();
+  // ซ่อนปุ่มไปเมนูที่ผู้ใช้ไม่มีสิทธิ์ (เช่น หัวหน้าพยาบาลไม่มีเมนูสัญญา)
+  return <Section title={title} sub="แนวทางสำหรับทีม เพื่อให้การดูแลครบถ้วนในทุกขั้นตอน"><ol className="workflow-list">{steps.map((s,i)=><li key={s.t} className="workflow-step"><span className="step-number">{String(i+1).padStart(2,"0")}</span><div><h3>{s.t}</h3><p>{s.d}</p>{s.link&&(!s.go||(user&&can(user,s.go)))&&<button className="step-link" onClick={()=>s.go?go(s.go):s.href&&window.location.assign(s.href)}>{s.link}<Icon name="arrow" className="h-3.5 w-3.5" /></button>}</div></li>)}</ol></Section>;
 }
 export function Workflow() {
   const {go}=useApp();
@@ -135,7 +142,7 @@ const NO_ROOM = "-";
 /** รูปบัตรประชาชนที่แนบในฟอร์ม ("" = ไม่ได้แนบ) */
 type IdPhotos = { employer: string; resident: string };
 
-function ContractForm({ rooms, residents, initial, onClose, onSave }: { rooms: string[][]; residents: string[][]; initial?: string[]; onClose: () => void; onSave: (r: string[], photos: IdPhotos) => void }) {
+function ContractForm({ rooms, residents, initial, fromQuote, onClose, onSave }: { rooms: string[][]; residents: string[][]; initial?: string[]; fromQuote?: string; onClose: () => void; onSave: (r: string[], photos: IdPhotos) => void }) {
   const [photos, setPhotos] = useState<IdPhotos>({ employer: "", resident: "" });
   const branchNames = useBranchNames();
   const { go, toast } = useApp();
@@ -193,7 +200,7 @@ function ContractForm({ rooms, residents, initial, onClose, onSave }: { rooms: s
   };
 
   return (
-    <Section title={initial ? `ต่อสัญญา · ${initial[2]} (สัญญาเดิม ${initial[0]})` : "เปิดสัญญาใหม่"}>
+    <Section title={fromQuote !== undefined ? `เปิดสัญญาใหม่ · จากใบเสนอราคา ${fromQuote}` : initial ? `ต่อสัญญา · ${initial[2]} (สัญญาเดิม ${initial[0]})` : "เปิดสัญญาใหม่"}>
       <div className="contract-steps" aria-label="ขั้นตอน">
         <span className={step === 1 ? "is-active" : ""}><b>1</b>รายละเอียดสัญญา</span>
         <span className={step === 2 ? "is-active" : ""}><b>2</b>เลือกห้องผู้ป่วย</span>
@@ -213,7 +220,7 @@ function ContractForm({ rooms, residents, initial, onClose, onSave }: { rooms: s
           <Field label="อายุ (ปี) ผู้รับบริการ"><input name="age" type="number" min={0} max={130} placeholder="เช่น 78" defaultValue={dn(13)} /></Field>
           <Field label="วันเริ่มสัญญา" required><input name="start" type="date" required /></Field>
           <Field label="รูปถ่ายบัตรประชาชนผู้รับบริการ" className="md:col-span-2"><PhotoPicker value={photos.resident} onChange={(v) => setPhotos({ ...photos, resident: v })} label={initial ? "ไม่แนบใหม่ = ใช้รูปจากสัญญาเดิม" : "ถ่ายหรือเลือกรูปบัตรประชาชนผู้รับบริการ"} /></Field>
-          <Field label="เลขที่สัญญา"><input value={initial ? `ออกเลขใหม่อัตโนมัติ (สัญญาเดิม ${initial[0]})` : "ระบบออกเลขให้อัตโนมัติเมื่อบันทึก"} readOnly tabIndex={-1} className="field-locked" /><p className="field-hint">รูปแบบ CT-ปี พ.ศ.-ลำดับ เช่น CT-2569-0001 · แก้ไขไม่ได้</p></Field>
+          <Field label="เลขที่สัญญา"><input value={initial && fromQuote === undefined ? `ออกเลขใหม่อัตโนมัติ (สัญญาเดิม ${initial[0]})` : "ระบบออกเลขให้อัตโนมัติเมื่อบันทึก"} readOnly tabIndex={-1} className="field-locked" /><p className="field-hint">รูปแบบ CT-ปี พ.ศ.-ลำดับ เช่น CT-2569-0001 · แก้ไขไม่ได้</p></Field>
           <Field label="ค่าบริการ/เดือน (บาท)"><input name="fee" type="number" min={0} placeholder="เช่น 30000 (ไม่ต้องใส่จุลภาค)" defaultValue={dn(4)} /></Field>
           <Field label="สถานะสัญญา" required><select name="status" defaultValue={CONTRACT_STATUSES[0]}>{CONTRACT_STATUSES.slice(0, 2).map((x) => <option key={x}>{x}</option>)}</select></Field>
         </div>
@@ -318,7 +325,24 @@ export function Contracts() {
   };
   const [invoices, setInvoices] = useRecords<Invoice>("invoices", []);
   const [renew, setRenew] = useState<number | null>(null);
+  // เปิดสัญญาจากใบเสนอราคา (ส่งมาจากหน้าใบเสนอราคา)
+  const quotes = useCrud("assessments", []);
+  const [fromQuote, setFromQuote] = useState<QuoteHandoff | null>(null);
+  useEffect(() => { const h = handoff.take(); if (h) { setFromQuote(h); setCreating(true); } }, []);
   const [dc, setDc] = useState<{ i: number; date: string; reason: string; done?: boolean } | null>(null);
+  // เอกสารพิมพ์: สัญญา · บันทึกต่อท้ายสัญญา · ใบจำหน่าย (ข้อมูลประกอบจากประวัติผู้รับบริการ)
+  const branchInfo = useBranchInfo();
+  const [doc, setDoc] = useState<null | { kind: "contract"; i: number; copy?: boolean } | { kind: "renew"; before: string[]; after: string[] } | { kind: "dc"; d: DcData; branch: string }>(null);
+  const [terms, setTerms] = useState("");
+  const [termsDlg, setTermsDlg] = useState<string | null>(null);
+  const admin = user?.role === "Global Admin" || user?.role === "Branch Admin";
+  useEffect(() => { fetchDocSettings().then((s) => setTerms(s.contract_terms ?? "")).catch(() => {}); }, []);
+  const saveTerms = async () => {
+    if (termsDlg === null) return;
+    try { await clinic({ op: "doc_settings", key: "contract_terms", value: termsDlg.trim() }); setTerms(termsDlg.trim()); setTermsDlg(null); toast("แก้ไขข้อความสัญญาแล้ว · ใช้กับสัญญาที่พิมพ์หลังจากนี้ทุกฉบับ"); }
+    catch (e) { toast((e as Error).message); }
+  };
+  const resOf = (c: string[]) => { const j = resIndex(c[2], c[1]); return j >= 0 ? { row: res.rows[j], id: res.ids[j] } : null; };
 
   /**
    * สัญญาใหม่ / ต่อสัญญา: เพิ่มหรืออัปเดตผู้รับบริการพร้อมห้องก่อน (server ออก HN ให้) แล้วจึงบันทึกสัญญา
@@ -336,9 +360,10 @@ export function Contracts() {
     } else res.add([r[2], r[13] || "-", r[6], r[1], "", status, "", freeBed(info)]);
     const id = add(r);
     if (photos.employer || photos.resident || oldId) uploadIdCards(id, { ...(photos.employer ? { employer: photos.employer } : {}), ...(photos.resident ? { resident: photos.resident } : {}), ...(oldId ? { copyFrom: oldId } : {}) });
-    if (renew !== null) { const old = rows[renew]; update(renew, old.map((x, k) => (k === 5 ? "สิ้นสุดสัญญา" : x))); }
+    if (renew !== null) { const old = rows[renew]; update(renew, old.map((x, k) => (k === 5 ? "สิ้นสุดสัญญา" : x))); setDoc({ kind: "renew", before: old, after: r }); }
     const inv = contractInvoice(r, j >= 0 ? res.rows[j][6] ?? "" : "");
     if (inv) setInvoices([inv, ...invoices]);
+    if (fromQuote) { const k = quotes.ids.indexOf(fromQuote.quoteId); if (k >= 0) quotes.update(k, quotes.rows[k].map((x, n) => (n === 12 ? `เปิดสัญญาแล้ว ${docDate(todayIso())}` : x))); setFromQuote(null); }
     setCreating(false); setRenew(null);
     toast(`${renew !== null ? "ต่อสัญญาแล้ว" : "บันทึกสัญญาแล้ว"} · ${r[2]}${r[6] === NO_ROOM ? " (ยังไม่มีห้อง)" : ` ห้อง ${r[6]}`}${inv ? ` · ออกใบแจ้งหนี้ ${money(inv.net)} บาทที่เมนูการเงินแล้ว` : ""}`);
   };
@@ -358,7 +383,7 @@ export function Contracts() {
         update(i, c.map((x, k) => (k === 5 ? CANCELLED : k === 20 ? note : x)));
         if (stay) setResident(j, NO_ROOM, "ย้ายออก (Inactive)");
         if (bills.length) setInvoices(invoices.map((x) => (bills.includes(x) ? { ...x, status: VOID } : x)));
-        toast(`ยกเลิกสัญญา ${c[0]} แล้ว`);
+        toast(`ยกเลิกสัญญาแล้ว · ${c[0]} · ${c[2]}`);
       },
     });
   };
@@ -381,7 +406,7 @@ export function Contracts() {
     if (Object.keys(body).length === 1) return setCards(null);
     const r = await fetch("/api/idcards", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).catch(() => null);
     if (!r?.ok) return toast("ยังไม่สามารถบันทึกรูปบัตรประชาชนได้ กรุณาลองใหม่");
-    toast("บันทึกรูปบัตรประชาชนแล้ว"); setCards(null);
+    toast("บันทึกรูปบัตรประชาชนแล้ว · ดูได้ที่ปุ่ม รูปบัตร ของสัญญานี้"); setCards(null);
   };
 
   /** D/C กลับบ้าน: สิ้นสุดสัญญา ย้ายออก คืนห้อง แล้วพิมพ์ใบจำหน่าย */
@@ -392,8 +417,30 @@ export function Contracts() {
     const note = [c[20], `D/C ${docDate(dc.date)} · ${dc.reason}`].filter((x) => x && x !== "-").join(" · ");
     update(dc.i, c.map((x, k) => (k === 5 ? "สิ้นสุดสัญญา" : k === 20 ? note : x)));
     if (j >= 0) setResident(j, NO_ROOM, "ย้ายออก (Inactive)");
-    setDc({ ...dc, done: true });
-    toast(`D/C ${c[2]} แล้ว · คืนห้อง${c[6] && c[6] !== NO_ROOM ? ` ${c[6]}` : ""}ให้ว่าง`);
+    setDc(null);
+    toast(`D/C แล้ว · ${c[2]} · คืนห้อง${c[6] && c[6] !== NO_ROOM ? ` ${c[6]}` : ""}ให้ว่าง`);
+    openDc(c, dc.date, dc.reason);
+  };
+
+  /** ใบจำหน่าย: สัญญาณชีพล่าสุด ยาที่ใช้อยู่ นัดถัดไป จากประวัติผู้รับบริการ · ยอดค้างจากหน้าการเงิน */
+  const openDc = async (c: string[], date: string, reason: string) => {
+    const r = resOf(c);
+    const start = c[7] ? c[7].split("/") : [];
+    const startIso = start.length === 3 ? `${Number(start[2]) - 543}-${start[1].padStart(2, "0")}-${start[0].padStart(2, "0")}` : "";
+    const days = startIso ? Math.max(0, Math.round((new Date(date).getTime() - new Date(startIso).getTime()) / 864e5)) : undefined;
+    const base: DcData = { contract: c, hn: r?.row[6], age: r?.row[1] && r.row[1] !== "-" ? r.row[1] : c[13], date, reason, days, chronic: r?.row[4], vitals: null, meds: [], nextAppt: null,
+      owing: invoices.filter((x) => x.who === c[2] && isOpen(x)).reduce((n, x) => n + balanceOf(x), 0), deposit: Number(String(c[19] ?? "").replace(/,/g, "")) || 0 };
+    setDoc({ kind: "dc", d: base, branch: c[1] });
+    if (!r?.id) return;
+    try {
+      const p = await fetchProfile(r.id);
+      const h = [...p.health].sort((a, b) => String(b.at).localeCompare(String(a.at)))[0];
+      const meds = p.meds.filter((m) => !m.on_hold && (m.status ?? "ปกติ") === "ปกติ").map((m) => ({ name: String(m.drug_name ?? "-"), how: `ครั้งละ ${m.dose ?? "-"} ${m.unit ?? ""}`.trim(), meals: String(Array.isArray(m.meals) ? m.meals.join(" · ") : m.meals ?? "-") }));
+      const next = p.appts.filter((a) => String(a.date ?? "") >= date).sort((a, b) => String(a.date).localeCompare(String(b.date)))[0];
+      setDoc({ kind: "dc", branch: c[1], d: { ...base, meds,
+        vitals: h ? { at: String(h.at ?? "").slice(0, 16), text: [h.vital_signs, h.o2_sat ? `O₂ ${h.o2_sat}` : "", h.dtx && h.dtx !== "-" ? `DTX ${h.dtx}` : ""].filter(Boolean).join(" · ") } : null,
+        nextAppt: next ? `${String(next.date)} ${String(next.time ?? "").slice(0, 5)} น. ${next.purpose ?? ""}` : null } });
+    } catch { /* ข้อมูลประกอบโหลดไม่ได้ ยังพิมพ์ส่วนหลักได้ */ }
   };
 
   /** แก้สัญญา: เปลี่ยนห้อง = ย้ายผู้รับบริการตาม · สิ้นสุดสัญญา = ถามว่าจะคืนห้องไหม */
@@ -413,15 +460,15 @@ export function Contracts() {
       if (j >= 0) setResident(j, info.no);
     }
     update(i, v); setDlg(null);
-    toast(roomChanged ? `บันทึกการแก้ไขแล้ว · ย้าย ${v[2]} ไปห้อง ${v[6]}` : "บันทึกการแก้ไขแล้ว");
+    toast(roomChanged ? `ย้ายห้องแล้ว · ${v[2]} · ไปห้อง ${v[6]}` : `แก้ไขสัญญาแล้ว · ${v[0] || ""} ${v[2]}`.trim());
     // ชำระมัดจำแล้ว (รอชำระ → ใช้งานอยู่): เปลี่ยนจากจองห้องเป็นเข้าพัก
     if (v[5] === "ใช้งานอยู่" && before[5] === "รอชำระเงินมัดจำ" && j >= 0 && res.rows[j][5].startsWith("มัดจำ")) setResident(j, res.rows[j][2], "เข้าอยู่ (Active)");
     if (v[5] === "สิ้นสุดสัญญา" && before[5] !== "สิ้นสุดสัญญา" && j >= 0 && staying(res.rows[j][5] ?? ""))
-      confirm({ title: "สิ้นสุดสัญญา", message: `ต้องการเปลี่ยนสถานะ ${v[2]} เป็นย้ายออก และคืนห้อง ${res.rows[j][2]} ให้ว่างด้วยหรือไม่`, okLabel: "ย้ายออกและคืนห้อง", onOk: () => { setResident(j, NO_ROOM, "ย้ายออก (Inactive)"); toast(`คืนห้องแล้ว · ${v[2]} ย้ายออก`); } });
+      confirm({ title: "สิ้นสุดสัญญา", message: `ต้องการเปลี่ยนสถานะ ${v[2]} เป็นย้ายออก และคืนห้อง ${res.rows[j][2]} ให้ว่างด้วยหรือไม่`, okLabel: "ย้ายออกและคืนห้อง", onOk: () => { setResident(j, NO_ROOM, "ย้ายออก (Inactive)"); toast(`ย้ายออกและคืนห้องแล้ว · ${v[2]}`); } });
   };
 
   if (creating || renew !== null)
-    return <ContractForm rooms={rooms.rows} residents={res.rows} initial={renew !== null ? rows[renew] : undefined} onClose={() => { setCreating(false); setRenew(null); }} onSave={create} />;
+    return <ContractForm rooms={rooms.rows} residents={res.rows} initial={renew !== null ? rows[renew] : fromQuote?.prefill} fromQuote={fromQuote ? fromQuote.quoteNo : undefined} onClose={() => { setCreating(false); setRenew(null); setFromQuote(null); }} onSave={create} />;
   const dcRow = dc ? rows[dc.i] : null;
   const dcRes = dcRow ? res.rows[resIndex(dcRow[2], dcRow[1])] : undefined;
   const owing = dcRow ? invoices.filter((x) => x.who === dcRow[2] && isOpen(x)) : [];
@@ -433,6 +480,7 @@ export function Contracts() {
         sub="ดูแลรายละเอียดข้อตกลงบริการ ตั้งแต่วันแรกจนถึงวันสิ้นสุดสัญญา"
         actions={<>
           <button className="btn-primary" onClick={() => setCreating(true)}><Icon name="plus" className="h-4 w-4" /> เปิดสัญญาใหม่</button>
+          {admin && <button className="btn-soft" onClick={() => setTermsDlg(terms || DEFAULT_TERMS)}><Icon name="doc" className="h-4 w-4" /> ข้อความสัญญา</button>}
           <button className="btn-soft" onClick={() => setSample(true)}><Icon name="print" className="h-4 w-4" /> ตัวอย่าง สบส. (แบบฟอร์มเปล่า)</button>
         </>}
       />
@@ -442,12 +490,13 @@ export function Contracts() {
           rows={shown.map(({ r }) => [r[0] || "กำลังออกเลข…", r[1], r[2], r[6] || NO_ROOM, r[3], r[4], r[5]])}
           actions={[
             { label: "ดู", onClick: (k) => setDlg({ mode: "view", i: shown[k].i }) },
+            { label: "พิมพ์สัญญา", onClick: (k) => setDoc({ kind: "contract", i: shown[k].i }) },
             { label: "แก้ไข", onClick: (k) => setDlg({ mode: "edit", i: shown[k].i }) },
             { label: "รูปบัตร", onClick: (k) => openCards(shown[k].i) },
             { label: "ต่อสัญญา", onClick: (k) => setRenew(shown[k].i) },
             { label: "D/C กลับบ้าน", onClick: (k) => [CANCELLED, "สิ้นสุดสัญญา"].includes(shown[k].r[5]) ? toast("ไม่สามารถ D/C ได้ สัญญานี้สิ้นสุดหรือถูกยกเลิกแล้ว") : setDc({ i: shown[k].i, date: todayIso(), reason: DC_REASONS[0] }) },
             { label: "ยกเลิกสัญญา", danger: true, onClick: (k) => cancel(shown[k].i) },
-            ...(can(user, "contracts.delete") ? [{ label: "ลบ", danger: true, onClick: (k: number) => confirm({ title: "ลบสัญญา", message: `ต้องการลบสัญญา ${shown[k].r[0]} (${shown[k].r[2]}) ออกจากระบบใช่หรือไม่ ลบแล้วกู้คืนไม่ได้ (ดูย้อนหลังได้ที่ประวัติการแก้ไข) ถ้าแค่ไม่ใช้สัญญานี้แล้ว แนะนำให้กด "ยกเลิกสัญญา" แทน`, danger: true, okLabel: "ลบ", onOk: () => { remove(shown[k].i); toast("ลบสัญญาแล้ว"); } }) }] : []),
+            ...(can(user, "contracts.delete") ? [{ label: "ลบ", danger: true, onClick: (k: number) => confirm({ title: "ลบสัญญา", message: `ต้องการลบสัญญา ${shown[k].r[0]} (${shown[k].r[2]}) ออกจากระบบใช่หรือไม่ ลบแล้วกู้คืนไม่ได้ (ดูย้อนหลังได้ที่ประวัติการแก้ไข) ถ้าแค่ไม่ใช้สัญญานี้แล้ว แนะนำให้กด "ยกเลิกสัญญา" แทน`, danger: true, okLabel: "ลบ", onOk: () => { const c = shown[k].r; remove(shown[k].i); toast(`ลบสัญญาแล้ว · ${c[0] || ""} ${c[2]}`.trim()); } }) }] : []),
           ]}
         />
       </Section>
@@ -470,27 +519,28 @@ export function Contracts() {
           <p className="text-xs leading-6 text-gold-500 md:col-span-2">ข้อมูลส่วนบุคคล: การเปิดดูและเปลี่ยนรูปบันทึกไว้ในประวัติการแก้ไขทุกครั้ง</p>
         </div>)}
       </Modal>
-      <Modal open={!!dc} title={dc?.done ? "ใบจำหน่ายผู้รับบริการ (D/C)" : "D/C กลับบ้าน"} onClose={() => setDc(null)}
-        footer={dc?.done ? <><button className="btn-soft" onClick={() => setDc(null)}>ปิด</button><button className="btn-primary" onClick={() => window.print()}><Icon name="print" className="h-4 w-4" /> พิมพ์เอกสาร D/C</button></>
-          : <><button className="btn-soft" onClick={() => setDc(null)}>ยกเลิก</button><button className="btn-primary" onClick={discharge}>ยืนยัน D/C</button></>}>
-        {dc && dcRow && (dc.done ? <div className="space-y-4">
-          <dl className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
-            {[["HN", dcRes?.[6] || "-"], ["ชื่อผู้รับบริการ", dcRow[2]], ["อายุ", dcRes?.[1] && dcRes[1] !== "-" ? `${dcRes[1]} ปี` : dcRow[13] || "-"], ["สาขา", dcRow[1]],
-              ["ห้อง", dcRow[6] || "-"], ["เลขที่สัญญา", dcRow[0]], ["วันเริ่มสัญญา", dcRow[7] || "-"], ["วันที่ D/C", docDate(dc.date)],
-              ["เหตุผล", dc.reason], ["ผู้ว่าจ้าง / ญาติ", `${dcRow[3]}${dcRow[9] ? ` · ${dcRow[9]}` : ""}`],
-              ["ยอดค้างชำระ", owing.length ? `${money(owing.reduce((n, x) => n + balanceOf(x), 0))} บาท (${owing.length} ใบ: ${owing.map((x) => x.no ?? "").join(", ")})` : "ไม่มี"]].map(([k, v]) =>
-              <div key={k} className="flex justify-between gap-4 border-b border-cream-200 py-1.5"><dt className="text-gold-500">{k}</dt><dd className="text-right text-gold-800">{v}</dd></div>)}
-          </dl>
-          <PrintSignatures roles={["ผู้รับบริการ / ญาติ", "พยาบาลผู้จำหน่าย", "เจ้าหน้าที่การเงิน"]} />
-        </div> : <div className="space-y-4">
+      <Modal open={!!dc} title="D/C กลับบ้าน" onClose={() => setDc(null)}
+        footer={<><button className="btn-soft" onClick={() => setDc(null)}>ยกเลิก</button><button className="btn-primary" onClick={discharge}>ยืนยัน D/C และพิมพ์ใบจำหน่าย</button></>}>
+        {dc && dcRow && <div className="space-y-4">
           <p className="rounded-xl bg-cream-50 px-4 py-3 text-sm text-gold-700">{dcRow[2]} · สัญญา {dcRow[0]} · ห้อง {dcRow[6] || "-"} · สาขา{dcRow[1]}</p>
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="วันที่ D/C"><input type="date" value={dc.date} onChange={(e) => setDc({ ...dc, date: e.target.value })} /></Field>
             <Field label="เหตุผล"><select value={dc.reason} onChange={(e) => setDc({ ...dc, reason: e.target.value })}>{DC_REASONS.map((x) => <option key={x}>{x}</option>)}</select></Field>
           </div>
           {owing.length > 0 && <p role="alert" className="room-warn">ยังมียอดค้างชำระ {money(owing.reduce((n, x) => n + balanceOf(x), 0))} บาท ({owing.length} ใบ) เรียกเก็บที่เมนูการเงินก่อนหรือหลัง D/C ได้</p>}
-          <p className="text-xs text-gold-500">ระบบจะเปลี่ยนสัญญาเป็นสิ้นสุด เปลี่ยนผู้รับบริการเป็นย้ายออก และคืนห้องให้ว่าง</p>
-        </div>)}
+          <p className="text-xs text-gold-500">ระบบจะเปลี่ยนสัญญาเป็นสิ้นสุด เปลี่ยนผู้รับบริการเป็นย้ายออก คืนห้องให้ว่าง แล้วเปิดใบจำหน่ายให้พิมพ์</p>
+        </div>}
+      </Modal>
+      <PrintModal open={!!doc} title={doc?.kind === "contract" ? "สัญญาให้บริการ" : doc?.kind === "renew" ? "บันทึกต่อท้ายสัญญา" : "ใบจำหน่ายผู้รับบริการ (D/C)"} onClose={() => setDoc(null)}
+        extra={doc?.kind === "contract" ? <button className="btn-soft" onClick={() => setDoc({ ...doc, copy: !doc.copy })}>{doc.copy ? "เปลี่ยนเป็นต้นฉบับ" : "เปลี่ยนเป็นสำเนา"}</button> : undefined}>
+        {doc?.kind === "contract" && rows[doc.i] && <ContractDoc r={rows[doc.i]} hn={resOf(rows[doc.i])?.row[6]} bed={resOf(rows[doc.i])?.row[7]} branch={branchInfo(rows[doc.i][1])} terms={terms} by={user?.name} copy={doc.copy} />}
+        {doc?.kind === "renew" && <RenewDoc before={doc.before} after={doc.after} hn={resOf(doc.after)?.row[6]} branch={branchInfo(doc.after[1])} by={user?.name} />}
+        {doc?.kind === "dc" && <DischargeDoc d={doc.d} branch={branchInfo(doc.branch)} by={user?.name} />}
+      </PrintModal>
+      <Modal open={termsDlg !== null} wide title="ข้อความสัญญา (ข้อตกลง)" onClose={() => setTermsDlg(null)}
+        footer={<><button className="btn-soft" onClick={() => setTermsDlg(null)}>ยกเลิก</button><button className="btn-primary" onClick={saveTerms}>บันทึกข้อความสัญญา</button></>}>
+        <p className="form-intro">พิมพ์ข้อตกลงบรรทัดละ 1 ข้อ ระบบใส่เลขข้อให้เอง · ใช้กับสัญญาที่พิมพ์ทุกฉบับทุกสาขา · ควรใช้ข้อความที่ผ่านการตรวจทางกฎหมายแล้ว</p>
+        <textarea rows={12} value={termsDlg ?? ""} onChange={(e) => setTermsDlg(e.target.value)} aria-label="ข้อตกลงในสัญญา" />
       </Modal>
       <BlankForm open={sample} title="หนังสือสัญญาว่าจ้างบริการดูแลผู้สูงอายุ (แบบฟอร์มเปล่า)" onClose={() => setSample(false)}
         lines={["สัญญาเลขที่", "วันที่", "ชื่อ นามสกุล ผู้ว่าจ้าง", "เลขที่บัตรประชาชน", "ชื่อ นามสกุล ผู้รับบริการ", "เลขห้อง / เตียง", "ค่าบริการ/เดือน", "ลายมือชื่อ ผู้ว่าจ้าง", "ลายมือชื่อ ผู้รับจ้าง", "ลายมือชื่อ พยาน"]} />
@@ -549,7 +599,7 @@ export function Residents() {
             { label: "ประวัติ", onClick: (k) => setProfile(ids[shown[k].i]) },
             { label: "ลิงก์ครอบครัว", onClick: (k) => setFamily(ids[shown[k].i]) },
             { label: "แก้ไข", onClick: (k) => setDlg({ mode: "edit", i: shown[k].i }) },
-            { label: "ลบ", danger: true, onClick: (k) => confirm({ title: "ลบข้อมูลผู้รับบริการ", message: `ต้องการลบ ${shown[k].r[0]} ใช่หรือไม่`, danger: true, okLabel: "ลบ", onOk: () => { remove(shown[k].i); toast("ลบข้อมูลแล้ว"); } }) },
+            { label: "ลบ", danger: true, onClick: (k) => confirm({ title: "ลบข้อมูลผู้รับบริการ", message: `ต้องการลบ ${shown[k].r[0]} ใช่หรือไม่`, danger: true, okLabel: "ลบ", onOk: () => { const n = shown[k].r[0]; remove(shown[k].i); toast(`ลบผู้รับบริการแล้ว · ${n}`); } }) },
           ]}
         />
       </Section>
@@ -580,29 +630,40 @@ export function Residents() {
 }
 
 /* ---------- ข้อมูลงาน (Table) ---------- */
-const TASK_COLS = ["วันที่", "สาขา", "ผู้รับบริการ", "หมวดหมู่", "ชื่องาน", "ผู้ทำ", "สถานะ", "เวลาที่ส่ง"];
 
 export function TasksTable() {
   const branchNames = useBranchNames();
-  const { rows } = useCrud("tasks_table", TASKS);
+  const iso = (d: number) => new Date(Date.now() + 7 * 3600e3 - d * 864e5).toISOString().slice(0, 10);
   const [branch, setBranch] = useState("");
-  const [view, setView] = useState<number | null>(null);
-  const shown = rows.filter((r) => !branch || r[1] === branch);
+  const [from, setFrom] = useState(iso(6));
+  const [to, setTo] = useState(iso(0));
+  const [rows, setRows] = useState<string[][] | null>(null);
+  const [err, setErr] = useState("");
+  useEffect(() => {
+    setRows(null);
+    const q = new URLSearchParams({ op: "tasklog", from, to, ...(branch ? { branch } : {}) });
+    fetch(`/api/ops?${q}`, { cache: "no-store" }).then(async (r) => { const j = await r.json(); if (!r.ok) throw new Error(j.error);
+      setRows((j.rows as Record<string, string | number | null>[]).map((x) => [docDate(String(x.date)), String(x.branch ?? "-"), String(x.resident ?? "-"), String(x.shift ?? "-"), String(x.task ?? "-"), String(x.who ?? "-"), String(x.time ?? "-"), String(x.sent ?? "-"), String(x.status ?? "-"), x.stars ? `${x.stars} ดาว` : "-"]));
+      setErr(""); }).catch((e) => { setErr((e as Error).message); setRows([]); });
+  }, [from, to, branch]);
+  const cols = ["วันที่", "สาขา", "ผู้รับบริการ", "กะ", "งาน", "ผู้ทำ / ผู้รับผิดชอบ", "เวลางาน", "ส่งเมื่อ", "สถานะ", "ดาวผู้ตรวจ"];
   return (
     <>
-      <PageHeader
-        title="ข้อมูลงานรายวัน (Table)"
-        sub="ดูข้อมูลงานทั้งหมดในรูปแบบตาราง Excel (สามารถโหลด Excel ได้)"
+      <PageHeader title="ทะเบียนงาน" sub="งานประจำวันทุกงานย้อนหลังตามช่วงวันที่ ดาวน์โหลดเป็น Excel ได้"
         actions={<>
           {branchNames.length > 1 && <div className="min-w-44"><Select options={branchNames} placeholder="รวมทุกสาขา" value={branch} onChange={setBranch} /></div>}
-          <button className="btn-primary" onClick={() => downloadCsv("ข้อมูลงานรายวัน", TASK_COLS, shown)}><Icon name="download" className="h-4 w-4" /> โหลด CSV</button>
-        </>}
-      />
-      <p className="mb-4 rounded-xl bg-gold-100/70 px-4 py-2.5 text-sm text-gold-700">ข้อมูลยึดตามรอบเวร (ตัดกะ 07:00 น.)</p>
+          <button className="btn-primary" disabled={!rows?.length} onClick={() => downloadCsv(`ทะเบียนงาน-${from}-${to}`, cols, rows ?? [])}><Icon name="download" className="h-4 w-4" /> โหลด CSV</button>
+        </>} />
       <Section>
-        <DataTable columns={TASK_COLS} rows={shown} actions={[{ label: "ดู", onClick: (i) => setView(rows.indexOf(shown[i])) }]} />
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          <input type="date" aria-label="ตั้งแต่วันที่" className="!w-auto" value={from} onChange={(e) => e.target.value && setFrom(e.target.value)} />
+          <span className="text-sm text-gold-600">ถึง</span>
+          <input type="date" aria-label="ถึงวันที่" className="!w-auto" value={to} onChange={(e) => e.target.value && setTo(e.target.value)} />
+          <span className="text-xs text-gold-500">ดูย้อนหลังได้ครั้งละไม่เกิน 3 เดือน</span>
+        </div>
+        {err && <p role="alert" className="mb-3 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{err}</p>}
+        <DataTable columns={cols} rows={rows ?? []} badgeCols={[8]} empty={rows === null ? "กำลังโหลด…" : "ไม่มีงานในช่วงวันที่นี้"} />
       </Section>
-      <FormDialog open={view !== null} mode="view" title="รายละเอียดงาน" fields={TASK_COLS.map((label) => ({ label }))} value={view !== null ? rows[view] : undefined} onClose={() => setView(null)} onSave={() => {}} />
     </>
   );
 }
