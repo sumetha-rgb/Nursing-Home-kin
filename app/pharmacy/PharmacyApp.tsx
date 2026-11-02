@@ -59,6 +59,8 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   const today = iso();
   // กด "เพิ่มยาให้ผู้ป่วยคนนี้" จากหน้าจัดยา → เปิดฟอร์มรับยาพร้อมชื่อผู้ป่วย
   const [addFor, setAddFor] = useState<string | null>(null);
+  // ตรวจ QA เจอซองจัดผิด → รีเซตแล้วเปิดหน้าจัดยาของผู้ป่วยและวันนั้นให้เลย
+  const [focus, setFocus] = useState<{ who: string; date: string } | null>(null);
 
   // เปิดหน้าตาม ?page= เช่น /pharmacy?page=dispense
   useEffect(() => {
@@ -117,8 +119,8 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
         <main className="workspace-main" key={page}>
           <PrintLetterhead title="ระบบบริหารจัดการยา" className="page-letterhead" />
           {page === "dashboard" && <Dashboard go={go} need={todayNeed.length} packed={packedToday} low={low} waitQa={waitQa} />}
-          {page === "dispense" && <Dispense drugs={drugs} setDrugs={setDrugs} packs={packs} setPacks={setPacks} go={go} me={user.name} onAddDrug={(w) => { setAddFor(w); go("inventory"); }} />}
-          {page === "qa" && <QA packs={packs} setPacks={setPacks} drugs={drugs} go={go} me={user.name} />}
+          {page === "dispense" && <Dispense drugs={drugs} setDrugs={setDrugs} packs={packs} setPacks={setPacks} go={go} me={user.name} focus={focus} onAddDrug={(w) => { setAddFor(w); go("inventory"); }} />}
+          {page === "qa" && <QA packs={packs} setPacks={setPacks} drugs={drugs} setDrugs={setDrugs} me={user.name} go={go} onRedo={(who, date) => { setFocus({ who, date }); go("dispense"); }} />}
           {page === "inventory" && <Inventory drugs={drugs} setDrugs={setDrugs} master={master} addFor={addFor} onAdded={() => setAddFor(null)} />}
           {page === "central" && <CentralStock />}
           {page === "audit" && <Audit drugs={drugs} setDrugs={setDrugs} />}
@@ -140,7 +142,7 @@ function Dashboard({ go, need, packed, low, waitQa }: { go: (p: Page) => void; n
   const steps: { n: string; t: string; staff: string; sys: string; p: Page | "kinapp"; cta: string }[] = [
     { n: "01", t: "รับยาเข้าตะกร้าผู้ป่วย", staff: "ยาที่ญาติหรือโรงพยาบาลนำมา: ถ่ายรูปฉลากแล้วกรอกมื้อยา · ยาของศูนย์: เลือก \"เบิกจากคลังกลาง\"", sys: "สร้างตารางมื้อยาให้เอง เก็บรูปฉลากไว้ตรวจ · ยาคลังกลางหักคลังและขึ้นค่ายาที่การเงินให้", p: "inventory", cta: "ไปที่รับยาเข้าคลัง" },
     { n: "02", t: "จัดยารายวัน", staff: "เลือกผู้ป่วยและมื้อ ติ๊กยาที่หยิบ แล้วถ่ายรูปซองยาที่จัดเสร็จ · ยาน้ำหรือยาขวดกด \"เบิกยาตามจำนวน\"", sys: "หักยาในตะกร้าผู้ป่วย เก็บรูปซอง และส่งซองเข้าตะกร้ารอตรวจ QA", p: "dispense", cta: "ไปที่จัดยารายวัน" },
-    { n: "03", t: "ตรวจ QA", staff: "ดูรูปซองเทียบรายการยาและรูปฉลาก ถูกต้องกด \"ตรวจผ่าน\" · ผิดกด \"แจ้งจัดยาผิด\" แล้วกลับไปจัดยา กด \"รีเซต\" เพื่อจัดใหม่", sys: "ซองที่ตรวจผ่านขึ้นคิวจ่ายยาใน KinApp · ซองที่จัดผิดบันทึกเป็น Near Miss", p: "qa", cta: "ไปที่ตะกร้ายา & QA" },
+    { n: "03", t: "ตรวจ QA", staff: "ดูรูปซองเทียบรายการยาและรูปฉลาก ถูกต้องกด \"ตรวจผ่าน\" · ผิดกด \"แจ้งจัดยาผิด\" แล้วกด \"รีเซตซองนี้แล้วจัดใหม่\" ที่การ์ดเดียวกัน", sys: "ซองที่ตรวจผ่านขึ้นคิวจ่ายยาใน KinApp · ซองที่จัดผิดบันทึกเป็น Near Miss", p: "qa", cta: "ไปที่ตะกร้ายา & QA" },
     { n: "04", t: "ให้ยา (KinApp)", staff: "พยาบาลเปิด \"คิวจ่ายยาวันนี้\" ในแอปพยาบาล ให้ยาแล้วกดบันทึก", sys: "บันทึกผู้ให้ยาและเวลา ขึ้นในบันทึกการให้ยา (MAR) ของประวัติผู้ป่วย", p: "kinapp", cta: "เปิด KinApp" },
     { n: "05", t: "เติมยาเมื่อใกล้หมด", staff: "ดูรายการยาผู้ป่วยใกล้หมด · ยาคลังศูนย์กด \"เติมจากคลังกลาง\" · ยาของญาติแจ้งญาตินำมาเพิ่ม", sys: "เตือนยาที่เหลือไม่ถึง 2 วัน และยาคลังกลางที่ถึงจุดสั่งซื้อหรือใกล้หมดอายุ", p: "inventory", cta: "ไปที่รับยาเข้าคลัง" },
     { n: "06", t: "สุ่มนับยา (ทำเป็นครั้งคราว)", staff: "นับยาจริงเทียบกับระบบ แก้ยอดหรือสถานะ เช่น ยาหมด ยาหมดอายุ ยางดใช้", sys: "อัปเดตยอดคงเหลือให้ตรงของจริง", p: "audit", cta: "ไปที่เคลียร์คลังยา" },
@@ -187,12 +189,12 @@ function Dashboard({ go, need, packed, low, waitQa }: { go: (p: Page) => void; n
 }
 
 /* ---------- จัดยารายวัน ---------- */
-function Dispense({ drugs, setDrugs, packs, setPacks, go, me, onAddDrug }: { drugs: Drug[]; setDrugs: (x: Drug[]) => void; packs: Pack[]; setPacks: (x: Pack[]) => void; go: (p: Page) => void; me: string; onAddDrug: (who: string) => void }) {
+function Dispense({ drugs, setDrugs, packs, setPacks, go, me, focus, onAddDrug }: { drugs: Drug[]; setDrugs: (x: Drug[]) => void; packs: Pack[]; setPacks: (x: Pack[]) => void; go: (p: Page) => void; me: string; focus: { who: string; date: string } | null; onAddDrug: (who: string) => void }) {
   const RESIDENTS = useNames();
   const { toast, confirm } = useApp();
-  const [who, setWho] = useState(RESIDENTS[0]);
+  const [who, setWho] = useState(focus?.who ?? RESIDENTS[0]);
   useEffect(() => { if (!RESIDENTS.includes(who)) setWho(RESIDENTS[0]); }, [RESIDENTS]); // eslint-disable-line react-hooks/exhaustive-deps
-  const [date, setDate] = useState(iso());
+  const [date, setDate] = useState(focus?.date ?? iso());
   const [meal, setMeal] = useState<string | null>(null);
   const [photo, setPhoto] = useState("");
   const [checked, setChecked] = useState<number[]>([]);
@@ -331,8 +333,16 @@ function Dispense({ drugs, setDrugs, packs, setPacks, go, me, onAddDrug }: { dru
 }
 
 /* ---------- ตะกร้ายา & QA ---------- */
-function QA({ packs, setPacks, drugs, go, me }: { packs: Pack[]; setPacks: (x: Pack[]) => void; drugs: Drug[]; go: (p: Page) => void; me: string }) {
-  const { toast } = useApp();
+function QA({ packs, setPacks, drugs, setDrugs, go, me, onRedo }: { packs: Pack[]; setPacks: (x: Pack[]) => void; drugs: Drug[]; setDrugs: (x: Drug[]) => void; go: (p: Page) => void; me: string; onRedo: (who: string, date: string) => void }) {
+  const { toast, confirm } = useApp();
+  /** ซองที่จัดผิด: ลบซอง คืนยาเข้าตะกร้าผู้ป่วย แล้วเปิดหน้าจัดยาของผู้ป่วยและวันนั้น (เหมือนกดรีเซตที่หน้าจัดยา) */
+  const redo = (p: Pack) => confirm({ title: "รีเซตซองนี้แล้วจัดใหม่", message: `ล้างซองมื้อ${p.meal}ของ ${p.who} วันที่ ${thai(p.date)} คืนยาเข้าตะกร้า แล้วไปหน้าจัดยาเพื่อจัดใหม่ ใช่หรือไม่`, okLabel: "รีเซตและจัดใหม่", onOk: () => {
+    const list = drugsFor(drugs, p.who, p.meal, p.date);
+    setDrugs(drugs.map((y) => (list.some((z) => z.id === y.id) ? { ...y, stock: y.stock + y.dose } : y)));
+    setPacks(packs.filter((x) => x.id !== p.id));
+    toast(`รีเซตแล้ว · ${p.who} มื้อ${p.meal} · จัดซองใหม่ได้เลย`);
+    onRedo(p.who, p.date);
+  } });
   // รูปซองที่จัดเสร็จ + รูปฉลากต้นฉบับของยาในซอง (โหลดตอนกดดู)
   const [pics, setPics] = useState<{ title: string; items: PhotoItem[] } | null>(null);
   const openPics = (p: Pack) => setPics({ title: `${p.who} · มื้อ${p.meal} · ${thai(p.date)}`, items: [
@@ -362,7 +372,8 @@ function QA({ packs, setPacks, drugs, go, me }: { packs: Pack[]; setPacks: (x: P
               </div>
               <ul className="mt-3 flex-1 space-y-1 text-sm text-gold-700">{p.items.map((t) => <li key={t} className={t.includes("รอเติม") ? "text-red-700" : ""}>• {t}</li>)}</ul>
               <button className="btn-soft mt-3 w-full" onClick={() => openPics(p)}><Icon name="eye" className="h-4 w-4" /> ดูรูปซองเทียบฉลากยา</button>
-              {p.reason && <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700">สาเหตุ: {p.reason} · กลับไปหน้าจัดยารายวัน กด &quot;รีเซต&quot; มื้อนี้แล้วจัดใหม่</p>}
+              {p.reason && <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700">สาเหตุ: {p.reason}</p>}
+              {p.qa === "แจ้งจัดยาผิด" && !p.given && <button className="btn-primary mt-2 w-full" onClick={() => redo(p)}><Icon name="refresh" className="h-4 w-4" /> รีเซตซองนี้แล้วจัดใหม่</button>}
               {p.qa === "รอตรวจ" && (
                 <div className="mt-4 grid grid-cols-2 gap-2">
                   <button className="btn-danger !px-3" onClick={() => { setErr(p); setReason(""); }}>แจ้งจัดยาผิด</button>
@@ -406,6 +417,24 @@ function Inventory({ drugs, setDrugs, master, addFor, onAdded }: { drugs: Drug[]
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<Drug | null>(null);
   const [label, setLabel] = useState<Drug | null>(null);
+  // แก้ไขรายการยา (แพทย์ปรับขนาด/มื้อ) · ยอดคงเหลือแก้ที่เมนูเคลียร์คลังยา
+  const [edit, setEdit] = useState<(Drug & { doseText: string; tag: string }) | null>(null);
+  const toggleEdit = (k: "meals" | "days" | "warn", v: string) => edit && setEdit({ ...edit, [k]: edit[k].includes(v) ? edit[k].filter((x) => x !== v) : [...edit[k], v] });
+  const saveEdit = () => {
+    if (!edit) return;
+    const dose = Number(edit.doseText);
+    if (!edit.name.trim()) return toast("กรุณากรอกชื่อยา");
+    if (!edit.bulk && !(dose > 0)) return toast("กรุณากรอกปริมาณต่อครั้งให้มากกว่า 0");
+    if (!edit.bulk && !edit.meals.length) return toast("กรุณาเลือกมื้อยาอย่างน้อย 1 มื้อ");
+    const old = drugs.find((x) => x.id === edit.id);
+    if (!old) return setEdit(null);
+    const { doseText: _d, tag: _t, ...rest } = edit; // eslint-disable-line @typescript-eslint/no-unused-vars
+    const next: Drug = { ...rest, name: edit.name.trim(), dose: edit.bulk ? old.dose : dose, store: edit.fridge ? "ตู้เย็น" : edit.store === "ตู้เย็น" ? STORES[0] : edit.store };
+    setDrugs(drugs.map((x) => (x.id === edit.id ? next : x)));
+    const changed = [old.dose !== next.dose ? `ครั้งละ ${old.dose} → ${next.dose} ${next.unit}` : "", old.meals.join(",") !== next.meals.join(",") ? `มื้อ ${next.meals.join(", ") || "-"}` : "", old.hold !== next.hold ? (next.hold ? "งดยาชั่วคราว" : "ยกเลิกงดยา") : ""].filter(Boolean);
+    toast(`แก้ไขยาแล้ว · ${next.name} · ${next.who}${changed.length ? ` · ${changed.join(" · ")}` : ""} · ซองที่จัดหลังจากนี้ใช้ข้อมูลใหม่`);
+    setEdit(null);
+  };
   const [filter, setFilter] = useState("");
   const toggle = (k: "meals" | "days" | "warn", v: string) => setF({ ...f, [k]: f[k].includes(v) ? f[k].filter((x) => x !== v) : [...f[k], v] });
   const shown = drugs.filter((x) => !filter || x.who === filter);
@@ -482,6 +511,7 @@ function Inventory({ drugs, setDrugs, master, addFor, onAdded }: { drugs: Drug[]
           rows={shown.map((x) => [x.who, `${x.name} · [${x.src === CENTRAL ? CENTRAL : "ญาตินำมา"}]`, x.how || "-", x.bulk ? "ยาขวด / ไม่แพ็คซอง" : `${x.meals.join(", ")} · ครั้งละ ${x.dose} ${x.unit}`, stockText(x), x.hold ? "งดยาชั่วคราว" : x.status])}
           actions={[
             { label: "ดู", onClick: (i) => setView(shown[i]) },
+            { label: "แก้ไข", onClick: (i) => setEdit({ ...shown[i], doseText: String(shown[i].dose), tag: "" }) },
             { label: "เติมจากคลังกลาง", hidden: (i) => !shown[i].sdid, onClick: (i) => setRefill({ x: shown[i], qty: "" }) },
             { label: "ลบ", danger: true, onClick: (i) => confirm({ title: "ลบยาออกจากตะกร้า", message: `ต้องการลบ ${shown[i].name} ของ ${shown[i].who} ใช่หรือไม่`, danger: true, okLabel: "ลบ", onOk: () => { setDrugs(drugs.filter((x) => x.id !== shown[i].id)); toast("ลบยาแล้ว"); } }) },
           ]}
@@ -561,6 +591,42 @@ function Inventory({ drugs, setDrugs, master, addFor, onAdded }: { drugs: Drug[]
           <p className="text-sm text-gold-700">{refill.x.who} · คงเหลือในตะกร้า <b>{stockText(refill.x)}</b></p>
           <Field label={`จำนวนที่เติม (${refill.x.unit})`} required><input type="number" min="0" value={refill.qty} onChange={(e) => setRefill({ ...refill, qty: e.target.value })} placeholder="เช่น 30" autoFocus /></Field>
           <p className="text-xs text-gold-600">หักจากคลังกลางของสาขา · ขึ้นค่ายารอเรียกเก็บที่การเงิน (ถ้ายาตั้งราคาไว้)</p>
+        </div>}
+      </Modal>
+
+      <Modal open={!!edit} wide title={edit ? `แก้ไขยา · ${edit.name}` : ""} onClose={() => setEdit(null)}
+        footer={<><button className="btn-soft" onClick={() => setEdit(null)}>ยกเลิก</button><button className="btn-primary" onClick={saveEdit}>บันทึกการแก้ไข</button></>}>
+        {edit && <div className="space-y-5">
+          <p className="rounded-xl bg-cream-50 px-4 py-3 text-sm text-gold-700">{edit.who} · คงเหลือ <b>{stockText(edit)}</b> · แก้ยอดคงเหลือได้ที่เมนู &quot;เคลียร์คลังยา&quot; · ซองที่จัดไปแล้วไม่เปลี่ยน</p>
+          <div className="form-grid">
+            <Field label="ชื่อยา" required><input value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} /></Field>
+            <Field label="สรรพคุณ / ข้อบ่งใช้"><input value={edit.use} onChange={(e) => setEdit({ ...edit, use: e.target.value })} /></Field>
+            <Field label="วิธีทานตามฉลาก"><input value={edit.how} onChange={(e) => setEdit({ ...edit, how: e.target.value })} placeholder="เช่น ครั้งละ 20 ml ก่อนนอน" /></Field>
+            <Field label="ช่วงเวลา (Timing)"><Select options={TIMINGS} value={edit.timing} onChange={(v) => setEdit({ ...edit, timing: v || TIMINGS[0] })} /></Field>
+            <Field label="แหล่งเก็บยา"><Select options={STORES} value={edit.fridge ? "ตู้เย็น" : edit.store} onChange={(v) => setEdit({ ...edit, store: v || STORES[0], fridge: v === "ตู้เย็น" })} /></Field>
+          </div>
+          {!edit.bulk && (
+            <div className="rounded-2xl border border-cream-300 p-4">
+              <p className="mb-3 font-medium text-gold-800">ข้อมูลสำหรับการจัดยา</p>
+              <div className="form-grid">
+                <Field label={isLiquid(edit) ? "ให้ครั้งละ (ml)" : "กินครั้งละ (Dose)"}><div className="flex items-center gap-2"><input type="number" min={isLiquid(edit) ? "1" : "0.5"} step={isLiquid(edit) ? "1" : "0.5"} value={edit.doseText} onChange={(e) => setEdit({ ...edit, doseText: e.target.value })} /><span className="shrink-0 text-sm text-gold-600">{edit.unit}</span></div>
+                  {Number(edit.doseText) !== edit.dose && Number(edit.doseText) > 0 && <p className="field-hint is-ok">เดิม {edit.dose} {edit.unit} → ใหม่ {edit.doseText} {edit.unit}</p>}</Field>
+                <div><p className="label">มื้อยาที่ต้องทาน</p><div className="flex flex-wrap gap-2">{MEALS.map((m) => <Chip key={m} on={edit.meals.includes(m)} onClick={() => toggleEdit("meals", m)}>{m}</Chip>)}</div></div>
+              </div>
+              <p className="label mt-5">เงื่อนไขวันกิน (ปล่อยว่างไว้ถ้าทานทุกวัน)</p>
+              <div className="flex flex-wrap gap-2">{DAYS.map((x) => <Chip key={x} on={edit.days.includes(x)} onClick={() => toggleEdit("days", x)}>{x}</Chip>)}</div>
+            </div>
+          )}
+          <div>
+            <p className="label">คำเตือน / ข้อควรระวัง</p>
+            <div className="mb-2 flex flex-wrap gap-2">{edit.warn.length ? edit.warn.map((w) => <button type="button" key={w} onClick={() => toggleEdit("warn", w)} className="rounded-full bg-red-50 px-3 py-1 text-xs text-red-700">{w} ×</button>) : <span className="text-sm text-gold-500">ไม่มีคำเตือน</span>}</div>
+            <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); const t = edit.tag.trim(); setEdit({ ...edit, tag: "", warn: t && !edit.warn.includes(t) ? [...edit.warn, t] : edit.warn }); }}>
+              <input value={edit.tag} onChange={(e) => setEdit({ ...edit, tag: e.target.value })} placeholder="พิมพ์คำเตือนใหม่แล้วกด Enter..." /><button className="btn-soft shrink-0">เพิ่ม</button>
+            </form>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Chip on={edit.hold} onClick={() => setEdit({ ...edit, hold: !edit.hold })}>งดยาชั่วคราว (Hold)</Chip>
+          </div>
         </div>}
       </Modal>
 
@@ -763,7 +829,7 @@ function Manual() {
     ["1. การรับยาเข้าตะกร้าผู้ป่วย", "ยาที่ญาติหรือโรงพยาบาลนำมา: ถ่ายรูปฉลาก ระบุมื้อและจำนวนต่อครั้ง (Dose) ยาที่ไม่ได้กินทุกวันให้ติ๊กวันที่ต้องกิน · ยาของศูนย์: เลือกแหล่งที่มา \"เบิกจากคลังกลางของศูนย์\" ระบบหักคลังกลางและขึ้นค่ายาที่การเงินให้ ยาที่ใกล้หมดกด \"เติมจากคลังกลาง\" ได้ เมื่อบันทึกแล้วระบบสร้างซองมื้อยาให้อัตโนมัติ"],
     ["2. การจัดยา (Dispensing Process)", "เลือกผู้รับบริการและวันกินยา แล้วกด \"เริ่มจัดยามื้อนี้\" ถ้ายาในคลังมีไม่พอ ระบบจะแจ้งเตือนสีเหลืองทันทีและจัดเท่าที่มี สำหรับยาที่มีเงื่อนไขวันกิน ระบบจะดึงยาเข้าซองเฉพาะวันที่ตรงเงื่อนไขให้อัตโนมัติ ถ่ายรูปซองยาที่จัดเสร็จแล้วกดบันทึก สถานะจะเปลี่ยนเป็น \"จัดยาแล้ว\" และรูปซองถูกเก็บไว้ให้ผู้ตรวจ QA ดู"],
     ["3. การแก้ไขเมื่อทำผิดพลาด (Reset)", "หากจัดยาผิด ถ่ายรูปผิด หรือต้องการจัดใหม่ ให้กดปุ่ม \"รีเซต\" บนการ์ดมื้อยา ระบบจะล้างการจัดยาของมื้อนั้นและคืนสต็อกยา"],
-    ["4. ระบบตรวจสอบการจัดยา (QA & Near Miss)", "ใช้หลัก 5R (Right Patient, Right Drug, Right Dose, Right Time, Right Route) ร่วมกับรูปถ่าย ผู้ตรวจกด \"ดูรูปซองเทียบฉลากยา\" เพื่อเทียบรูปซองกับรูปฉลากต้นฉบับ หากถูกต้องกด \"ตรวจผ่าน\" ซองจะขึ้นคิวจ่ายยาใน KinApp หากพบว่าจัดผิดกด \"แจ้งจัดยาผิด\" ระบุสาเหตุ แล้วกลับไปรีเซตมื้อนั้นเพื่อจัดใหม่ การดักจับความผิดพลาดตรงนี้เรียกว่า Category B (Near Miss)"],
+    ["4. ระบบตรวจสอบการจัดยา (QA & Near Miss)", "ใช้หลัก 5R (Right Patient, Right Drug, Right Dose, Right Time, Right Route) ร่วมกับรูปถ่าย ผู้ตรวจกด \"ดูรูปซองเทียบฉลากยา\" เพื่อเทียบรูปซองกับรูปฉลากต้นฉบับ หากถูกต้องกด \"ตรวจผ่าน\" ซองจะขึ้นคิวจ่ายยาใน KinApp หากพบว่าจัดผิดกด \"แจ้งจัดยาผิด\" ระบุสาเหตุ แล้วกด \"รีเซตซองนี้แล้วจัดใหม่\" ระบบคืนยาและเปิดหน้าจัดยาของผู้ป่วยคนนั้นให้ การดักจับความผิดพลาดตรงนี้เรียกว่า Category B (Near Miss)"],
     ["5. การให้ยา (KinApp)", "พยาบาลเปิดคิวจ่ายยาวันนี้ในแอปพยาบาล ให้ยาแล้วกดบันทึก ระบบเก็บชื่อผู้ให้ยาและเวลา ขึ้นในบันทึกการให้ยา (MAR) ของประวัติผู้ป่วย"],
     ["6. การสุ่มตรวจ (Cycle Count)", "ใช้เมนูเคลียร์คลังยาเพื่อนับยาจริงเทียบกับระบบเป็นประจำ และอัปเดตสถานะยา เช่น ยาหมด ยาหมดอายุ หรือยางดใช้"],
   ];

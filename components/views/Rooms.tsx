@@ -195,7 +195,14 @@ export function Rooms() {
         { label: "เตียงว่าง", value: free, unit: "เตียง", icon: "check", note: full.length ? `ห้องเต็ม ${full.length} ห้อง` : undefined },
       ]} />
       {open.length > 0 && free === 0 && <p role="alert" className="room-warn mb-4">ห้องเต็มทุกห้องแล้ว ไม่สามารถรับผู้รับบริการใหม่ได้ {admin ? "สร้างห้องเพิ่ม หรือเพิ่มจำนวนเตียงในห้องก่อนเปิดสัญญาใหม่" : "แจ้งผู้จัดการสาขาให้เพิ่มห้องก่อนเปิดสัญญาใหม่"}</p>}
-      {noRoom.length > 0 && <p className="mb-4 text-sm text-gold-600">รอจัดห้อง <b className="text-gold-800">{noRoom.length} คน</b> <button type="button" className="ml-2 text-gold-700 underline underline-offset-4" onClick={() => document.getElementById("room-waiting")?.scrollIntoView({ behavior: "smooth" })}>ดูรายชื่อ</button></p>}
+      {noRoom.length > 0 && <div id="room-waiting" className="mb-6"><Section title="ผู้รับบริการที่ยังไม่มีห้อง" sub={`รอจัดห้อง ${noRoom.length} คน · ยังไม่ได้ระบุห้อง หรือห้องที่บันทึกไว้ยังไม่ได้สร้างในระบบ${move ? " · กด \"จัดห้อง\" เพื่อเลือกห้องและเตียง" : ""}`}>
+        {admin && missing.length > 0 && <div className="mb-4 flex flex-wrap items-center gap-2 text-sm text-gold-600">สร้างห้องจากข้อมูลเดิม:
+          {missing.map(([no, b]) => <button key={`${b}|${no}`} type="button" className="row-action" onClick={() => setDlg({ mode: "add", preset: [no, b, ROOM_TYPES[0], "1", "", ROOM_STATUSES[0], "", ""] })}>+ {no} ({b})</button>)}
+        </div>}
+        <DataTable search={false} columns={["ชื่อ-นามสกุล", "สาขา", "ห้องที่บันทึกไว้", "สถานะ"]}
+          rows={noRoom.map(({ r }) => [r[0], r[3], r[2] && r[2].trim() !== "-" ? `${r[2]} (ยังไม่ได้สร้างห้องนี้)` : "ยังไม่ระบุ", r[5]])}
+          actions={move ? [{ label: "จัดห้อง", onClick: (k) => setPlace(noRoom[k].i) }] : undefined} />
+      </Section></div>}
       {!rooms.loaded ? <Section><p className="py-8 text-center text-sm text-gold-500">กำลังโหลดห้อง…</p></Section>
         : !list.length ? <Section><div className="empty-state"><Icon name="bed" /><p>{admin ? "ยังไม่มีห้องในสาขานี้ กด \"สร้างห้อง\" เพื่อเริ่มกำหนดห้องและจำนวนเตียง" : "ยังไม่มีห้องในสาขานี้ แจ้งผู้จัดการสาขาให้สร้างห้อง"}</p></div></Section>
         : showMap ? <div className={`room-layout ${selected ? "has-panel" : ""}`}>
@@ -210,14 +217,6 @@ export function Rooms() {
           <div className="room-grid">{list.filter((r) => r.branch === b).map((r) => card(r))}</div>
         </Section>)}</div>}
       {!showMap && selected && <div className="mt-4">{panel}</div>}
-      {noRoom.length > 0 && <div id="room-waiting" className="mt-6"><Section title="ผู้รับบริการที่ยังไม่มีห้อง" sub="ยังไม่ได้ระบุห้อง หรือห้องที่บันทึกไว้ยังไม่ได้สร้างในระบบ">
-        {admin && missing.length > 0 && <div className="mb-4 flex flex-wrap items-center gap-2 text-sm text-gold-600">สร้างห้องจากข้อมูลเดิม:
-          {missing.map(([no, b]) => <button key={`${b}|${no}`} type="button" className="row-action" onClick={() => setDlg({ mode: "add", preset: [no, b, ROOM_TYPES[0], "1", "", ROOM_STATUSES[0], "", ""] })}>+ {no} ({b})</button>)}
-        </div>}
-        <DataTable search={false} columns={["ชื่อ-นามสกุล", "สาขา", "ห้องที่บันทึกไว้", "สถานะ"]}
-          rows={noRoom.map(({ r }) => [r[0], r[3], r[2] && r[2].trim() !== "-" ? `${r[2]} (ยังไม่ได้สร้างห้องนี้)` : "ยังไม่ระบุ", r[5]])}
-          actions={move ? [{ label: "จัดห้อง", onClick: (k) => setPlace(noRoom[k].i) }] : undefined} />
-      </Section></div>}
 
       <Modal open={!!person} title="รายละเอียดผู้ป่วย" onClose={() => setPerson(null)}
         footer={<><button className="btn-soft" onClick={() => setPerson(null)}>ปิด</button>{canHealth && person && <button className="btn-primary" onClick={() => { setProfileId(res.ids[person.idx]); setPerson(null); }}>ดูประวัติการดูแลทั้งหมด</button>}</>}>
