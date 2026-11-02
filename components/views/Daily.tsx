@@ -14,7 +14,7 @@ import { DataTable, Field, FieldDef, FormDialog, MetricGrid, Modal, PageHeader, 
  * แถวของชุดข้อมูล daily-YYYY-MM-DD:
  * [ผู้รับบริการ, ชื่องาน, ผู้รับผิดชอบ, เวลา, กะ, สถานะ, คำสั่งงาน, สัญญาณชีพ, เวลาที่ส่งจริง, บันทึกจากผู้ทำ, ผู้ส่งงาน]
  */
-const COLS = ["มอบหมายเมื่อ", "ผู้รับบริการ", "ชื่องาน", "ผู้รับผิดชอบ", "เวลา", "กะ", "สถานะ"];
+const COLS = ["มอบหมายเมื่อ", "ผู้รับบริการ", "ชื่องาน", "ประเภท", "ผู้รับผิดชอบ", "เวลา", "กะ", "สถานะ"];
 /** ผู้รับผิดชอบว่าง ("-") = ใครก็ได้ในเวรนั้น */
 const ANYONE = "ทุกคนในเวร (ไม่ระบุคน)";
 const owner = (r: string[]) => (r[10] && r[10] !== "-" ? `${r[10]} (ส่งแล้ว)` : r[2] && r[2] !== "-" ? r[2] : `ทีม${r[4] || "เวร"}`);
@@ -35,6 +35,7 @@ const shiftOf = (time: string) => { const h = Number(time.slice(0, 2)); return h
 export function DailyTasks() {
   const [date, setDate] = useState(todayIso);
   const [shift, setShift] = useState("ทั้งหมด");
+  const [kind, setKind] = useState("ทั้งหมด"); // งานประจำ (ระบบสร้างทุกวัน) / งานรายครั้ง
   // งานแยกตามวันที่ · วันที่ยังไม่มีงานจะว่าง (ไม่ใส่ข้อมูลตัวอย่างให้เอง) สร้างจากคลังงานหรือคัดลอกจากวันก่อน
   const { rows, ids, add, update, remove } = useCrud(`daily-${date}`, []);
   const { rows: master } = useCrud("master", MASTER_TASKS);
@@ -72,7 +73,10 @@ export function DailyTasks() {
   const people = (sh: string) => { const d = onDuty(sh); return [...new Set([...d, ...pool])]; };
   const [who, setWho] = useState<{ k: number; v: string } | null>(null);
   const names = useMemo(() => residents.filter((r) => staying(r.status ?? "")).map((r) => r.full_name), [residents]);
-  const shown = rows.map((r, k) => ({ r, k })).filter(({ r }) => shift === "ทั้งหมด" || r[4] === shift)
+  // งานประจำ = มีรายการทำซ้ำของผู้รับบริการ + งาน + กะ เดียวกัน
+  const routine = (r: string[]) => routines.some((x) => x.resident_name === r[0] && x.task_name === r[1] && x.shift === r[4]);
+  const kindOf = (r: string[]) => (routine(r) ? "งานประจำ" : "งานรายครั้ง");
+  const shown = rows.map((r, k) => ({ r, k })).filter(({ r }) => (shift === "ทั้งหมด" || r[4] === shift) && (kind === "ทั้งหมด" || kindOf(r) === kind))
     // มอบหมายล่าสุดอยู่บนสุด (งานที่ยังไม่บันทึกขึ้นระบบ = เพิ่งมอบหมาย) · มอบหมายพร้อมกันเรียงตามเวลางาน
     .sort((a, b) => stamp(b.r).localeCompare(stamp(a.r)) || String(a.r[3]).localeCompare(String(b.r[3])));
   const checked = shown.filter(({ r }) => r[5] === "ตรวจแล้ว").length;
@@ -80,6 +84,7 @@ export function DailyTasks() {
   const waiting = shown.filter(({ r }) => r[5] === "รอทำ").length;
   const pct = shown.length ? Math.round((checked / shown.length) * 100) : 0;
   const count = (s: string) => rows.filter((r) => s === "ทั้งหมด" || r[4] === s).length;
+  const kindCount = (s: string) => rows.filter((r) => (shift === "ทั้งหมด" || r[4] === shift) && (s === "ทั้งหมด" || kindOf(r) === s)).length;
   const cur = i !== null ? rows[i] : null;
   // รูปหลักฐานโหลดแยกตอนเปิดตรวจงาน (ไม่รวมในรายการงานเพื่อให้หน้าโหลดเร็ว)
   const [shot, setShot] = useState<{ photo: string | null; at: string | null; share?: boolean; stars?: number | null; note?: string | null } | null>(null);
@@ -135,7 +140,7 @@ export function DailyTasks() {
   };
 
   const ADD_FIELDS: FieldDef[] = [
-    { label: "ผู้รับบริการ", options: names, required: true },
+    { label: "ผู้รับบริการ", options: names, required: true, pick: "resident", requireRoom: true },
     { label: "ชื่องาน", required: true },
     { label: "เวลา", type: "time", required: true },
     { label: "คำสั่งงาน", area: true },
@@ -151,7 +156,7 @@ export function DailyTasks() {
           <button className="btn-soft" onClick={() => { loadRoutines(); setRoutineOpen(true); }}><Icon name="refresh" className="h-4 w-4" /> งานประจำ ({routines.length})</button>
           <button className="btn-soft" onClick={copyPrev}><Icon name="files" className="h-4 w-4" /> คัดลอกงานจากวันก่อน</button>
           <button className="btn-soft" onClick={() => setAddOpen(true)}><Icon name="plus" className="h-4 w-4" /> มอบหมายงาน</button>
-          <button className="btn-primary" onClick={() => { setAssignErr(""); setAssign(true); }}><Icon name="book" className="h-4 w-4" /> มอบหมายจากคลังงานมาตรฐาน</button>
+          <button className="btn-primary" onClick={() => { setAssignErr(""); setAssign(true); }}><Icon name="book" className="h-4 w-4" /> มอบหมายจากแม่แบบงานมาตรฐาน</button>
         </>}
       />
 
@@ -166,11 +171,15 @@ export function DailyTasks() {
 
       <MetricGrid items={[{ label: "งานในกะที่เลือก", value: shown.length, unit: "งาน", accent: true, icon: "check" }, { label: "รอพนักงานทำ", value: waiting, unit: "งาน", icon: "calendar" }, { label: "ส่งแล้ว รอผู้จัดการตรวจ", value: pending, unit: "งาน", icon: "search" }, { label: "ตรวจเรียบร้อย", value: checked, unit: "งาน", icon: "check", note: `ความคืบหน้า ${pct}%` }]} />
       <div className="mt-6">
-        <Section title="รายการงาน" actions={<Tabs tabs={SHIFTS.map((s) => `${s} (${count(s)})`)} value={`${shift} (${count(shift)})`} onChange={(t) => setShift(t.split(" (")[0])} />}>
+        <Section title="รายการงาน" actions={<div className="flex flex-wrap gap-2">
+          <Tabs tabs={["ทั้งหมด", "งานประจำ", "งานรายครั้ง"].map((s) => `${s === "ทั้งหมด" ? "ทุกประเภท" : s} (${kindCount(s)})`)} value={`${kind === "ทั้งหมด" ? "ทุกประเภท" : kind} (${kindCount(kind)})`} onChange={(t) => { const v = t.split(" (")[0]; setKind(v === "ทุกประเภท" ? "ทั้งหมด" : v); }} />
+          <Tabs tabs={SHIFTS.map((s) => `${s} (${count(s)})`)} value={`${shift} (${count(shift)})`} onChange={(t) => setShift(t.split(" (")[0])} />
+        </div>}>
           <DataTable
             columns={COLS}
-            rows={shown.map(({ r }) => [assignedAt(r), r[0], r[1], owner(r), r[3], r[4], r[5]])}
-            empty="ยังไม่มีงานของวันนี้ · กด &quot;มอบหมายจากคลังงานมาตรฐาน&quot; หรือ &quot;คัดลอกงานจากวันก่อน&quot;"
+            rows={shown.map(({ r }) => [assignedAt(r), r[0], r[1], kindOf(r), owner(r), r[3], r[4], r[5]])}
+            badgeCols={[3]}
+            empty="ยังไม่มีงานของวันนี้ · กด &quot;มอบหมายจากแม่แบบงานมาตรฐาน&quot; หรือ &quot;คัดลอกงานจากวันก่อน&quot;"
             actions={[
               { label: "ตรวจงาน", onClick: (n) => { setI(shown[n].k); setStar("5"); setNote(""); } },
               { label: "มอบหมายคน", onClick: (n) => { const r = rows[shown[n].k]; setWho({ k: shown[n].k, v: r[2] && r[2] !== "-" ? r[2] : ANYONE }); } },
@@ -181,7 +190,7 @@ export function DailyTasks() {
       </div>
 
       {/* มอบหมายจากคลังงาน */}
-      <Modal open={assign} wide title="มอบหมายงานจากคลังงานมาตรฐาน" onClose={() => setAssign(false)}
+      <Modal open={assign} wide title="มอบหมายงานจากแม่แบบงานมาตรฐาน" onClose={() => setAssign(false)}
         footer={<><button className="btn-soft" onClick={() => setAssign(false)}>ยกเลิก</button><button className="btn-primary" onClick={doAssign}>มอบหมาย {pickRes.length * pickTask.length > 0 ? `(${pickRes.length} คน × ${pickTask.length} งาน)` : ""}</button></>}>
         <p className="form-intro">เลือกผู้รับบริการและงาน ระบบสร้างงานของวันที่ {thaiDate(date)} ให้ทุกคู่ งาน &quot;ทั้งสองกะ&quot; สร้างทั้งกะเช้าและกะดึก</p>
         <div className="grid gap-5 md:grid-cols-2">
@@ -191,7 +200,7 @@ export function DailyTasks() {
             {!names.length && <p className="text-sm text-gold-500">ยังไม่มีผู้รับบริการในสาขา</p>}
           </div>
           <div>
-            <p className="label">2. งานจากคลังงานมาตรฐาน ({pickTask.length})</p>
+            <p className="label">2. งานจากแม่แบบงานมาตรฐาน ({pickTask.length})</p>
             <ul className="pick-list">{master.map((t, k) => <li key={k}><label><input type="checkbox" checked={pickTask.includes(k)} onChange={() => { setAssignErr(""); setPickTask(pickTask.includes(k) ? pickTask.filter((x) => x !== k) : [...pickTask, k]); }} /> <span>{t[1]} <small className="text-gold-500">· {t[4]} · {t[6]}</small></span></label></li>)}</ul>
           </div>
         </div>
@@ -205,7 +214,7 @@ export function DailyTasks() {
 
       {/* งานประจำ */}
       <Modal open={routineOpen} wide title="งานประจำ (ทำซ้ำทุกวัน)" onClose={() => setRoutineOpen(false)} footer={<button className="btn-primary" onClick={() => setRoutineOpen(false)}>ปิด</button>}>
-        <p className="form-intro">งานในรายการนี้ระบบสร้างให้เองทุกวัน ตั้งแต่วันนี้ถึงล่วงหน้า 14 วัน เมื่อมีคนเปิดดูวันนั้นครั้งแรก · เพิ่มงานประจำได้ที่ &quot;มอบหมายจากคลังงานมาตรฐาน&quot; แล้วติ๊ก &quot;ทำซ้ำทุกวัน&quot;</p>
+        <p className="form-intro">งานในรายการนี้ระบบสร้างให้เองทุกวัน ตั้งแต่วันนี้ถึงล่วงหน้า 14 วัน เมื่อมีคนเปิดดูวันนั้นครั้งแรก · เพิ่มงานประจำได้ที่ &quot;มอบหมายจากแม่แบบงานมาตรฐาน&quot; แล้วติ๊ก &quot;ทำซ้ำทุกวัน&quot;</p>
         <DataTable search={false} columns={["ผู้รับบริการ", "สาขา", "งาน", "กะ", "เวลา", "ตั้งโดย"]} empty="ยังไม่มีงานประจำ"
           rows={routines.map((r) => [r.resident_name, r.branch_name, r.task_name, r.shift, r.sched_time, r.created_by ?? "-"])}
           actions={[{ label: "หยุดทำซ้ำ", danger: true, onClick: (i) => stopRoutine(routines[i]) }]} />

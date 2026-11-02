@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { isIdle } from "./store";
 
 /** ตัวช่วยฝั่งหน้าเว็บสำหรับ /api/care: รายชื่อผู้รับบริการ ประวัติรายบุคคล แจ้งเตือนสัญญาณชีพ */
-export type ResidentLite = { id: string; full_name: string; age: number | null; room: string | null; branch_name: string | null; status: string | null; chronic_diseases: string | null };
+export type ResidentLite = { id: string; full_name: string; age: number | null; room: string | null; branch_name: string | null; status: string | null; chronic_diseases: string | null; hn?: string | null };
 export type CareAlert = { id: string; area: string; record_id: string; resident_id: string | null; resident_name: string | null; branch_name: string | null; level: "watch" | "critical"; summary: string; vital_text: string | null; created_by: string | null; created_at: string };
 
 const CACHE = "kin-cache:residents";

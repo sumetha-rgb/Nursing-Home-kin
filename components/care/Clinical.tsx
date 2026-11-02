@@ -7,6 +7,7 @@ import { can } from "@/lib/perms";
 import { money } from "@/lib/billing";
 import { ADMISSION, call, Clinic, clinic, fetchClinic, Note, SupplyItem } from "@/lib/clinic";
 import { DataTable, Field, Modal } from "../ui";
+import { SearchSelect } from "../SearchSelect";
 
 /**
  * งานพยาบาลและกายภาพรายบุคคล (แท็บในหน้าประวัติผู้รับบริการ · ใช้ได้ทั้งระบบจัดการและ KinApp)
@@ -145,12 +146,21 @@ function Physio({ id, c, reload }: P) {
   const [buy, setBuy] = useState<{ name: string; total: string; price: string } | null>(null);
   const [use, setUse] = useState<{ id: string; name: string; body: string; pain: string; plan: string } | null>(null);
   const sessions = c.notes.filter((n) => n.kind === "physio");
+  // ทำกายภาพโดยยังไม่มีคอร์ส (หลังซื้อคอร์สล่าสุด) · เตือนให้แจ้งญาติเปิดคอร์ส
+  const key = (at: string) => at.replace(/^(\d{2})\/(\d{2})\/(\d{4}) (\d{2}):(\d{2}).*$/, "$3$2$1$4$5"); // "DD/MM/YYYY HH:MM" → เรียงตามเวลาได้
+  const lastBuy = c.courses.map((k) => key(k.at)).sort().pop() ?? "";
+  const free = sessions.filter((n) => n.data.nocourse && key(n.at) >= lastBuy).length;
+  const active = c.courses.some((k) => k.total - k.used > 0);
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-gold-600">ใช้คอร์สทีละครั้งพร้อมบันทึก Progress note · เหลือ 2 ครั้งระบบเตือนให้แจ้งญาติต่อคอร์ส</p>
-        {canSell && <button className="btn-primary !py-2" onClick={() => setBuy({ name: "กายภาพบำบัด (ครั้งละ 45 นาที)", total: "10", price: "" })}><Icon name="plus" className="h-4 w-4" /> ซื้อคอร์ส</button>}
+        <div className="flex flex-wrap gap-2">
+          {!active && <button className="btn-soft !py-2" onClick={() => setUse({ id: "", name: "กายภาพรายครั้ง (ยังไม่มีคอร์ส)", body: "", pain: "", plan: "" })}><Icon name="plus" className="h-4 w-4" /> บันทึกกายภาพ (ยังไม่มีคอร์ส)</button>}
+          {canSell && <button className="btn-primary !py-2" onClick={() => setBuy({ name: "กายภาพบำบัด (ครั้งละ 45 นาที)", total: "10", price: "" })}><Icon name="plus" className="h-4 w-4" /> ซื้อคอร์ส</button>}
+        </div>
       </div>
+      {free > 0 && <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">ทำกายภาพไปแล้ว {free} ครั้งโดยยังไม่มีคอร์ส · แจ้งญาติเปิดคอร์ส · แคชเชียร์กำหนดราคาครั้งที่ทำไปแล้วตอนออกใบแจ้งหนี้</p>}
       {!c.courses.length && <p className="rounded-xl bg-cream-50 px-4 py-6 text-center text-sm text-gold-600">ยังไม่มีคอร์สกายภาพ</p>}
       <div className="grid gap-3 md:grid-cols-2">{c.courses.map((k) => {
         const left = k.total - k.used, pct = Math.round((k.used / k.total) * 100);
@@ -177,7 +187,7 @@ function Physio({ id, c, reload }: P) {
         </div>}
       </Modal>
       <Modal open={!!use} title={use ? `บันทึกการทำกายภาพ · ${use.name}` : ""} onClose={() => setUse(null)}
-        footer={<><button className="btn-soft" onClick={() => setUse(null)}>ยกเลิก</button><button className="btn-primary" onClick={() => use && (use.body.trim() ? run(toast, { op: "course_use", courseId: use.id, body: use.body, data: { pain: use.pain, plan: use.plan } }, `บันทึกกายภาพแล้ว · ${use.name} · ตัดคอร์ส 1 ครั้ง`, () => { setUse(null); reload(); }) : toast("กรุณาพิมพ์ Progress note"))}>บันทึกและใช้ 1 ครั้ง</button></>}>
+        footer={<><button className="btn-soft" onClick={() => setUse(null)}>ยกเลิก</button><button className="btn-primary" onClick={() => use && (use.body.trim() ? run(toast, use.id ? { op: "course_use", courseId: use.id, body: use.body, data: { pain: use.pain, plan: use.plan } } : { op: "physio_free", residentId: id, body: use.body, data: { pain: use.pain, plan: use.plan } }, use.id ? `บันทึกกายภาพแล้ว · ${use.name} · ตัดคอร์ส 1 ครั้ง` : "บันทึกกายภาพแล้ว · ยังไม่มีคอร์ส · ส่งให้แคชเชียร์กำหนดราคา", () => { setUse(null); reload(); }) : toast("กรุณาพิมพ์ Progress note"))}>บันทึกและใช้ 1 ครั้ง</button></>}>
         {use && <div className="space-y-4">
           <Field label="Progress note"><textarea rows={4} value={use.body} onChange={(e) => setUse({ ...use, body: e.target.value })} placeholder="สิ่งที่ทำและผล เช่น ฝึกเดินด้วย walker 20 เมตร 2 รอบ ทรงตัวดีขึ้น" /></Field>
           <div className="grid gap-3 sm:grid-cols-2">
@@ -197,7 +207,6 @@ function Supplies({ id, c, reload }: P) {
   const manage = can(user, "residents");
   const [items, setItems] = useState<SupplyItem[]>([]);
   const [pick, setPick] = useState({ item: "", qty: "1" });
-  const [edit, setEdit] = useState<{ id?: string; name: string; unit: string; price: string; stock: string } | null>(null);
   const loadItems = useCallback(() => { call<{ items: SupplyItem[] }>("/api/clinic?op=supplies").then((d) => setItems(d.items)).catch(() => {}); }, []);
   useEffect(loadItems, [loadItems]);
   const it = items.find((x) => x.id === pick.item);
@@ -207,35 +216,20 @@ function Supplies({ id, c, reload }: P) {
       <section className="space-y-3">
         <h4 className="profile-sub">เบิกเวชภัณฑ์ให้ผู้รับบริการ</h4>
         <div className="grid gap-2 sm:grid-cols-[1fr_100px_auto]">
-          <select value={pick.item} onChange={(e) => setPick({ ...pick, item: e.target.value })} aria-label="เวชภัณฑ์">
-            <option value="">-- เลือกเวชภัณฑ์ --</option>
-            {items.map((x) => <option key={x.id} value={x.id} disabled={x.stock < 1}>{x.name} · คงเหลือ {x.stock} {x.unit}{x.price ? ` · ${money(x.price)} บาท` : ""}</option>)}
-          </select>
+          <SearchSelect value={pick.item} onChange={(v) => setPick({ ...pick, item: v })} ariaLabel="เวชภัณฑ์" placeholder="พิมพ์ค้นหา เช่น ผ้าอ้อม"
+            items={items.map((x) => ({ value: x.id, label: x.name, sub: `${money(x.price)} บาท / ${x.unit}`, disabled: x.stock < 1,
+              badge: x.stock < 1 ? "หมด · เลือกไม่ได้" : x.stock <= 5 ? `เหลือน้อย ${x.stock} ${x.unit}` : `เหลือ ${x.stock} ${x.unit}`, tone: x.stock < 1 ? "muted" as const : x.stock <= 5 ? "warn" as const : "ok" as const }))} />
           <input type="number" min={1} value={pick.qty} onChange={(e) => setPick({ ...pick, qty: e.target.value })} aria-label="จำนวน" />
           <button className="btn-primary !py-2" onClick={() => !it ? toast("กรุณาเลือกเวชภัณฑ์") : run(toast, { op: "supply_issue", residentId: id, itemId: it.id, qty: Number(pick.qty) }, `เบิกเวชภัณฑ์แล้ว · ${it.name} ${pick.qty} ${it.unit}`, () => { setPick({ item: "", qty: "1" }); reload(); loadItems(); })}>เบิก</button>
         </div>
-        {!items.length && <p className="text-sm text-gold-600">ยังไม่มีเวชภัณฑ์ในคลังของสาขา{manage ? " · กด จัดการคลังเวชภัณฑ์ เพื่อเพิ่ม" : " · แจ้งหัวหน้าพยาบาลให้เพิ่มรายการ"}</p>}
+        {!items.length && <p className="text-sm text-gold-600">ยังไม่มีเวชภัณฑ์ในคลังของสาขา{manage ? "" : " · แจ้งหัวหน้าพยาบาลหรือผู้จัดการให้เพิ่มรายการ"}</p>}
       </section>
       <div>
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2"><h4 className="profile-sub !mb-0">ประวัติการเบิก</h4>{unbilled.length > 0 && <span className="text-xs text-amber-800">ยังไม่เรียกเก็บ {unbilled.length} รายการ · {money(unbilled.reduce((n, s) => n + s.qty * s.price, 0))} บาท (ดึงเข้าใบแจ้งหนี้ได้ที่เมนูการเงิน)</span>}</div>
         <DataTable search={false} columns={["วันเวลา", "รายการ", "จำนวน", "ราคารวม", "ผู้เบิก", "เรียกเก็บ"]} empty="ยังไม่มีการเบิก"
           rows={c.supplies.map((s) => [s.at, s.item_name, `${s.qty} ${s.unit}`, money(s.qty * s.price), s.issued_by ?? "-", s.invoice_id ? "ออกใบแจ้งหนี้แล้ว" : "ยังไม่เรียกเก็บ"])} />
       </div>
-      {manage && <div>
-        <div className="mb-2 flex items-center justify-between gap-2"><h4 className="profile-sub !mb-0">คลังเวชภัณฑ์ของสาขา</h4><button className="btn-soft !py-2" onClick={() => setEdit({ name: "", unit: "ชิ้น", price: "", stock: "" })}><Icon name="plus" className="h-4 w-4" /> เพิ่มรายการ</button></div>
-        <DataTable search={false} columns={["รายการ", "หน่วย", "ราคา/หน่วย", "คงเหลือ"]} empty="ยังไม่มีรายการ"
-          rows={items.map((x) => [x.name, x.unit, money(x.price), String(x.stock)])}
-          actions={[{ label: "แก้ไข / เติมสต็อก", onClick: (i) => setEdit({ id: items[i].id, name: items[i].name, unit: items[i].unit, price: String(items[i].price), stock: String(items[i].stock) }) }]} />
-      </div>}
-      <Modal open={!!edit} title={edit?.id ? "แก้ไขเวชภัณฑ์" : "เพิ่มเวชภัณฑ์"} onClose={() => setEdit(null)}
-        footer={<><button className="btn-soft" onClick={() => setEdit(null)}>ยกเลิก</button><button className="btn-primary" onClick={() => edit && run(toast, { op: "supply_item", ...edit, price: Number(edit.price) || 0, stock: Number(edit.stock) || 0 }, `${edit.id ? "แก้ไขเวชภัณฑ์แล้ว" : "เพิ่มเวชภัณฑ์แล้ว"} · ${edit.name} · คงเหลือ ${edit.stock || 0} ${edit.unit}`, () => { setEdit(null); loadItems(); })}>บันทึก</button></>}>
-        {edit && <div className="form-grid">
-          <Field label="ชื่อเวชภัณฑ์" className="md:col-span-2"><input value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} placeholder="เช่น ผ้าอ้อมผู้ใหญ่ ไซซ์ L" /></Field>
-          <Field label="หน่วย"><input value={edit.unit} onChange={(e) => setEdit({ ...edit, unit: e.target.value })} placeholder="ชิ้น / ห่อ / กล่อง" /></Field>
-          <Field label="ราคาต่อหน่วย (บาท)"><input type="number" min={0} value={edit.price} onChange={(e) => setEdit({ ...edit, price: e.target.value })} /></Field>
-          <Field label="จำนวนคงเหลือ"><input type="number" min={0} value={edit.stock} onChange={(e) => setEdit({ ...edit, stock: e.target.value })} /></Field>
-        </div>}
-      </Modal>
+      {manage && <p className="text-sm text-gold-600">เพิ่มรายการ ตั้งราคา หรือเติมสต็อก ได้ที่ <a className="font-medium text-gold-800 underline" href="/pharmacy?page=supplies">ห้องยา › คลังเวชภัณฑ์</a></p>}
     </div>
   );
 }

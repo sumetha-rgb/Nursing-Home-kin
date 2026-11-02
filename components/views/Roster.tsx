@@ -63,6 +63,22 @@ export function Roster() {
   const todays = shifts.filter((s) => s.date === today);
   const inToday = attendance.filter((a) => a.date === today && a.kind === "in");
   const lateMonth = attendance.filter((a) => a.kind === "in" && (a.late_min ?? 0) > 0).length;
+  // สรุปการมาทำงานรายคน: นับเฉพาะเวรที่ถึงเวลาเข้างานแล้ว (+ผ่อนผัน 15 นาที) · ขาด 2 ครั้งขึ้นไปชื่อเป็นสีแดง
+  const nowHm = new Date().toTimeString().slice(0, 5);
+  const due = (s: { date: string; shift: string }) => s.date < today || (s.date === today && nowHm >= (s.shift === "ดึก" ? "19:15" : "07:15"));
+  const report = (() => {
+    const by = new Map<string, { name: string; due: number; ontime: number; late: number; lateMin: number; missed: number; extra: number }>();
+    const row = (id: string, name: string) => { if (!by.has(id)) by.set(id, { name, due: 0, ontime: 0, late: 0, lateMin: 0, missed: 0, extra: 0 }); return by.get(id)!; };
+    for (const s of shifts) {
+      const a = attendance.find((x) => x.staff_id === s.staff_id && x.date === s.date && x.shift === s.shift && x.kind === "in");
+      if (!a && !due(s)) continue;
+      const r = row(s.staff_id, s.staff_name); r.due++;
+      if (!a) r.missed++; else if ((a.late_min ?? 0) > 0) { r.late++; r.lateMin += a.late_min ?? 0; } else r.ontime++;
+    }
+    for (const a of attendance) if (a.kind === "in" && !a.shift) row(a.staff_id, a.staff_name).extra++;
+    return [...by.values()].sort((a, b) => b.missed - a.missed || b.late - a.late || a.name.localeCompare(b.name));
+  })();
+  const missedMonth = report.reduce((n, r) => n + r.missed, 0);
   // จัดเวรเฉพาะพยาบาล (พนักงานพยาบาลและหัวหน้าพยาบาล)
   const team = (data?.team ?? []).filter((t) => t.role === "Nurse" || t.role === "Head Nurse");
 
@@ -78,11 +94,26 @@ export function Roster() {
         { label: "เข้าเวรวันนี้", value: todays.length, unit: "คน", icon: "user" },
         { label: "เช็คชื่อแล้ววันนี้", value: inToday.length, unit: `/ ${todays.length}`, icon: "check", accent: true },
         { label: "เข้างานสายเดือนนี้", value: lateMonth, unit: "ครั้ง", icon: "history", note: "เกิน 15 นาทีจากเวลาเริ่มเวร" },
-        { label: "เวรทั้งเดือน", value: shifts.length, unit: "เวร", icon: "calendar" },
+        { label: "ขาดงานเดือนนี้", value: missedMonth, unit: "ครั้ง", icon: "alert", note: "ถึงเวลาเข้าเวรแล้วไม่ได้เช็คชื่อ" },
       ]} />
       <Section title={`ตารางเวร${data?.branch ? ` · สาขา${data.branch}` : ""}`} sub="กดวันที่เพื่อจัดเวรหรือดูการเช็คชื่อ">
         {error && <p role="alert" className="form-error mb-3"><Icon name="alert" className="h-4 w-4 shrink-0" />{error}</p>}
         <RosterCalendar ym={ym} onMonth={setYm} shifts={shifts} attendance={attendance} today={today} selected={day} onDay={openDay} />
+      </Section>
+
+      <Section title="สรุปการมาทำงานรายคน" sub="นับเฉพาะเวรที่ถึงเวลาเข้างานแล้ว · ชื่อสีแดง = ขาด 2 ครั้งขึ้นไปในเดือนนี้ · เรียงคนที่ขาดและสายมากที่สุดขึ้นก่อน">
+        {report.length ? <div className="overflow-x-auto rounded-2xl border border-cream-300">
+          <table className="data-table w-full min-w-[640px]">
+            <thead><tr><th scope="col">พนักงาน</th><th scope="col">เวรที่ถึงเวลาแล้ว</th><th scope="col">ตรงเวลา</th><th scope="col">สาย</th><th scope="col">ขาด</th><th scope="col">เช็คชื่อนอกตาราง</th></tr></thead>
+            <tbody>{report.map((r) => <tr key={r.name}>
+              <td className={r.missed >= 2 ? "font-semibold text-red-700" : r.missed === 1 ? "font-medium text-amber-800" : ""}>{r.name}</td>
+              <td>{r.due}</td><td>{r.ontime}</td>
+              <td className={r.late ? "text-amber-800" : ""}>{r.late ? `${r.late} ครั้ง · รวม ${r.lateMin} นาที` : "-"}</td>
+              <td className={r.missed >= 2 ? "font-semibold text-red-700" : r.missed ? "text-amber-800" : ""}>{r.missed || "-"}</td>
+              <td>{r.extra || "-"}</td>
+            </tr>)}</tbody>
+          </table>
+        </div> : <p className="rounded-xl bg-cream-50 px-4 py-6 text-center text-sm text-gold-600">ยังไม่มีเวรที่ถึงเวลาเข้างานในเดือนนี้</p>}
       </Section>
 
       <Modal open={!!day} wide title={day ? `จัดเวร · ${dayTitle(day)}` : ""} onClose={() => setDay(null)}

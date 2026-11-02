@@ -8,3 +8,10 @@ export const handoff = {
   set: (h: QuoteHandoff) => { pending = h; },
   take: () => { const h = pending; pending = null; return h; },
 };
+
+/** สัญญา → การเงิน: เปิดฟอร์มใบแจ้งหนี้พร้อมรายการตามสัญญา (เก็บ id ของสัญญา) */
+let bill: string | null = null;
+export const billHandoff = {
+  set: (contractId: string) => { bill = contractId; },
+  take: () => { const h = bill; bill = null; return h; },
+};

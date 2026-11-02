@@ -155,7 +155,7 @@ export function Dashboard() {
 const apptFields = (names: string[], nurses: string[]): FieldDef[] => [
   { label: "วันที่", type: "date", required: true },
   { label: "เวลา", type: "time", required: true },
-  { label: "ผู้รับบริการ", options: names, required: true },
+  { label: "ผู้รับบริการ", options: names, required: true, pick: "resident" },
   { label: "รายการ", required: true, placeholder: "เช่น พบแพทย์อายุรกรรม รพ.ศิริราช, ทำกายภาพ, ตรวจเลือด" },
   { label: "ผู้ดูแล / ผู้พาไป", suggest: nurses, placeholder: "พิมพ์ค้นหาชื่อพยาบาล หรือพิมพ์เอง เช่น ญาติพาไปเอง" },
   { label: "การเตรียมตัว", placeholder: "เช่น งดน้ำและอาหารหลังเที่ยงคืน นำสมุดยาไปด้วย (พิมพ์ในใบนัด)" },
@@ -262,7 +262,7 @@ export function HealthLogs() {
   });
   return (
     <>
-      <PageHeader title="รายงานข้อมูลสุขภาพ (Health Logs)" sub="ดูบันทึกสัญญาณชีพและการประเมินต่างๆ ของผู้สูงอายุ · ค่าที่เกินเกณฑ์ระบบแจ้งเตือนพยาบาลให้เอง"
+      <PageHeader title="รายงานสุขภาพ" sub="ดูบันทึกสัญญาณชีพและการประเมินต่างๆ ของผู้สูงอายุ · ค่าที่เกินเกณฑ์ระบบแจ้งเตือนพยาบาลให้เอง"
         actions={<button className="btn-primary" onClick={() => setRecord(true)}><Icon name="plus" className="h-4 w-4" /> บันทึกสัญญาณชีพ</button>} />
       <Section>
         <div className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -342,7 +342,7 @@ export function OfficialDocs() {
   };
   return (
     <>
-      <PageHeader title="เอกสารระเบียบ" sub="เก็บระเบียบ แบบฟอร์ม คู่มือ และใบอนุญาตของศูนย์ แนบไฟล์รูปหรือ PDF ได้"
+      <PageHeader title="เอกสารและระเบียบ" sub="เก็บระเบียบ แบบฟอร์ม คู่มือ และใบอนุญาตของศูนย์ แนบไฟล์รูปหรือ PDF ได้"
         actions={<button className="btn-primary" onClick={() => open(null)}><Icon name="plus" className="h-4 w-4" /> เพิ่มเอกสาร</button>} />
       <Section>
         <DataTable columns={["ชื่อเอกสาร", "ประเภท", "วันที่", "สถานะ", "ไฟล์แนบ"]}

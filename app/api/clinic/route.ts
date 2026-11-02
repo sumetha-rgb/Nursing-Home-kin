@@ -24,6 +24,7 @@ export const fetchCache = "force-no-store";
  *  POST { op: "note_delete", id }                          ลบบันทึก (ผู้เขียน หรือผู้มีสิทธิ์ผู้รับบริการ)
  *  POST { op: "course", residentId, name, total, price? }   ซื้อคอร์สกายภาพ
  *  POST { op: "course_use", courseId, body?, data? }        ใช้คอร์ส 1 ครั้ง + Progress note
+ *  POST { op: "physio_free", residentId, body, data? }      บันทึกกายภาพที่ยังไม่มีคอร์ส (รอแคชเชียร์กำหนดราคา)
  *  POST { op: "supply_item", id?, name, unit, price, stock } เพิ่ม/แก้เวชภัณฑ์ในคลัง
  *  POST { op: "supply_issue", residentId, itemId, qty }     เบิกเวชภัณฑ์ให้ผู้รับบริการ (ตัดสต็อก)
  *  POST { op: "supply_bill", ids, courseIds?, invoiceId }   ทำเครื่องหมายว่าออกใบแจ้งหนี้แล้ว
@@ -62,11 +63,51 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ admission: adm ?? null, notes, courses, supplies });
       }
       case "supplies": {
-        if (!canRead(me)) return forbidden();
+        if (!canRead(me) && !can(me, "app.pharmacy")) return forbidden();
         const rows = scoped(me)
           ? await sql`SELECT id, branch_name, name, unit, price::float, stock FROM supply_items WHERE branch_name = ${me.branch} ORDER BY name`
           : await sql`SELECT id, branch_name, name, unit, price::float, stock FROM supply_items ORDER BY branch_name, name`;
         return NextResponse.json({ items: rows });
+      }
+      case "home": {
+        // การ์ด "สิ่งที่ต้องทำวันนี้" หน้าแรก · ส่งเฉพาะเรื่องที่บัญชีนี้มีสิทธิ์ · ผู้บริหารนับทุกสาขา
+        const br = scoped(me) ? me.branch : null;
+        const p = br ? [br] : [];
+        const w = (col: string) => (br ? `AND ${col} = $1` : "");
+        const TODAY = "(now() AT TIME ZONE 'Asia/Bangkok')::date";
+        const out: Record<string, unknown> = {};
+        if (can(me, "tasks") || can(me, "tasks.review")) {
+          out.review = await sql(`SELECT shift, count(*)::int AS n FROM daily_tasks WHERE work_date = ${TODAY} AND status = 'เสร็จแล้ว' ${w("branch_name")} GROUP BY shift`, p);
+        }
+        if (can(me, "billing")) {
+          [out.bills] = await sql(`SELECT count(*)::int AS n, coalesce(sum(net - coalesce(paid_total, 0)), 0)::float AS sum, to_char(min(doc_date), 'YYYY-MM-DD') AS oldest
+            FROM invoices WHERE status IN ('ค้างชำระ', 'ชำระบางส่วน') ${w("branch_name")}`, p);
+          const [ph] = (await sql(`SELECT count(*)::int AS n FROM clinical_notes WHERE kind = 'physio' AND data->>'nocourse' = 'true' AND invoice_id IS NULL ${w("branch_name")}`, p)) as { n: number }[];
+          out.physio = ph.n;
+        }
+        if (can(me, "contracts") || can(me, "billing")) {
+          out.deposit = await sql(`SELECT c.contract_no AS no, c.resident_name AS name,
+              EXISTS (SELECT 1 FROM invoices i WHERE i.contract_no = c.contract_no AND i.status <> 'ยกเลิก') AS billed
+            FROM contracts c WHERE c.status = 'รอชำระเงินมัดจำ' ${w("c.branch_name")} ORDER BY c.created_at LIMIT 20`, p);
+        }
+        if (can(me, "residents") || can(me, "app.pharmacy")) {
+          // เกณฑ์เดียวกับแอปจัดยา: เหลือไม่พอ 2 วัน (ยาขวด/ยาทาเหลือ 1) · ไม่นับยาที่งดหรือผู้ที่ย้ายออกแล้ว
+          const [m] = (await sql(`SELECT count(*)::int AS n FROM resident_medications m WHERE NOT m.on_hold
+              AND coalesce(m.stock, 0) <= CASE WHEN m.is_bulk THEN 1 ELSE coalesce(m.dose, 0) * cardinality(m.meals) * 2 END
+              AND NOT EXISTS (SELECT 1 FROM residents r WHERE r.full_name = m.resident_name AND r.branch_name = m.branch_name AND r.status LIKE 'ย้ายออก%') ${w("m.branch_name")}`, p)) as { n: number }[];
+          const [sp] = (await sql(`SELECT count(*)::int AS n FROM supply_items WHERE stock <= 5 ${w("branch_name")}`, p)) as { n: number }[];
+          const [ce] = (await sql(`SELECT count(*)::int AS n FROM (SELECT 1 FROM stock_lots l JOIN stock_drugs d ON d.id = l.drug_id WHERE true ${w("l.branch_name")}
+              GROUP BY d.id, d.min_qty, l.branch_name HAVING sum(l.qty) <= d.min_qty OR min(l.expiry) FILTER (WHERE l.qty > 0) <= ${TODAY} + 60) x`, p)) as { n: number }[];
+          out.stock = { meds: m.n, supplies: sp.n, central: ce.n };
+        }
+        if (can(me, "roster")) {
+          // เวรวันนี้ที่เลยเวลาเข้างาน + ผ่อนผัน 15 นาทีแล้วยังไม่เช็คชื่อ (เกณฑ์เดียวกับ KPI)
+          out.checkin = await sql(`SELECT s.staff_name AS name, s.shift FROM staff_shifts s WHERE s.shift_date = ${TODAY} ${w("s.branch_name")}
+              AND (now() AT TIME ZONE 'Asia/Bangkok')::time >= (CASE WHEN s.shift = 'ดึก' THEN time '19:15' ELSE time '07:15' END)
+              AND NOT EXISTS (SELECT 1 FROM attendance a WHERE a.staff_id = s.staff_id AND a.work_date = s.shift_date AND a.shift = s.shift AND a.kind = 'in')
+            ORDER BY s.shift, s.staff_name`, p);
+        }
+        return NextResponse.json(out);
       }
       case "unbilled": {
         if (!can(me, "billing") && !can(me, "contracts")) return forbidden();
@@ -77,7 +118,9 @@ export async function GET(req: NextRequest) {
         // ยาจากคลังยากลางที่เบิกให้ผู้ป่วย (มีราคาขาย) ยังไม่เรียกเก็บ
         const meds = await sql(`SELECT m.id, d.name, d.unit, (-m.delta)::float AS qty, m.price::float, ${TH_AT("m.created_at")} AS at FROM stock_moves m JOIN stock_drugs d ON d.id = m.drug_id
           WHERE m.resident_id = $1 AND m.reason = 'เบิกให้ผู้ป่วย' AND m.invoice_id IS NULL AND m.price IS NOT NULL ORDER BY m.created_at`, [o.r.id]);
-        return NextResponse.json({ items: rows, courses, meds });
+        // กายภาพที่ทำโดยยังไม่มีคอร์ส: แคชเชียร์กำหนดราคาตอนออกใบแจ้งหนี้
+        const sessions = await sql(`SELECT id, ${TH_AT("created_at")} AS at FROM clinical_notes WHERE resident_id = $1 AND kind = 'physio' AND data->>'nocourse' = 'true' AND invoice_id IS NULL ORDER BY created_at`, [o.r.id]);
+        return NextResponse.json({ items: rows, courses, meds, sessions });
       }
       case "doc_file": {
         if (!can(me, "official-docs")) return forbidden();
@@ -170,6 +213,18 @@ export async function POST(req: NextRequest) {
         await audit(req, me, [{ area: "physio", action: "update", recordId: c.id, summary: `ใช้คอร์ส ${c.name} ครั้งที่ ${done[0].used}/${done[0].total} · ${c.resident_name}`, branch: c.branch_name }]);
         return NextResponse.json({ ok: true, used: done[0].used, total: done[0].total });
       }
+      case "physio_free": {
+        if (!canRead(me)) return forbidden();
+        const o = await residentOf(me, String(b.residentId ?? ""));
+        if (!o.r) return o.res;
+        const body = text(b.body, 4000);
+        if (!body) return bad("กรุณาพิมพ์ Progress note");
+        const id = randomUUID();
+        await sql`INSERT INTO clinical_notes (id, resident_id, resident_name, branch_name, kind, title, body, data, author)
+                  VALUES (${id}, ${o.r.id}, ${o.r.full_name}, ${o.r.branch_name}, 'physio', 'กายภาพรายครั้ง (ยังไม่มีคอร์ส)', ${body}, ${JSON.stringify({ ...obj(b.data), nocourse: true })}::jsonb, ${me.name})`;
+        await audit(req, me, [{ area: "physio", action: "create", recordId: id, summary: `กายภาพรายครั้ง (ยังไม่มีคอร์ส) · ${o.r.full_name}`, branch: o.r.branch_name }]);
+        return NextResponse.json({ ok: true, id });
+      }
       case "supply_item": {
         if (!canManage(me)) return forbidden("บัญชีนี้ไม่มีสิทธิ์จัดการคลังเวชภัณฑ์");
         const name = text(b.name, 120);
@@ -211,6 +266,9 @@ export async function POST(req: NextRequest) {
         const cids = (Array.isArray(b.courseIds) ? b.courseIds : []).map(String).slice(0, 50);
         if (cids.length) await sql(`UPDATE physio_courses SET invoice_id = $1 WHERE id = ANY($2) AND invoice_id IS NULL ${scoped(me) ? "AND branch_name = $3" : ""}`,
           scoped(me) ? [String(b.invoiceId ?? ""), cids, me.branch] : [String(b.invoiceId ?? ""), cids]);
+        const nids = (Array.isArray(b.noteIds) ? b.noteIds : []).map(String).slice(0, 200);
+        if (nids.length) await sql(`UPDATE clinical_notes SET invoice_id = $1 WHERE id = ANY($2) AND invoice_id IS NULL ${scoped(me) ? "AND branch_name = $3" : ""}`,
+          scoped(me) ? [String(b.invoiceId ?? ""), nids, me.branch] : [String(b.invoiceId ?? ""), nids]);
         const mids = (Array.isArray(b.medIds) ? b.medIds : []).map(String).slice(0, 200);
         if (mids.length) await sql(`UPDATE stock_moves SET invoice_id = $1 WHERE id = ANY($2) AND invoice_id IS NULL ${scoped(me) ? "AND branch_name = $3" : ""}`,
           scoped(me) ? [String(b.invoiceId ?? ""), mids, me.branch] : [String(b.invoiceId ?? ""), mids]);

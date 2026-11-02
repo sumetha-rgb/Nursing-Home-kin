@@ -2,6 +2,7 @@
 import { ReactNode, useEffect, useState, useId, useRef, Children, isValidElement, cloneElement, ReactElement } from "react";
 import { createPortal } from "react-dom";
 import Icon from "./Icon";
+import { ResidentPicker } from "./SearchSelect";
 import { clearNotice, closeModal, openModal, useNotice } from "@/lib/notice";
 
 export function PageHeader({ title, sub, actions }: { title: string; sub?: string; actions?: ReactNode }) {
@@ -47,7 +48,31 @@ export function Upload({ text = "คลิกเพื่ออัปโหล�
   );
 }
 
-export type RowAction = { label: string; onClick: (i: number) => void; danger?: boolean; hidden?: (i: number) => boolean };
+/** more: ย้ายไปอยู่ในปุ่ม "เพิ่มเติม" ของแถว (ปุ่มเยอะจนล้นจอ) */
+export type RowAction = { label: string; onClick: (i: number) => void; danger?: boolean; hidden?: (i: number) => boolean; more?: boolean };
+
+/** เมนู "เพิ่มเติม" ของแถว · วางแบบ fixed เพื่อไม่ถูกกรอบตารางที่เลื่อนได้ตัด */
+function RowMenu({ items, i }: { items: RowAction[]; i: number }) {
+  const [at, setAt] = useState<{ x: number; y: number; up: boolean } | null>(null);
+  useEffect(() => {
+    if (!at) return;
+    const close = () => setAt(null);
+    window.addEventListener("scroll", close, true); window.addEventListener("resize", close);
+    return () => { window.removeEventListener("scroll", close, true); window.removeEventListener("resize", close); };
+  }, [at]);
+  const list = items.filter((x) => !x.hidden?.(i));
+  if (!list.length) return null;
+  return <>
+    <button type="button" className="row-action" aria-haspopup="menu" aria-expanded={!!at}
+      onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); const up = r.bottom + 40 * list.length + 24 > window.innerHeight; setAt(at ? null : { x: Math.max(r.right, 190), y: up ? r.top : r.bottom, up }); }}>เพิ่มเติม ▾</button>
+    {at && <>
+      <button type="button" aria-label="ปิดเมนู" className="fixed inset-0 z-40 cursor-default" onClick={() => setAt(null)} />
+      <div role="menu" className="fixed z-50 min-w-44 rounded-2xl border border-cream-300 bg-white py-1 shadow-lg" style={{ left: at.x, top: at.y, transform: `translate(-100%, ${at.up ? "calc(-100% - 6px)" : "6px"})` }}>
+        {list.map((x) => <button key={x.label} type="button" role="menuitem" className={`block w-full whitespace-nowrap px-4 py-2 text-left text-sm hover:bg-cream-50 ${x.danger ? "text-red-700" : "text-gold-800"}`} onClick={() => { setAt(null); x.onClick(i); }}>{x.label}</button>)}
+      </div>
+    </>}
+  </>;
+}
 
 /** Table on desktop, stacked label/value cards on mobile. */
 export function DataTable({ columns, rows = [], empty = "ไม่พบข้อมูล", actions, badgeCols = [], search = true }: { columns: string[]; rows?: string[][]; empty?: string; actions?: RowAction[]; badgeCols?: number[]; search?: boolean }) {
@@ -59,15 +84,17 @@ export function DataTable({ columns, rows = [], empty = "ไม่พบข้�
   const current=Math.min(page,pages-1);
   const shown=filtered.slice(current*PAGE_SIZE,(current+1)*PAGE_SIZE);
   const searchId=useId();
+  const buttons=(i:number)=><>{actions!.filter(x=>!x.more).map(x=>button(x,i))}{actions!.some(x=>x.more)&&<RowMenu items={actions!.filter(x=>x.more)} i={i} />}</>;
   const button=(x:RowAction,i:number)=>x.hidden?.(i)?null:<button type="button" key={x.label} onClick={()=>x.onClick(i)} className={"row-action "+(x.danger?"danger":"")}>{x.label}</button>;
   const cell=(value:string,col:number)=>columns[col]?.includes("สถานะ")||badgeCols.includes(col)?<StatusBadge value={value} />:value;
   const blank=<div className="empty-state"><Icon name="search" /><p>{query?"ไม่พบรายการที่ตรงกับคำค้นหา":empty}</p>{query&&<button className="mt-3 text-sm text-plum-700" onClick={()=>{setQuery("");setPage(0);}}>ล้างคำค้นหา</button>}</div>;
-  return <div className="data-table-container"><div className="table-toolbar">{search?<div className="table-search"><Icon name="search" /><input id={searchId} aria-label="ค้นหาในรายการ" placeholder="ค้นหาในรายการ…" value={query} onChange={e=>{setQuery(e.target.value);setPage(0);}} /></div>:<span />}<span className="table-count" aria-live="polite">{filtered.length} รายการ</span></div><div className="table-scroll hidden md:block"><table className="data-table"><thead><tr>{columns.map((c,i)=><th scope="col" key={i}>{c.replace(/\s*\([^)]*\)/g,"")}</th>)}{actions&&<th scope="col" className="cell-actions">จัดการ</th>}</tr></thead><tbody>{shown.length?shown.map(({r,i})=><tr key={i}>{r.map((c,j)=><td key={j}>{cell(c,j)}</td>)}{actions&&<td className="cell-actions"><div className="row-actions">{actions.map(x=>button(x,i))}</div></td>}</tr>):<tr><td colSpan={columns.length+(actions?1:0)}>{blank}</td></tr>}</tbody></table></div><div className="space-y-3 md:hidden">{shown.length?shown.map(({r,i})=><dl className="mobile-data-row" key={i}>{r.map((c,j)=><div key={j}><dt>{columns[j]?.replace(/\s*\([^)]*\)/g,"")}</dt><dd>{cell(c,j)}</dd></div>)}{actions&&<div className="row-actions border-t border-cream-200 pt-3">{actions.map(x=>button(x,i))}</div>}</dl>):blank}</div><div className="table-pagination"><span>{filtered.length?(current*PAGE_SIZE+1)+"–"+Math.min((current+1)*PAGE_SIZE,filtered.length)+" จาก "+filtered.length+" รายการ":"0 รายการ"}</span><div className="table-pagination-controls"><button type="button" disabled={current===0} aria-label="หน้าก่อนหน้า" onClick={()=>setPage(current-1)}><Icon name="chevron" className="h-3.5 w-3.5 rotate-90" /></button><span>หน้า {current+1} / {pages}</span><button type="button" disabled={current>=pages-1} aria-label="หน้าถัดไป" onClick={()=>setPage(current+1)}><Icon name="chevron" className="h-3.5 w-3.5 -rotate-90" /></button></div></div></div>;
+  return <div className="data-table-container"><div className="table-toolbar">{search?<div className="table-search"><Icon name="search" /><input id={searchId} aria-label="ค้นหาในรายการ" placeholder="ค้นหาในรายการ…" value={query} onChange={e=>{setQuery(e.target.value);setPage(0);}} /></div>:<span />}<span className="table-count" aria-live="polite">{filtered.length} รายการ</span></div><div className="table-scroll hidden md:block"><table className="data-table"><thead><tr>{columns.map((c,i)=><th scope="col" key={i}>{c.replace(/\s*\([^)]*\)/g,"")}</th>)}{actions&&<th scope="col" className="cell-actions">จัดการ</th>}</tr></thead><tbody>{shown.length?shown.map(({r,i})=><tr key={i}>{r.map((c,j)=><td key={j}>{cell(c,j)}</td>)}{actions&&<td className="cell-actions"><div className="row-actions">{buttons(i)}</div></td>}</tr>):<tr><td colSpan={columns.length+(actions?1:0)}>{blank}</td></tr>}</tbody></table></div><div className="space-y-3 md:hidden">{shown.length?shown.map(({r,i})=><dl className="mobile-data-row" key={i}>{r.map((c,j)=><div key={j}><dt>{columns[j]?.replace(/\s*\([^)]*\)/g,"")}</dt><dd>{cell(c,j)}</dd></div>)}{actions&&<div className="row-actions border-t border-cream-200 pt-3">{buttons(i)}</div>}</dl>):blank}</div><div className="table-pagination"><span>{filtered.length?(current*PAGE_SIZE+1)+"–"+Math.min((current+1)*PAGE_SIZE,filtered.length)+" จาก "+filtered.length+" รายการ":"0 รายการ"}</span><div className="table-pagination-controls"><button type="button" disabled={current===0} aria-label="หน้าก่อนหน้า" onClick={()=>setPage(current-1)}><Icon name="chevron" className="h-3.5 w-3.5 rotate-90" /></button><span>หน้า {current+1} / {pages}</span><button type="button" disabled={current>=pages-1} aria-label="หน้าถัดไป" onClick={()=>setPage(current+1)}><Icon name="chevron" className="h-3.5 w-3.5 -rotate-90" /></button></div></div></div>;
 }
 
 /** readOnly: ระบบเป็นคนกำหนดค่า (เช่น เลขที่เอกสาร) แสดงอย่างเดียวแม้ในโหมดแก้ไข */
 /** hidden: ไม่แสดงในฟอร์ม แต่ค่าเดิมยังอยู่ตอนบันทึก (เช่น รายการ JSON ที่แก้ผ่านหน้าอื่น) */
-export type FieldDef = { label: string; options?: string[]; type?: string; area?: boolean; required?: boolean; wide?: boolean; readOnly?: boolean; placeholder?: string; suggest?: string[]; hidden?: boolean };
+/** pick "resident": ช่องพิมพ์ค้นหาผู้รับบริการ (options = รายชื่อที่เลือกได้) · requireRoom: ต้องมีห้องก่อน */
+export type FieldDef = { pick?: "resident"; requireRoom?: boolean; label: string; options?: string[]; type?: string; area?: boolean; required?: boolean; wide?: boolean; readOnly?: boolean; placeholder?: string; suggest?: string[]; hidden?: boolean };
 
 /** เวลาแบบ 24 ชั่วโมง (เช่น 13:50 น.) ไม่ขึ้นกับภาษา/รูปแบบ AM-PM ของเบราว์เซอร์ · ค่าเป็น "HH:MM" */
 export function TimeInput({ value, required, onChange }: { value: string; required?: boolean; onChange: (v: string) => void }) {
@@ -133,6 +160,11 @@ export function FormDialog({ open, mode, title, fields, value, onClose, onSave, 
           <Field key={f.label} label={f.label} required={f.required && !view} className={f.wide || f.area ? "md:col-span-2" : ""}>
             {view || f.readOnly ? (
               <p className="field-view">{v[i] || "-"}</p>
+            ) : f.pick === "resident" ? (
+              <>
+                <ResidentPicker names={f.options} requireRoom={f.requireRoom} value={v[i] ?? ""} onChange={(x) => set(i, x)} ariaLabel={f.label} />
+                {f.required && <input tabIndex={-1} aria-hidden="true" required value={v[i] ?? ""} onChange={() => {}} className="pointer-events-none absolute h-px w-px opacity-0" />}
+              </>
             ) : f.options ? (
               <select value={v[i] ?? ""} required={f.required} onChange={(e) => set(i, e.target.value)}>
                 <option value="">-- เลือก --</option>

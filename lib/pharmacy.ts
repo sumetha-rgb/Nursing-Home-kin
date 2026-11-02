@@ -30,7 +30,7 @@ export type Pack = {
   /** ผู้ตรวจ QA · ผู้ให้ยา · เวลาที่ให้ยา (วว/ดด/ปปปป HH:MM) */
   qby?: string; gby?: string; gat?: string;
 };
-export type Page = "dashboard" | "central" | "inventory" | "master" | "templates" | "audit" | "dispense" | "qa" | "report" | "manual";
+export type Page = "dashboard" | "central" | "supplies" | "inventory" | "master" | "templates" | "audit" | "dispense" | "qa" | "report" | "manual";
 
 export const MEALS = ["เช้า", "กลางวัน", "เย็น", "ก่อนนอน"];
 export const DAYS = ["จ.", "อ.", "พ.", "พฤ.", "ศ.", "ส.", "อา."];

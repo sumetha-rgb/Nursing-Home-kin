@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 import { ReactNode, useState, useEffect, useRef } from "react";
 import Image from "next/image";
 import Link from "next/link";
@@ -13,7 +13,7 @@ type Props={view:ViewId;views:ViewId[];onView:(v:ViewId)=>void;user:SessionUser;
 const GROUPS=[{id:0,label:"พื้นที่ดูแล",en:"CARE SPACE"},{id:1,label:"บริหารองค์กร",en:"ORGANIZATION"},{id:2,label:"เครื่องมือและระบบ",en:"WORKSPACE"}];
 export default function Shell({view,views,onView,user,onLogout,onChangePassword,children}:Props) {
   /** เมนูที่บัญชีนี้มีสิทธิ์ (ลิงก์แอปทีมดูแลแสดงเมื่อใช้ KinApp ได้) */
-  const nav=NAV.filter(n=>n.kind==="view"?views.includes(n.id):can(user,"app.staff"));
+  const nav=NAV.filter(n=>n.kind==="view"?views.includes(n.id):can(user,n.perm));
   const initial=user.name.replace(/^(คุณ|นาย|นาง|นางสาว)\s*/,"").charAt(0)||"K";
   const [open,setOpen]=useState(false);
   const [menu,setMenu]=useState(false);

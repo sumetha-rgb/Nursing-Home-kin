@@ -73,8 +73,8 @@ export async function GET(req: NextRequest) {
     switch (qs.get("op")) {
       case "residents": {
         const rows = scoped(me)
-          ? await sql`SELECT id, full_name, age, room, branch_name, status, chronic_diseases FROM residents WHERE branch_name = ${me.branch} ORDER BY sort_order DESC, created_at DESC`
-          : await sql`SELECT id, full_name, age, room, branch_name, status, chronic_diseases FROM residents ORDER BY sort_order DESC, created_at DESC`;
+          ? await sql`SELECT id, full_name, age, room, branch_name, status, chronic_diseases, hn FROM residents WHERE branch_name = ${me.branch} ORDER BY sort_order DESC, created_at DESC`
+          : await sql`SELECT id, full_name, age, room, branch_name, status, chronic_diseases, hn FROM residents ORDER BY sort_order DESC, created_at DESC`;
         return NextResponse.json({ residents: rows });
       }
       case "family_updates_all": {

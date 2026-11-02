@@ -4,6 +4,7 @@ import Icon from "../Icon";
 import { Modal } from "../ui";
 import { bahtText, money } from "@/lib/billing";
 import { EXTRA_SERVICES, PACKAGES, rateColumns, ROOMS } from "@/lib/priceList";
+import { isNoAllergy } from "@/lib/medicalLists";
 import { ACCEPT, CONSENT, CONSENT_MARKETING, DOC_RECEIPT, EXCLUDED, EXCLUDED_NOTE, FINES, HOSPITAL_STEPS, INCLUDED, INCLUDED_NOTE, PAY_CHANNELS, REHAB_CHECKS, ROOM_CHECK, ROOM_CHECK_NOTE,
   RULES_CENTER, RULES_FINANCE_AFTER, RULES_FINANCE_BEFORE, RULES_NURSING, RULES_REFUND, RULES_REHAB, VISIT_EFFECTIVE, VISIT_RULES } from "@/lib/contractText";
 
@@ -115,7 +116,7 @@ export function ContractDoc({ r, hn, bed, branch, terms, by, copy, chronic }: { 
         <KV items={[
           ["ชื่อ - นามสกุล", val(r[2])], ["อายุ", blank(r[13]) ? `${r[13]} ปี` : "-"], ["เลขบัตรประชาชน", idFmt(r[12])], ["ห้องพัก", room || "-"],
           ["โรคประจำตัว", val(chronic)], ["โรงพยาบาลตามสิทธิ์การรักษา", val(r[24])],
-          ["ประวัติการแพ้ยา", blank(r[25]) ? `แพ้ยา (ระบุ: ${r[25]})` : "ปฏิเสธ"], ["ประวัติการแพ้อาหาร", blank(r[26]) ? `แพ้ (ระบุ: ${r[26]})` : "ปฏิเสธ"],
+          ["ประวัติการแพ้ยา", isNoAllergy(r[25]) ? "ปฏิเสธ" : `แพ้ยา (ระบุ: ${r[25]})`], ["ประวัติการแพ้อาหาร", isNoAllergy(r[26]) ? "ปฏิเสธ" : `แพ้ (ระบุ: ${r[26]})`],
           ["ยา / เวชภัณฑ์ที่ใช้ประจำ", val(r[28]), true],
         ]} />
       </Num>
@@ -200,7 +201,7 @@ export function ContractDoc({ r, hn, bed, branch, terms, by, copy, chronic }: { 
       {RULES_NURSING.map((x, i) => <Num key={i} n={`3.${i + 1}`}><p>{x}</p></Num>)}
       <Num n={`3.${RULES_NURSING.length + 1}`}>
         <p>ในกรณีที่ผู้รับบริการจำเป็นต้องเข้ารับการรักษา ให้นำส่งโรงพยาบาล <Fill v={r[24]} w="14em" /></p>
-        <p>หรือให้นำส่งโรงพยาบาลใกล้เคียงชื่อ <Fill w="14em" /></p>
+        <p>หรือให้นำส่งโรงพยาบาลใกล้เคียงชื่อ <Fill v={r[29]} w="14em" /></p>
         <p>หมายเลขโทรศัพท์ที่สามารถติดต่อได้เร่งด่วนที่สุดในกรณีฉุกเฉิน <Fill v={telFmt(r[9]) === "-" ? "" : telFmt(r[9])} w="9em" /></p>
       </Num>
 

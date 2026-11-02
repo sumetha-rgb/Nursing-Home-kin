@@ -43,7 +43,10 @@ export async function GET(req: NextRequest) {
     const shifts = (await sql(`SELECT s.staff_id, count(*)::int AS scheduled,
         count(a.id) FILTER (WHERE COALESCE(a.late_min, 0) = 0)::int AS ontime, count(a.id) FILTER (WHERE a.late_min > 0)::int AS late
       FROM staff_shifts s LEFT JOIN attendance a ON a.staff_id = s.staff_id AND a.work_date = s.shift_date AND a.shift = s.shift AND a.kind = 'in'
-      WHERE s.shift_date >= $1::date AND s.shift_date < $1::date + interval '1 month' AND s.shift_date <= (now() AT TIME ZONE 'Asia/Bangkok')::date ${bw("s.branch_name", 2)}
+      WHERE s.shift_date >= $1::date AND s.shift_date < $1::date + interval '1 month' AND s.shift_date <= (now() AT TIME ZONE 'Asia/Bangkok')::date
+        -- เวรวันนี้ที่ยังไม่ถึงเวลาเข้างาน (+ผ่อนผัน 15 นาที) และยังไม่ได้เช็คชื่อ: ยังไม่นับว่าขาด
+        AND (s.shift_date < (now() AT TIME ZONE 'Asia/Bangkok')::date OR a.id IS NOT NULL
+             OR (now() AT TIME ZONE 'Asia/Bangkok')::time >= (CASE WHEN s.shift = 'ดึก' THEN time '19:15' ELSE time '07:15' END)) ${bw("s.branch_name", 2)}
       GROUP BY s.staff_id`, [from, ...bp])) as { staff_id: string; scheduled: number; ontime: number; late: number }[];
 
     const taskOf = (s: { name: string; branch: string }) => tasks.find((t) => t.name === s.name && t.branch === s.branch);

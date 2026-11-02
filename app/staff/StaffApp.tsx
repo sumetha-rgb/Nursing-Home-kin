@@ -12,6 +12,7 @@ import CashierOnly from "@/components/CashierOnly";
 import { can } from "@/lib/perms";
 import Icon from "@/components/Icon";
 import { Field, Modal, Select } from "@/components/ui";
+import { ResidentPicker } from "@/components/SearchSelect";
 import { AppProvider, useApp } from "@/lib/app";
 import { downloadCsv, useCrud, useRecords } from "@/lib/store";
 import { useResidents } from "@/lib/care";
@@ -378,7 +379,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
             </Card>
             <Card title="สรุปรายงานประจำวัน (ตอบญาติ)" icon="doc">
               <p className="mb-3 text-xs text-gold-600">รวมข้อมูลรายงานสุขภาพ (สัญญาณชีพ/อาหาร/ขับถ่าย) การให้ยา เรื่องเฝ้าระวัง และโน้ตการทำงาน รายบุคคล เพื่อให้พนักงานทุกคนตอบคำถามญาติได้ตรงกัน</p>
-              <Select options={RESIDENTS.map((r) => r.name)} placeholder="-- เลือกผู้รับบริการเพื่อดูข้อมูลตอบญาติ --" value={rep.who} onChange={(v) => setRep({ ...rep, who: v })} />
+              <ResidentPicker names={RESIDENTS.map((r) => r.name)} placeholder="พิมพ์ชื่อหรือเลขห้องเพื่อดูข้อมูลตอบญาติ" value={rep.who} onChange={(v) => setRep({ ...rep, who: v })} />
               <div className="my-3 flex gap-2">{["วันนี้", "เมื่อวาน"].map((d) => <button key={d} onClick={() => setRep({ ...rep, day: d })} className={`flex-1 rounded-full py-2 text-sm ${rep.day === d ? "bg-gold-700 text-white" : "bg-cream-200 text-gold-700"}`}>{d}</button>)}</div>
               {rep.who ? (() => {
                 const r = RESIDENTS.find((x) => x.name === rep.who);
@@ -534,7 +535,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
           }).catch((e) => toast((e as Error).message || "ส่งงานพิเศษไม่สำเร็จ กรุณาลองใหม่"));
         }}>ยืนยันส่งงานพิเศษ</button>}>
         <div className="space-y-4">
-          <Field label="ผู้รับบริการ (Resident)"><Select options={RESIDENTS.map((r) => r.name)} placeholder="-- เลือกผู้รับบริการ --" value={bonusWho} onChange={setBonusWho} /></Field>
+          <Field label="ผู้รับบริการ (Resident)"><ResidentPicker names={RESIDENTS.map((r) => r.name)} value={bonusWho} onChange={setBonusWho} /></Field>
           <Field label="รายละเอียดงาน"><input value={bonusText} onChange={(e) => setBonusText(e.target.value)} placeholder="เช่น เช็ดน้ำหก, ถ่ายภาพรอยยิ้ม" /></Field>
           <div><p className="label">ถ่ายภาพผลงาน (บังคับ)</p><PhotoInput label="กดเพื่อถ่ายภาพ" file={photo} onFile={setPhoto} /></div>
           <p className="rounded-2xl bg-cream-50 p-3 text-xs leading-6 text-gold-600">แชร์ส่งให้ญาติทาง LINE พร้อมแนบลิงก์แอป Family (ส่งเสร็จจะมีปุ่มให้กดแชร์)</p>
@@ -580,7 +581,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
           setHandover([{ id: Date.now(), type: hoType, who: hoWho, text: hoText, by: user.name, at: nowTh() }, ...handover]); setModal("handover"); toast(`บันทึกส่งเวรแล้ว · ${hoType}${hoWho ? ` · ${hoWho}` : ""}`);
         }}>บันทึกส่งเวร</button>}>
         <div className="space-y-4">
-          <Field label="1. ระบุผู้ป่วย"><Select options={RESIDENTS.map((r) => r.name)} placeholder="-- เลือก --" value={hoWho} onChange={setHoWho} /></Field>
+          <Field label="1. ระบุผู้ป่วย"><ResidentPicker names={RESIDENTS.map((r) => r.name)} value={hoWho} onChange={setHoWho} /></Field>
           <div><p className="label">2. ประเภทเรื่องที่ส่ง</p><div className="grid grid-cols-2 gap-2">{TYPES.map((x) => <button key={x} type="button" onClick={() => setHoType(x)} className={`rounded-xl border px-3 py-2.5 text-sm ${hoType === x ? "border-gold-600 bg-gold-100 text-gold-800" : "border-cream-300 text-gold-600"}`}>{x}</button>)}</div></div>
           <Field label="3. รายละเอียด (พิมพ์ หรือ ใช้เสียงพูด)"><textarea rows={4} value={hoText} onChange={(e) => setHoText(e.target.value)} placeholder="ระบุรายละเอียดที่ต้องการส่งเวร..." /></Field>
         </div>

@@ -38,7 +38,7 @@ const SPECS: Record<string, Omit<Spec, "scope">> = {
       c("room"), c("start_date", "date_th"), c("employer_id_no"), c("employer_phone"), c("employer_address"), c("relationship"),
       c("resident_id_no"), c("resident_age", "int"), c("included_services"), c("extra_services"), c("extra_fee"), c("extra_package"),
       c("prepaid", "money"), c("deposit", "money"), c("note"),
-      c("program"), c("end_date", "date_th"), c("items_json"), c("hospital"), c("drug_allergy"), c("food_allergy"), c("room_deposit", "money"), c("regular_meds"),
+      c("program"), c("end_date", "date_th"), c("items_json"), c("hospital"), c("drug_allergy"), c("food_allergy"), c("room_deposit", "money"), c("regular_meds"), c("hospital_alt"),
     ],
   },
   /** ใบแจ้งหนี้/ใบเสร็จ: items = JSON รายการ [{desc, qty, price, discount}] · สถานะ ค้างชำระ → ชำระแล้ว (เป็นใบเสร็จ) */

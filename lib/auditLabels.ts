@@ -17,8 +17,8 @@ export const ACTION_GROUPS: Record<string, string[]> = {
 };
 
 export const AREA_LABEL: Record<string, string> = {
-  residents: "ผู้รับบริการ", contracts: "สัญญาบริการ", assessments: "แผนดูแลและใบประเมิน", tasks_table: "ทะเบียนงาน",
-  facility: "งานทั่วไปของศูนย์", master: "คลังงานมาตรฐาน", appointments: "ตารางนัดหมาย", health: "บันทึกสุขภาพ",
+  residents: "ผู้รับบริการ", contracts: "สัญญาบริการ", assessments: "ใบเสนอราคา / แผนดูแล", tasks_table: "ประวัติงานย้อนหลัง",
+  facility: "งานทั่วไปของสาขา", master: "แม่แบบงานมาตรฐาน", appointments: "ตารางนัดหมาย", health: "รายงานสุขภาพ",
   complaints: "เสียงจากครอบครัว", docs: "เอกสารและระเบียบ", branches: "สาขาของเรา", users: "ทีมและสิทธิ์การใช้งาน",
   auth: "การเข้าสู่ระบบ", "pharmacy-master": "แอปจัดยา · ฐานข้อมูลยา", "pharmacy-drugs": "แอปจัดยา · คลังยา",
   "pharmacy-packs": "แอปจัดยา · ซองยา", "staff-tasks": "KinApp · งานวันนี้", "staff-meds": "KinApp · คิวจ่ายยา",

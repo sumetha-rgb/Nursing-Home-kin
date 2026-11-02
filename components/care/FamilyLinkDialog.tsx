@@ -8,7 +8,8 @@ import { can } from "@/lib/perms";
 import { useResidents } from "@/lib/care";
 import { familyUrl, LINK_DAYS, ReviewLink, reviewUrl } from "@/lib/reviews";
 import { openHere } from "@/lib/site";
-import { DataTable, Field, Modal, Select } from "../ui";
+import { DataTable, Field, Modal } from "../ui";
+import { ResidentPicker } from "../SearchSelect";
 
 async function call<T>(url: string, body?: object): Promise<T> {
   const r = await fetch(url, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : { cache: "no-store" });
@@ -59,8 +60,7 @@ export default function FamilyLinkDialog({ open, onClose, residentId = "" }: { o
         ญาติเปิดลิงก์เดียวแล้วเห็นรูปและบันทึกการดูแลแต่ละวัน (เฉพาะรูปที่พนักงานแชร์) การให้ยาตามมื้อ และกดรีวิวพนักงานได้ · ไม่ต้องสมัครสมาชิก
         · ลิงก์มีรหัสสุ่ม ใช้ได้ {LINK_DAYS} วัน ยกเลิกได้ทุกเมื่อ
       </p>
-      <Field label="ผู้รับบริการ"><Select options={residents.map((r) => r.full_name)} placeholder="-- เลือกผู้รับบริการ --"
-        value={name} onChange={(n) => setResId(residents.find((r) => r.full_name === n)?.id ?? "")} /></Field>
+      <Field label="ผู้รับบริการ"><ResidentPicker by="id" names={residents.map((r) => r.full_name)} value={resId} onChange={setResId} /></Field>
       {resId && (
         <div className="mt-4 space-y-4">
           {token ? (

@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import Icon from "@/components/Icon";
-import { DataTable, Field, Modal, StatusBadge, Tabs } from "@/components/ui";
+import { DataTable, Field, Modal, StatusBadge } from "@/components/ui";
 import ClinicalPanel, { ClinicalTab, useClinic } from "./Clinical";
 import { PrintModal, ProfileDoc, ReferralDoc } from "@/components/print/Docs";
 import { MedPhotoModal } from "@/components/pharmacy/MedPhotos";
@@ -56,6 +56,11 @@ const limitLines = (k: keyof Vitals) => {
 };
 
 const TABS = ["ภาพรวม", "แรกรับ/ประเมิน", "บันทึกพยาบาล", "สัญญาณชีพ", "ยาและการให้ยา", "กายภาพ", "เวชภัณฑ์", "งานดูแลและนัดหมาย", "สมุดส่งเวร"];
+/** แท็บแบ่ง 2 แถวตามกลุ่ม ไม่ต้องเลื่อนซ้ายขวา */
+const TAB_GROUPS = [
+  { label: "ข้อมูลทั่วไป", tabs: ["ภาพรวม", "แรกรับ/ประเมิน", "งานดูแลและนัดหมาย", "สมุดส่งเวร"] },
+  { label: "การดูแลรายวัน", tabs: ["บันทึกพยาบาล", "สัญญาณชีพ", "ยาและการให้ยา", "กายภาพ", "เวชภัณฑ์"] },
+];
 const CLINICAL: Record<string, ClinicalTab> = { "แรกรับ/ประเมิน": "admission", "บันทึกพยาบาล": "nursing", "กายภาพ": "physio", "เวชภัณฑ์": "supplies" };
 
 /** ประวัติรายบุคคล: กดชื่อผู้รับบริการแล้วเห็นทุกอย่างในหน้าเดียว (พิมพ์เป็นเอกสารได้) */
@@ -110,7 +115,13 @@ export default function ResidentProfile({ id, onClose }: { id: string | null; on
             {r.status && <StatusBadge value={r.status} />}
           </div>
 
-          <div className="print-hide"><Tabs tabs={TABS} value={tab} onChange={setTab} /></div>
+          <div className="print-hide space-y-2 rounded-2xl border border-cream-300 bg-cream-50 p-3" role="group" aria-label="เลือกหัวข้อ">
+            {TAB_GROUPS.map((g) => <div key={g.label} className="flex flex-col gap-1.5 sm:flex-row sm:items-center">
+              <span className="w-28 shrink-0 text-xs font-medium text-gold-500">{g.label}</span>
+              <div className="flex flex-wrap gap-1.5">{g.tabs.map((t) => <button type="button" key={t} aria-pressed={tab === t} onClick={() => setTab(t)}
+                className={`rounded-full px-3.5 py-1.5 text-sm transition ${tab === t ? "bg-gold-700 font-medium text-white shadow-sm" : "border border-cream-300 bg-white text-gold-700 hover:border-gold-300"}`}>{t}</button>)}</div>
+            </div>)}
+          </div>
 
           {tab === TABS[0] && (
             <div className="grid gap-4 md:grid-cols-2">

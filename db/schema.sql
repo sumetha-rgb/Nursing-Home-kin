@@ -866,6 +866,7 @@ UPDATE care_assessments c SET doc_no = 'QT-' || (extract(year FROM c.created_at 
 FROM n WHERE c.id = n.id;
 -- คอร์สกายภาพ: ออกใบแจ้งหนี้แล้วหรือยัง (ดึงเข้าใบแจ้งหนี้ได้แบบเดียวกับเวชภัณฑ์)
 ALTER TABLE physio_courses ADD COLUMN IF NOT EXISTS invoice_id text;
+ALTER TABLE clinical_notes ADD COLUMN IF NOT EXISTS invoice_id text;  -- กายภาพรายครั้งที่ยังไม่มีคอร์ส: ออกใบแจ้งหนี้แล้ว
 -- ยาน้ำนับเป็นปริมาตร: ขนาดบรรจุต่อขวด (เช่น 1000 ml) · สต็อกและขนาดต่อครั้งเก็บเป็น ml
 ALTER TABLE resident_medications ADD COLUMN IF NOT EXISTS pack_size numeric(12,2);
 -- ยอดที่รับเข้าครั้งแรก (ใช้คำนวณ "ใช้ไปแล้ว" = รับเข้า − คงเหลือ)
@@ -944,3 +945,4 @@ ALTER TABLE contracts ADD COLUMN IF NOT EXISTS drug_allergy  text;
 ALTER TABLE contracts ADD COLUMN IF NOT EXISTS food_allergy  text;
 ALTER TABLE contracts ADD COLUMN IF NOT EXISTS room_deposit  numeric(12,2);
 ALTER TABLE contracts ADD COLUMN IF NOT EXISTS regular_meds  text;
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS hospital_alt  text;  -- โรงพยาบาลสำรอง (ใกล้เคียง) ข้อ 3.8

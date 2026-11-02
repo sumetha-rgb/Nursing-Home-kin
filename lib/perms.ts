@@ -11,9 +11,9 @@ type Item = { id: Perm; label: string; hint?: string };
 
 export const PERM_GROUPS: { title: string; items: Item[] }[] = [
   { title: "เมนูพื้นที่ดูแล", items: [
-    { id: "careplan", label: "ภาพรวมการดูแล" }, { id: "residents", label: "ผู้รับบริการ", hint: "ดู/แก้ทะเบียนและประวัติผู้รับบริการ" },
+    { id: "careplan", label: "หน้าแรก" }, { id: "residents", label: "ผู้รับบริการ", hint: "ดู/แก้ทะเบียนและประวัติผู้รับบริการ" },
     { id: "rooms", label: "ห้องผู้ป่วย", hint: "ดูห้องว่างและคนในห้อง" }, { id: "tasks", label: "มอบหมายและตรวจงาน" }, { id: "roster", label: "ตารางเวร" },
-    { id: "appointments", label: "ตารางนัดหมาย" }, { id: "health_logs", label: "บันทึกสุขภาพ" }, { id: "quotations", label: "แผนดูแลและใบประเมิน" },
+    { id: "appointments", label: "ตารางนัดหมาย" }, { id: "health_logs", label: "รายงานสุขภาพ" }, { id: "quotations", label: "ใบเสนอราคา / แผนดูแล" },
   ] },
   { title: "เมนูบริหารองค์กร", items: [
     { id: "contracts", label: "สัญญาบริการ", hint: "เปิด/แก้/ต่อสัญญา D/C ยกเลิกสัญญา" }, { id: "billing", label: "การเงิน", hint: "ออกใบแจ้งหนี้ รับชำระ ใบเสร็จ" },
@@ -21,7 +21,7 @@ export const PERM_GROUPS: { title: string; items: Item[] }[] = [
     { id: "feedbacks", label: "เสียงจากครอบครัว" }, { id: "reviews", label: "รีวิวพนักงาน" }, { id: "kpi", label: "KPI พนักงาน" }, { id: "audit", label: "ประวัติการแก้ไข" },
   ] },
   { title: "เมนูเครื่องมือและระบบ", items: [
-    { id: "tasks_table", label: "ทะเบียนงาน" }, { id: "facility_tasks", label: "งานทั่วไปของศูนย์" }, { id: "master_tasks", label: "คลังงานมาตรฐาน" },
+    { id: "tasks_table", label: "ประวัติงานย้อนหลัง" }, { id: "facility_tasks", label: "งานทั่วไปของสาขา" }, { id: "master_tasks", label: "แม่แบบงานมาตรฐาน" },
     { id: "official-docs", label: "เอกสารและระเบียบ" }, { id: "tutorials", label: "วิดีโอสอนใช้งาน" },
   ] },
   { title: "สิทธิ์การทำงาน", items: [

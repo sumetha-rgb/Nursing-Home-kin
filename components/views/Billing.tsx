@@ -10,10 +10,56 @@ import { useApp } from "@/lib/app";
 import { useSession } from "@/lib/session";
 import { can } from "@/lib/perms";
 import { staying } from "@/lib/rooms";
+import { billHandoff } from "@/lib/handoff";
+import { contractLines } from "../print/Docs";
 import { DataTable, Field, MetricGrid, Modal, PageHeader, Section, Tabs } from "../ui";
+import { ResidentPicker } from "../SearchSelect";
+import { rateText, searchPrices } from "@/lib/priceList";
 
 const blankItem = (): BillItem => ({ desc: "", qty: 1, price: 0, discount: 0, pct: 0 });
+
+/** ช่องชื่อรายการ: พิมพ์อย่างน้อย 2 ตัวแล้วขึ้นค่าบริการจากใบราคา กดราคาแล้วชื่อกับราคาลงให้ · ไม่มีในใบราคาพิมพ์เองได้ */
+function LineDesc({ value, onText, onPick }: { value: string; onText: (v: string) => void; onPick: (desc: string, price: number) => void }) {
+  const [open, setOpen] = useState(false);
+  const list = open ? searchPrices(value, 8) : [];
+  return (
+    <div className="relative">
+      <input value={value} placeholder="พิมพ์ 2 ตัวเพื่อค้นจากใบราคา หรือพิมพ์เอง" autoComplete="off" aria-label="รายการ"
+        onChange={(e) => { onText(e.target.value); setOpen(true); }} onFocus={() => setOpen(true)} onBlur={() => setTimeout(() => setOpen(false), 150)} onKeyDown={(e) => { if (e.key === "Escape") setOpen(false); }} />
+      {list.length > 0 && (
+        <div className="absolute z-30 mt-1 max-h-72 w-full min-w-[320px] overflow-auto rounded-2xl border border-gold-200 bg-white shadow-lg">
+          <p className="sticky top-0 border-b border-cream-200 bg-cream-50 px-4 py-2 text-xs text-gold-600">จากใบราคาของศูนย์ · กดราคาแล้วชื่อกับราคาลงให้เลย</p>
+          {list.map((x) => (
+            <div key={x.code} className="border-b border-cream-100 px-4 py-2.5 last:border-0">
+              <p className="text-sm font-medium text-gold-800">{x.name}</p>
+              <div className="mt-1.5 flex flex-wrap gap-1.5">{x.rates.map((r, k) => (
+                <button key={k} type="button" className="rounded-lg border border-gold-300 bg-cream-50 px-2.5 py-1 text-xs font-medium text-gold-800 hover:border-gold-600 hover:bg-gold-100"
+                  onMouseDown={(e) => { e.preventDefault(); onPick(x.name, r.price); setOpen(false); }}>{rateText(r)}</button>
+              ))}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 const num = (x: string) => Number(String(x).replace(/,/g, "")) || 0;
+const val = (x?: string) => num(x && x !== "-" ? x : "");
+
+/**
+ * รายการใบแจ้งหนี้จากสัญญา (ปุ่ม "ออกใบแจ้งหนี้" ในทะเบียนสัญญา)
+ *  มีค่าบริการล่วงหน้า = ใช้ยอดนั้น · ไม่มี = ราคาโปรแกรม + รายการในสัญญา หักมัดจำห้องที่จ่ายตอนจอง · บวกเงินประกัน
+ */
+export function contractStartLines(r: string[]): BillItem[] {
+  const prepaid = val(r[18]), deposit = val(r[19]), dep = val(r[27]);
+  const room = r[6] && r[6] !== "-" ? ` ห้อง ${r[6]}` : "";
+  const service: BillItem[] = prepaid ? [{ desc: `ชำระค่าบริการล่วงหน้า${room}`, qty: 1, price: prepaid, discount: 0 }] : [
+    ...(val(r[4]) ? [{ desc: `${r[21] && r[21] !== "-" ? r[21] : "ค่าบริการรายเดือน"}${room}`, qty: 1, price: val(r[4]), discount: 0 }] : []),
+    ...contractLines(r).filter((x) => x.price > 0).map((x) => ({ desc: x.desc, qty: x.qty, price: x.price, discount: 0 })),
+  ];
+  if (dep && !prepaid) { const k = service.findIndex((l) => l.qty * l.price >= dep); if (k >= 0) service[k] = { ...service[k], discount: dep }; }
+  return [...service, ...(deposit ? [{ desc: "เงินประกัน", qty: 1, price: deposit, discount: 0 }] : [])];
+}
 
 /** ข้อมูลหัวกระดาษของสาขา จากหน้า "สาขาของเรา" (แถว: รหัส, ชื่อ, นิติบุคคล, โทร, ที่อยู่, ...) */
 export function useBranchInfo() {
@@ -56,25 +102,40 @@ export function Billing() {
   /** สัญญาล่าสุดของผู้รับบริการ (ผู้ว่าจ้าง ที่อยู่ เลขที่สัญญา) */
   const contractOf = (name: string) => con.rows.find((r) => r[2] === name && r[5] !== "สิ้นสุดสัญญา") ?? con.rows.find((r) => r[2] === name);
 
+  // มาจากปุ่ม "ออกใบแจ้งหนี้" ในทะเบียนสัญญา · รอข้อมูลสัญญาโหลดก่อนเปิดฟอร์ม
+  const [billFor, setBillFor] = useState<string | null>(null);
+  useEffect(() => { const h = billHandoff.take(); if (h) setBillFor(h); }, []);
+  useEffect(() => {
+    if (!billFor) return;
+    const k = con.ids.indexOf(billFor);
+    if (k < 0) return;
+    setBillFor(null);
+    const c = con.rows[k], p = res.rows.find((r) => r[0] === c[2] && r[3] === c[1]);
+    const dep = val(c[27]), items = contractStartLines(c);
+    setForm({ id: newId(), date: todayIso(), who: c[2], hn: p?.[6] ?? "", payer: c[3] ?? "", address: c[10] ?? "", kind: c[5] === "รอชำระเงินมัดจำ" ? BILL_KINDS[0] : BILL_KINDS[1], contract: c[0] ?? "", items: "[]", total: 0, discount: 0, net: 0, status: UNPAID, note: dep && !val(c[18]) ? `หักมัดจำห้องพักที่ชำระตอนจอง ${money(dep)} บาท` : "" });
+    setLines(items.length ? items : [blankItem()]);
+    loadUnbilled(c[2]);
+  }, [billFor, con.ids, con.rows, res.rows]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const startNew = () => {
     setForm({ id: newId(), date: todayIso(), who: "", hn: "", payer: "", address: "", kind: BILL_KINDS[1], contract: "", items: "[]", total: 0, discount: 0, net: 0, status: UNPAID, note: "" });
     setLines([blankItem()]);
   };
   // เวชภัณฑ์ที่เบิกแล้วยังไม่เรียกเก็บ ของผู้รับบริการที่เลือก (ดึงเข้าใบแจ้งหนี้ได้ในคลิกเดียว)
-  const [unbilled, setUnbilled] = useState<{ id: string; item_name: string; unit: string; qty: number; price: number; at: string; course?: boolean; med?: boolean }[]>([]);
+  const [unbilled, setUnbilled] = useState<{ id: string; item_name: string; unit: string; qty: number; price: number; at: string; course?: boolean; med?: boolean; session?: boolean }[]>([]);
   const [pulled, setPulled] = useState<string[]>([]);
-  const loadUnbilled = (name: string) => {
-    setUnbilled([]); setPulled([]);
+  const loadUnbilled = (name: string, pre: string[] = []) => {
+    setUnbilled([]); setPulled(pre);
     const k = res.rows.findIndex((r) => r[0] === name);
     if (k < 0) return;
-    fetch(`/api/clinic?op=unbilled&resident=${encodeURIComponent(res.ids[k])}`).then((r) => (r.ok ? r.json() : { items: [] })).then((d) => setUnbilled([...(d.meds ?? []).map((m: { id: string; name: string; unit: string; qty: number; price: number; at: string }) => ({ id: m.id, item_name: m.name, unit: m.unit, qty: m.qty, price: m.price, at: m.at, med: true })), ...(d.courses ?? []).map((c: { id: string; name: string; total: number; price: number; at: string }) => ({ id: c.id, item_name: `คอร์ส${c.name.startsWith("กายภาพ") ? "" : "กายภาพ "}${c.name} ${c.total} ครั้ง`, unit: "คอร์ส", qty: 1, price: c.price, at: c.at, course: true })), ...(d.items ?? [])])).catch(() => {});
+    fetch(`/api/clinic?op=unbilled&resident=${encodeURIComponent(res.ids[k])}`).then((r) => (r.ok ? r.json() : { items: [] })).then((d) => setUnbilled([...(d.meds ?? []).map((m: { id: string; name: string; unit: string; qty: number; price: number; at: string }) => ({ id: m.id, item_name: m.name, unit: m.unit, qty: m.qty, price: m.price, at: m.at, med: true })), ...(d.courses ?? []).map((c: { id: string; name: string; total: number; price: number; at: string }) => ({ id: c.id, item_name: `คอร์ส${c.name.startsWith("กายภาพ") ? "" : "กายภาพ "}${c.name} ${c.total} ครั้ง`, unit: "คอร์ส", qty: 1, price: c.price, at: c.at, course: true })), ...(d.items ?? []), ...(d.sessions ?? []).map((x: { id: string; at: string }) => ({ id: x.id, item_name: `กายภาพรายครั้ง (ยังไม่มีคอร์ส) ${x.at.slice(0, 10)}`, unit: "ครั้ง", qty: 1, price: 0, at: x.at, session: true }))])).catch(() => {});
   };
   const pullSupplies = () => {
     const add = unbilled.filter((x) => !pulled.includes(x.id));
     if (!add.length) return;
-    setLines([...lines.filter((l) => l.desc.trim()), ...add.map((x) => ({ desc: x.course ? `${x.item_name} (ซื้อ ${x.at.slice(0, 10)})` : x.med ? `ยา: ${x.item_name} ${x.qty} ${x.unit} (จ่าย ${x.at.slice(0, 10)})` : `เวชภัณฑ์: ${x.item_name} (เบิก ${x.at.slice(0, 10)})`, qty: x.qty, price: x.price, discount: 0 }))]);
+    setLines([...lines.filter((l) => l.desc.trim()), ...add.map((x) => ({ desc: x.course ? `${x.item_name} (ซื้อ ${x.at.slice(0, 10)})` : x.session ? x.item_name : x.med ? `ยา: ${x.item_name} ${x.qty} ${x.unit} (จ่าย ${x.at.slice(0, 10)})` : `เวชภัณฑ์: ${x.item_name} (เบิก ${x.at.slice(0, 10)})`, qty: x.qty, price: x.price, discount: 0 }))]);
     setPulled([...pulled, ...add.map((x) => x.id)]);
-    if (form && form.kind === BILL_KINDS[1]) setForm({ ...form, kind: (add.every((x) => x.course) ? BILL_KINDS.find((k) => k.startsWith("คอร์ส")) : BILL_KINDS.find((k) => k.startsWith("เวชภัณฑ์"))) ?? form.kind });
+    if (form && form.kind === BILL_KINDS[1]) setForm({ ...form, kind: (add.every((x) => x.course || x.session) ? BILL_KINDS.find((k) => k.startsWith("คอร์ส")) : BILL_KINDS.find((k) => k.startsWith("เวชภัณฑ์"))) ?? form.kind });
   };
   const pickResident = (name: string) => {
     if (!form) return;
@@ -83,6 +144,34 @@ export function Billing() {
     setForm({ ...form, who: name, hn: r?.[6] ?? "", payer: c?.[3] ?? form.payer, address: c?.[10] ?? form.address, contract: c?.[0] ?? "" });
     if (c && lines.length === 1 && !lines[0].desc && form.kind === BILL_KINDS[1] && c[4] !== "-") setLines([{ desc: `ค่าบริการรายเดือน ${c[6] && c[6] !== "-" ? `ห้อง ${c[6]}` : ""}`.trim(), qty: 1, price: num(c[4]), discount: 0 }]);
   };
+  // ขายคอร์สกายภาพจากหน้าการเงิน: สร้างคอร์ส (นักกายภาพตัดครั้งที่แท็บกายภาพ) แล้วเปิดใบแจ้งหนี้ที่ใส่คอร์สไว้ให้
+  const [course, setCourse] = useState<{ who: string; name: string; total: string; price: string; busy: boolean } | null>(null);
+  const saveCourse = async () => {
+    if (!course || course.busy) return;
+    const k = res.rows.findIndex((r) => r[0] === course.who);
+    const name = course.name.trim(), total = Math.floor(num(course.total)), price = num(course.price);
+    if (k < 0) return toast("กรุณาเลือกผู้รับบริการ");
+    if (!name) return toast("กรุณากรอกชื่อคอร์ส");
+    if (!(total > 0 && total <= 500)) return toast("กรุณากรอกจำนวนครั้ง 1–500 ครั้ง");
+    if (!(price > 0)) return toast("กรุณากรอกราคาคอร์ส");
+    setCourse({ ...course, busy: true });
+    let id = "";
+    try {
+      const r = await fetch("/api/clinic", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "course", residentId: res.ids[k], name, total, price }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.id) throw new Error(d.error || "บันทึกคอร์สไม่สำเร็จ");
+      id = d.id;
+    } catch (e) {
+      setCourse({ ...course, busy: false });
+      return toast(e instanceof Error ? e.message : "บันทึกคอร์สไม่สำเร็จ");
+    }
+    const p = res.rows[k], c = contractOf(course.who);
+    setCourse(null);
+    setForm({ id: newId(), date: todayIso(), who: course.who, hn: p[6] ?? "", payer: c?.[3] ?? "", address: c?.[10] ?? "", kind: BILL_KINDS.find((x) => x.startsWith("คอร์ส")) ?? BILL_KINDS[1], contract: c?.[0] ?? "", items: "[]", total: 0, discount: 0, net: 0, status: UNPAID, note: "" });
+    setLines([{ desc: `คอร์ส${name.startsWith("กายภาพ") ? "" : "กายภาพ "}${name} ${total} ครั้ง`, qty: 1, price, discount: 0 }]);
+    loadUnbilled(course.who, [id]);
+    toast(`บันทึกคอร์สแล้ว · ${name} ${total} ครั้ง · ${course.who} · ตรวจใบแจ้งหนี้แล้วกดบันทึก`);
+  };
   const sum = totals(lines.filter((l) => l.desc.trim()));
   const saveNew = () => {
     if (!form) return;
@@ -90,10 +179,11 @@ export function Billing() {
     if (!form.who) return toast("กรุณาเลือกผู้รับบริการ");
     if (!form.payer.trim()) return toast("กรุณากรอกชื่อผู้ชำระ");
     if (!items.length) return toast("กรุณาเพิ่มรายการอย่างน้อย 1 รายการ");
+    if (items.some((l) => l.desc.startsWith("กายภาพรายครั้ง") && !(l.price > 0))) return toast("กรุณากรอกราคากายภาพรายครั้ง (ยังไม่มีคอร์ส)");
     if (items.some((l) => l.qty <= 0 || l.price < 0 || l.discount < 0 || (l.pct ?? 0) < 0 || (l.pct ?? 0) > 100 || lineDiscount(l) > l.qty * l.price)) return toast("กรุณาตรวจจำนวน ราคา และส่วนลดของแต่ละรายการ");
     setList([{ ...form, items: JSON.stringify(items), ...totals(items) }, ...list]);
     // เวชภัณฑ์ที่ดึงเข้าใบนี้: ทำเครื่องหมายว่าเรียกเก็บแล้ว (ไม่ดึงซ้ำในใบถัดไป)
-    if (pulled.length) fetch("/api/clinic", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "supply_bill", ids: pulled.filter((id) => { const x = unbilled.find((y) => y.id === id); return x && !x.course && !x.med; }), medIds: pulled.filter((id) => unbilled.find((x) => x.id === id)?.med), courseIds: pulled.filter((id) => unbilled.find((x) => x.id === id)?.course), invoiceId: form.id }) }).catch(() => {});
+    if (pulled.length) fetch("/api/clinic", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "supply_bill", ids: pulled.filter((id) => { const x = unbilled.find((y) => y.id === id); return x && !x.course && !x.med && !x.session; }), noteIds: pulled.filter((id) => unbilled.find((x) => x.id === id)?.session), medIds: pulled.filter((id) => unbilled.find((x) => x.id === id)?.med), courseIds: pulled.filter((id) => unbilled.find((x) => x.id === id)?.course), invoiceId: form.id }) }).catch(() => {});
     setForm(null); setTab(UNPAID);
     toast(`ออกใบแจ้งหนี้แล้ว · ${form.who} · ${money(totals(items).net)} บาท · ระบบออกเลขที่เอกสารให้`);
   };
@@ -119,6 +209,20 @@ export function Billing() {
       refreshData("invoices");
       toast(d.status === PAID ? `รับชำระครบแล้ว · ${pay.no ?? ""} · ${pay.who} · ออกเป็นใบเสร็จรับเงิน` : `รับชำระบางส่วนแล้ว · ${pay.no ?? ""} · รับ ${money(now)} บาท · คงเหลือ ${money(left - now)} บาท`);
       setTab(d.status === PAID ? PAID : UNPAID);
+      // ชำระครบ และสัญญายังรอชำระมัดจำ: ถามเปลี่ยนเป็นใช้งานอยู่ + ให้ผู้รับบริการเข้าพัก
+      const k = d.status === PAID && pay.contract && can(user, "contracts") ? con.rows.findIndex((c) => c[0] === pay.contract && c[5] === "รอชำระเงินมัดจำ") : -1;
+      if (k >= 0) {
+        const c = con.rows[k], j = res.rows.findIndex((r) => r[0] === c[2] && r[3] === c[1]);
+        confirm({
+          title: "เริ่มสัญญา", okLabel: "เปลี่ยนเป็นใช้งานอยู่",
+          message: `รับชำระครบแล้ว ต้องการเปลี่ยนสัญญา ${c[0]} เป็น "ใช้งานอยู่"${j >= 0 && res.rows[j][5]?.startsWith("มัดจำ") ? ` และให้ ${c[2]} เข้าพัก${c[6] && c[6] !== "-" ? `ห้อง ${c[6]}` : ""}` : ""} เลยหรือไม่`,
+          onOk: () => {
+            con.update(k, c.map((x, n) => (n === 5 ? "ใช้งานอยู่" : x)));
+            if (j >= 0 && res.rows[j][5]?.startsWith("มัดจำ")) res.update(j, res.rows[j].map((x, n) => (n === 5 ? "เข้าอยู่ (Active)" : x)));
+            toast(`เริ่มสัญญาแล้ว · ${c[0]} · ${c[2]} เข้าพัก`);
+          },
+        });
+      }
     } catch (e) { toast((e as Error).message); }
     finally { setBusy(false); }
   };
@@ -138,6 +242,7 @@ export function Billing() {
       <PageHeader title="การเงิน" sub="ออกใบแจ้งหนี้ รับชำระเงิน และพิมพ์ใบเสร็จตามแบบของศูนย์"
         actions={<>
           <button className="btn-soft" onClick={() => downloadCsv("การเงิน", ["เลขที่เอกสาร", "วันที่", "HN", "ผู้รับบริการ", "ประเภท", "ยอดสุทธิ", "ชำระแล้ว", "คงเหลือ", "สถานะ"], rows)}><Icon name="download" className="h-4 w-4" /> ส่งออก CSV</button>
+          <button className="btn-soft" onClick={() => setCourse({ who: "", name: "กายภาพบำบัด (ครั้งละ 45 นาที)", total: "10", price: "", busy: false })}><Icon name="plus" className="h-4 w-4" /> ขายคอร์สกายภาพ</button>
           <button className="btn-primary" onClick={startNew}><Icon name="plus" className="h-4 w-4" /> ออกใบแจ้งหนี้</button>
         </>} />
       <MetricGrid items={[
@@ -161,11 +266,8 @@ export function Billing() {
         footer={<><button className="btn-soft" onClick={() => setForm(null)}>ยกเลิก</button><button className="btn-primary" onClick={saveNew}>บันทึกใบแจ้งหนี้</button></>}>
         {form && <div className="space-y-5">
           <div className="grid gap-4 md:grid-cols-2">
-            <Field label="ผู้รับบริการ" required><select value={form.who} onChange={(e) => pickResident(e.target.value)}>
-              <option value="">-- เลือกผู้รับบริการ --</option>
-              {people.map((r) => <option key={`${r[0]}|${r[3]}`} value={r[0]}>{r[0]}{r[6] ? ` · ${r[6]}` : ""} · {r[3]}</option>)}
-            </select></Field>
-            <Field label="ประเภท"><select value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value })}>{BILL_KINDS.map((k) => <option key={k}>{k}</option>)}</select></Field>
+            <Field label="ผู้รับบริการ" required><ResidentPicker value={form.who} names={people.map((r) => r[0])} onChange={pickResident} /></Field>
+            <Field label="ประเภท"><select value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value })}>{BILL_KINDS.map((k) => <option key={k}>{k}</option>)}</select><p className="field-hint">หมวดหลักของใบนี้ · ใบเดียวใส่ได้หลายรายการ เช่น ค่าห้อง + ค่ากายภาพ + เวชภัณฑ์</p></Field>
             <Field label="ชื่อผู้ชำระ" required><input value={form.payer} onChange={(e) => setForm({ ...form, payer: e.target.value })} /></Field>
             <Field label="วันที่"><input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></Field>
             <Field label="ที่อยู่ผู้ชำระ" className="md:col-span-2"><textarea rows={2} value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} /></Field>
@@ -180,7 +282,7 @@ export function Billing() {
             <div className="space-y-3">{lines.map((l, i) => {
               const set = (p: Partial<BillItem>) => setLines(lines.map((x, j) => (j === i ? { ...x, ...p } : x)));
               return <div key={i} className="bill-line">
-                <Field label="รายการ"><input value={l.desc} placeholder="เช่น ค่าบริการรายเดือน พ.ย. 2569" onChange={(e) => set({ desc: e.target.value })} /></Field>
+                <Field label="รายการ"><LineDesc value={l.desc} onText={(desc) => set({ desc })} onPick={(desc, price) => set({ desc, price })} /></Field>
                 <Field label="จำนวน"><input type="number" min={0} value={l.qty} onChange={(e) => set({ qty: num(e.target.value) })} /></Field>
                 <Field label="ราคา/หน่วย"><input type="number" min={0} value={l.price} onChange={(e) => set({ price: num(e.target.value) })} /></Field>
                 <Field label="ส่วนลด (บาท)"><input type="number" min={0} value={l.discount} onChange={(e) => set({ discount: num(e.target.value) })} /></Field>
@@ -192,6 +294,20 @@ export function Billing() {
             <p className="mt-3 text-right text-sm text-gold-700">รวม {money(sum.total)} · ส่วนลด {money(sum.discount)} · <b className="text-base text-gold-800">สุทธิ {money(sum.net)} บาท</b></p>
           </div>
           <Field label="หมายเหตุ"><input value={form.note ?? ""} onChange={(e) => setForm({ ...form, note: e.target.value })} /></Field>
+        </div>}
+      </Modal>
+
+      {/* ขายคอร์สกายภาพ */}
+      <Modal open={!!course} title="ขายคอร์สกายภาพ" onClose={() => setCourse(null)}
+        footer={<><button className="btn-soft" onClick={() => setCourse(null)}>ยกเลิก</button><button className="btn-primary" disabled={course?.busy} onClick={saveCourse}>{course?.busy ? "กำลังบันทึก…" : "บันทึกคอร์สและออกใบแจ้งหนี้"}</button></>}>
+        {course && <div className="space-y-4">
+          <div className="form-grid">
+            <Field label="ผู้รับบริการ" required className="md:col-span-2"><ResidentPicker value={course.who} names={people.map((r) => r[0])} onChange={(v) => setCourse({ ...course, who: v })} /></Field>
+            <Field label="ชื่อคอร์ส" required className="md:col-span-2"><input value={course.name} onChange={(e) => setCourse({ ...course, name: e.target.value })} /></Field>
+            <Field label="จำนวนครั้ง" required><input type="number" min={1} max={500} value={course.total} onChange={(e) => setCourse({ ...course, total: e.target.value })} /></Field>
+            <Field label="ราคาคอร์ส (บาท)" required><input type="number" min={0} value={course.price} onChange={(e) => setCourse({ ...course, price: e.target.value })} placeholder="เช่น 8000" /></Field>
+          </div>
+          <p className="rounded-xl bg-cream-50 px-4 py-3 text-sm text-gold-700">กดบันทึกแล้วระบบเปิดใบแจ้งหนี้ที่ใส่คอร์สนี้ไว้ให้ เพิ่มรายการอื่นในใบเดียวกันได้ · นักกายภาพเห็นคอร์สและตัดครั้งได้ที่ประวัติผู้รับบริการ แท็บกายภาพ</p>
         </div>}
       </Modal>
 

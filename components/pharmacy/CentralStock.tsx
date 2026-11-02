@@ -8,6 +8,7 @@ import { money } from "@/lib/billing";
 import { MEALS } from "@/lib/pharmacy";
 import { refreshData } from "@/lib/store";
 import { DataTable, Field, MetricGrid, Modal, PageHeader, Section, Select } from "../ui";
+import { SearchSelect } from "../SearchSelect";
 
 /**
  * คลังยากลางของศูนย์ (ยาที่ศูนย์ซื้อเอง แยกจากยาของผู้ป่วย)
@@ -72,7 +73,7 @@ export default function CentralStock() {
 
   return (
     <>
-      <PageHeader title="คลังยากลางของศูนย์" sub="ยาที่ศูนย์ซื้อเอง แยกตามสาขา · เบิกให้ผู้ป่วยแล้วแคชเชียร์ดึงเข้าใบแจ้งหนี้ได้ · ยาของผู้ป่วยที่ญาตินำมาอยู่ที่เมนูรับยาเข้าคลัง"
+      <PageHeader title="คลังยากลางของศูนย์" sub="ยาที่ศูนย์ซื้อเอง แยกตามสาขา · เบิกให้ผู้ป่วยแล้วแคชเชียร์ดึงเข้าใบแจ้งหนี้ได้ · ยาของผู้ป่วยที่ญาตินำมาอยู่ที่เมนูยาของผู้ป่วย"
         actions={<>
           {branchNames.length > 1 && <div className="min-w-44"><Select options={branchNames} placeholder="รวมทุกสาขา" value={branch} onChange={setBranch} /></div>}
           {data?.manager && <button className="btn-primary" onClick={() => setItem({ name: "", unit: "เม็ด", form: "", price: "", min: "10", note: "" })}><Icon name="plus" className="h-4 w-4" /> เพิ่มรายการยา</button>}
@@ -139,9 +140,8 @@ export default function CentralStock() {
             `เบิกยาแล้ว · ${issue.drug.name} ${issue.qty} ${issue.drug.unit} · ${residents.find((r) => r.id === issue.resident)?.full_name ?? ""}${issue.basket ? " · เข้าตะกร้ายาผู้ป่วย" : ""}${issue.drug.price !== null ? " · ขึ้นรอเรียกเก็บที่การเงิน" : ""}`,
             () => { if (issue.basket) refreshData("pharmacy-drugs"); setIssue(null); }))}>ยืนยันเบิก</button></>}>
         {issue && <div className="space-y-4">
-          <Field label="ผู้รับบริการ" required><select value={issue.resident} onChange={(e) => setIssue({ ...issue, resident: e.target.value })}>
-            <option value="">-- เลือกผู้รับบริการ --</option>{pick.map((r) => <option key={r.id} value={r.id}>{r.full_name}{r.room ? ` · ห้อง ${r.room}` : ""}</option>)}
-          </select></Field>
+          <Field label="ผู้รับบริการ" required><SearchSelect value={issue.resident} onChange={(v) => setIssue({ ...issue, resident: v })} ariaLabel="ผู้รับบริการ" placeholder="พิมพ์ชื่อ, HN หรือเลขห้อง"
+            items={pick.map((r) => { const room = r.room && r.room.trim() !== "-" ? r.room : ""; return { value: r.id, label: r.full_name, sub: [r.hn || "ยังไม่มี HN", r.branch_name].filter(Boolean).join(" · "), badge: room ? `ห้อง ${room}` : "ยังไม่มีห้อง", tone: room ? "room" as const : "warn" as const, keys: room ? "" : "ยังไม่มีห้อง" }; })} /></Field>
           <Field label={`จำนวน (${issue.drug.unit})`}><input type="number" min={0} value={issue.qty} onChange={(e) => setIssue({ ...issue, qty: e.target.value })} /></Field>
           <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-cream-300 bg-cream-50 p-4 text-sm">
             <input type="checkbox" className="mt-1" checked={issue.basket} onChange={(e) => setIssue({ ...issue, basket: e.target.checked })} />

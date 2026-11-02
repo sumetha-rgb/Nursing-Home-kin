@@ -1,7 +1,8 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import Icon from "@/components/Icon";
-import { Field, Modal, Select } from "@/components/ui";
+import { Field, Modal } from "@/components/ui";
+import { ResidentPicker } from "../SearchSelect";
 import { useApp } from "@/lib/app";
 import { nowTh } from "@/lib/pharmacy";
 import { evaluateVitals, flagText, levelOf, LEVEL_TH, parseVitals, vitalText } from "@/lib/vitals";
@@ -51,7 +52,7 @@ export default function VitalsDialog({ open, residents, resident, recorder, onCl
     <Modal open={open} title="บันทึกสัญญาณชีพ" onClose={onClose}
       footer={<><button className="btn-soft" onClick={onClose}>ยกเลิก</button><button className={level === "critical" ? "btn-danger" : "btn-primary"} onClick={save}>{level === "normal" ? "บันทึก" : "บันทึกและแจ้งพยาบาล"}</button></>}>
       <div className="space-y-4">
-        <Field label="ผู้รับบริการ" required><Select options={residents} placeholder="-- เลือกผู้รับบริการ --" value={who} onChange={setWho} /></Field>
+        <Field label="ผู้รับบริการ" required><ResidentPicker names={residents} value={who} onChange={setWho} /></Field>
         <div className="grid grid-cols-2 gap-3">
           {FIELDS.map((x) => (
             <Field key={x.k} label={x.label}>

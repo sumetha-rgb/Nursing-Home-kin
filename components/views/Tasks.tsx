@@ -35,11 +35,11 @@ export function FacilityTasks() {
   return (
     <>
       <PageHeader
-        title="งานทั่วไปประจำสาขา (Facility Tasks)"
+        title="งานทั่วไปของสาขา"
         sub="จัดการงานสถานที่ งานทำความสะอาด และงานทั่วไปที่ไม่ผูกกับผู้รับบริการ"
         actions={<>
-          <button className="btn-soft" onClick={() => go("master_tasks")}>จัดการคลังงานมาตรฐาน</button>
-          <button className="btn-soft" onClick={() => downloadCsv("งานทั่วไปประจำสาขา", FAC_COLS, rows)}><Icon name="download" className="h-4 w-4" /> ส่งออก CSV (Excel)</button>
+          <button className="btn-soft" onClick={() => go("master_tasks")}>จัดการแม่แบบงานมาตรฐาน</button>
+          <button className="btn-soft" onClick={() => downloadCsv("งานทั่วไปของสาขา", FAC_COLS, rows)}><Icon name="download" className="h-4 w-4" /> ส่งออก CSV (Excel)</button>
           <button className="btn-primary" onClick={() => setDlg({ mode: "add", i: -1 })}><Icon name="plus" className="h-4 w-4" /> เพิ่มงานทั่วไป</button>
         </>}
       />
@@ -101,10 +101,10 @@ export function MasterTasks() {
   return (
     <>
       <PageHeader
-        title="คลังงานมาตรฐาน (Master Tasks)"
+        title="แม่แบบงานมาตรฐาน"
         sub="จัดการชื่องานและคำสั่งงานที่เป็นมาตรฐานของศูนย์"
         actions={<>
-          <button className="btn-soft" onClick={() => downloadCsv("คลังงานมาตรฐาน", MT_COLS, rows.map((r) => r.slice(0, 6)))}><Icon name="download" className="h-4 w-4" /> ส่งออก CSV</button>
+          <button className="btn-soft" onClick={() => downloadCsv("แม่แบบงานมาตรฐาน", MT_COLS, rows.map((r) => r.slice(0, 6)))}><Icon name="download" className="h-4 w-4" /> ส่งออก CSV</button>
           <button className="btn-soft" onClick={() => setGroup(true)}>สร้างกลุ่มงานใหม่</button>
           <button className="btn-primary" onClick={() => setDlg({ mode: "add", i: -1 })}><Icon name="plus" className="h-4 w-4" /> เพิ่มงานมาตรฐาน</button>
         </>}

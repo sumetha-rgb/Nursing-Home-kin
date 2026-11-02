@@ -16,6 +16,7 @@ import { useSession } from "@/lib/session";
 import { can } from "@/lib/perms";
 import { findRoom, freeBed, RoomInfo, roomInfos, roomKey, roomLabel, roomProblem, ROOM_STATUSES, ROOM_TYPES, staying, withRoom } from "@/lib/rooms";
 import { DataTable, FieldDef, FormDialog, MetricGrid, Modal, PageHeader, Section, Select, StatusBadge, Tabs } from "../ui";
+import { SearchSelect } from "../SearchSelect";
 
 type Dlg = { mode: "add" | "edit"; i?: number; preset?: string[] } | null;
 const VIEWS = ["แผนผัง 3D", "การ์ด"];
@@ -257,10 +258,9 @@ export function Rooms() {
         {assign && <div className="space-y-4">
           <p className="text-sm text-gold-600">ห้อง {assign.room.no} · สาขา{assign.room.branch} · ว่าง {assign.room.free} จาก {assign.room.capacity} เตียง</p>
           {candidates.length ? <>
-            <select value={who} onChange={(e) => { setWho(e.target.value); const p = res.rows[Number(e.target.value)]; const ok = assign.room.beds.find((b) => b.label === assign.bed && (!b.who || b.who === p?.[0])); if (!ok) setAssign({ ...assign, bed: freeBed(assign.room, p?.[0]) }); }} aria-label="เลือกผู้รับบริการ">
-              <option value="">-- เลือกผู้รับบริการ --</option>
-              {candidates.map(({ r, i }) => <option key={i} value={i}>{r[0]}{r[2] && r[2].trim() !== "-" ? ` (ตอนนี้อยู่ห้อง ${r[2]}${r[7] ? ` เตียง ${r[7]}` : ""})` : " (ยังไม่มีห้อง)"}</option>)}
-            </select>
+            <SearchSelect value={who} ariaLabel="เลือกผู้รับบริการ" placeholder="พิมพ์ชื่อ หรือ ยังไม่มีห้อง"
+              onChange={(v) => { setWho(v); const p = res.rows[Number(v)]; const ok = assign.room.beds.find((b) => b.label === assign.bed && (!b.who || b.who === p?.[0])); if (v && !ok) setAssign({ ...assign, bed: freeBed(assign.room, p?.[0]) }); }}
+              items={candidates.map(({ r, i }) => { const room = r[2] && r[2].trim() !== "-" ? r[2] : ""; return { value: String(i), label: r[0], sub: [r[6] || "ยังไม่มี HN", r[3]].filter(Boolean).join(" · "), badge: room ? `ตอนนี้อยู่ห้อง ${room}${r[7] ? ` เตียง ${r[7]}` : ""}` : "ยังไม่มีห้อง", tone: room ? "room" as const : "warn" as const, keys: room ? "" : "ยังไม่มีห้อง" }; })} />
             <select value={assign.bed} onChange={(e) => setAssign({ ...assign, bed: e.target.value })} aria-label="เลือกเตียง">
               {bedChoices.map((b) => <option key={b.label} value={b.label}>เตียง {b.label}{b.who ? ` (เตียงของ ${b.who})` : " · ว่าง"}</option>)}
             </select>

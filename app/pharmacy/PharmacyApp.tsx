@@ -11,6 +11,8 @@ import PhotoPicker from "@/components/PhotoPicker";
 import TutorialVideos from "@/components/TutorialVideos";
 import CashierOnly from "@/components/CashierOnly";
 import CentralStock from "@/components/pharmacy/CentralStock";
+import { ResidentPicker } from "@/components/SearchSelect";
+import SupplyStock from "@/components/pharmacy/SupplyStock";
 import { MedPhotoModal, PhotoItem, saveMedPhoto } from "@/components/pharmacy/MedPhotos";
 import { stockAlertText, useStockAlerts } from "@/lib/stockAlerts";
 import { can } from "@/lib/perms";
@@ -23,10 +25,11 @@ import { nowTh, Drug, Pack, Page, MEALS, DAYS, FORMS, STORES, TIMINGS, AUDIT_STA
 const NAV: { id: Page; label: string; icon: string; group: number }[] = [
   { id: "dashboard", label: "แดชบอร์ด", icon: "grid", group: 0 },
   { id: "dispense", label: "จัดยารายวัน", icon: "pill", group: 0 },
-  { id: "qa", label: "ตะกร้ายา & ตรวจสอบ (QA)", icon: "check", group: 0 },
+  { id: "qa", label: "ตรวจซองยา (QA)", icon: "check", group: 0 },
   { id: "central", label: "คลังยากลางของศูนย์", icon: "building", group: 1 },
-  { id: "inventory", label: "รับยาเข้าคลัง (ยาผู้ป่วย)", icon: "download", group: 1 },
-  { id: "audit", label: "เคลียร์คลังยา", icon: "refresh", group: 1 },
+  { id: "supplies", label: "คลังเวชภัณฑ์", icon: "files", group: 1 },
+  { id: "inventory", label: "ยาของผู้ป่วย (รับเข้า · แก้ไข)", icon: "download", group: 1 },
+  { id: "audit", label: "ตรวจนับและปรับยอดยา", icon: "refresh", group: 1 },
   { id: "templates", label: "ซองมื้อยา", icon: "files", group: 1 },
   { id: "master", label: "ฐานข้อมูลยา", icon: "book", group: 1 },
   { id: "report", label: "รายงานการจัดยา", icon: "table", group: 2 },
@@ -123,6 +126,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
           {page === "qa" && <QA packs={packs} setPacks={setPacks} drugs={drugs} setDrugs={setDrugs} me={user.name} go={go} onRedo={(who, date) => { setFocus({ who, date }); go("dispense"); }} />}
           {page === "inventory" && <Inventory drugs={drugs} setDrugs={setDrugs} master={master} addFor={addFor} onAdded={() => setAddFor(null)} />}
           {page === "central" && <CentralStock />}
+          {page === "supplies" && <SupplyStock />}
           {page === "audit" && <Audit drugs={drugs} setDrugs={setDrugs} />}
           {page === "templates" && <Templates drugs={drugs} setDrugs={setDrugs} />}
           {page === "master" && <Master master={master} setMaster={setMaster} drugs={drugs} />}
@@ -140,12 +144,12 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
 function Dashboard({ go, need, packed, low, waitQa }: { go: (p: Page) => void; need: number; packed: number; low: Drug[]; waitQa: number }) {
   const { items: stock } = useStockAlerts();
   const steps: { n: string; t: string; staff: string; sys: string; p: Page | "kinapp"; cta: string }[] = [
-    { n: "01", t: "รับยาเข้าตะกร้าผู้ป่วย", staff: "ยาที่ญาติหรือโรงพยาบาลนำมา: ถ่ายรูปฉลากแล้วกรอกมื้อยา · ยาของศูนย์: เลือก \"เบิกจากคลังกลาง\"", sys: "สร้างตารางมื้อยาให้เอง เก็บรูปฉลากไว้ตรวจ · ยาคลังกลางหักคลังและขึ้นค่ายาที่การเงินให้", p: "inventory", cta: "ไปที่รับยาเข้าคลัง" },
+    { n: "01", t: "รับยาเข้าตะกร้าผู้ป่วย", staff: "ยาที่ญาติหรือโรงพยาบาลนำมา: ถ่ายรูปฉลากแล้วกรอกมื้อยา · ยาของศูนย์: เลือก \"เบิกจากคลังกลาง\"", sys: "สร้างตารางมื้อยาให้เอง เก็บรูปฉลากไว้ตรวจ · ยาคลังกลางหักคลังและขึ้นค่ายาที่การเงินให้", p: "inventory", cta: "ไปที่ยาของผู้ป่วย" },
     { n: "02", t: "จัดยารายวัน", staff: "เลือกผู้ป่วยและมื้อ ติ๊กยาที่หยิบ แล้วถ่ายรูปซองยาที่จัดเสร็จ · ยาน้ำหรือยาขวดกด \"เบิกยาตามจำนวน\"", sys: "หักยาในตะกร้าผู้ป่วย เก็บรูปซอง และส่งซองเข้าตะกร้ารอตรวจ QA", p: "dispense", cta: "ไปที่จัดยารายวัน" },
-    { n: "03", t: "ตรวจ QA", staff: "ดูรูปซองเทียบรายการยาและรูปฉลาก ถูกต้องกด \"ตรวจผ่าน\" · ผิดกด \"แจ้งจัดยาผิด\" แล้วกด \"รีเซตซองนี้แล้วจัดใหม่\" ที่การ์ดเดียวกัน", sys: "ซองที่ตรวจผ่านขึ้นคิวจ่ายยาใน KinApp · ซองที่จัดผิดบันทึกเป็น Near Miss", p: "qa", cta: "ไปที่ตะกร้ายา & QA" },
+    { n: "03", t: "ตรวจ QA", staff: "ดูรูปซองเทียบรายการยาและรูปฉลาก ถูกต้องกด \"ตรวจผ่าน\" · ผิดกด \"แจ้งจัดยาผิด\" แล้วกด \"รีเซตซองนี้แล้วจัดใหม่\" ที่การ์ดเดียวกัน", sys: "ซองที่ตรวจผ่านขึ้นคิวจ่ายยาใน KinApp · ซองที่จัดผิดบันทึกเป็น Near Miss", p: "qa", cta: "ไปที่ตรวจซองยา (QA)" },
     { n: "04", t: "ให้ยา (KinApp)", staff: "พยาบาลเปิด \"คิวจ่ายยาวันนี้\" ในแอปพยาบาล ให้ยาแล้วกดบันทึก", sys: "บันทึกผู้ให้ยาและเวลา ขึ้นในบันทึกการให้ยา (MAR) ของประวัติผู้ป่วย", p: "kinapp", cta: "เปิด KinApp" },
-    { n: "05", t: "เติมยาเมื่อใกล้หมด", staff: "ดูรายการยาผู้ป่วยใกล้หมด · ยาคลังศูนย์กด \"เติมจากคลังกลาง\" · ยาของญาติแจ้งญาตินำมาเพิ่ม", sys: "เตือนยาที่เหลือไม่ถึง 2 วัน และยาคลังกลางที่ถึงจุดสั่งซื้อหรือใกล้หมดอายุ", p: "inventory", cta: "ไปที่รับยาเข้าคลัง" },
-    { n: "06", t: "สุ่มนับยา (ทำเป็นครั้งคราว)", staff: "นับยาจริงเทียบกับระบบ แก้ยอดหรือสถานะ เช่น ยาหมด ยาหมดอายุ ยางดใช้", sys: "อัปเดตยอดคงเหลือให้ตรงของจริง", p: "audit", cta: "ไปที่เคลียร์คลังยา" },
+    { n: "05", t: "เติมยาเมื่อใกล้หมด", staff: "ดูรายการยาผู้ป่วยใกล้หมด · ยาคลังศูนย์กด \"เติมจากคลังกลาง\" · ยาของญาติแจ้งญาตินำมาเพิ่ม", sys: "เตือนยาที่เหลือไม่ถึง 2 วัน และยาคลังกลางที่ถึงจุดสั่งซื้อหรือใกล้หมดอายุ", p: "inventory", cta: "ไปที่ยาของผู้ป่วย" },
+    { n: "06", t: "สุ่มนับยา (ทำเป็นครั้งคราว)", staff: "นับยาจริงเทียบกับระบบ แก้ยอดหรือสถานะ เช่น ยาหมด ยาหมดอายุ ยางดใช้", sys: "อัปเดตยอดคงเหลือให้ตรงของจริง", p: "audit", cta: "ไปที่ตรวจนับและปรับยอดยา" },
   ];
   return (
     <>
@@ -180,7 +184,7 @@ function Dashboard({ go, need, packed, low, waitQa }: { go: (p: Page) => void; n
         ))}
       </div>
       {low.length > 0 && (
-        <div className="mt-6"><Section title="ยาใกล้หมด" sub="ยาคลังศูนย์กด &quot;เติมจากคลังกลาง&quot; ที่เมนูรับยาเข้าคลัง · ยาของญาติแจ้งญาตินำมาเพิ่มก่อนรอบจัดยาถัดไป">
+        <div className="mt-6"><Section title="ยาใกล้หมด" sub="ยาคลังศูนย์กด &quot;เติมจากคลังกลาง&quot; ที่เมนูยาของผู้ป่วย · ยาของญาติแจ้งญาตินำมาเพิ่มก่อนรอบจัดยาถัดไป">
           <DataTable columns={["ผู้รับบริการ", "ชื่อยา", "คงเหลือ", "สถานะ"]} rows={low.map((x) => [x.who, x.name, `${x.stock} ${x.unit}`, x.stock === 0 ? "ยาหมด" : "รอเติมยา"])} />
         </Section></div>
       )}
@@ -274,7 +278,7 @@ function Dispense({ drugs, setDrugs, packs, setPacks, go, me, focus, onAddDrug }
       <PageHeader title="จัดยาใหม่ (Dispense)" sub="เลือกผู้สูงอายุและวันที่กินยา แล้วแตะที่การ์ดมื้อยาเพื่อเริ่มจัด"
         actions={<><button className="btn-soft" onClick={() => onAddDrug(who)}><Icon name="plus" className="h-4 w-4" /> เพิ่มยาให้ {who || "ผู้ป่วย"}</button><button className="btn-soft" onClick={() => setPreview(true)}><Icon name="eye" className="h-4 w-4" /> ตรวจสอบซองมื้อยาก่อนจัด</button><button className="btn-soft" onClick={() => setBulk(true)}><Icon name="pill" className="h-4 w-4" /> เบิกยาตามจำนวน</button></>} />
       <div className="card mb-6 grid gap-4 p-5 sm:grid-cols-2">
-        <Field label="เลือกผู้สูงอายุ"><Select options={RESIDENTS} value={who} onChange={(v) => { setWho(v || RESIDENTS[0]); }} /></Field>
+        <Field label="เลือกผู้สูงอายุ"><ResidentPicker names={RESIDENTS} requireRoom clearable={false} value={who} onChange={(v) => { setWho(v || RESIDENTS[0]); }} /></Field>
         <Field label="วันกินยา"><input type="date" value={date} onChange={(e) => e.target.value && setDate(e.target.value)} /></Field>
       </div>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
@@ -357,7 +361,7 @@ function QA({ packs, setPacks, drugs, setDrugs, go, me, onRedo }: { packs: Pack[
   const count = (t: string) => packs.filter((p) => t === "ทั้งหมด" || p.qa === t).length;
   return (
     <>
-      <PageHeader title="ตรวจสอบตะกร้ายา (QA)" sub="ตรวจสอบซองยาทั้งหมดที่จัดเสร็จแล้วในตะกร้า แยกตามผู้สูงอายุและวันที่ เพื่อเช็คความถูกต้องก่อนจบงาน"
+      <PageHeader title="ตรวจซองยา (QA)" sub="ตรวจสอบซองยาทั้งหมดที่จัดเสร็จแล้วในตะกร้า แยกตามผู้สูงอายุและวันที่ เพื่อเช็คความถูกต้องก่อนจบงาน"
         actions={<button className="btn-soft" onClick={() => { go("audit"); toast("สุ่มตรวจสต็อก: เลือกผู้รับบริการเพื่อนับยาเทียบกับระบบ"); }}><Icon name="refresh" className="h-4 w-4" /> สุ่มตรวจ (Cycle Count)</button>} />
       <div className="mb-5"><Tabs tabs={["รอตรวจ", "ตรวจผ่าน", "แจ้งจัดยาผิด", "ทั้งหมด"].map((t) => `${t} (${count(t)})`)} value={`${tab} (${count(tab)})`} onChange={(v) => setTab(v.split(" (")[0])} /></div>
       {list.length === 0 ? (
@@ -503,7 +507,7 @@ function Inventory({ drugs, setDrugs, master, addFor, onAdded }: { drugs: Drug[]
   };
   return (
     <>
-      <PageHeader title="รับยาเข้าคลัง (Receiving)" sub="บันทึกสต็อกยาและข้อมูลจากโรงพยาบาล เพื่อเป็นฐานข้อมูลหลักให้ระบบจัดยารายวันดึงไปใช้ และคำนวณการหักสต็อก"
+      <PageHeader title="ยาของผู้ป่วย (รับเข้า · แก้ไข)" sub="บันทึกสต็อกยาและข้อมูลจากโรงพยาบาล เพื่อเป็นฐานข้อมูลหลักให้ระบบจัดยารายวันดึงไปใช้ และคำนวณการหักสต็อก"
         actions={<><button className="btn-soft" onClick={() => window.print()}><Icon name="print" className="h-4 w-4" /> พิมพ์ใบรับยาเข้า</button><button className="btn-primary" onClick={() => { setF(blankForm()); setOpen(true); }}><Icon name="plus" className="h-4 w-4" /> บันทึกข้อมูลยาใหม่จากโรงพยาบาล</button></>} />
       <Section title="คลังยาทั้งหมด (แยกตามผู้สูงอายุ)" actions={<div className="min-w-52"><Select options={RESIDENTS} placeholder="ผู้สูงอายุทั้งหมด" value={filter} onChange={setFilter} /></div>}>
         <DataTable
@@ -523,7 +527,7 @@ function Inventory({ drugs, setDrugs, master, addFor, onAdded }: { drugs: Drug[]
           ? <button className="btn-primary" disabled={busy} onClick={saveCentral}>เบิกและเพิ่มเข้าตะกร้า</button>
           : <button className="btn-primary" onClick={save}>บันทึกรับยาเข้าตะกร้าผู้สูงอายุ</button>}</>}>
         <div className="space-y-6">
-          <Field label="1. เลือกผู้สูงอายุที่รับยามา" required><Select options={RESIDENTS} placeholder="-- เลือกผู้สูงอายุ --" value={f.who} onChange={(v) => setF({ ...f, who: v, sdrug: "" })} /></Field>
+          <Field label="1. เลือกผู้สูงอายุที่รับยามา" required><ResidentPicker names={RESIDENTS} value={f.who} onChange={(v) => setF({ ...f, who: v, sdrug: "" })} /></Field>
           <div><p className="label">แหล่งที่มาของยา</p><div className="flex flex-wrap gap-2">
             <Chip on={f.src === "own"} onClick={() => setF({ ...f, src: "own" })}>ญาตินำมา / จากโรงพยาบาล</Chip>
             <Chip on={f.src === "central"} onClick={() => setF({ ...f, src: "central", form: FORMS[0], unit: "เม็ด", dose: "1" })}>เบิกจากคลังกลางของศูนย์</Chip>
@@ -597,7 +601,7 @@ function Inventory({ drugs, setDrugs, master, addFor, onAdded }: { drugs: Drug[]
       <Modal open={!!edit} wide title={edit ? `แก้ไขยา · ${edit.name}` : ""} onClose={() => setEdit(null)}
         footer={<><button className="btn-soft" onClick={() => setEdit(null)}>ยกเลิก</button><button className="btn-primary" onClick={saveEdit}>บันทึกการแก้ไข</button></>}>
         {edit && <div className="space-y-5">
-          <p className="rounded-xl bg-cream-50 px-4 py-3 text-sm text-gold-700">{edit.who} · คงเหลือ <b>{stockText(edit)}</b> · แก้ยอดคงเหลือได้ที่เมนู &quot;เคลียร์คลังยา&quot; · ซองที่จัดไปแล้วไม่เปลี่ยน</p>
+          <p className="rounded-xl bg-cream-50 px-4 py-3 text-sm text-gold-700">{edit.who} · คงเหลือ <b>{stockText(edit)}</b> · แก้ยอดคงเหลือได้ที่เมนู &quot;ตรวจนับและปรับยอดยา&quot; · ซองที่จัดไปแล้วไม่เปลี่ยน</p>
           <div className="form-grid">
             <Field label="ชื่อยา" required><input value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} /></Field>
             <Field label="สรรพคุณ / ข้อบ่งใช้"><input value={edit.use} onChange={(e) => setEdit({ ...edit, use: e.target.value })} /></Field>
@@ -693,7 +697,7 @@ function Audit({ drugs, setDrugs }: { drugs: Drug[]; setDrugs: (x: Drug[]) => vo
   }
   return (
     <>
-      <PageHeader title="ภารกิจเคลียร์คลังยา" sub="เช็กสต็อกเพื่อความแม่นยำก่อนจัดยา" />
+      <PageHeader title="ตรวจนับและปรับยอดยา" sub="เช็กสต็อกเพื่อความแม่นยำก่อนจัดยา" />
       <Section title="ความคืบหน้าวันนี้">
         <div className="flex items-center justify-between text-sm text-gold-600"><span>ตรวจแล้ว {done.length} / {total} รายการ</span><b className="text-gold-700">{total ? Math.round((done.length / total) * 100) : 0}%</b></div>
         <div className="mt-2 h-2 overflow-hidden rounded-full bg-cream-200"><div className="h-full rounded-full bg-gold-600 transition-all" style={{ width: `${total ? (done.length / total) * 100 : 0}%` }} /></div>
@@ -727,7 +731,7 @@ function Templates({ drugs, setDrugs }: { drugs: Drug[]; setDrugs: (x: Drug[]) =
   return (
     <>
       <PageHeader title="ซองมื้อยา" sub="ใช้สำหรับตั้งค่าและตรวจสอบยาที่จะถูกจัดลงในแต่ละซอง" />
-      <div className="card mb-6 p-5"><Field label="เลือกผู้สูงอายุ"><Select options={RESIDENTS} placeholder="-- เลือกผู้สูงอายุ --" value={who} onChange={setWho} /></Field></div>
+      <div className="card mb-6 p-5"><Field label="เลือกผู้สูงอายุ"><ResidentPicker names={RESIDENTS} value={who} onChange={setWho} /></Field></div>
       {!who ? <div className="card empty-state"><Icon name="files" /><p>กรุณาเลือกผู้สูงอายุด้านบนเพื่อแสดงแม่แบบซองยา</p></div> : (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           {MEALS.map((m) => {
@@ -831,7 +835,7 @@ function Manual() {
     ["3. การแก้ไขเมื่อทำผิดพลาด (Reset)", "หากจัดยาผิด ถ่ายรูปผิด หรือต้องการจัดใหม่ ให้กดปุ่ม \"รีเซต\" บนการ์ดมื้อยา ระบบจะล้างการจัดยาของมื้อนั้นและคืนสต็อกยา"],
     ["4. ระบบตรวจสอบการจัดยา (QA & Near Miss)", "ใช้หลัก 5R (Right Patient, Right Drug, Right Dose, Right Time, Right Route) ร่วมกับรูปถ่าย ผู้ตรวจกด \"ดูรูปซองเทียบฉลากยา\" เพื่อเทียบรูปซองกับรูปฉลากต้นฉบับ หากถูกต้องกด \"ตรวจผ่าน\" ซองจะขึ้นคิวจ่ายยาใน KinApp หากพบว่าจัดผิดกด \"แจ้งจัดยาผิด\" ระบุสาเหตุ แล้วกด \"รีเซตซองนี้แล้วจัดใหม่\" ระบบคืนยาและเปิดหน้าจัดยาของผู้ป่วยคนนั้นให้ การดักจับความผิดพลาดตรงนี้เรียกว่า Category B (Near Miss)"],
     ["5. การให้ยา (KinApp)", "พยาบาลเปิดคิวจ่ายยาวันนี้ในแอปพยาบาล ให้ยาแล้วกดบันทึก ระบบเก็บชื่อผู้ให้ยาและเวลา ขึ้นในบันทึกการให้ยา (MAR) ของประวัติผู้ป่วย"],
-    ["6. การสุ่มตรวจ (Cycle Count)", "ใช้เมนูเคลียร์คลังยาเพื่อนับยาจริงเทียบกับระบบเป็นประจำ และอัปเดตสถานะยา เช่น ยาหมด ยาหมดอายุ หรือยางดใช้"],
+    ["6. การสุ่มตรวจ (Cycle Count)", "ใช้เมนูตรวจนับและปรับยอดยาเพื่อนับยาจริงเทียบกับระบบเป็นประจำ และอัปเดตสถานะยา เช่น ยาหมด ยาหมดอายุ หรือยางดใช้"],
   ];
   return (
     <>
