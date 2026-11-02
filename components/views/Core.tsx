@@ -7,7 +7,9 @@ import { APPOINTMENTS, CONTRACTS, DAILY_LIST, RESIDENTS, BRANCH_NAMES } from "@/
 import { downloadCsv, useCrud, useRecords } from "@/lib/store";
 import { balanceOf, docDate, Invoice, isOpen, money, todayIso, UNPAID, VOID } from "@/lib/billing";
 import { contractInvoice, useBranchInfo } from "./Billing";
-import { ContractDoc, DcData, DEFAULT_TERMS, DischargeDoc, PrintModal, RenewDoc } from "../print/Docs";
+import { ContractDoc, contractLines, contractTotal, DcData, DischargeDoc, PrintModal, RenewDoc } from "../print/Docs";
+import { ServiceLine, ServiceLines } from "../ServicePicker";
+import { PROGRAMS } from "@/lib/contractText";
 import { clinic, fetchDocSettings } from "@/lib/clinic";
 import { fetchProfile } from "@/lib/care";
 import { handoff, QuoteHandoff } from "@/lib/handoff";
@@ -73,30 +75,6 @@ export function Workflow() {
 }
 
 /* ---------- ระบบสัญญา ---------- */
-const BASE = [
-  "การดูแลขั้นพื้นฐานและช่วยเหลือในกิจวัตรประจำวัน (ADL)",
-  "อาหารหลัก 3 มื้อ และอาหารว่าง 1 มื้อ",
-  "กิจกรรมสันทนาการตามตารางของศูนย์",
-  "การวัดและบันทึกสัญญาณชีพประจำวัน",
-];
-const EXTRA = [
-  "การให้บริการโดยทีมสหวิชาชีพ",
-  "หัตถการทางการพยาบาล",
-  "ยาสามัญประจำบ้าน, ยาประจำตัว, เวชภัณฑ์",
-  "ของใช้ส่วนตัว (เสื้อผ้า, แพมเพิส, สบู่ ฯลฯ)",
-  "อาหารทางการแพทย์ / อาหารเสริม (เพิ่มไข่, นม)",
-  "ค่าบริการดูแลระหว่างไป รพ. และค่ารถ",
-];
-
-function Check({ text, name, checked }: { text: string; name: string; checked?: boolean }) {
-  return (
-    <label className="flex items-start gap-3 rounded-xl px-3 py-2.5 text-sm hover:bg-cream-50">
-      <input type="checkbox" name={name} value={text} defaultChecked={checked} className="mt-0.5" />
-      <span>{text}</span>
-    </label>
-  );
-}
-
 const CONTRACT_STATUSES = ["ใช้งานอยู่", "รอชำระเงินมัดจำ", "สิ้นสุดสัญญา", "ยกเลิกสัญญา"];
 const CANCELLED = "ยกเลิกสัญญา";
 /** พิมพ์ได้เฉพาะตัวเลข ไม่เกิน max หลัก */
@@ -144,6 +122,11 @@ type IdPhotos = { employer: string; resident: string };
 
 function ContractForm({ rooms, residents, initial, fromQuote, onClose, onSave }: { rooms: string[][]; residents: string[][]; initial?: string[]; fromQuote?: string; onClose: () => void; onSave: (r: string[], photos: IdPhotos) => void }) {
   const [photos, setPhotos] = useState<IdPhotos>({ employer: "", resident: "" });
+  // รายการค่าบริการจากใบราคา (ต่อสัญญา / เปิดจากใบเสนอราคา = ดึงรายการเดิมมาให้)
+  const [items, setItems] = useState<ServiceLine[]>(() => (initial ? contractLines(initial) : []));
+  const [fee, setFee] = useState(() => initial?.[4] && initial[4] !== "-" ? initial[4].replace(/,/g, "") : "");
+  const [roomDep, setRoomDep] = useState(() => initial?.[27] && initial[27] !== "-" ? initial[27].replace(/,/g, "") : "");
+  const sum = (Number(fee) || 0) + items.reduce((n, x) => n + x.qty * x.price, 0);
   const branchNames = useBranchNames();
   const { go, toast } = useApp();
   const { user } = useSession();
@@ -165,11 +148,16 @@ function ContractForm({ rooms, residents, initial, fromQuote, onClose, onSave }:
     e.preventDefault();
     const f = new FormData(e.currentTarget);
     const g = (k: string) => String(f.get(k) ?? "").trim();
+    const lines = items.filter((x) => x.desc.trim());
+    if (lines.some((x) => !(x.qty > 0) || x.price < 0)) return toast("กรุณาตรวจจำนวนและราคาของรายการค่าบริการ");
+    const end = g("end");
+    if (end && end < g("start")) return toast("วันสิ้นสุดสัญญาต้องไม่ก่อนวันเริ่มสัญญา");
     const r = [
-      "", g("branch"), norm(g("resident")), norm(g("employer")), g("fee") || "-", g("status") || CONTRACT_STATUSES[0],
+      "", g("branch"), norm(g("resident")), norm(g("employer")), fee || "-", g("status") || CONTRACT_STATUSES[0],
       NO_ROOM, g("start"), g("employer_id"), g("phone"), g("address"), g("relation"),
-      g("resident_id"), g("age"), f.getAll("base").map(String).join(", "), f.getAll("extra").map(String).join(", "), g("extra_fee"), g("package"),
+      g("resident_id"), g("age"), initial?.[14] ?? "", lines.map((x) => x.desc).join(", "), lines.length ? String(lines.reduce((n, x) => n + x.qty * x.price, 0)) : "", initial?.[17] ?? "",
       g("prepaid"), g("deposit"), g("note"),
+      g("program"), end, JSON.stringify(lines), g("hospital"), g("drug_allergy"), g("food_allergy"), roomDep, g("meds"),
     ];
     if (!r[1]) return toast("กรุณาเลือกสาขา");
     setRow(r);
@@ -221,25 +209,34 @@ function ContractForm({ rooms, residents, initial, fromQuote, onClose, onSave }:
           <Field label="วันเริ่มสัญญา" required><input name="start" type="date" required /></Field>
           <Field label="รูปถ่ายบัตรประชาชนผู้รับบริการ" className="md:col-span-2"><PhotoPicker value={photos.resident} onChange={(v) => setPhotos({ ...photos, resident: v })} label={initial ? "ไม่แนบใหม่ = ใช้รูปจากสัญญาเดิม" : "ถ่ายหรือเลือกรูปบัตรประชาชนผู้รับบริการ"} /></Field>
           <Field label="เลขที่สัญญา"><input value={initial && fromQuote === undefined ? `ออกเลขใหม่อัตโนมัติ (สัญญาเดิม ${initial[0]})` : "ระบบออกเลขให้อัตโนมัติเมื่อบันทึก"} readOnly tabIndex={-1} className="field-locked" /><p className="field-hint">รูปแบบ CT-ปี พ.ศ.-ลำดับ เช่น CT-2569-0001 · แก้ไขไม่ได้</p></Field>
-          <Field label="ค่าบริการ/เดือน (บาท)"><input name="fee" type="number" min={0} placeholder="เช่น 30000 (ไม่ต้องใส่จุลภาค)" defaultValue={dn(4)} /></Field>
+          <Field label="วันสิ้นสุดสัญญา"><input name="end" type="date" /><p className="field-hint">ว่างได้ · สัญญามีผลต่อเนื่องจนกว่าจะจำหน่าย</p></Field>
           <Field label="สถานะสัญญา" required><select name="status" defaultValue={CONTRACT_STATUSES[0]}>{CONTRACT_STATUSES.slice(0, 2).map((x) => <option key={x}>{x}</option>)}</select></Field>
         </div>
 
         <div>
-          <h3 className="mb-3 font-semibold text-gold-800">ขอบเขตการให้บริการ</h3>
-          <div className="grid gap-4 lg:grid-cols-2">
-            <div className="rounded-2xl border border-cream-300 bg-cream-50/60 p-3">
-              <p className="px-3 py-2 text-sm font-medium text-gold-700">รวมอยู่ในค่าบริการพื้นฐาน:</p>
-              {BASE.map((t) => <Check key={t} name="base" text={t} checked={!!d(14)?.includes(t)} />)}
-            </div>
-            <div className="rounded-2xl border border-cream-300 bg-cream-50/60 p-3">
-              <p className="px-3 py-2 text-sm font-medium text-gold-700">รายการที่มีค่าใช้จ่ายเพิ่มเติม (ไม่รวมในค่าบริการพื้นฐาน):</p>
-              {EXTRA.map((t) => <Check key={t} name="extra" text={t} checked={!!d(15)?.includes(t)} />)}
-            </div>
+          <h3 className="mb-3 font-semibold text-gold-800">ข้อมูลด้านสุขภาพของผู้รับบริการ</h3>
+          <div className="grid gap-4 md:grid-cols-2">
+            <Field label="โรงพยาบาลตามสิทธิ์การรักษา"><input name="hospital" placeholder="เช่น รพ.ราชวิถี (บัตรทอง)" defaultValue={d(24)} /><p className="field-hint">พิมพ์ในข้อ 3.8 ของสัญญาเป็นโรงพยาบาลที่นำส่ง</p></Field>
+            <Field label="ยา / เวชภัณฑ์ที่ใช้ประจำ"><input name="meds" placeholder="เช่น ยาความดัน ยาเบาหวาน" defaultValue={d(28)} /></Field>
+            <Field label="ประวัติแพ้ยา"><input name="drug_allergy" placeholder="ถ้าแพ้ ให้พิมพ์ชื่อยา เช่น Penicillin" defaultValue={d(25)} /><p className="field-hint">ไม่แพ้ยา = เว้นว่างไว้ · สัญญาจะพิมพ์ว่า &quot;ปฏิเสธ&quot; (ไม่มีประวัติแพ้)</p></Field>
+            <Field label="ประวัติแพ้อาหาร"><input name="food_allergy" placeholder="ถ้าแพ้ ให้พิมพ์ชื่ออาหาร เช่น อาหารทะเล" defaultValue={d(26)} /><p className="field-hint">ไม่แพ้อาหาร = เว้นว่างไว้ · สัญญาจะพิมพ์ว่า &quot;ปฏิเสธ&quot; (ไม่มีประวัติแพ้)</p></Field>
           </div>
+          <p className="mt-3 rounded-xl bg-cream-50 px-4 py-2.5 text-sm text-gold-700">โรคประจำตัว ไม่ต้องกรอกที่นี่ · ระบบดึงจากข้อมูลผู้รับบริการ (เมนูผู้รับบริการ) มาพิมพ์ในสัญญาให้เอง</p>
+        </div>
+
+        <div>
+          <h3 className="mb-3 font-semibold text-gold-800">โปรแกรมและค่าบริการ</h3>
+          <div className="grid gap-4 md:grid-cols-2">
+            <Field label="โปรแกรม"><input name="program" list="contract-programs" placeholder="เลือกหรือพิมพ์ชื่อโปรแกรม" defaultValue={d(21) ?? PROGRAMS[0]} /><datalist id="contract-programs">{PROGRAMS.map((x) => <option key={x} value={x} />)}</datalist></Field>
+            <Field label="ราคาโปรแกรม (บาท)"><input type="number" min={0} value={fee} onChange={(e) => setFee(e.target.value)} placeholder="เช่น 14000 · ว่างได้ถ้าคิดตามรายการด้านล่าง" /></Field>
+          </div>
+          <p className="label mt-4">รายการบริการและค่าบริการเพิ่มเติม <small className="font-normal text-gold-500">· พิมพ์ค้นหาอย่างน้อย 2 ตัวอักษร แล้วกดราคาที่ต้องการ · ราคา 0 = รวมในโปรแกรม (เช่น ห้องพัก)</small></p>
+          <ServiceLines items={items} onChange={setItems} total={false} />
           <div className="mt-4 grid gap-4 md:grid-cols-2">
-            <Field label="ค่าบริการเพิ่มเติมรายเดือนที่ตกลงไว้ (ระบุถ้ามี)"><input name="extra_fee" placeholder="เช่น ค่าแพมเพิส 1,500 บาท/เดือน" defaultValue={d(16)} /></Field>
-            <Field label="แพ็กเกจเสริมอื่นๆ (ระบุถ้ามี)"><input name="package" placeholder="เช่น กายภาพบำบัด 8 ครั้ง/เดือน" defaultValue={d(17)} /></Field>
+            <Field label="หักค่ามัดจำห้องพัก (บาท)"><input type="number" min={0} value={roomDep} onChange={(e) => setRoomDep(e.target.value)} placeholder="เช่น 3000" /><p className="field-hint">มัดจำที่จ่ายตอนจองห้อง หักออกจากยอดในสัญญา</p></Field>
+            <div className="self-end rounded-2xl bg-cream-50 px-4 py-3 text-sm text-gold-700">
+              ยอดรวมทั้งหมด <b className="text-gold-900">{money(sum)}</b> บาท{Number(roomDep) > 0 && <> · หักมัดจำ {money(Number(roomDep))} · <b className="text-gold-900">คงเหลือ {money(sum - Number(roomDep))}</b> บาท</>}
+            </div>
             <Field label="หมายเหตุ" className="md:col-span-2"><textarea name="note" rows={2} placeholder="เช่น แพ้ยาเพนิซิลลิน, ญาติมาเยี่ยมทุกวันเสาร์" defaultValue={initial ? `ต่อจากสัญญา ${initial[0]}` : undefined} /></Field>
             <Field label="ชำระค่าบริการล่วงหน้า (บาท)"><input name="prepaid" type="number" min={0} placeholder="เช่น 30000" /><p className="field-hint">ใส่ยอดแล้ว ระบบออกใบแจ้งหนี้ให้ที่เมนูการเงิน</p></Field>
             <Field label="ชำระเงินประกัน (บาท)"><input name="deposit" type="number" min={0} placeholder="เช่น 60000" /><p className="field-hint">คืนตอนสิ้นสุดสัญญาตามเงื่อนไขของศูนย์</p></Field>
@@ -254,7 +251,7 @@ function ContractForm({ rooms, residents, initial, fromQuote, onClose, onSave }:
 
       {step === 2 && row && <div className="space-y-5">
         <div className="rounded-2xl border border-cream-200 bg-cream-50/60 px-4 py-3 text-sm text-gold-700">
-          <p><span className="text-gold-500">ผู้รับบริการ</span> <b className="font-medium text-gold-800">{row[2]}</b>{row[13] ? ` · ${row[13]} ปี` : ""} · <span className="text-gold-500">สาขา</span> {row[1]} · <span className="text-gold-500">ผู้ว่าจ้าง</span> {row[3]}{row[4] !== "-" ? ` · ${Number(row[4]).toLocaleString("en-US")} บาท/เดือน` : ""}</p>
+          <p><span className="text-gold-500">ผู้รับบริการ</span> <b className="font-medium text-gold-800">{row[2]}</b>{row[13] ? ` · ${row[13]} ปี` : ""} · <span className="text-gold-500">สาขา</span> {row[1]} · <span className="text-gold-500">ผู้ว่าจ้าง</span> {row[3]}{contractTotal(row) ? ` · ยอดรวม ${money(contractTotal(row))} บาท` : ""}</p>
           {existing && <p className="mt-1 text-xs text-gold-500">มีชื่อนี้ในทะเบียนผู้รับบริการแล้ว ระบบจะอัปเดตห้องให้คนเดิม ไม่สร้างรายชื่อซ้ำ</p>}
         </div>
         {warn && <p role="alert" className="room-warn">{warn}</p>}
@@ -297,8 +294,16 @@ const CONTRACT_FIELDS: FieldDef[] = [
   { label: "ชำระค่าบริการล่วงหน้า" },
   { label: "เงินประกัน" },
   { label: "หมายเหตุ", area: true },
+  { label: "โปรแกรม", suggest: PROGRAMS },
+  { label: "วันสิ้นสุดสัญญา (วว/ดด/ปปปป)" },
+  { label: "รายการค่าบริการ", hidden: true },
+  { label: "โรงพยาบาลตามสิทธิ์การรักษา" },
+  { label: "แพ้ยา" },
+  { label: "แพ้อาหาร" },
+  { label: "หักค่ามัดจำห้องพัก" },
+  { label: "ยา / เวชภัณฑ์ที่ใช้ประจำ" },
 ];
-const CONTRACT_COLS = ["เลขที่สัญญา", "สาขา", "ผู้รับบริการ", "ห้อง", "ผู้ว่าจ้าง", "ค่าบริการ/เดือน", "สถานะ"];
+const CONTRACT_COLS = ["เลขที่สัญญา", "สาขา", "ผู้รับบริการ", "ห้อง", "ผู้ว่าจ้าง", "ยอดรวม (บาท)", "สถานะ"];
 
 type Dlg = { mode: "view" | "edit"; i: number } | null;
 
@@ -339,7 +344,7 @@ export function Contracts() {
   useEffect(() => { fetchDocSettings().then((s) => setTerms(s.contract_terms ?? "")).catch(() => {}); }, []);
   const saveTerms = async () => {
     if (termsDlg === null) return;
-    try { await clinic({ op: "doc_settings", key: "contract_terms", value: termsDlg.trim() }); setTerms(termsDlg.trim()); setTermsDlg(null); toast("แก้ไขข้อความสัญญาแล้ว · ใช้กับสัญญาที่พิมพ์หลังจากนี้ทุกฉบับ"); }
+    try { await clinic({ op: "doc_settings", key: "contract_terms", value: termsDlg.trim() }); setTerms(termsDlg.trim()); setTermsDlg(null); toast("บันทึกเงื่อนไขเพิ่มเติมแล้ว · ขึ้นในข้อ 5.4 ของสัญญาที่พิมพ์หลังจากนี้"); }
     catch (e) { toast((e as Error).message); }
   };
   const resOf = (c: string[]) => { const j = resIndex(c[2], c[1]); return j >= 0 ? { row: res.rows[j], id: res.ids[j] } : null; };
@@ -480,14 +485,14 @@ export function Contracts() {
         sub="ดูแลรายละเอียดข้อตกลงบริการ ตั้งแต่วันแรกจนถึงวันสิ้นสุดสัญญา"
         actions={<>
           <button className="btn-primary" onClick={() => setCreating(true)}><Icon name="plus" className="h-4 w-4" /> เปิดสัญญาใหม่</button>
-          {admin && <button className="btn-soft" onClick={() => setTermsDlg(terms || DEFAULT_TERMS)}><Icon name="doc" className="h-4 w-4" /> ข้อความสัญญา</button>}
+          {admin && <button className="btn-soft" onClick={() => setTermsDlg(terms)}><Icon name="doc" className="h-4 w-4" /> เงื่อนไขเพิ่มเติมในสัญญา</button>}
           <button className="btn-soft" onClick={() => setSample(true)}><Icon name="print" className="h-4 w-4" /> ตัวอย่าง สบส. (แบบฟอร์มเปล่า)</button>
         </>}
       />
       <MetricGrid items={[{label:"สัญญาทั้งหมด",value:rows.length,unit:"สัญญา",accent:true,icon:"doc"},{label:"ใช้งานอยู่",value:rows.filter(r=>r[5]==="ใช้งานอยู่").length,unit:"สัญญา",icon:"check"},{label:"รอชำระมัดจำ",value:rows.filter(r=>r[5]==="รอชำระเงินมัดจำ").length,unit:"สัญญา",icon:"receipt"},{label:"สิ้นสุดสัญญา",value:rows.filter(r=>r[5]==="สิ้นสุดสัญญา").length,unit:"สัญญา",icon:"files",note:rows.some(r=>r[5]===CANCELLED)?`ยกเลิก ${rows.filter(r=>r[5]===CANCELLED).length} สัญญา`:undefined}]} /><Section title="ทะเบียนสัญญาบริการ" actions={<Tabs tabs={["ใช้งานอยู่", "รอชำระเงินมัดจำ", "สิ้นสุดสัญญา", CANCELLED, "ทั้งหมด"]} value={filter} onChange={setFilter} />}>
         <DataTable
           columns={CONTRACT_COLS}
-          rows={shown.map(({ r }) => [r[0] || "กำลังออกเลข…", r[1], r[2], r[6] || NO_ROOM, r[3], r[4], r[5]])}
+          rows={shown.map(({ r }) => [r[0] || "กำลังออกเลข…", r[1], r[2], r[6] || NO_ROOM, r[3], contractTotal(r) ? money(contractTotal(r)) : "-", r[5]])}
           actions={[
             { label: "ดู", onClick: (k) => setDlg({ mode: "view", i: shown[k].i }) },
             { label: "พิมพ์สัญญา", onClick: (k) => setDoc({ kind: "contract", i: shown[k].i }) },
@@ -531,15 +536,15 @@ export function Contracts() {
           <p className="text-xs text-gold-500">ระบบจะเปลี่ยนสัญญาเป็นสิ้นสุด เปลี่ยนผู้รับบริการเป็นย้ายออก คืนห้องให้ว่าง แล้วเปิดใบจำหน่ายให้พิมพ์</p>
         </div>}
       </Modal>
-      <PrintModal open={!!doc} title={doc?.kind === "contract" ? "สัญญาให้บริการ" : doc?.kind === "renew" ? "บันทึกต่อท้ายสัญญา" : "ใบจำหน่ายผู้รับบริการ (D/C)"} onClose={() => setDoc(null)}
+      <PrintModal open={!!doc} title={doc?.kind === "contract" ? "สัญญาจ้างดูแลผู้สูงอายุ หรือผู้มีภาวะพึ่งพิง" : doc?.kind === "renew" ? "บันทึกต่อท้ายสัญญา" : "ใบจำหน่ายผู้รับบริการ (D/C)"} onClose={() => setDoc(null)}
         extra={doc?.kind === "contract" ? <button className="btn-soft" onClick={() => setDoc({ ...doc, copy: !doc.copy })}>{doc.copy ? "เปลี่ยนเป็นต้นฉบับ" : "เปลี่ยนเป็นสำเนา"}</button> : undefined}>
-        {doc?.kind === "contract" && rows[doc.i] && <ContractDoc r={rows[doc.i]} hn={resOf(rows[doc.i])?.row[6]} bed={resOf(rows[doc.i])?.row[7]} branch={branchInfo(rows[doc.i][1])} terms={terms} by={user?.name} copy={doc.copy} />}
+        {doc?.kind === "contract" && rows[doc.i] && <ContractDoc r={rows[doc.i]} hn={resOf(rows[doc.i])?.row[6]} bed={resOf(rows[doc.i])?.row[7]} chronic={resOf(rows[doc.i])?.row[4]} branch={branchInfo(rows[doc.i][1])} terms={terms} by={user?.name} copy={doc.copy} />}
         {doc?.kind === "renew" && <RenewDoc before={doc.before} after={doc.after} hn={resOf(doc.after)?.row[6]} branch={branchInfo(doc.after[1])} by={user?.name} />}
         {doc?.kind === "dc" && <DischargeDoc d={doc.d} branch={branchInfo(doc.branch)} by={user?.name} />}
       </PrintModal>
-      <Modal open={termsDlg !== null} wide title="ข้อความสัญญา (ข้อตกลง)" onClose={() => setTermsDlg(null)}
-        footer={<><button className="btn-soft" onClick={() => setTermsDlg(null)}>ยกเลิก</button><button className="btn-primary" onClick={saveTerms}>บันทึกข้อความสัญญา</button></>}>
-        <p className="form-intro">พิมพ์ข้อตกลงบรรทัดละ 1 ข้อ ระบบใส่เลขข้อให้เอง · ใช้กับสัญญาที่พิมพ์ทุกฉบับทุกสาขา · ควรใช้ข้อความที่ผ่านการตรวจทางกฎหมายแล้ว</p>
+      <Modal open={termsDlg !== null} wide title="เงื่อนไขอื่น ๆ เพิ่มเติม (ข้อ 5.4 ในสัญญา)" onClose={() => setTermsDlg(null)}
+        footer={<><button className="btn-soft" onClick={() => setTermsDlg(null)}>ยกเลิก</button><button className="btn-primary" onClick={saveTerms}>บันทึกเงื่อนไขเพิ่มเติม</button></>}>
+        <p className="form-intro">ข้อความหลักของสัญญา (ระเบียบข้อ 1–5 หนังสือยินยอม มาตรการเข้าเยี่ยม) ใช้ตามแบบฟอร์มของ KIN · ช่องนี้สำหรับเงื่อนไขที่เพิ่มเอง พิมพ์บรรทัดละ 1 ข้อ ขึ้นในข้อ 5.4 ของสัญญาทุกฉบับ · ว่าง = เว้นเส้นให้เขียนด้วยมือ</p>
         <textarea rows={12} value={termsDlg ?? ""} onChange={(e) => setTermsDlg(e.target.value)} aria-label="ข้อตกลงในสัญญา" />
       </Modal>
       <BlankForm open={sample} title="หนังสือสัญญาว่าจ้างบริการดูแลผู้สูงอายุ (แบบฟอร์มเปล่า)" onClose={() => setSample(false)}

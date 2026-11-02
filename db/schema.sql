@@ -935,3 +935,12 @@ CREATE TABLE IF NOT EXISTS med_photos (
   created_at  timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (kind, ref_id)
 );
+-- สัญญาจ้างแบบ KIN: โปรแกรม · วันสิ้นสุด · รายการค่าบริการ (JSON จากใบราคา) · ข้อมูลสุขภาพ · หักมัดจำห้องพัก
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS program       text;
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS end_date      date;
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS items_json    text;
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS hospital      text;
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS drug_allergy  text;
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS food_allergy  text;
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS room_deposit  numeric(12,2);
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS regular_meds  text;

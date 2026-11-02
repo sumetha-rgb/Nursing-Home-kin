@@ -3,6 +3,9 @@ import { ReactNode } from "react";
 import Icon from "../Icon";
 import { Modal } from "../ui";
 import { bahtText, money } from "@/lib/billing";
+import { EXTRA_SERVICES, PACKAGES, rateColumns, ROOMS } from "@/lib/priceList";
+import { ACCEPT, CONSENT, CONSENT_MARKETING, DOC_RECEIPT, EXCLUDED, EXCLUDED_NOTE, FINES, HOSPITAL_STEPS, INCLUDED, INCLUDED_NOTE, PAY_CHANNELS, REHAB_CHECKS, ROOM_CHECK, ROOM_CHECK_NOTE,
+  RULES_CENTER, RULES_FINANCE_AFTER, RULES_FINANCE_BEFORE, RULES_NURSING, RULES_REFUND, RULES_REHAB, VISIT_EFFECTIVE, VISIT_RULES } from "@/lib/contractText";
 
 /**
  * เอกสารทางการสำหรับพิมพ์ (กระดาษ A4 · ฟอนต์ Sarabun)
@@ -56,7 +59,7 @@ export const KV = ({ items }: { items: [string, ReactNode, boolean?][] }) => (
   <dl className="doc-kv">{items.map(([k, v, wide]) => <div key={k} className={wide ? "is-wide" : ""}><dt>{k}</dt><dd>{v}</dd></div>)}</dl>
 );
 export const Signs = ({ people }: { people: [string, string?][] }) => (
-  <div className="doc-sign">{people.map(([role, name], i) => <div key={i}><span className="line" /><b>( {name || "................................................"} )</b><small>{role}</small></div>)}</div>
+  <div className="doc-sign">{people.map(([role, name], i) => <div key={i}><span className="line" /><b>( {name || "...................................."} )</b><small>{role}</small></div>)}</div>
 );
 export const DocFoot = ({ left, by }: { left: string; by?: string }) => (
   <footer className="doc-foot"><span>{left}</span><span>พิมพ์เมื่อ {nowTh()}{by ? ` โดย ${by}` : ""}</span></footer>
@@ -72,68 +75,199 @@ export function PrintModal({ open, title, onClose, children, extra }: { open: bo
   );
 }
 
-/* ---------- สัญญาให้บริการ ---------- */
-/** ข้อสัญญามาตรฐาน (ใช้เมื่อยังไม่ได้ตั้งข้อความจริงที่เมนูสัญญา → ข้อความสัญญา) */
-export const DEFAULT_TERMS = [
-  "ผู้ให้บริการจะจัดให้มีการดูแลผู้รับบริการตามแผนการดูแลที่ตกลงร่วมกัน โดยทีมพยาบาลและผู้ช่วยพยาบาลตลอด 24 ชั่วโมง",
-  "ผู้ว่าจ้างตกลงชำระค่าบริการตามอัตราในสัญญานี้ภายในกำหนด",
-  "ค่ายา เวชภัณฑ์ และค่ารักษาพยาบาลภายนอก ไม่รวมอยู่ในค่าบริการ ผู้ให้บริการจะออกใบแจ้งหนี้แยกตามจริง",
-  "การเปลี่ยนห้องพักหรือแผนการดูแล ให้ทำเป็นบันทึกต่อท้ายสัญญา ลงนามทั้งสองฝ่าย",
-  "คู่สัญญาฝ่ายใดประสงค์บอกเลิกสัญญา ให้แจ้งอีกฝ่ายเป็นลายลักษณ์อักษรล่วงหน้า",
-].join("\n");
+/* ---------- สัญญาจ้างดูแลผู้สูงอายุ หรือผู้มีภาวะพึ่งพิง (แบบฟอร์ม KIN) ---------- */
+/** ข้อความเดิมที่เคยตั้งไว้เป็นข้อตกลงหลัก · ตอนนี้ใช้เป็น "เงื่อนไขอื่น ๆ เพิ่มเติม" (ข้อ 5.4) */
+export const DEFAULT_TERMS = "";
 
-/** แถวสัญญา: [เลขที่, สาขา, ผู้รับบริการ, ผู้ว่าจ้าง, ค่าบริการ/เดือน, สถานะ, ห้อง, วันเริ่ม, บัตรผู้ว่าจ้าง, โทร, ที่อยู่, ความเกี่ยวข้อง, บัตรผู้รับบริการ, อายุ, บริการพื้นฐาน, รายการเพิ่มเติม, ค่าเพิ่มเติม, แพ็กเกจ, ล่วงหน้า, ประกัน, หมายเหตุ] */
-export function ContractDoc({ r, hn, bed, branch, terms, by, copy }: { r: string[]; hn?: string; bed?: string; branch?: DocBranch; terms?: string; by?: string; copy?: boolean }) {
-  const fee = numOf(r[4]), extra = numOf(r[16]), prepaid = numOf(r[18]), deposit = numOf(r[19]);
-  const lines: [string, number][] = [
-    [`ค่าบริการรายเดือน${blank(r[6]) ? ` ห้อง ${r[6]}${bed ? ` เตียง ${bed}` : ""}` : ""}${blank(r[14]) ? ` (รวม ${r[14]})` : ""}`, fee],
-    ...(extra ? [[`ค่าบริการเพิ่มเติมรายเดือน${blank(r[15]) ? ` (${r[15]})` : ""}`, extra] as [string, number]] : []),
-    ...(blank(r[17]) ? [[`แพ็กเกจเสริม: ${r[17]}`, 0] as [string, number]] : []),
-  ];
-  const first = prepaid + deposit;
-  const clauses = (terms?.trim() || DEFAULT_TERMS).split(/\n+/).map((x) => x.trim()).filter(Boolean);
+/** แถวสัญญา: [เลขที่, สาขา, ผู้รับบริการ, ผู้ว่าจ้าง, ราคาโปรแกรม, สถานะ, ห้อง, วันเริ่ม, บัตรผู้ว่าจ้าง, โทร, ที่อยู่, ความเกี่ยวข้อง, บัตรผู้รับบริการ, อายุ, บริการพื้นฐาน, รายการเพิ่มเติม, ค่าเพิ่มเติม, แพ็กเกจ, ล่วงหน้า, ประกัน, หมายเหตุ,
+ *  โปรแกรม, วันสิ้นสุด, รายการ (JSON), โรงพยาบาลตามสิทธิ์, แพ้ยา, แพ้อาหาร, หักมัดจำห้อง, ยา/เวชภัณฑ์ที่ใช้ประจำ] */
+export type ContractLine = { desc: string; qty: number; unit: string; price: number };
+/** รายการค่าบริการของสัญญา · สัญญาเก่าที่ยังไม่มีรายการ: แปลงจากค่าบริการเพิ่มเติมรายเดือนเดิม */
+export function contractLines(r: string[]): ContractLine[] {
+  try { const x = JSON.parse(r[23] || "[]"); if (Array.isArray(x)) return x; } catch { /* สัญญาเก่า */ }
+  const extra = numOf(r[16]);
+  return extra ? [{ desc: blank(r[15]) ? `ค่าบริการเพิ่มเติม (${r[15]})` : "ค่าบริการเพิ่มเติม", qty: 1, unit: "เดือน", price: extra }] : [];
+}
+/** ยอดรวม = ราคาโปรแกรม + รายการค่าบริการ (ก่อนหักมัดจำห้อง) */
+export const contractTotal = (r: string[]) => numOf(r[4]) + contractLines(r).reduce((n, x) => n + x.qty * x.price, 0);
+
+const Num = ({ n, children }: { n: string; children: ReactNode }) => <div className="doc-num"><b>{n}</b><div>{children}</div></div>;
+const Fill = ({ v, w }: { v?: string | null; w?: string }) => <span className="doc-fill" style={w ? { minWidth: w } : undefined}>{blank(v) || " "}</span>;
+const Break = () => <div className="doc-break" aria-hidden="true" />;
+
+export function ContractDoc({ r, hn, bed, branch, terms, by, copy, chronic }: { r: string[]; hn?: string; bed?: string; branch?: DocBranch; terms?: string; by?: string; copy?: boolean; chronic?: string }) {
+  const lines = contractLines(r);
+  const fee = numOf(r[4]), total = contractTotal(r), dep = numOf(r[27]), prepaid = numOf(r[18]), deposit = numOf(r[19]);
+  const net = total - dep;
+  const legal = branch?.legal || COMPANY.legal;
+  const room = blank(r[6]) ? `ห้อง ${r[6]}${bed ? ` เตียง ${bed}` : ""}` : "";
+  const extra = (terms ?? "").split(/\n+/).map((x) => x.trim()).filter(Boolean);
+  const head = (title: string) => <><DocHead branch={branch} refs={[["เลขที่สัญญา", val(r[0])], ["HN", val(hn)]]} /><DocTitle title={title} /></>;
+  const sign = (people: [string, string?][]) => <Signs people={people} />;
   return (
     <Paper>
-      <DocHead branch={branch} refs={[["เลขที่สัญญา", val(r[0])], ["HN", val(hn)], ["ทำที่", `สาขา${r[1]}`]]} />
-      <DocTitle title="สัญญาให้บริการดูแลผู้สูงอายุและผู้ป่วย" sub={`ทำเมื่อวันที่ ${longDate(r[7])}`} copy={copy ? "สำเนา" : "ต้นฉบับ"} />
-      <p className="doc-indent">สัญญาฉบับนี้ทำขึ้นระหว่าง <span className="doc-fill">{branch?.legal || COMPANY.legal}</span> ซึ่งต่อไปในสัญญานี้เรียกว่า &quot;ผู้ให้บริการ&quot; ฝ่ายหนึ่ง กับ <span className="doc-fill">{val(r[3])}</span> ซึ่งต่อไปในสัญญานี้เรียกว่า &quot;ผู้ว่าจ้าง&quot; อีกฝ่ายหนึ่ง ทั้งสองฝ่ายตกลงทำสัญญากันโดยมีข้อความดังต่อไปนี้</p>
-      <DocH>ข้อมูลคู่สัญญาและผู้รับบริการ</DocH>
-      <KV items={[
-        ["ผู้ว่าจ้าง", val(r[3])], ["เลขบัตรประชาชน", idFmt(r[8])], ["เบอร์โทรศัพท์", telFmt(r[9])], ["ความเกี่ยวข้อง", val(r[11])],
-        ["ที่อยู่", val(r[10]), true],
-        ["ผู้รับบริการ", val(r[2])], ["อายุ", blank(r[13]) ? `${r[13]} ปี` : "-"], ["เลขบัตรประชาชน", idFmt(r[12])],
-        ["ห้องพัก", blank(r[6]) ? `${r[6]}${bed ? ` เตียง ${bed}` : ""}` : "ยังไม่ระบุ"], ["เริ่มสัญญา", longDate(r[7])],
-      ]} />
-      <DocH>อัตราค่าบริการ</DocH>
+      {/* หน้า 1: คู่สัญญา ผู้รับบริการ ระยะเวลา และค่าบริการ */}
+      <DocHead branch={branch} refs={[["เลขที่สัญญา", val(r[0])], ["HN", val(hn)], ["จัดทำที่", `สาขา${r[1]}`]]} />
+      <DocTitle title="สัญญาจ้างดูแลผู้สูงอายุ หรือผู้มีภาวะพึ่งพิง" sub={`วันที่ ${longDate(r[7])}`} copy={copy ? "สำเนา" : "ต้นฉบับ"} />
+      <p className="doc-indent">ข้าพเจ้า <Fill v={r[3]} w="14em" /> มีความสัมพันธ์เกี่ยวข้องเป็น <Fill v={r[11]} w="5em" /> เลขบัตรประชาชน <Fill v={idFmt(r[8]) === "-" ? "" : idFmt(r[8])} w="10em" /> เบอร์ติดต่อ <Fill v={telFmt(r[9]) === "-" ? "" : telFmt(r[9])} w="7em" /> ที่อยู่ <Fill v={r[10]} w="20em" /> ซึ่งต่อไปนี้เรียกว่า &quot;ผู้ว่าจ้าง&quot; ฝ่ายหนึ่ง กับ {legal} ที่ตั้งเลขที่ {branch?.address || COMPANY.address} ซึ่งต่อไปนี้เรียกว่า &quot;ผู้รับจ้าง&quot; อีกฝ่ายหนึ่ง</p>
+      <Num n="1.">
+        <p>ผู้ว่าจ้างตกลงว่าจ้างให้ผู้รับจ้างดูแลผู้สูงอายุ หรือผู้มีภาวะพึ่งพิง โดยมีประวัติดังต่อไปนี้</p>
+        <KV items={[
+          ["ชื่อ - นามสกุล", val(r[2])], ["อายุ", blank(r[13]) ? `${r[13]} ปี` : "-"], ["เลขบัตรประชาชน", idFmt(r[12])], ["ห้องพัก", room || "-"],
+          ["โรคประจำตัว", val(chronic)], ["โรงพยาบาลตามสิทธิ์การรักษา", val(r[24])],
+          ["ประวัติการแพ้ยา", blank(r[25]) ? `แพ้ยา (ระบุ: ${r[25]})` : "ปฏิเสธ"], ["ประวัติการแพ้อาหาร", blank(r[26]) ? `แพ้ (ระบุ: ${r[26]})` : "ปฏิเสธ"],
+          ["ยา / เวชภัณฑ์ที่ใช้ประจำ", val(r[28]), true],
+        ]} />
+      </Num>
+      <Num n="2."><p>สัญญานี้เริ่มตั้งแต่วันที่ <Fill v={longDate(r[7])} w="9em" /> จนถึงวันที่ <Fill v={blank(r[22]) ? longDate(r[22]) : ""} w="9em" /> และสัญญาจะมีผลต่อเนื่องจนกว่าผู้รับบริการจะจำหน่ายจากศูนย์ฯ</p></Num>
       <div className="doc-tbl"><table>
         <thead><tr><th>รายการ</th><th className="n">จำนวนเงิน (บาท)</th></tr></thead>
-        <tbody>{lines.map(([t, n], i) => <tr key={i}><td>{t}</td><td className="n">{n ? money(n) : "-"}</td></tr>)}</tbody>
+        <tbody>
+          <tr><td><b>{val(r[21]) === "-" ? "ค่าบริการ" : r[21]}</b></td><td className="n">{fee ? money(fee) : ""}</td></tr>
+          {lines.map((x, i) => <tr key={i}><td>&nbsp;- {x.desc}{x.qty !== 1 || !["เดือน", "แพ็กเกจ"].includes(x.unit) ? ` (${x.qty.toLocaleString("en-US")} ${x.unit}${x.price ? ` × ${money(x.price)}` : ""})` : ""}</td><td className="n">{x.price ? money(x.qty * x.price) : "รวมในโปรแกรม"}</td></tr>)}
+        </tbody>
+        <tfoot>
+          <tr><td>ยอดรวมทั้งหมด</td><td className="n">{money(total)}</td></tr>
+          {dep > 0 && <tr><td>หักค่ามัดจำห้องพัก</td><td className="n">-{money(dep)}</td></tr>}
+          {dep > 0 && <tr><td>ยอดรวมทั้งหมด ({bahtText(net)})</td><td className="n">{money(net)}</td></tr>}
+        </tfoot>
       </table></div>
-      {first > 0 && <>
-        <DocH>ชำระแรกเข้า</DocH>
-        <div className="doc-tbl"><table>
-          <tbody>
-            {prepaid > 0 && <tr><td>ค่าบริการล่วงหน้า</td><td className="n">{money(prepaid)}</td></tr>}
-            {deposit > 0 && <tr><td>เงินประกัน (คืนเมื่อสิ้นสุดสัญญา หักค่าใช้จ่ายค้างชำระ)</td><td className="n">{money(deposit)}</td></tr>}
-          </tbody>
-          <tfoot><tr><td>รวมชำระแรกเข้า ({bahtText(first)})</td><td className="n">{money(first)}</td></tr></tfoot>
-        </table></div>
-      </>}
-      <DocH>ข้อตกลง</DocH>
-      <ol className="doc-clauses">{clauses.map((c, i) => <li key={i}>{c}</li>)}</ol>
+      {(prepaid > 0 || deposit > 0) && <p className="doc-note">ชำระแรกเข้า: {[prepaid ? `ค่าบริการล่วงหน้า ${money(prepaid)} บาท` : "", deposit ? `เงินประกัน ${money(deposit)} บาท (คืนเมื่อสิ้นสุดสัญญา หักค่าใช้จ่ายค้างชำระ)` : ""].filter(Boolean).join(" · ")}</p>}
       {blank(r[20]) && <p className="doc-note">หมายเหตุ: {r[20]}</p>}
-      <p className="doc-indent">คู่สัญญาได้อ่านและเข้าใจข้อความในสัญญานี้โดยตลอดแล้ว เห็นว่าถูกต้องตามเจตนา จึงลงลายมือชื่อไว้เป็นสำคัญต่อหน้าพยาน สัญญานี้ทำขึ้นสองฉบับมีข้อความตรงกัน ต่างฝ่ายต่างยึดถือไว้ฝ่ายละหนึ่งฉบับ</p>
-      <Signs people={[["ผู้ว่าจ้าง", blank(r[3])], ["ผู้ให้บริการ / ผู้มีอำนาจลงนาม"], ["พยาน"], ["พยาน"]]} />
+      {sign([["ผู้ว่าจ้าง ผู้รับบริการ ญาติ หรือผู้สนับสนุน", blank(r[3])]])}
+
+      {/* หน้า 2: รายการที่รวม/ไม่รวม และอัตราค่าบริการ */}
+      <Break />
+      {head("สัญญาจ้างดูแลผู้สูงอายุ หรือผู้มีภาวะพึ่งพิง")}
+      <DocH>รายการที่รวมอยู่ในบริการรายวัน และรายเดือน</DocH>
+      <ol className="doc-clauses">{INCLUDED.map((x) => <li key={x}>{x}</li>)}</ol>
+      <p className="doc-note"><b>{INCLUDED_NOTE}</b></p>
+      <DocH>สิ่งที่ไม่รวมในรายการ</DocH>
+      <ol className="doc-clauses">{EXCLUDED.map((x) => <li key={x}>{x}</li>)}</ol>
+      <p className="doc-note">{EXCLUDED_NOTE}</p>
+      <DocH>อัตราค่าบริการห้องพัก</DocH>
+      <div className="doc-tbl"><table>
+        <thead><tr><th>รายการ</th><th className="n">ราคารายวัน</th><th className="n">ราคารายเดือน</th><th className="n">โปรโมชัน/เดือน</th></tr></thead>
+        <tbody>{ROOMS.map((x) => <tr key={x.name}><td>{x.name}</td><td className="n">{money(x.day)}</td><td className="n">{money(x.month)}</td><td className="n">{money(x.promo)}</td></tr>)}</tbody>
+      </table></div>
+      <DocH>อัตราค่าบริการเพิ่มเติม</DocH>
+      <div className="doc-tbl"><table>
+        <thead><tr><th>รายการ</th><th className="n">รายครั้ง</th><th className="n">รายวัน</th><th className="n">รายเดือน</th></tr></thead>
+        <tbody>{EXTRA_SERVICES.map((x) => { const c = rateColumns(x); return <tr key={x.code}><td>{x.name}</td><td className="n">{c.once}</td><td className="n">{c.day}</td><td className="n">{c.month}</td></tr>; })}</tbody>
+      </table></div>
+      <DocH>แพ็กเกจฟื้นฟู</DocH>
+      <div className="doc-tbl"><table>
+        <thead><tr><th>แพ็กเกจ</th><th className="n">ราคา (บาท)</th></tr></thead>
+        <tbody>{PACKAGES.map((x) => <tr key={x.code}><td>{x.name}</td><td className="n">{money(x.rates[0].price)}</td></tr>)}</tbody>
+      </table></div>
+
+      {/* หน้า 3: อัตราค่าปรับทรัพย์สิน */}
+      <Break />
+      {head("สัญญาจ้างดูแลผู้สูงอายุ หรือผู้มีภาวะพึ่งพิง")}
+      <DocH>อัตราค่าปรับกรณีทรัพย์สินชำรุด สูญหาย หรือเสียหาย</DocH>
+      <div className="doc-tbl"><table>
+        <thead><tr><th className="n">ลำดับ</th><th>รายการ</th><th>จำนวน</th><th className="n">อัตราค่าปรับ</th></tr></thead>
+        <tbody>{FINES.map(([t, q, n], i) => <tr key={t}><td className="n">{i + 1}</td><td>{t}</td><td>{q}</td><td className="n">{n.toLocaleString("en-US")} บาท</td></tr>)}</tbody>
+      </table></div>
+
+      {/* หน้า 4–8: ระเบียบข้อบังคับ */}
+      <Break />
+      {head("สัญญาจ้างดูแลผู้สูงอายุ หรือผู้มีภาวะพึ่งพิง")}
+      <DocH>1. ระเบียบข้อบังคับของทางศูนย์ฯ</DocH>
+      {RULES_CENTER.map((x, i) => <Num key={i} n={`1.${i + 1}`}><p>{x}</p></Num>)}
+
+      <Break />
+      <DocH>2. ระเบียบข้อบังคับ และเงื่อนไขการใช้บริการทางการเงิน และบัญชี</DocH>
+      {RULES_FINANCE_BEFORE.map((x, i) => <Num key={i} n={`2.${i + 1}`}><p>{x}</p></Num>)}
+      <Num n="2.3">
+        <p>ผู้ที่จะอุปถัมภ์ช่วยสนับสนุนทางด้านการเงินตามที่ได้ตกลงกับศูนย์ฯ มีดังนี้</p>
+        {[0, 1].map((k) => (
+          <div key={k} className="doc-sponsor">
+            <KV items={[
+              [`${k + 1}. ชื่อ - นามสกุล`, k ? "" : val(r[3])], ["เลขบัตรประชาชน", k ? "" : idFmt(r[8])],
+              ["ที่อยู่", k ? "" : val(r[10]), true], ["เบอร์ติดต่อ", k ? "" : telFmt(r[9])], ["ความสัมพันธ์", k ? "" : val(r[11])],
+            ]} />
+            <p>ยินดีสนับสนุนด้านการเงินตามอัตราที่ตกลงกันไว้ข้างต้น</p>
+            {sign([["ผู้รับผิดชอบอุปถัมภ์ด้านการเงิน", k ? undefined : blank(r[3])]])}
+          </div>
+        ))}
+        <p>ที่อยู่ที่ปรากฏในข้อ 2.3 เป็นที่อยู่ในการจัดส่งสรรพเอกสาร และให้ถือเป็นภูมิลำเนาอีกแห่งหนึ่งของญาติ หรือผู้สนับสนุนด้วย</p>
+      </Num>
+      {RULES_FINANCE_AFTER.map((x, i) => <Num key={i} n={`2.${i + 4}`}><p>{x}</p></Num>)}
+      <Num n={`2.${RULES_FINANCE_AFTER.length + 4}`}><p>ช่องทางการชำระค่าใช้จ่าย</p><ul className="doc-dash">{PAY_CHANNELS.map((x) => <li key={x}>{x}</li>)}</ul></Num>
+
+      <DocH>3. ระเบียบข้อบังคับทางการพยาบาล</DocH>
+      {RULES_NURSING.map((x, i) => <Num key={i} n={`3.${i + 1}`}><p>{x}</p></Num>)}
+      <Num n={`3.${RULES_NURSING.length + 1}`}>
+        <p>ในกรณีที่ผู้รับบริการจำเป็นต้องเข้ารับการรักษา ให้นำส่งโรงพยาบาล <Fill v={r[24]} w="14em" /></p>
+        <p>หรือให้นำส่งโรงพยาบาลใกล้เคียงชื่อ <Fill w="14em" /></p>
+        <p>หมายเลขโทรศัพท์ที่สามารถติดต่อได้เร่งด่วนที่สุดในกรณีฉุกเฉิน <Fill v={telFmt(r[9]) === "-" ? "" : telFmt(r[9])} w="9em" /></p>
+      </Num>
+
+      <Break />
+      <DocH>4. ระเบียบข้อบังคับในการรับบริการทีมฟื้นฟู</DocH>
+      {RULES_REHAB.map((x, i) => <Num key={i} n={`4.${i + 1}`}><p>{x}</p>{i === 0 && <ul className="doc-dash">{REHAB_CHECKS.map((c) => <li key={c}>{c}</li>)}</ul>}</Num>)}
+
+      <DocH>5. ระเบียบข้อบังคับกรณีคืนเตียง / การคืนเงิน</DocH>
+      {RULES_REFUND.map((x, i) => <Num key={i} n={`5.${i + 1}`}><p>{x}</p></Num>)}
+      <Num n="5.3"><p>ทรัพย์สินแรกรับ</p><div className="doc-lines">{[0, 1, 2].map((k) => <span key={k} />)}</div></Num>
+      <Num n="5.4"><p>เงื่อนไขอื่น ๆ เพิ่มเติม</p>{extra.length ? <ul className="doc-dash">{extra.map((x, i) => <li key={i}>{x}</li>)}</ul> : <div className="doc-lines">{[0, 1, 2].map((k) => <span key={k} />)}</div>}</Num>
+      <p className="doc-indent">{ACCEPT}</p>
+      {sign([["ผู้ว่าจ้าง ผู้รับบริการ ญาติ หรือผู้สนับสนุน", blank(r[3])], ["ผู้รับจ้าง หรือผู้แทนบริษัท"], ["พยาน"], ["พยาน"]])}
+
+      {/* หน้า 9: หนังสือยินยอมเปิดเผยข้อมูล */}
+      <Break />
+      {head("หนังสือแสดงความยินยอมให้เปิดเผยข้อมูลทางการพยาบาล")}
+      <Num n="1."><p>ข้าพเจ้า <Fill v={r[3]} w="12em" /> เลขประจำตัวประชาชน <Fill v={idFmt(r[8]) === "-" ? "" : idFmt(r[8])} w="10em" /> ในฐานะผู้ว่าจ้าง ญาติ ผู้สนับสนุน หรือผู้มีอำนาจกระทำแทน เป็นผู้มีอำนาจกระทำแทนผู้รับบริการ เกี่ยวข้องเป็น <Fill v={r[11]} w="5em" /> ของผู้รับบริการ ชื่อ - นามสกุล <Fill v={r[2]} w="12em" /> เลขประจำตัวประชาชน <Fill v={idFmt(r[12]) === "-" ? "" : idFmt(r[12])} w="10em" /></p></Num>
+      {CONSENT.map((x, i) => <Num key={i} n={`${i + 2}.`}>{x === "MARKETING" ? <p>ข้าพเจ้า ☐ ไม่ยินยอม ☐ ยินยอม {CONSENT_MARKETING.replace("ให้บริษัท", `ให้${legal}`)}</p> : <p>{x.replace(/บริษัท(?!ฯ)/, legal)}</p>}</Num>)}
+      {sign([["ผู้ว่าจ้าง ผู้รับบริการ ญาติ หรือผู้สนับสนุน", blank(r[3])], ["ผู้รับจ้าง หรือผู้แทนบริษัท"], ["พยาน"], ["พยาน"]])}
+
+      {/* หน้า 10: ขั้นตอนไปโรงพยาบาลตามนัด และมาตรการเข้าเยี่ยม */}
+      <Break />
+      {head("ขั้นตอนการไปโรงพยาบาลตามนัดหมาย")}
+      <ol className="doc-clauses">{HOSPITAL_STEPS.map((x) => <li key={x}>{x}</li>)}</ol>
+      <DocH>มาตรการการเข้าเยี่ยม</DocH>
+      <ol className="doc-clauses">{VISIT_RULES.map((x) => <li key={x}>{x}</li>)}</ol>
+      <p className="doc-indent">{VISIT_EFFECTIVE}</p>
+      {sign([["ผู้ว่าจ้าง ผู้รับบริการ ญาติ หรือผู้สนับสนุน", blank(r[3])]])}
+
+      {/* หน้า 11: บันทึกการรับเอกสาร */}
+      <Break />
+      {head("บันทึกการรับเอกสาร")}
+      <p>ชื่อ - นามสกุลผู้รับบริการ <Fill v={r[2]} w="16em" /></p>
+      <div className="doc-tbl doc-grid"><table>
+        <thead><tr><th>วันที่รับ</th><th>รายการเอกสารที่ได้รับ</th><th>หมายเหตุ</th><th>ลงชื่อผู้มอบ</th><th>ลงชื่อผู้รับ</th></tr></thead>
+        <tbody>
+          {DOC_RECEIPT.map((x) => <tr key={x}><td /><td>☐ {x}</td><td>☐ สำเนาแล้ว ☐ ส่งคืนแล้ว</td><td /><td /></tr>)}
+          <tr><td /><td><b>เอกสารอื่น ๆ เพิ่มเติม</b></td><td /><td /><td /></tr>
+          {[0, 1, 2, 3, 4, 5].map((k) => <tr key={k}><td>&nbsp;</td><td /><td /><td /><td /></tr>)}
+        </tbody>
+      </table></div>
+
+      {/* หน้า 12: ตรวจห้องพักและอุปกรณ์ */}
+      <Break />
+      {head("เอกสารตรวจห้องพักและอุปกรณ์")}
+      <p>ชื่อ - นามสกุลผู้รับบริการ <Fill v={r[2]} w="16em" /> {room && <>· {room}</>}</p>
+      <div className="doc-tbl doc-grid"><table>
+        <thead><tr><th>รายการ</th><th>จำนวน</th><th>ครบ</th><th>ไม่ครบ</th></tr></thead>
+        <tbody>{ROOM_CHECK.map(([g, items]) => [
+          <tr key={g}><td colSpan={4}><b>{g}</b></td></tr>,
+          ...items.map(([t, q]) => <tr key={g + t}><td>&nbsp;&nbsp;{t}</td><td>{q}</td><td /><td /></tr>),
+        ])}</tbody>
+      </table></div>
+      <p className="doc-note" style={{ color: "#b42318" }}>{ROOM_CHECK_NOTE}</p>
+      {sign([["ผู้ว่าจ้าง ผู้รับบริการ ญาติ หรือผู้สนับสนุน", blank(r[3])], ["เจ้าหน้าที่ผู้ตรวจ"]])}
       <DocFoot left={`สัญญา ${val(r[0])}`} by={by} />
     </Paper>
   );
 }
 
 /* ---------- บันทึกต่อท้ายสัญญา (ต่อสัญญา / เปลี่ยนเงื่อนไข) ---------- */
-const DIFF: [number, string][] = [[7, "วันเริ่มสัญญา"], [6, "ห้องพัก"], [4, "ค่าบริการรายเดือน"], [14, "บริการในค่าบริการพื้นฐาน"], [15, "รายการที่มีค่าใช้จ่ายเพิ่มเติม"], [16, "ค่าบริการเพิ่มเติมรายเดือน"], [17, "แพ็กเกจเสริม"], [19, "เงินประกัน"]];
+const DIFF: [number, string][] = [[21, "โปรแกรม"], [7, "วันเริ่มสัญญา"], [22, "วันสิ้นสุดสัญญา"], [6, "ห้องพัก"], [4, "ราคาโปรแกรม"], [23, "รายการค่าบริการ"], [27, "หักมัดจำห้องพัก"], [19, "เงินประกัน"]];
+const linesText = (r: string[]) => contractLines(r).map((x) => `${x.desc}${x.price ? ` ${money(x.qty * x.price)}` : ""}`).join(" · ") || "-";
 export function RenewDoc({ before, after, hn, branch, by }: { before: string[]; after: string[]; hn?: string; branch?: DocBranch; by?: string }) {
-  const show = (k: number, v?: string) => (k === 7 ? longDate(v, true) : [4, 16, 19].includes(k) && numOf(v) ? money(numOf(v)) : val(v));
-  const rows = DIFF.filter(([k]) => (before[k] ?? "") !== (after[k] ?? ""));
+  const show = (k: number, v?: string, r?: string[]) => (k === 23 && r ? linesText(r) : [7, 22].includes(k) ? (blank(v) ? longDate(v, true) : "-") : [4, 19, 27].includes(k) && numOf(v) ? money(numOf(v)) : val(v));
+  const rows = DIFF.filter(([k]) => (k === 23 ? linesText(before) !== linesText(after) : (before[k] ?? "") !== (after[k] ?? "")));
   return (
     <Paper>
       <DocHead branch={branch} refs={[["อ้างอิงสัญญา", val(before[0])], ["สัญญาใหม่", val(after[0]) === "-" ? "รอออกเลข" : after[0]], ["HN", val(hn)]]} />
@@ -142,7 +276,7 @@ export function RenewDoc({ before, after, hn, branch, by }: { before: string[]; 
       <DocH>รายการที่เปลี่ยนแปลง</DocH>
       <div className="doc-tbl"><table>
         <thead><tr><th>หัวข้อ</th><th>เดิม</th><th>ใหม่</th></tr></thead>
-        <tbody>{rows.length ? rows.map(([k, t]) => <tr key={k}><td>{t}</td><td>{show(k, before[k])}</td><td><b>{show(k, after[k])}</b></td></tr>) : <tr><td colSpan={3}>ต่อสัญญาด้วยเงื่อนไขเดิมทุกข้อ</td></tr>}</tbody>
+        <tbody>{rows.length ? rows.map(([k, t]) => <tr key={k}><td>{t}</td><td>{show(k, before[k], before)}</td><td><b>{show(k, after[k], after)}</b></td></tr>) : <tr><td colSpan={3}>ต่อสัญญาด้วยเงื่อนไขเดิมทุกข้อ</td></tr>}</tbody>
       </table></div>
       <Signs people={[["ผู้ว่าจ้าง", blank(after[3])], ["ผู้ให้บริการ"]]} />
       <DocFoot left={`ต่อจากสัญญา ${val(before[0])}`} by={by} />

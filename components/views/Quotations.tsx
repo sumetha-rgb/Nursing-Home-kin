@@ -10,6 +10,7 @@ import { handoff } from "@/lib/handoff";
 import { longDate, PrintModal, QuoteDoc, QuoteItem } from "../print/Docs";
 import { useBranchInfo } from "./Billing";
 import { DataTable, Field, Modal, PageHeader, Section, SuggestInput } from "../ui";
+import { ServiceLines } from "../ServicePicker";
 
 /**
  * ใบเสนอราคาและแผนการดูแล
@@ -17,8 +18,6 @@ import { DataTable, Field, Modal, PageHeader, Section, SuggestInput } from "../u
  * กด "เปิดสัญญา" = ไปหน้าสัญญาพร้อมข้อมูลจากใบนี้ ไม่ต้องกรอกซ้ำ
  */
 const CARE_LEVELS = ["ช่วยเหลือตัวเองได้", "ต้องการความช่วยเหลือบางส่วน", "ติดเตียง", "ฟื้นฟูหลังโรคหลอดเลือดสมอง"];
-const UNITS = ["เดือน", "ครั้ง", "วัน", "ชุด", "รายการ"];
-const blankItem = (): QuoteItem => ({ desc: "", qty: 1, unit: "ครั้ง", price: 0 });
 const numOf = (v?: string) => Number(String(v ?? "").replace(/,/g, "")) || 0;
 const has = (v?: string) => !!v && v !== "-";
 const itemsOf = (r: string[]): QuoteItem[] => {
@@ -46,7 +45,7 @@ export function Quotations() {
     const r = i !== null ? rows[i] : null;
     setF(r ? { i, plan: r[0], who: r[1], chronic: has(r[2]) ? r[2] : "", phone: has(r[3]) ? r[3] : "", payer: has(r[9]) ? r[9] : "", level: has(r[10]) ? r[10] : CARE_LEVELS[1],
       date: has(r[7]) ? r[7] : today(), days: has(r[8]) ? r[8] : "30", note: has(r[5]) ? r[5] : "", items: itemsOf(r) }
-      : { i: null, plan: "", who: "", chronic: "", phone: "", payer: "", level: CARE_LEVELS[1], date: today(), days: "30", note: "", items: [{ desc: "ห้องพักพร้อมการดูแลพื้นฐาน 24 ชม.", qty: 1, unit: "เดือน", price: 0 }] });
+      : { i: null, plan: "", who: "", chronic: "", phone: "", payer: "", level: CARE_LEVELS[1], date: today(), days: "30", note: "", items: [] });
   };
   const save = () => {
     if (!f) return;
@@ -61,16 +60,14 @@ export function Quotations() {
     toast(`${f.i !== null ? "แก้ไขใบเสนอราคาแล้ว" : "สร้างใบเสนอราคาแล้ว"} · ${row[1]} · ${money(totalOf(items))} บาท${f.i === null ? " · ระบบออกเลขที่ให้" : ""}`);
     setF(null);
   };
-  /** เปิดสัญญาจากใบเสนอราคา: รายการหน่วย "เดือน" รวมเป็นค่าบริการรายเดือน · รายการอื่นเป็นค่าใช้จ่ายเพิ่มเติม */
+  /** เปิดสัญญาจากใบเสนอราคา: ชื่อแผน = โปรแกรม · รายการทั้งหมดตามไปเป็นรายการค่าบริการของสัญญา */
   const toContract = (i: number) => {
     const r = rows[i];
     if (has(r[12])) return toast(`ใบเสนอราคานี้เปิดสัญญาไปแล้ว · ${r[12]}`);
     const items = itemsOf(r);
-    const monthly = items.filter((x) => x.unit === "เดือน").reduce((n, x) => n + x.qty * x.price, 0);
-    const extra = items.filter((x) => x.unit !== "เดือน");
     const p = resident(r[1]);
-    const prefill = ["", p?.[3] ?? user?.branch ?? "", r[1], has(r[9]) ? r[9] : "", monthly ? String(monthly) : "", "รอชำระเงินมัดจำ", "", "", "", has(r[3]) ? r[3].replace(/\D/g, "") : "", "", "", "", p?.[1] && p[1] !== "-" ? p[1] : "",
-      r[0], extra.map((x) => `${x.desc} ${x.qty} ${x.unit}`).join(", "), extra.length ? String(extra.reduce((n, x) => n + x.qty * x.price, 0)) : "", "", "", "", `เปิดจากใบเสนอราคา ${r[6] || ""}`.trim()];
+    const prefill = ["", p?.[3] ?? user?.branch ?? "", r[1], has(r[9]) ? r[9] : "", "", "รอชำระเงินมัดจำ", "", "", "", has(r[3]) ? r[3].replace(/\D/g, "") : "", "", "", "", p?.[1] && p[1] !== "-" ? p[1] : "",
+      "", "", "", "", "", "", `เปิดจากใบเสนอราคา ${r[6] || ""}`.trim(), r[0], "", JSON.stringify(items), "", "", "", "", ""];
     handoff.set({ prefill, quoteId: ids[i], quoteNo: r[6] || "" });
     go("contracts");
   };
@@ -112,28 +109,13 @@ export function Quotations() {
             <Field label="เบอร์โทรติดต่อ"><input value={f.phone} inputMode="tel" onChange={(e) => setF({ ...f, phone: e.target.value })} placeholder="08X-XXX-XXXX" /></Field>
             <Field label="ระดับการดูแลที่ประเมิน"><select value={f.level} onChange={(e) => setF({ ...f, level: e.target.value })}>{CARE_LEVELS.map((x) => <option key={x}>{x}</option>)}</select></Field>
             <Field label="โรคประจำตัว"><input value={f.chronic} onChange={(e) => setF({ ...f, chronic: e.target.value })} placeholder="เช่น เบาหวาน ความดันโลหิตสูง" /></Field>
-            <Field label="ชื่อแผนการดูแล"><input value={f.plan} onChange={(e) => setF({ ...f, plan: e.target.value })} placeholder="เช่น แผนดูแลระดับ 2 + กายภาพ" /></Field>
+            <Field label="ชื่อแผนการดูแล"><input value={f.plan} onChange={(e) => setF({ ...f, plan: e.target.value })} placeholder="เช่น ดูแลแบบช่วยเหลือบางส่วน + กายภาพ" /></Field>
             <Field label="วันที่"><input type="date" value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} /></Field>
             <Field label="ยืนราคา (วัน)"><input type="number" min={1} value={f.days} onChange={(e) => setF({ ...f, days: e.target.value })} /></Field>
           </div>
           <div>
-            <p className="label">รายการบริการ <small className="font-normal text-gold-500">· หน่วย &quot;เดือน&quot; จะเป็นค่าบริการรายเดือนตอนเปิดสัญญา</small></p>
-            <div className="space-y-2">{f.items.map((x, k) => {
-              const set = (p: Partial<QuoteItem>) => setF({ ...f, items: f.items.map((y, j) => (j === k ? { ...y, ...p } : y)) });
-              return (
-                <div key={k} className="quote-line">
-                  <input value={x.desc} onChange={(e) => set({ desc: e.target.value })} placeholder="รายการ เช่น กายภาพบำบัด" aria-label="รายการ" />
-                  <input type="number" min={0} value={x.qty} onChange={(e) => set({ qty: Number(e.target.value) || 0 })} aria-label="จำนวน" />
-                  <select value={x.unit} onChange={(e) => set({ unit: e.target.value })} aria-label="หน่วย">{UNITS.map((u) => <option key={u}>{u}</option>)}</select>
-                  <input type="number" min={0} value={x.price} onChange={(e) => set({ price: Number(e.target.value) || 0 })} aria-label="ราคาต่อหน่วย" />
-                  <button type="button" className="row-action danger" disabled={f.items.length === 1} onClick={() => setF({ ...f, items: f.items.filter((_, j) => j !== k) })}>ลบ</button>
-                </div>
-              );
-            })}</div>
-            <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-              <button type="button" className="btn-soft !py-2" onClick={() => setF({ ...f, items: [...f.items, blankItem()] })}><Icon name="plus" className="h-4 w-4" /> เพิ่มรายการ</button>
-              <b className="text-gold-800">รวม {money(totalOf(f.items))} บาท</b>
-            </div>
+            <p className="label">รายการบริการ <small className="font-normal text-gold-500">· พิมพ์ค้นหาจากใบราคาแล้วกดราคาที่ต้องการ หรือเพิ่มรายการเอง · รายการทั้งหมดตามไปที่สัญญาตอนกดเปิดสัญญา</small></p>
+            <ServiceLines items={f.items} onChange={(items) => setF({ ...f, items })} />
           </div>
           <Field label="หมายเหตุ / เงื่อนไขเพิ่มเติม"><textarea rows={2} value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} /></Field>
         </div>}

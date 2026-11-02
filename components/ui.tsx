@@ -66,7 +66,8 @@ export function DataTable({ columns, rows = [], empty = "ไม่พบข้�
 }
 
 /** readOnly: ระบบเป็นคนกำหนดค่า (เช่น เลขที่เอกสาร) แสดงอย่างเดียวแม้ในโหมดแก้ไข */
-export type FieldDef = { label: string; options?: string[]; type?: string; area?: boolean; required?: boolean; wide?: boolean; readOnly?: boolean; placeholder?: string; suggest?: string[] };
+/** hidden: ไม่แสดงในฟอร์ม แต่ค่าเดิมยังอยู่ตอนบันทึก (เช่น รายการ JSON ที่แก้ผ่านหน้าอื่น) */
+export type FieldDef = { label: string; options?: string[]; type?: string; area?: boolean; required?: boolean; wide?: boolean; readOnly?: boolean; placeholder?: string; suggest?: string[]; hidden?: boolean };
 
 /** เวลาแบบ 24 ชั่วโมง (เช่น 13:50 น.) ไม่ขึ้นกับภาษา/รูปแบบ AM-PM ของเบราว์เซอร์ · ค่าเป็น "HH:MM" */
 export function TimeInput({ value, required, onChange }: { value: string; required?: boolean; onChange: (v: string) => void }) {
@@ -128,7 +129,7 @@ export function FormDialog({ open, mode, title, fields, value, onClose, onSave, 
     >
       <div className="form-intro">{view ? "รายละเอียดข้อมูลที่บันทึกไว้ในระบบ" : "กรอกข้อมูลให้ครบถ้วน ช่องที่มีเครื่องหมาย * เป็นข้อมูลที่จำเป็น"}</div>
       <form id="form-dialog" onSubmit={(e) => { e.preventDefault(); onSave(v); }} className="form-grid">
-        {fields.map((f, i) => (
+        {fields.map((f, i) => f.hidden ? null : (
           <Field key={f.label} label={f.label} required={f.required && !view} className={f.wide || f.area ? "md:col-span-2" : ""}>
             {view || f.readOnly ? (
               <p className="field-view">{v[i] || "-"}</p>
