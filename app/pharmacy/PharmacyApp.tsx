@@ -340,7 +340,7 @@ function Dispense({ drugs, setDrugs, packs, setPacks, go, me, focus, onAddDrug }
 function QA({ packs, setPacks, drugs, setDrugs, go, me, onRedo }: { packs: Pack[]; setPacks: (x: Pack[]) => void; drugs: Drug[]; setDrugs: (x: Drug[]) => void; go: (p: Page) => void; me: string; onRedo: (who: string, date: string) => void }) {
   const { toast, confirm } = useApp();
   /** ซองที่จัดผิด: ลบซอง คืนยาเข้าตะกร้าผู้ป่วย แล้วเปิดหน้าจัดยาของผู้ป่วยและวันนั้น (เหมือนกดรีเซตที่หน้าจัดยา) */
-  const redo = (p: Pack) => confirm({ title: "รีเซตซองนี้แล้วจัดใหม่", message: `ล้างซองมื้อ${p.meal}ของ ${p.who} วันที่ ${thai(p.date)} คืนยาเข้าตะกร้า แล้วไปหน้าจัดยาเพื่อจัดใหม่ ใช่หรือไม่`, okLabel: "รีเซตและจัดใหม่", onOk: () => {
+  const redo = (p: Pack) => confirm({ title: "รีเซตซองนี้แล้วจัดใหม่", message: `ล้างซองมื้อ${p.meal}ของ ${p.who} วันที่ ${thai(p.date)} คืนยาเข้าตะกร้า แล้วไปหน้าจัดยาเพื่อจัดใหม่ ใช่หรือไม่`, danger: true, okLabel: "รีเซตและจัดใหม่", onOk: () => {
     const list = drugsFor(drugs, p.who, p.meal, p.date);
     setDrugs(drugs.map((y) => (list.some((z) => z.id === y.id) ? { ...y, stock: y.stock + y.dose } : y)));
     setPacks(packs.filter((x) => x.id !== p.id));

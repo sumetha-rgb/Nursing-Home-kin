@@ -7,6 +7,7 @@ import { useBranchNames } from "@/lib/branches";
 import { money } from "@/lib/billing";
 import { MEALS } from "@/lib/pharmacy";
 import { refreshData } from "@/lib/store";
+import { useAutoRefresh } from "@/lib/autoRefresh";
 import { DataTable, Field, MetricGrid, Modal, PageHeader, Section, Select } from "../ui";
 import { SearchSelect } from "../SearchSelect";
 
@@ -51,6 +52,7 @@ export default function CentralStock() {
     call<List>(`/api/pharmstock?op=list${branch ? `&branch=${encodeURIComponent(branch)}` : ""}`).then((d) => { setData(d); setErr(""); }).catch((e) => setErr((e as Error).message));
   }, [branch]);
   useEffect(load, [load]);
+  useAutoRefresh(load);
   const global = data !== null && data.branch === null && !branch;
 
   const rows = useMemo(() => (data?.drugs ?? []).map((d) => {

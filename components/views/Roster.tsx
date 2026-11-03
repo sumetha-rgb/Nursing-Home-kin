@@ -4,6 +4,7 @@ import Icon from "@/components/Icon";
 import { MetricGrid, Modal, PageHeader, Section, Select } from "@/components/ui";
 import RosterCalendar from "@/components/roster/RosterCalendar";
 import { useApp } from "@/lib/app";
+import { useAutoRefresh } from "@/lib/autoRefresh";
 import { ROLE_INFO, Role } from "@/lib/roles";
 import { useBranchNames } from "@/lib/branches";
 import { assignShift, Attendance, dayTitle, fetchDay, fetchMonth, isoDate, Month, SHIFTS, ymOf } from "@/lib/roster";
@@ -29,6 +30,7 @@ export function Roster() {
     catch (e) { setError((e as Error).message); }
   }, [ym, branch]);
   useEffect(() => { load(); }, [load]);
+  useAutoRefresh(load); // การเช็คชื่อของพยาบาลขึ้นเองระหว่างเปิดหน้าค้างไว้
   // ผู้บริหาร: เริ่มที่สาขาแรกเพื่อให้จัดเวรได้ทันที
   useEffect(() => { if (isGlobal && !branch && branches.length) setBranch(branches[0]); }, [isGlobal, branch, branches]);
 

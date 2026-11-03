@@ -6,6 +6,7 @@ import { useSession } from "@/lib/session";
 import { can } from "@/lib/perms";
 import { useBranchNames } from "@/lib/branches";
 import { money } from "@/lib/billing";
+import { useAutoRefresh } from "@/lib/autoRefresh";
 import { DataTable, Field, MetricGrid, Modal, PageHeader, Section, Select } from "../ui";
 
 /**
@@ -36,6 +37,7 @@ export default function SupplyStock() {
       .catch((e) => setErr((e as Error).message));
   }, []);
   useEffect(load, [load]);
+  useAutoRefresh(load);
 
   const multi = branchNames.length > 1;
   const shown = useMemo(() => (items ?? []).filter((x) => !branch || x.branch_name === branch), [items, branch]);

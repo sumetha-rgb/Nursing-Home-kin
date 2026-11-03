@@ -30,6 +30,6 @@ export async function POST(req: NextRequest) {
   const user = { id: u.id, name: u.name, email: u.email, role: u.role as Role, branch: u.branch ?? "", perms: permsFor(u.role as Role, u.permissions) };
   await audit(req, user, [{ area: "auth", action: "login", recordId: u.id, summary: email }]);
   const res = NextResponse.json({ user: await checkBranch(user) });
-  await startSession(res, u.id);
+  await startSession(res, u.id, body.remember !== false);
   return res;
 }

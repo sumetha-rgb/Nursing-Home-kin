@@ -2,7 +2,7 @@
 import { ReactNode, useEffect, useState, useId, useRef, Children, isValidElement, cloneElement, ReactElement } from "react";
 import { createPortal } from "react-dom";
 import Icon from "./Icon";
-import { ResidentPicker } from "./SearchSelect";
+import { ResidentPicker, SearchSelect } from "./SearchSelect";
 import { clearNotice, closeModal, openModal, useNotice } from "@/lib/notice";
 
 export function PageHeader({ title, sub, actions }: { title: string; sub?: string; actions?: ReactNode }) {
@@ -16,9 +16,10 @@ export function MetricGrid({items}:{items:{label:string;value:string|number;unit
   return <div className="metrics-grid">{items.map(item=><div key={item.label} className={"metric "+(item.accent?"accent":"")}><div className="metric-top"><span>{item.label}</span><Icon name={item.icon||"chart"} /></div><div className="metric-value">{item.value}<small>{item.unit}</small></div>{item.note&&<p className="metric-note">{item.note}</p>}</div>)}</div>;
 }
 export function StatusBadge({value}:{value:string}) {
-  const success=/^(เพิ่ม|อนุมัติ|สมัครสมาชิก|เข้าสู่ระบบ$|ตรวจแล้ว|เสร็จแล้ว|เสร็จสิ้น|แก้ไขแล้ว|ใช้งานอยู่|ทำงาน|เปิด|เข้าอยู่|สำเร็จ|ตรวจผ่าน|จัดยาแล้ว|จ่ายยาแล้ว|ปกติ|ชำระแล้ว)/.test(value);
-  const warning=/^(เฝ้าระวัง|รอ|กำลัง|แอดมิท|ค้างชำระ|ชำระบางส่วน|มัดจำ|แก้ไข$|แทนที่|เปลี่ยนรหัส|รีเซตรหัส)/.test(value);
-  const danger=/^(ผิดปกติ|ลบ|ล้างข้อมูล|เข้าสู่ระบบไม่สำเร็จ|ปิด|ลาออก|สิ้นสุด|พักงาน|งด|ยาหมด|ยางด|แจ้งจัดยาผิด|ยกเลิก)/.test(value);
+  // เขียว = เสร็จ/ใช้งานได้ · ส้ม = รอ/ใกล้ถึงเกณฑ์ · แดง = ปัญหาที่ต้องจัดการ · เทา = จบแล้ว/ไม่ใช้งาน (สิ้นสุดสัญญา ลาออก ย้ายออก หมดอายุ)
+  const success=/^(เพิ่ม|อนุมัติ|สมัครสมาชิก|เข้าสู่ระบบ$|ตรวจแล้ว|เสร็จแล้ว|เสร็จสิ้น|แก้ไขแล้ว|ใช้งานอยู่|ทำงาน|เปิด|เข้าอยู่|สำเร็จ|ตรวจผ่าน|จัดยาแล้ว|จ่ายยาแล้ว|ปกติ|ชำระแล้ว|ทำแล้ว|พร้อมใช้งาน|เผยแพร่แล้ว)/.test(value);
+  const warning=/^(เฝ้าระวัง|รอ|กำลัง|แอดมิท|ค้างชำระ|ชำระบางส่วน|มัดจำ|แก้ไข$|แทนที่|เปลี่ยนรหัส|รีเซตรหัส|ใกล้หมด|เหลือน้อย|เตรียมเปิด|พักงาน)/.test(value);
+  const danger=/^(ผิดปกติ|ลบ|ล้างข้อมูล|เข้าสู่ระบบไม่สำเร็จ|ปิด|งด|ยาหมด|ยางด|แจ้งจัดยาผิด|ยกเลิก|เลยเวลา|ไม่มีคนทำ|หมด$)/.test(value);
   return <span className={"status-badge "+(success?"status-success":warning?"status-warning":danger?"status-danger":"status-neutral")}>{value.replace(/\s*\([^)]*\)/g, "")}</span>;
 }
 
@@ -94,7 +95,8 @@ export function DataTable({ columns, rows = [], empty = "ไม่พบข้�
 /** readOnly: ระบบเป็นคนกำหนดค่า (เช่น เลขที่เอกสาร) แสดงอย่างเดียวแม้ในโหมดแก้ไข */
 /** hidden: ไม่แสดงในฟอร์ม แต่ค่าเดิมยังอยู่ตอนบันทึก (เช่น รายการ JSON ที่แก้ผ่านหน้าอื่น) */
 /** pick "resident": ช่องพิมพ์ค้นหาผู้รับบริการ (options = รายชื่อที่เลือกได้) · requireRoom: ต้องมีห้องก่อน */
-export type FieldDef = { pick?: "resident"; requireRoom?: boolean; label: string; options?: string[]; type?: string; area?: boolean; required?: boolean; wide?: boolean; readOnly?: boolean; placeholder?: string; suggest?: string[]; hidden?: boolean };
+/** pick "search": พิมพ์ค้นหาจาก options · showIf: แสดงช่องนี้เมื่อเงื่อนไขจริง (เช่น เลือกวิธีมอบหมายแล้ว) */
+export type FieldDef = { showIf?: (v: string[]) => boolean; pick?: "resident" | "search"; requireRoom?: boolean; label: string; options?: string[]; type?: string; area?: boolean; required?: boolean; wide?: boolean; readOnly?: boolean; placeholder?: string; suggest?: string[]; hidden?: boolean };
 
 /** เวลาแบบ 24 ชั่วโมง (เช่น 13:50 น.) ไม่ขึ้นกับภาษา/รูปแบบ AM-PM ของเบราว์เซอร์ · ค่าเป็น "HH:MM" */
 export function TimeInput({ value, required, onChange }: { value: string; required?: boolean; onChange: (v: string) => void }) {
@@ -156,10 +158,12 @@ export function FormDialog({ open, mode, title, fields, value, onClose, onSave, 
     >
       <div className="form-intro">{view ? "รายละเอียดข้อมูลที่บันทึกไว้ในระบบ" : "กรอกข้อมูลให้ครบถ้วน ช่องที่มีเครื่องหมาย * เป็นข้อมูลที่จำเป็น"}</div>
       <form id="form-dialog" onSubmit={(e) => { e.preventDefault(); onSave(v); }} className="form-grid">
-        {fields.map((f, i) => f.hidden ? null : (
+        {fields.map((f, i) => f.hidden || (f.showIf && !f.showIf(v)) ? null : (
           <Field key={f.label} label={f.label} required={f.required && !view} className={f.wide || f.area ? "md:col-span-2" : ""}>
             {view || f.readOnly ? (
               <p className="field-view">{v[i] || "-"}</p>
+            ) : f.pick === "search" ? (
+              <SearchSelect items={(f.options ?? []).map((o) => ({ value: o, label: o }))} value={v[i] ?? ""} onChange={(x) => set(i, x)} ariaLabel={f.label} placeholder={f.placeholder ?? "พิมพ์เพื่อค้นหา"} />
             ) : f.pick === "resident" ? (
               <>
                 <ResidentPicker names={f.options} requireRoom={f.requireRoom} value={v[i] ?? ""} onChange={(x) => set(i, x)} ariaLabel={f.label} />

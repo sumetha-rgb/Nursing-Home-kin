@@ -16,6 +16,7 @@ import { ResidentPicker } from "@/components/SearchSelect";
 import { AppProvider, useApp } from "@/lib/app";
 import { downloadCsv, useCrud, useRecords } from "@/lib/store";
 import { useResidents } from "@/lib/care";
+import { useAutoRefresh } from "@/lib/autoRefresh";
 import { HEALTH } from "@/lib/mock";
 import { daysLeft, Drug, DRUGS0, iso, MEALS, nowTh, Pack } from "@/lib/pharmacy";
 import AlertsBell from "@/components/care/AlertsBell";
@@ -92,7 +93,13 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   const RESIDENTS = live.map((r) => ({ id: r.id, name: r.full_name, room: r.room ?? "-", age: r.age ?? "-" }));
   // นัดหมายและงานส่วนกลาง: ชุดข้อมูลเดียวกับที่ผู้จัดการ/หัวหน้าพยาบาลบันทึกในระบบจัดการ
   const { rows: apptRows } = useCrud("appointments", []);
-  const { rows: facilityRows } = useCrud("facility", []);
+  // งานส่วนกลาง: ทำแล้วถ่ายรูปส่ง (รอบละครั้ง ทุกวัน / ทุกสัปดาห์ / ทุกเดือน) · นับเป็นผลงานใน KPI
+  type Fac = { id: string; name: string; category: string | null; schedule: string; manual: boolean; assignee: string | null; done: boolean; late: boolean; last: { id: string; by: string; at: string; note: string | null } | null };
+  const [fac, setFac] = useState<Fac[]>([]);
+  const loadFac = () => { fetch("/api/care?op=facility&mine=1", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).then((d) => d && setFac(d.items)).catch(() => {}); };
+  useEffect(() => { loadFac(); const t = setInterval(() => { if (document.visibilityState === "visible") loadFac(); }, 60_000); return () => clearInterval(t); }, []);
+  const [facPick, setFacPick] = useState<Fac | null>(null);
+  const [facBusy, setFacBusy] = useState(false);
   const tomorrowIso = new Date(Date.now() + 7 * 3600e3 + 864e5).toISOString().slice(0, 10);
   const appts = upcomingAppts(apptRows).filter(({ r }) => apptIso(r[0]) <= tomorrowIso).map(({ r }) => ({ who: r[2], what: r[3], when: `${apptIso(r[0]) === iso() ? "วันนี้" : "พรุ่งนี้"} ${(r[1] ?? "").slice(0, 5)}`, by: r[4] }));
   const [profile, setProfile] = useState<string | null>(null);
@@ -107,10 +114,11 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   const [feed, setFeed] = useState<Feed>({ kudos: [], cheers: [], bonusToday: 0 });
   const loadFeed = () => { fetch("/api/ops?op=feed", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).then((d) => d && setFeed(d)).catch(() => {}); };
   useEffect(loadFeed, []);
+  useAutoRefresh(loadFeed); // ผลงานพิเศษ คำชม กำลังใจของทีม
   const bonus = feed.bonusToday;
   const [menu, setMenu] = useState(false);
   const [fab, setFab] = useState(false);
-  const [modal, setModal] = useState<null | "task" | "sop" | "bonus" | "dispense" | "metrics" | "handover" | "write" | "pwd" | "manual" | "viewtask">(null);
+  const [modal, setModal] = useState<null | "facility" | "task" | "sop" | "bonus" | "dispense" | "metrics" | "handover" | "write" | "pwd" | "manual" | "viewtask">(null);
   const [cur, setCur] = useState<number | null>(null);
   const [photo, setPhoto] = useState("");
   const [note, setNote] = useState("");
@@ -189,7 +197,22 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   }, [modal, t?.rid]); // eslint-disable-line react-hooks/exhaustive-deps
   const md = cur !== null ? packs.find((x) => x.id === cur) : undefined;
   const unread = handover.length;
-  const mine = doneTasks.length + bonus;
+  const facMine = fac.filter((x) => x.last?.by === user.name && x.last.at.startsWith(todayIso)).length;
+  const mine = doneTasks.length + bonus + facMine;
+  const facLeft = fac.filter((x) => !x.done);
+  const saveFac = async () => {
+    if (!facPick || facBusy) return;
+    if (!photo) return toast("กรุณาถ่ายรูปหลักฐาน");
+    setFacBusy(true);
+    try {
+      const r = await fetch("/api/care", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "facility_done", taskId: facPick.id, photo, note }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || "ส่งงานไม่สำเร็จ กรุณาลองใหม่");
+      toast(`ส่งงานส่วนกลางแล้ว · ${facPick.name} · นับเป็นผลงานของคุณ`);
+      close(); setFacPick(null); loadFac();
+    } catch (e) { toast((e as Error).message); loadFac(); }
+    finally { setFacBusy(false); }
+  };
 
   return (
     <div className="staff-app mx-auto min-h-dvh w-full max-w-lg pb-28 sm:border-x sm:border-cream-300/60" onClick={() => menu && setMenu(false)}>
@@ -286,10 +309,16 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
               ))}</ul>}
             </Card>
 
-            <Card title="งานส่วนกลางตามรอบ" icon="building" right={<Count n={facilityRows.length} />}>
-              {facilityRows.length === 0 ? <Empty t="ยังไม่มีงานส่วนกลางของสาขา (ผู้จัดการเพิ่มได้ที่เมนูงานทั่วไปของศูนย์)" /> : <ul className="space-y-2">{facilityRows.map((f, k) => (
-                <li key={k} className="flex items-center justify-between gap-3 rounded-2xl bg-cream-50 px-4 py-3 text-sm"><span>{f[0]}<span className="block text-xs text-gold-500">{[f[1], f[2]].filter((x) => x && x !== "-").join(" · ")}</span></span></li>
+            <Card title="งานส่วนกลางตามรอบ" icon="building" right={<Count n={facLeft.length} />}>
+              {fac.length === 0 ? <Empty t="ยังไม่มีงานส่วนกลางของสาขา (ผู้จัดการเพิ่มได้ที่เมนูงานทั่วไปของสาขา)" /> : <ul className="space-y-2">{[...fac].sort((a, b) => Number(a.done) - Number(b.done) || Number(b.late) - Number(a.late)).map((f) => (
+                <li key={f.id} className={`flex items-center justify-between gap-3 rounded-2xl px-4 py-3 text-sm ${f.done ? "bg-emerald-50/70" : f.late ? "border border-red-200 bg-red-50" : "bg-cream-50"}`}>
+                  <span className="min-w-0">{f.name}{f.manual && <span className="ml-1.5 rounded-full bg-gold-700 px-2 py-0.5 align-[2px] text-[11px] font-semibold text-white">มอบหมายให้คุณ</span>}<span className="block text-xs text-gold-500">{[f.category, f.schedule].filter((x) => x && x !== "-").join(" · ")}</span>
+                    {f.done && f.last && <span className="block text-xs font-medium text-emerald-800">ทำแล้ว {f.last.at.slice(11)} น. โดย {f.last.by}</span>}
+                    {!f.done && f.late && <span className="block text-xs font-semibold text-red-700">เลยเวลาแล้ว ยังไม่มีคนทำ</span>}</span>
+                  {!f.done && <button type="button" className="btn-primary !min-h-[44px] shrink-0 !px-3 !py-2 !text-xs" onClick={() => { setFacPick(f); setPhoto(""); setNote(""); setModal("facility"); }}><Icon name="camera" className="h-4 w-4" /> ทำแล้ว</button>}
+                </li>
               ))}</ul>}
+              {fac.length > 0 && <p className="mt-2 text-xs text-gold-500">แต่ละงานส่งได้ 1 ครั้งต่อรอบ (วัน / สัปดาห์ / เดือน) · งานทั่วไป ใครทำก่อนกดส่ง · งานที่มีป้าย &quot;มอบหมายให้คุณ&quot; คุณเป็นคนรับผิดชอบส่ง · ส่งแล้วขึ้นชื่อคนทำให้ทุกคนเห็น และนับเป็นผลงานของคนนั้น</p>}
             </Card>
           </>
         )}
@@ -522,6 +551,15 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
       </Modal>
 
       {/* ผลงานพิเศษ */}
+      <Modal open={modal === "facility"} title={facPick ? `ส่งงานส่วนกลาง · ${facPick.name}` : "ส่งงานส่วนกลาง"} onClose={() => { close(); setFacPick(null); }}
+        footer={<button className="btn-primary w-full" disabled={facBusy} onClick={saveFac}>{facBusy ? "กำลังส่ง…" : "ยืนยันส่งงาน"}</button>}>
+        {facPick && <div className="space-y-4">
+          <p className="rounded-xl bg-cream-50 px-4 py-3 text-sm text-gold-700">{[facPick.category, facPick.schedule].filter(Boolean).join(" · ")} · <b>{facPick.schedule.includes("ทุกเดือน") ? "ส่งได้เดือนละ 1 ครั้งต่อสาขา" : facPick.schedule.includes("ทุกสัปดาห์") ? "ส่งได้สัปดาห์ละ 1 ครั้งต่อสาขา (จันทร์–อาทิตย์)" : "ส่งได้วันละ 1 ครั้งต่อสาขา"} {facPick.manual ? "งานนี้มอบหมายให้คุณรับผิดชอบ" : "ใครทำก่อนเป็นคนส่ง"}</b> · นับเป็นผลงานของคุณใน KPI</p>
+          <div><p className="label">ถ่ายภาพหลักฐาน (บังคับ)</p><PhotoInput label="กดเพื่อถ่ายภาพ" file={photo} onFile={setPhoto} /></div>
+          <Field label="หมายเหตุ (ถ้ามี)"><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="เช่น ถังดับเพลิงหมดอายุ 1 ถัง แจ้งผู้จัดการแล้ว" /></Field>
+        </div>}
+      </Modal>
+
       <Modal open={modal === "bonus"} title="เพิ่มผลงานพิเศษ" onClose={close}
         footer={<button className="btn-primary w-full" onClick={() => {
           if (!bonusWho) return toast("กรุณาเลือกผู้รับบริการ");

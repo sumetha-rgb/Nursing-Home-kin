@@ -36,9 +36,15 @@ export async function GET(req: NextRequest) {
     const staff = (await sql(`SELECT id, full_name AS name, branch_name AS branch, access_level AS role FROM staff_users WHERE status = 'ทำงาน' ${bw("branch_name", 1)} ORDER BY full_name`, bp)) as { id: string; name: string; branch: string; role: string }[];
     const fam = (await sql(`SELECT staff_id, avg(rating)::float AS avg, count(*)::int AS n FROM staff_reviews
       WHERE created_at >= $1::date AND created_at < $1::date + interval '1 month' ${bw("branch_name", 2)} GROUP BY staff_id`, [from, ...bp])) as { staff_id: string; avg: number; n: number }[];
-    const tasks = (await sql(`SELECT done_by AS name, branch_name AS branch, count(*)::int AS n, avg(review_stars)::float AS mavg, count(review_stars)::int AS mn
-      FROM daily_tasks WHERE work_date >= $1::date AND work_date < $1::date + interval '1 month' AND status IN ('เสร็จแล้ว', 'ตรวจแล้ว') AND done_by IS NOT NULL AND done_by <> '-' ${bw("branch_name", 2)}
-      GROUP BY done_by, branch_name`, [from, ...bp])) as { name: string; branch: string; n: number; mavg: number | null; mn: number }[];
+    // งานที่ส่ง = งานดูแลผู้ป่วยที่ทำเสร็จ + งานส่วนกลางที่ทำ (ดาวจากหัวหน้ามาจากงานดูแลผู้ป่วย)
+    const tasks = (await sql(`SELECT name, branch, sum(n)::int AS n, (sum(ssum) / NULLIF(sum(mn), 0))::float AS mavg, sum(mn)::int AS mn FROM (
+        SELECT done_by AS name, branch_name AS branch, count(*) AS n, sum(review_stars) AS ssum, count(review_stars) AS mn
+        FROM daily_tasks WHERE work_date >= $1::date AND work_date < $1::date + interval '1 month' AND status IN ('เสร็จแล้ว', 'ตรวจแล้ว') AND done_by IS NOT NULL AND done_by <> '-' ${bw("branch_name", 2)}
+        GROUP BY done_by, branch_name
+        UNION ALL
+        SELECT done_by, branch_name, count(*), 0, 0 FROM facility_logs WHERE work_date >= $1::date AND work_date < $1::date + interval '1 month' ${bw("branch_name", 2)}
+        GROUP BY done_by, branch_name
+      ) x GROUP BY name, branch`, [from, ...bp])) as { name: string; branch: string; n: number; mavg: number | null; mn: number }[];
     // เวรในตารางที่ถึงวันแล้ว เทียบกับการเช็คชื่อเข้างานของเวรนั้น
     const shifts = (await sql(`SELECT s.staff_id, count(*)::int AS scheduled,
         count(a.id) FILTER (WHERE COALESCE(a.late_min, 0) = 0)::int AS ontime, count(a.id) FILTER (WHERE a.late_min > 0)::int AS late

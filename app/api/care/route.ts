@@ -29,7 +29,20 @@ export const fetchCache = "force-no-store";
  *  POST { op: "task_photo", id, photo, share? }  แนบรูปหลักฐานตอนส่งงานจาก KinApp (share = แชร์ให้ครอบครัว)
  *  POST { op: "task_review", id, stars, note? }  ผู้จัดการให้ดาวตอนตรวจงาน (ใช้คิด KPI)
  *  POST { op: "task_share", id, share }  ผู้จัดการซ่อน/แสดงรูปในสมุดภาพของครอบครัว
+ *  GET  ?op=facility[&mine=1]    งานส่วนกลางของสาขา + ทำล่าสุด + ถึงรอบหรือยัง (ทุกวัน / ทุกสัปดาห์ / ทุกเดือน)
+ *                                mine=1 (KinApp): งานแบบมอบหมายขึ้นเฉพาะคนที่ได้รับมอบหมาย
+ *  GET  ?op=facility_photo&id=…  รูปหลักฐานงานส่วนกลาง (บันทึกนั้น)
+ *  GET  ?op=facility_history&id=…&month=YYYY-MM  ทุกครั้งที่ทำงานนี้ในเดือนนั้น (ผู้มีสิทธิ์เมนูงานทั่วไปของสาขา)
+ *  POST { op: "facility_done", taskId, photo, note? }  พยาบาลทำงานส่วนกลางแล้ว (รอบละครั้ง · นับใน KPI)
+ *  POST { op: "facility_assign", taskId, assignee, branch? }  มอบหมายคนรับผิดชอบงานแบบมอบหมายของสาขา (assignee ว่าง = ยกเลิก)
  */
+/** รอบของงานส่วนกลางจากข้อความความถี่ เช่น "07:00 / ทุกวัน", "ทุกเดือน วันที่ 1", "กะเช้า / ทุกสัปดาห์" */
+const PERIOD_SQL = `CASE WHEN f.schedule LIKE '%ทุกเดือน%' THEN date_trunc('month', (now() AT TIME ZONE 'Asia/Bangkok'))::date
+  WHEN f.schedule LIKE '%ทุกสัปดาห์%' THEN date_trunc('week', (now() AT TIME ZONE 'Asia/Bangkok'))::date
+  ELSE (now() AT TIME ZONE 'Asia/Bangkok')::date END`;
+const canFacility = (me: SessionUser) => can(me, "app.staff") || can(me, "facility_tasks");
+/** งานแบบมอบหมายคนรับผิดชอบ (ค่าเดิม "จ่ายเอง (Manual)" หรือค่าใหม่ที่มีคำว่า Manual) */
+const isManual = (mode: unknown) => /Manual|มอบหมาย/.test(String(mode ?? ""));
 const bad = (msg: string, status = 400) => NextResponse.json({ error: msg }, { status });
 const scoped = (me: SessionUser) => me.role !== "Global Admin";
 /** ตรวจสอบข่าวและลิงก์ที่ทีมส่งถึงญาติ: ผู้ที่มีเมนูผู้รับบริการ รีวิวพนักงาน หรือเสียงจากครอบครัว */
@@ -71,6 +84,46 @@ export async function GET(req: NextRequest) {
   const qs = req.nextUrl.searchParams;
   try {
     switch (qs.get("op")) {
+      case "facility": {
+        if (!canFacility(me)) return forbidden();
+        const rows = await sql(`SELECT f.id, f.task_name AS name, f.category, f.schedule, f.dispatch_mode,
+            ${scoped(me) ? "(SELECT assignee FROM facility_assignees WHERE task_id = f.id AND branch_name = $1)" : "(SELECT string_agg(branch_name || ': ' || assignee, ', ') FROM facility_assignees WHERE task_id = f.id)"} AS assignee, to_char(${PERIOD_SQL}, 'YYYY-MM-DD') AS period_start,
+            l.id AS log_id, l.done_by, to_char(l.done_at AT TIME ZONE 'Asia/Bangkok', 'YYYY-MM-DD HH24:MI') AS done_at, l.work_date::text AS done_date, l.note,
+            (SELECT count(*)::int FROM facility_logs x WHERE x.task_id = f.id ${scoped(me) ? "AND x.branch_name = $1" : ""} AND x.work_date >= date_trunc('month', (now() AT TIME ZONE 'Asia/Bangkok'))::date) AS month_count
+          FROM facility_tasks f LEFT JOIN LATERAL (SELECT * FROM facility_logs WHERE task_id = f.id ${scoped(me) ? "AND branch_name = $1" : ""} ORDER BY done_at DESC LIMIT 1) l ON true
+          ${scoped(me) ? "WHERE (f.branch_name = $1 OR f.branch_name = 'ทุกสาขา' OR f.branch_name IS NULL)" : ""} ORDER BY f.sort_order DESC, f.created_at`, scoped(me) ? [me.branch] : []) as Record<string, string | number | null>[];
+        const today = new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10);
+        const items = rows.map((r) => {
+          const start = String(r.period_start).slice(0, 10);
+          const done = !!r.done_date && String(r.done_date) >= start;
+          const sched = String(r.schedule ?? "");
+          // เลยเวลา: งานรายวันที่ระบุเวลา เลยไป 2 ชั่วโมงแล้ว · งานรายเดือน "วันที่ N" เลยไป 2 วันแล้ว
+          const hm = sched.match(/(\d{1,2}):(\d{2})/), day = sched.match(/วันที่\s*(\d{1,2})/);
+          const nowMin = new Date(Date.now() + 7 * 3600e3).getUTCHours() * 60 + new Date(Date.now() + 7 * 3600e3).getUTCMinutes();
+          const late = !done && (sched.includes("ทุกเดือน") ? !!day && Number(today.slice(8)) > Number(day[1]) + 2 : !sched.includes("ทุกสัปดาห์") && !!hm && nowMin > Number(hm[1]) * 60 + Number(hm[2]) + 120);
+          const manual = isManual(r.dispatch_mode);
+          return { id: r.id, name: r.name, category: r.category, schedule: sched, manual, assignee: manual ? (r.assignee as string | null) || null : null, done, late, last: r.log_id ? { id: r.log_id, by: r.done_by, at: r.done_at, note: r.note } : null, monthCount: r.month_count };
+        });
+        // KinApp: งานมอบหมายขึ้นเฉพาะคนรับผิดชอบ · งานทั่วไปขึ้นให้ทุกคน
+        return NextResponse.json({ items: qs.get("mine") ? items.filter((x) => !x.manual || x.assignee === me.name) : items });
+      }
+      case "facility_history": {
+        if (!can(me, "facility_tasks")) return forbidden();
+        const month = /^\d{4}-\d{2}$/.test(qs.get("month") ?? "") ? qs.get("month")! : new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 7);
+        const [task] = (await sql`SELECT id, task_name AS name, schedule FROM facility_tasks WHERE id = ${qs.get("id") ?? ""}`) as Record<string, string>[];
+        if (!task) return bad("ไม่พบงานนี้", 404);
+        const logs = await sql(`SELECT id, branch_name AS branch, done_by AS by, note, work_date::text AS date, to_char(done_at AT TIME ZONE 'Asia/Bangkok', 'HH24:MI') AS time
+          FROM facility_logs WHERE task_id = $1 AND work_date >= $2::date AND work_date < $2::date + interval '1 month' ${scoped(me) ? "AND branch_name = $3" : ""}
+          ORDER BY done_at DESC`, scoped(me) ? [task.id, `${month}-01`, me.branch] : [task.id, `${month}-01`]);
+        return NextResponse.json({ task, month, logs, today: new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10) });
+      }
+      case "facility_photo": {
+        if (!canFacility(me)) return forbidden();
+        const [r] = (await sql`SELECT photo, branch_name FROM facility_logs WHERE id = ${qs.get("id") ?? ""}`) as { photo: string | null; branch_name: string }[];
+        if (!r) return bad("ไม่พบบันทึก", 404);
+        if (scoped(me) && r.branch_name !== me.branch) return forbidden();
+        return NextResponse.json({ photo: r.photo });
+      }
       case "residents": {
         const rows = scoped(me)
           ? await sql`SELECT id, full_name, age, room, branch_name, status, chronic_diseases, hn FROM residents WHERE branch_name = ${me.branch} ORDER BY sort_order DESC, created_at DESC`
@@ -163,6 +216,55 @@ export async function POST(req: NextRequest) {
   const me = await currentUser(req);
   if (!me) return unauthorized();
   const b = await req.json().catch(() => ({}));
+  if (b.op === "facility_done") {
+    if (!can(me, "app.staff") && !can(me, "facility_tasks")) return forbidden();
+    const photo = typeof b.photo === "string" ? b.photo : "";
+    if (!photo.startsWith("data:image/") || photo.length > 900_000) return bad("กรุณาถ่ายรูปหลักฐาน (รูปต้องไม่ใหญ่เกินไป)");
+    const note = typeof b.note === "string" ? b.note.trim().slice(0, 500) : "";
+    const [f] = (await sql(`SELECT f.id, f.task_name, f.branch_name, f.schedule, f.dispatch_mode, to_char(${PERIOD_SQL}, 'YYYY-MM-DD') AS period_start FROM facility_tasks f WHERE f.id = $1`, [String(b.taskId ?? "")])) as Record<string, string>[];
+    if (!f) return bad("ไม่พบงานนี้", 404);
+    // งานที่ตั้งไว้ "ทุกสาขา" บันทึกแยกตามสาขาของคนทำ
+    const shared = !f.branch_name || f.branch_name === "ทุกสาขา";
+    if (scoped(me) && !shared && f.branch_name !== me.branch) return forbidden();
+    const branch = scoped(me) || !shared ? (scoped(me) ? me.branch : f.branch_name) : me.branch;
+    // งานแบบมอบหมาย: ส่งได้เฉพาะคนที่สาขามอบหมายไว้
+    if (isManual(f.dispatch_mode)) {
+      const [a] = (await sql`SELECT assignee FROM facility_assignees WHERE task_id = ${f.id} AND branch_name = ${branch}`) as { assignee: string }[];
+      if (!a) return bad("งานนี้ยังไม่ได้มอบหมายคนรับผิดชอบ แจ้งหัวหน้าพยาบาลให้มอบหมายก่อน");
+      if (a.assignee !== me.name) return forbidden(`งานนี้มอบหมายให้ ${a.assignee} เป็นผู้ส่ง`);
+    }
+    const [dup] = (await sql`SELECT done_by FROM facility_logs WHERE task_id = ${f.id} AND branch_name IS NOT DISTINCT FROM ${branch} AND work_date >= ${String(f.period_start).slice(0, 10)}::date LIMIT 1`) as { done_by: string }[];
+    if (dup) {
+      // บอกรอบถัดไป: รายเดือน = วันที่ 1 เดือนหน้า · รายสัปดาห์ = วันจันทร์หน้า · รายวัน = พรุ่งนี้
+      const sched = String(f.schedule ?? "");
+      const TH = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
+      const m = Number(String(f.period_start).slice(5, 7));
+      const [when, next] = sched.includes("ทุกเดือน") ? ["เดือนนี้", `วันที่ 1 ${TH[m % 12]}`] : sched.includes("ทุกสัปดาห์") ? ["สัปดาห์นี้", "วันจันทร์หน้า"] : ["วันนี้", "พรุ่งนี้"];
+      return bad(`งานนี้ทำแล้ว${when}โดย ${dup.done_by} · ส่งได้อีกครั้ง${next}`, 409);
+    }
+    const id = crypto.randomUUID();
+    await sql`INSERT INTO facility_logs (id, task_id, task_name, branch_name, done_by, done_by_id, work_date, photo, note)
+              VALUES (${id}, ${f.id}, ${f.task_name}, ${branch}, ${me.name}, ${me.id}, (now() AT TIME ZONE 'Asia/Bangkok')::date, ${photo}, ${note || null})`;
+    await audit(req, me, [{ area: "facility", action: "update", recordId: f.id, summary: `ทำงานส่วนกลางแล้ว · ${f.task_name}`, branch }]);
+    return NextResponse.json({ ok: true, id });
+  }
+  if (b.op === "facility_assign") {
+    if (!can(me, "facility_tasks")) return forbidden("มอบหมายได้เฉพาะผู้ที่มีสิทธิ์เมนูงานทั่วไปของสาขา");
+    const branch = scoped(me) ? me.branch : String(b.branch ?? "").trim();
+    if (!branch || branch === "ทุกสาขา") return bad("กรุณาเลือกสาขา");
+    const [f] = (await sql`SELECT id, task_name, branch_name FROM facility_tasks WHERE id = ${String(b.taskId ?? "")}`) as Record<string, string>[];
+    if (!f) return bad("ไม่พบงานนี้", 404);
+    if (f.branch_name && f.branch_name !== "ทุกสาขา" && f.branch_name !== branch) return forbidden();
+    const who = typeof b.assignee === "string" ? b.assignee.trim() : "";
+    if (who) {
+      const [n] = (await sql`SELECT 1 FROM staff_users WHERE full_name = ${who} AND branch_name = ${branch} AND status = 'ทำงาน'`) as unknown[];
+      if (!n) return bad("ไม่พบพยาบาลคนนี้ในสาขา");
+      await sql`INSERT INTO facility_assignees (task_id, branch_name, assignee, assigned_by) VALUES (${f.id}, ${branch}, ${who}, ${me.name})
+                ON CONFLICT (task_id, branch_name) DO UPDATE SET assignee = EXCLUDED.assignee, assigned_by = EXCLUDED.assigned_by, updated_at = now()`;
+    } else await sql`DELETE FROM facility_assignees WHERE task_id = ${f.id} AND branch_name = ${branch}`;
+    await audit(req, me, [{ area: "facility", action: "update", recordId: f.id, summary: who ? `มอบหมายงานส่วนกลาง ${f.task_name} ให้ ${who}` : `ยกเลิกการมอบหมาย ${f.task_name}`, branch }]);
+    return NextResponse.json({ ok: true });
+  }
   if (b.op === "family_update") {
     if (!can(me, "app.staff") && !can(me, "residents")) return forbidden("บัญชีนี้ไม่มีสิทธิ์ส่งอัปเดตถึงครอบครัว");
     const text = typeof b.text === "string" ? b.text.trim().slice(0, 1000) : "";

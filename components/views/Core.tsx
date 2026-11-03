@@ -12,6 +12,7 @@ import { ServiceLine, ServiceLines } from "../ServicePicker";
 import { AddressFinder, ChipChoice, SuggestText, TagInput } from "../ContractInputs";
 import { addMonthsIso, ALLERGY_DRUGS, COMMON_MEDS, FOOD_ALLERGENS, HEALTH_RIGHTS, HOSP_LATER, NO_ALLERGY, RELATIONS } from "@/lib/medicalLists";
 import { PROGRAMS } from "@/lib/contractText";
+import { ROOMS } from "@/lib/priceList";
 import { clinic, fetchDocSettings } from "@/lib/clinic";
 import { fetchProfile } from "@/lib/care";
 import { billHandoff, handoff, QuoteHandoff } from "@/lib/handoff";
@@ -409,6 +410,7 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, on
             <p className="text-sm text-gold-600">เลือกห้องที่ยังว่าง · สาขา{row[1]} ว่าง {free} เตียง จาก {options.length} ห้อง</p>
             {free === 0 && <p role="alert" className="room-warn">ห้องของสาขา{row[1]}เต็มทุกห้องแล้ว บันทึกสัญญาโดยยังไม่เลือกห้อง แล้วแจ้งผู้จัดการสาขาให้เพิ่มห้องหรือเพิ่มจำนวนผู้ป่วยต่อห้อง</p>}
             <div className="room-grid">{options.map((r) => <RoomCard key={r.i} room={r} selected={roomKey(r.no) === roomKey(room)} onClick={() => pick(r)} />)}</div>
+            <RoomPriceCheck info={findRoom(all, row[1], room)} fee={Number(row[4]) || 0} onUse={(v) => { setFee(String(v)); setRow(row.map((x, k) => (k === 4 ? String(v) : x))); toast(`ใช้ราคาโปรแกรม ${money(v)} บาท/เดือนแล้ว · ยอดรวมใหม่ ${money(contractTotal(row.map((x, k) => (k === 4 ? String(v) : x))))} บาท`); }} />
           </>}
         <div className="flex flex-col-reverse gap-2 border-t border-cream-200 pt-4 sm:flex-row sm:justify-end">
           <button type="button" className="btn-soft" onClick={() => setStep(1)}>ย้อนกลับไปแก้รายละเอียด</button>
@@ -417,6 +419,32 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, on
         </div>
       </div>}
     </Section>
+  );
+}
+
+/**
+ * ขั้นเลือกห้อง: เทียบค่าห้อง (ตั้งไว้ที่เมนูห้องผู้ป่วย) กับราคาโปรแกรมที่กรอกในขั้นที่ 1 · เตือนเท่านั้น ไม่บังคับ
+ * แสดงราคาห้องประเภทเดียวกันจากใบราคาให้เทียบ (ชื่อประเภทในระบบกับใบราคาไม่ตรงกันทุกห้อง จึงจับคู่จากคำ เดี่ยว / คู่ / รวม)
+ */
+function RoomPriceCheck({ info, fee, onUse }: { info?: RoomInfo; fee: number; onUse: (v: number) => void }) {
+  const [ok, setOk] = useState("");
+  if (!info) return null;
+  const rate = Number(String(info.rate ?? "").replace(/,/g, "")) || 0;
+  const kw = /เดี่ยว/.test(info.type) ? "เดี่ยว" : /คู่/.test(info.type) ? "คู่" : /รวม/.test(info.type) ? "รวม" : "";
+  const list = kw ? ROOMS.filter((x) => x.name.includes(kw)) : [];
+  const chip = (label: string, v: number) => <button key={label} type="button" onClick={() => onUse(v)} className="rounded-full border border-gold-300 bg-white px-2.5 py-1 text-xs text-gold-800 hover:border-gold-600">{label} {money(v)}</button>;
+  const ref = list.length > 0 && <div className="flex flex-wrap items-center gap-1.5"><span className="text-xs text-gold-600">ใบราคา ({kw === "เดี่ยว" ? "ห้องเดี่ยว" : kw === "คู่" ? "ห้องคู่" : "ห้องรวม"}):</span>{list.flatMap((x) => { const n = x.name.replace(/^.*\(|\)$/g, ""); return [chip(n, x.month), chip(`${n} โปร`, x.promo)]; })}</div>;
+  if (!rate) return <div className="mt-4 space-y-2 rounded-2xl border border-cream-300 bg-cream-50 px-4 py-3 text-sm text-gold-700"><p>ห้อง {info.no} ยังไม่ได้ตั้งค่าห้อง (ตั้งได้ที่เมนูห้องผู้ป่วย)</p>{ref}</div>;
+  if (fee === rate || ok === info.no) return <p role="status" className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">{fee === rate ? `ราคาโปรแกรมตรงกับค่าห้อง ${info.no} (${money(rate)} บาท/เดือน)` : `ยืนยันราคาโปรแกรม ${money(fee)} บาท/เดือนแล้ว (ค่าห้อง ${info.no} คือ ${money(rate)})`}</p>;
+  return (
+    <div role="status" className="mt-4 space-y-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
+      <p className="text-sm text-amber-950">{fee ? <><b>ค่าห้อง {info.no} คือ {money(rate)} บาท/เดือน</b> แต่ราคาโปรแกรมที่กรอกไว้คือ <b>{money(fee)} บาท</b> · ตรวจอีกครั้งก่อนบันทึก</> : <><b>ยังไม่ได้กรอกราคาโปรแกรม</b> · ค่าห้อง {info.no} คือ {money(rate)} บาท/เดือน</>}</p>
+      <div className="flex flex-wrap gap-2">
+        <button type="button" className="btn-primary !min-h-0 !py-2 !text-sm" onClick={() => onUse(rate)}>{fee ? `ใช้ ${money(rate)} เป็นราคาโปรแกรม` : `ใส่ค่าห้อง ${money(rate)}`}</button>
+        {fee > 0 && <button type="button" className="btn-soft !min-h-0 !py-2 !text-sm" onClick={() => setOk(info.no)}>ราคาถูกแล้ว ไม่ต้องเปลี่ยน</button>}
+      </div>
+      {ref}
+    </div>
   );
 }
 

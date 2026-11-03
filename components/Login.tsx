@@ -1,5 +1,5 @@
 ﻿"use client";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useBranchNames } from "@/lib/branches";
 import Image from "next/image";
 import Link from "next/link";
@@ -22,11 +22,25 @@ export default function Login({ onLogin, staff = false }: { onLogin: (u: Session
   const [copied, setCopied] = useState("");
   const demoAcc = SHOW_DEMO && demo ? DEMO_ACCOUNTS.find((d) => d.role === demo) : undefined;
   const [f, setF] = useState({ name: "", email: "", password: "", confirm: "", branch: "" });
+  // จดจำฉันไว้: อยู่ในระบบ 30 วัน + จำอีเมลไว้ให้ · รหัสผ่านให้เบราว์เซอร์เป็นคนจำ (ระบบไม่เก็บรหัสผ่านในเครื่อง)
+  const [remember, setRemember] = useState(true);
+  useEffect(() => {
+    try {
+      const r = localStorage.getItem("kin-remember") !== "0";
+      setRemember(r);
+      const em = r ? localStorage.getItem("kin-email") : null;
+      if (em) setF((x) => (x.email ? x : { ...x, email: em }));
+    } catch { /* โหมดส่วนตัว */ }
+  }, []);
   const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
 
   const login = async (email: string, password: string) => {
     setBusy(true); setError(""); setNotice("");
-    try { onLogin((await api.login(email, password)).user); }
+    try {
+      const u = (await api.login(email, password, remember)).user;
+      try { localStorage.setItem("kin-remember", remember ? "1" : "0"); if (remember) localStorage.setItem("kin-email", email); else localStorage.removeItem("kin-email"); } catch { /* โหมดส่วนตัว */ }
+      onLogin(u);
+    }
     catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   };
@@ -75,6 +89,10 @@ export default function Login({ onLogin, staff = false }: { onLogin: (u: Session
             <div className="mt-4"><label className="label" htmlFor="login-password">รหัสผ่าน{reg && " (อย่างน้อย 8 ตัวอักษร)"}</label><div className="input-with-icon"><Icon name="lock" /><input id="login-password" type={show ? "text" : "password"} value={f.password} onChange={set("password")} placeholder="กรอกรหัสผ่านของคุณ" autoComplete={reg ? "new-password" : "current-password"} required /><button type="button" className="password-eye" onClick={() => setShow(!show)} aria-pressed={show} aria-label={show ? "ซ่อนรหัสผ่าน" : "แสดงรหัสผ่าน"}><Icon name="eye" /></button></div></div>
             {reg && <div className="mt-4"><label className="label" htmlFor="reg-confirm">ยืนยันรหัสผ่าน</label><div className="input-with-icon"><Icon name="lock" /><input id="reg-confirm" type={show ? "text" : "password"} value={f.confirm} onChange={set("confirm")} placeholder="กรอกรหัสผ่านอีกครั้ง" autoComplete="new-password" required /></div></div>}
 
+            {!reg && <label className="mt-4 flex cursor-pointer items-start gap-3 text-sm text-gold-700">
+              <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} className="mt-0.5 h-5 w-5 shrink-0 accent-[#8b6e3e]" />
+              <span><b className="font-medium text-gold-800">จดจำฉันไว้ในเครื่องนี้</b><span className="block text-xs text-gold-500">อยู่ในระบบได้ 30 วัน และจำอีเมลไว้ให้ · ถ้าเป็นเครื่องที่ใช้ร่วมกับคนอื่น ไม่ต้องติ๊ก ระบบจะออกเองเมื่อปิดเบราว์เซอร์</span></span>
+            </label>}
             {error && <p role="alert" className="mt-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
             {notice && <p role="status" className="mt-4 rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-800">{notice}</p>}
             <button className="btn-primary auth-submit" disabled={busy}>{busy ? "กำลังตรวจสอบ…" : reg ? "สมัครสมาชิก" : "เข้าสู่ระบบ"} <Icon name="arrow" className="h-5 w-5" /></button>

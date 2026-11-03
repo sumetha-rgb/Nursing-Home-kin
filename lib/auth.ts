@@ -8,7 +8,9 @@ import { permsFor } from "./perms";
 
 const scrypt = promisify(scryptCb) as (pw: string, salt: Buffer, len: number) => Promise<Buffer>;
 export const COOKIE = "kin_session";
-const SESSION_DAYS = 7;
+/** จดจำฉันไว้ = อยู่ในระบบ 30 วัน · ไม่จดจำ = ออกเองเมื่อปิดเบราว์เซอร์ (และหมดอายุใน 12 ชั่วโมง) */
+const SESSION_DAYS = 30;
+const SHORT_HOURS = 12;
 
 export async function hashPassword(pw: string) {
   const salt = randomBytes(16);
@@ -28,12 +30,12 @@ export const validEmail = (e: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
 
 const tokenId = (token: string) => createHash("sha256").update(token).digest("hex");
 
-export async function startSession(res: NextResponse, userId: string) {
+export async function startSession(res: NextResponse, userId: string, remember = true) {
   const token = randomBytes(32).toString("base64url");
-  const expires = new Date(Date.now() + SESSION_DAYS * 864e5);
+  const expires = new Date(Date.now() + (remember ? SESSION_DAYS * 864e5 : SHORT_HOURS * 3600e3));
   await sql`INSERT INTO sessions (id, user_id, expires_at) VALUES (${tokenId(token)}, ${userId}, ${expires.toISOString()})`;
   await sql`UPDATE staff_users SET last_login_at = now() WHERE id = ${userId}`;
-  res.cookies.set(COOKIE, token, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", path: "/", expires });
+  res.cookies.set(COOKIE, token, { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", path: "/", ...(remember ? { expires } : {}) });
 }
 
 export async function endSession(req: NextRequest, res: NextResponse) {

@@ -946,3 +946,28 @@ ALTER TABLE contracts ADD COLUMN IF NOT EXISTS food_allergy  text;
 ALTER TABLE contracts ADD COLUMN IF NOT EXISTS room_deposit  numeric(12,2);
 ALTER TABLE contracts ADD COLUMN IF NOT EXISTS regular_meds  text;
 ALTER TABLE contracts ADD COLUMN IF NOT EXISTS hospital_alt  text;  -- โรงพยาบาลสำรอง (ใกล้เคียง) ข้อ 3.8
+
+-- บันทึกการทำงานส่วนกลาง (KinApp กด "ทำแล้ว · ถ่ายรูป") · นับเป็นผลงานใน KPI ส่วน "งานที่ส่ง"
+CREATE TABLE IF NOT EXISTS facility_logs (
+  id           text PRIMARY KEY,
+  task_id      text,
+  task_name    text NOT NULL,
+  branch_name  text,
+  done_by      text NOT NULL,
+  done_by_id   text,
+  work_date    date NOT NULL,
+  photo        text,
+  note         text,
+  done_at      timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS facility_logs_task ON facility_logs (task_id, done_at DESC);
+CREATE INDEX IF NOT EXISTS facility_logs_month ON facility_logs (branch_name, work_date);
+-- งานส่วนกลางแบบมอบหมาย (Manual): ผู้รับผิดชอบของแต่ละสาขา
+CREATE TABLE IF NOT EXISTS facility_assignees (
+  task_id      text NOT NULL,
+  branch_name  text NOT NULL,
+  assignee     text NOT NULL,
+  assigned_by  text,
+  updated_at   timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (task_id, branch_name)
+);

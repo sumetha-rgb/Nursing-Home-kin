@@ -14,7 +14,7 @@ async function post<T>(url: string, body?: object): Promise<T> {
 }
 
 export const api = {
-  login: (email: string, password: string) => post<{ user: SessionUser }>("/api/auth/login", { email, password }),
+  login: (email: string, password: string, remember = true) => post<{ user: SessionUser }>("/api/auth/login", { email, password, remember }),
   register: (b: { name: string; email: string; password: string; branch: string }) => post<{ pending: boolean; user?: SessionUser }>("/api/auth/register", b),
   logout: () => post("/api/auth/logout"),
   changePassword: (current: string, next: string) => post("/api/auth/password", { current, next }),
