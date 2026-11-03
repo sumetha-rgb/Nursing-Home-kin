@@ -7,8 +7,8 @@
 export type BillItem = { desc: string; qty: number; price: number; discount: number; pct?: number; vat?: number };
 /** อัตรา VAT เริ่มต้นของใบใหม่ (%) · แก้ได้ในฟอร์มใบแจ้งหนี้และสัญญา */
 export const DEFAULT_VAT = 7;
-/** อัตรา VAT ค่าห้องของสัญญา (คอลัมน์ room_vat) · ว่าง (สัญญาเก่า) = อัตราเริ่มต้น */
-export const contractVat = (r: string[]) => { const v = r[30]; return v === undefined || v === "" || v === "-" ? DEFAULT_VAT : Number(v) || 0; };
+/** อัตรา VAT ค่าห้องของสัญญา (คอลัมน์ room_vat) บวกเพิ่มจากค่าห้อง · ว่าง (สัญญาเก่า) = อัตราเริ่มต้น · 0 = ไม่คิด VAT */
+export const contractVat = (r: string[]) => { const v = r[30]; return v === undefined || v === "" || v === "-" ? DEFAULT_VAT : Math.max(0, Number(v) || 0); };
 export type Invoice = {
   id: string; no?: string; date: string; who: string; hn: string; payer: string; address: string;
   kind: string; contract: string; items: string; total: number; discount: number; net: number;
@@ -17,6 +17,8 @@ export type Invoice = {
 
 export const BILL_KINDS = ["มัดจำ / แรกเข้า", "ค่าบริการรายเดือน", "ค่าหัตถการ", "คอร์สกายภาพ", "เวชภัณฑ์และอื่น ๆ", "สรุปค่าใช้จ่ายก่อนกลับบ้าน (D/C)"];
 export const UNPAID = "ค้างชำระ", PARTIAL = "ชำระบางส่วน", PAID = "ชำระแล้ว", VOID = "ยกเลิก";
+/** ใบที่ระบบออกให้จากสัญญาที่ไม่ได้ระบุยอดล่วงหน้า · ยังรับชำระไม่ได้จนกว่าการเงินกดยืนยันยอด (เป็นค้างชำระ) */
+export const DRAFT = "รอตรวจสอบยอด";
 /** ยังเก็บเงินไม่ครบ (ยังไม่ได้รับชำระ หรือรับแล้วบางส่วน) */
 export const isOpen = (x: { status: string }) => x.status === UNPAID || x.status === PARTIAL;
 /** ยอดที่ยังค้างอยู่ */
@@ -29,6 +31,10 @@ export const parseItems = (json: string): BillItem[] => {
   catch { return []; }
 };
 export const lineAmount = (i: BillItem) => i.qty * i.price;
+/** ส่วนลดของบรรทัดค่าบริการในสัญญา / ใบเสนอราคา (บาท) = % ของยอดบรรทัด + ส่วนลดเป็นบาท (ข้อมูลเดิม) */
+export const svcDiscount = (x: { qty: number; price: number; discount?: number; pct?: number }) => Math.round(x.qty * x.price * (Number(x.pct) || 0)) / 100 + (Number(x.discount) || 0);
+/** ยอดบรรทัด = จำนวน × ราคาต่อหน่วย − ส่วนลด */
+export const svcNet = (x: { qty: number; price: number; discount?: number; pct?: number }) => Math.max(0, x.qty * x.price - svcDiscount(x));
 /** ส่วนลดรวมของบรรทัด = บาท + % ของยอดบรรทัด (ปัดเป็นสตางค์) */
 export const lineDiscount = (i: BillItem) => Math.round((i.discount + (lineAmount(i) * (i.pct ?? 0)) / 100) * 100) / 100;
 /**

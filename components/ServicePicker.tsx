@@ -1,11 +1,11 @@
 "use client";
 import { useState } from "react";
 import Icon from "./Icon";
-import { money } from "@/lib/billing";
+import { money, svcDiscount, svcNet } from "@/lib/billing";
 import { PRICE_LIST, PriceItem, Rate, rateText, searchPrices } from "@/lib/priceList";
 
-/** รายการค่าบริการในเอกสาร (ใบเสนอราคา / สัญญา) */
-export type ServiceLine = { desc: string; qty: number; unit: string; price: number };
+/** รายการค่าบริการในเอกสาร (ใบเสนอราคา / สัญญา) · pct = ส่วนลด (% ของยอดบรรทัด) · discount = ส่วนลดเป็นบาท (ข้อมูลเดิม) */
+export type ServiceLine = { desc: string; qty: number; unit: string; price: number; discount?: number; pct?: number };
 const UNITS = ["เดือน", "สัปดาห์", "วัน", "ครั้ง", "แพ็กเกจ", "ชุด", "รายการ"];
 /** หมวดในใบราคา (ตามลำดับในใบราคา) */
 const GROUPS = [...new Set(PRICE_LIST.map((x) => x.group))];
@@ -67,13 +67,13 @@ export function ServicePicker({ onPick, exclude = [] }: { onPick: (line: Service
   );
 }
 
-/** ตารางแก้รายการ: ค้นหาจากใบราคา หรือพิมพ์เองก็ได้ · price 0 = รวมในโปรแกรม (ไม่คิดเพิ่ม) · แต่ละบรรทัดแสดงรวม = จำนวน × ราคาต่อหน่วย */
+/** ตารางแก้รายการ: ค้นหาจากใบราคา หรือพิมพ์เองก็ได้ · price 0 = รวมในโปรแกรม (ไม่คิดเพิ่ม) · แต่ละบรรทัดแสดงรวม = จำนวน × ราคาต่อหน่วย − ส่วนลด */
 export function ServiceLines({ items, onChange, total = true, exclude }: { items: ServiceLine[]; onChange: (x: ServiceLine[]) => void; total?: boolean; exclude?: string[] }) {
   const add = (line: ServiceLine) => onChange([...items.filter((x) => x.desc.trim()), line]);
   return (
     <div className="space-y-2">
       <ServicePicker onPick={add} exclude={exclude} />
-      {items.length > 0 && <div className="quote-line quote-head" aria-hidden="true"><span>รายการ</span><span>จำนวน</span><span>หน่วย</span><span>ราคาต่อหน่วย</span><span className="text-right">รวม (บาท)</span><span /></div>}
+      {items.length > 0 && <div className="quote-line quote-head" aria-hidden="true"><span>รายการ</span><span>จำนวน</span><span>หน่วย</span><span>ราคาต่อหน่วย</span><span>ส่วนลด (%)</span><span className="text-right">รวม (บาท)</span><span /></div>}
       {items.map((x, k) => {
         const set = (p: Partial<ServiceLine>) => onChange(items.map((y, j) => (j === k ? { ...y, ...p } : y)));
         return (
@@ -82,14 +82,15 @@ export function ServiceLines({ items, onChange, total = true, exclude }: { items
             <input type="number" min={0} value={x.qty} onChange={(e) => set({ qty: Number(e.target.value) || 0 })} aria-label="จำนวน" />
             <select value={x.unit} onChange={(e) => set({ unit: e.target.value })} aria-label="หน่วย">{(UNITS.includes(x.unit) ? UNITS : [x.unit, ...UNITS]).map((u) => <option key={u}>{u}</option>)}</select>
             <input type="number" min={0} value={x.price} onChange={(e) => set({ price: Number(e.target.value) || 0 })} aria-label="ราคาต่อหน่วย" />
-            <b className="quote-sum" aria-label="รวมบรรทัดนี้">{x.price ? money(x.qty * x.price) : "รวมในโปรแกรม"}</b>
+            <input type="number" min={0} max={100} step="0.5" value={x.pct || ""} placeholder="0" disabled={!x.price} onChange={(e) => set({ pct: Math.min(100, Math.max(0, Number(e.target.value) || 0)), discount: 0 })} aria-label="ส่วนลด (%)" />
+            <b className="quote-sum" aria-label="รวมบรรทัดนี้">{x.price ? <>{money(svcNet(x))}{svcDiscount(x) ? <small className="block font-normal text-gold-500">ลด {money(svcDiscount(x))}</small> : null}</> : "รวมในโปรแกรม"}</b>
             <button type="button" className="row-action danger" onClick={() => onChange(items.filter((_, j) => j !== k))}>ลบ</button>
           </div>
         );
       })}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <button type="button" className="btn-soft !py-2" onClick={() => onChange([...items, { desc: "", qty: 1, unit: "ครั้ง", price: 0 }])}><Icon name="plus" className="h-4 w-4" /> เพิ่มรายการเอง</button>
-        {total && <b className="text-gold-800">รวม {money(items.reduce((n, x) => n + x.qty * x.price, 0))} บาท</b>}
+        {total && <b className="text-gold-800">รวม {money(items.reduce((n, x) => n + svcNet(x), 0))} บาท</b>}
       </div>
     </div>
   );

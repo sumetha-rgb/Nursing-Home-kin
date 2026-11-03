@@ -1,5 +1,6 @@
 "use client";
 import Occupancy from "../care/Occupancy";
+import CourseSummary from "../care/CourseSummary";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useBranchNames } from "@/lib/branches";
 import Icon from "../Icon";
@@ -102,6 +103,8 @@ export function Dashboard() {
         </details>
         <DataTable columns={KPI_COLS} rows={rows} empty={d ? "ยังไม่มีข้อมูลในช่วงเวลานี้" : "กำลังโหลด…"} />
       </Section>
+
+      <CourseSummary branch={shiftBranch} />
 
       <div className="mt-6 grid gap-6 xl:grid-cols-2">
         <Section title="งานที่ทีมเพิ่งส่ง" sub="กดชื่นชมเป็นกำลังใจ พนักงานเห็นคำชมใน KinApp">

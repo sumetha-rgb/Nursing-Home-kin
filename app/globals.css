@@ -942,7 +942,8 @@ button.room-card:hover:not(.is-full):not(.is-closed) { border-color:#c9a96a; box
 .bill-who { display:flex; justify-content:space-between; gap:16px; margin:14px 0 6px; }
 .bill-table td:nth-child(1) { text-align:center; width:60px; }
 .bill-table td:nth-last-child(1) { text-align:right; white-space:nowrap; }
-.bill-table td[colspan="3"] { text-align:right; }
+.bill-table td[colspan="3"], .bill-table td[colspan="4"]:not(.bill-words) { text-align:right; }
+.bill-table td.bill-vat-col { text-align:center; width:64px; white-space:nowrap; }
 .bill-table td.bill-words { text-align:center; font-weight:600; }
 .bill-table:not(.bill-table2) td:nth-child(3):not([colspan]) { text-align:center; width:110px; }
 .bill-line { margin-top:8px; display:flex; flex-wrap:wrap; gap:6px 40px; }
@@ -967,7 +968,7 @@ button.room-card:hover:not(.is-full):not(.is-closed) { border-color:#c9a96a; box
 .bill-table2 { border-left:0; border-right:0; }
 .bill-table2 th:first-child,.bill-table2 td:first-child { border-left:0; }
 .bill-table2 th:last-child,.bill-table2 td:last-child { border-right:0; }
-.bill-table2 td:nth-child(n+3) { text-align:right; white-space:nowrap; width:110px; }
+.bill-table2 td:nth-child(n+3):not(.bill-vat-col) { text-align:right; white-space:nowrap; width:110px; }
 .bill-table2 tbody td { border-top:0; border-bottom:0; }
 .bill-table2 .bill-filler td { height:200px; border-bottom:1px solid #111; }
 .bill-sum2 { display:flex; justify-content:space-between; gap:12px; padding:8px 10px; border-bottom:1px solid #111; }
@@ -977,6 +978,8 @@ button.room-card:hover:not(.is-full):not(.is-closed) { border-color:#c9a96a; box
 .bill-pay2 { display:flex; flex-wrap:wrap; gap:6px 30px; padding:8px 10px 12px; border-bottom:1px solid #111; }
 .bill-pay2 span { display:flex; flex-direction:column; }
 .bill-pay2 small { font-size:12px; padding-left:16px; }
+.bill-disc { display:block; margin-top:2px; font-size:.86em; color:#5d5241; }
+.bill-pay-cust { margin-top:8px; padding:0 0 4px; border-bottom:0; }
 .bill-sign2 { display:grid; grid-template-columns:1fr auto 1fr; gap:16px; align-items:end; padding:36px 14px 14px; text-align:center; }
 .bill-sign2 p { border-bottom:1px solid #111; padding-bottom:4px; }
 .bill-sign2 span { display:block; margin-top:6px; font-size:13px; }
@@ -989,7 +992,11 @@ button.room-card:hover:not(.is-full):not(.is-closed) { border-color:#c9a96a; box
 @media print {
   .modal-body:has(.bill-doc) > .print-letterhead, .modal-body:has(.bill-doc) > .print-footer, .bill-switch { display:none!important; }
   .bill-doc { font-size:11pt; }
+  /* ใบแจ้งหนี้/ใบเสร็จ: ขอบกระดาษ 0 (ระยะขอบมาจาก padding ของ body) · เบราว์เซอร์จึงไม่พิมพ์หัว-ท้าย (URL วันที่ เลขหน้า)
+     ต้องใช้ named page เพราะ @page ของเอกสารสัญญา (ขอบ 14 มม.) อยู่ท้ายไฟล์และทับ @page ทั่วไป */
+  .modal-overlay:has(.bill-doc) { page:bill; }
 }
+@page bill { size:A4; margin:0; }
 
 /* คำแนะนำใต้ช่องกรอก · ระหว่างพิมพ์แสดงผลจำลอง (เลขบัตร/เบอร์โทร) */
 .field-hint { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 10px; margin-top:6px; font-size:12px; line-height:1.5; color:#8a7457; }
@@ -1186,18 +1193,20 @@ button.room-card:hover:not(.is-full):not(.is-closed) { border-color:#c9a96a; box
 }
 
 /* ใบเสนอราคา: บรรทัดรายการ (รายการ · จำนวน · หน่วย · ราคา · ลบ) */
-.quote-line { display:grid; grid-template-columns:minmax(0,1fr) 80px 100px 120px 110px 48px; gap:8px; align-items:center; padding:10px; border:1px solid #e9e1d4; border-radius:12px; }
+.quote-line { display:grid; grid-template-columns:minmax(0,1fr) 68px 118px 104px 96px 108px 48px; gap:8px; align-items:center; padding:10px; border:1px solid #e9e1d4; border-radius:12px; }
 .quote-line.quote-head { padding:0 10px; border:0; font-size:12px; color:#9a8566; }
+.quote-line > input, .quote-line > select { padding-left:12px; }
+.quote-line > select { padding-right:28px; }
 .quote-sum { text-align:right; font-size:14px; color:#3a2d1b; font-variant-numeric:tabular-nums; }
 @media (max-width:640px) { .quote-line { grid-template-columns:1fr 1fr; } .quote-line > input:first-child { grid-column:1/-1; } .quote-line.quote-head { display:none; } .quote-sum { text-align:left; } }
 
 /* ใบแจ้งหนี้: บรรทัดรายการ (รายการ · จำนวน · ราคา · ส่วนลดบาท · ส่วนลด % · ลบ) */
-.bill-line { display:grid; gap:8px; padding:12px; border:1px solid #efe9df; border-radius:12px; grid-template-columns:minmax(0,1fr) 76px 110px 104px 88px auto auto; align-items:end; }
+.bill-item { display:grid; gap:8px; padding:12px; border:1px solid #efe9df; border-radius:12px; grid-template-columns:minmax(0,1fr) 76px 110px 104px 88px auto auto; align-items:end; }
 .bill-vat { display:inline-flex; align-items:center; gap:6px; min-height:44px; white-space:nowrap; font-size:13px; color:#5f4c30; cursor:pointer; }
 .bill-vat input { width:16px; height:16px; min-height:0; accent-color:var(--gold); }
 .bill-vat-row td { font-size:12px; color:#5f4c30; }
 .bill-line-sum { grid-column:1/-1; margin:0; font-size:12.5px; color:#6b5a3f; text-align:right; }
-@media (max-width:760px) { .bill-line { grid-template-columns:1fr 1fr; } .bill-line > :first-child { grid-column:1/-1; } }
+@media (max-width:760px) { .bill-item { grid-template-columns:1fr 1fr; } .bill-item > :first-child { grid-column:1/-1; } }
 
 /* สัญญาจ้างแบบ KIN: ข้อย่อย 1.1 · เส้นเติมข้อความ · ขึ้นหน้าใหม่ตอนพิมพ์ */
 .doc-num { display:grid; grid-template-columns:2.8em 1fr; gap:2px 6px; text-align:justify; margin:0 0 6px; }

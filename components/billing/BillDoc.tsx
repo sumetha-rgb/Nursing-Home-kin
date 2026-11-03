@@ -1,5 +1,5 @@
 "use client";
-import { bahtText, docDate, Invoice, lineAmount, lineDiscount, money, PAID, PARTIAL, parseItems, Payment, vatOf } from "@/lib/billing";
+import { bahtText, BillItem, docDate, Invoice, lineAmount, lineDiscount, money, PAID, PARTIAL, parseItems, Payment, vatOf } from "@/lib/billing";
 import { COMPANY } from "../ui";
 
 export type Branch = { name: string; legal: string; address: string; phone: string };
@@ -27,6 +27,15 @@ export default function BillDoc({ inv, branch, format, copy, slips = [], payment
   const title = payment ? (full ? RECEIPT : [`ใบรับเงิน (งวดที่ ${payment.n})`, "RECEIPT"]) : full ? RECEIPT : partial ? ["ใบแจ้งหนี้ (ชำระบางส่วน)", "INVOICE"] : ["ใบแจ้งหนี้", "INVOICE"];
   const items = parseItems(inv.items);
   const tax = vatOf(items);
+  // มัดจำห้องที่จ่ายตอนจอง (ใบแรกเข้าจากสัญญาเขียนไว้ในหมายเหตุ) · ใช้บอกว่าส่วนลดของบรรทัดค่าห้องคือการหักมัดจำ
+  const roomDep = Number((inv.note ?? "").match(/หักมัดจำห้องพัก[^0-9]*([\d,]+(?:\.\d+)?)/)?.[1]?.replace(/,/g, "")) || 0;
+  const discNote = (i: BillItem) => {
+    const d = lineDiscount(i);
+    if (!d) return null;
+    const dep = roomDep && /ห้อง|room/i.test(i.desc) && d >= roomDep ? roomDep : 0;
+    const parts = [dep ? `หักมัดจำห้องพัก ${money(dep)}` : "", d - dep > 0 ? `ส่วนลด${i.pct ? ` ${i.pct}%` : ""} ${money(d - dep)}` : ""].filter(Boolean).join(" · ");
+    return <small className="bill-disc">{parts} · คงเหลือ {money(lineAmount(i) - d)}</small>;
+  };
   const legal = branch.legal || COMPANY.th;
   const m = payment ?? { cash: inv.cash, credit: inv.credit, transfer: inv.transfer };
   const methods = [["เงินสด", "Cash", m.cash], ["บัตรเครดิต", "Credit", m.credit], ["โอนเงิน", "Transfer", m.transfer]] as const;
@@ -67,15 +76,15 @@ export default function BillDoc({ inv, branch, format, copy, slips = [], payment
           <div className="bill-title2"><b>{title[0]} / {title[1]}</b><span>{copy ? "สำเนา / COPY" : "ต้นฉบับ / ORIGINAL"}</span></div>
         </div>
         <table className="bill-table bill-table2">
-          <thead><tr><th>ลำดับ<br />NO.</th><th>รายการ<br />DESCRIPTION</th><th>จำนวนเงิน<br />AMOUNT</th><th>ส่วนลด<br />DISCOUNT</th><th>คงเหลือ<br />NET AMOUNT</th></tr></thead>
+          <thead><tr><th>ลำดับ<br />NO.</th><th>รายการ<br />DESCRIPTION</th><th>จำนวนเงิน<br />AMOUNT</th><th>ส่วนลด<br />DISCOUNT</th><th>VAT</th><th>คงเหลือ<br />NET AMOUNT</th></tr></thead>
           <tbody>
-            {items.map((i, k) => <tr key={k}><td>{k + 1}</td><td>{i.desc}{i.qty !== 1 ? ` · ${i.qty} หน่วย` : ""}{i.vat ? ` (+VAT ${i.vat}%)` : ""}{inv.who ? ` — ผู้รับบริการ: ${inv.who}` : ""}</td><td>{money(lineAmount(i))}</td><td>{money(lineDiscount(i))}{i.pct ? <small> ({i.pct}%{i.discount ? ` + ${money(i.discount)}` : ""})</small> : null}</td><td>{money(lineAmount(i) - lineDiscount(i))}</td></tr>)}
-            <tr className="bill-filler"><td /><td /><td /><td /><td /></tr>
+            {items.map((i, k) => <tr key={k}><td>{k + 1}</td><td>{i.desc}{i.qty !== 1 ? ` · ${i.qty} หน่วย` : ""}{inv.who ? ` — ผู้รับบริการ: ${inv.who}` : ""}</td><td>{money(lineAmount(i))}</td><td>{money(lineDiscount(i))}{i.pct ? <small> ({i.pct}%{i.discount ? ` + ${money(i.discount)}` : ""})</small> : null}</td><td className="bill-vat-col">{i.vat ? `${i.vat}%` : "-"}</td><td>{money(lineAmount(i) - lineDiscount(i))}</td></tr>)}
+            <tr className="bill-filler"><td /><td /><td /><td /><td /><td /></tr>
             {tax.vat > 0 && <>
-              <tr className="bill-vat-row"><td /><td>มูลค่าที่เสียภาษีมูลค่าเพิ่ม (ก่อน VAT) / VATABLE AMOUNT</td><td /><td /><td>{money(tax.base)}</td></tr>
-              {tax.rates.map((x) => <tr key={x.rate} className="bill-vat-row"><td /><td>ภาษีมูลค่าเพิ่ม {x.rate}% / VAT {x.rate}%</td><td /><td /><td>{money(x.vat)}</td></tr>)}
-              {tax.exempt > 0 && <tr className="bill-vat-row"><td /><td>มูลค่าที่ไม่มีภาษีมูลค่าเพิ่ม / NON-VAT AMOUNT</td><td /><td /><td>{money(tax.exempt)}</td></tr>}
-              <tr className="bill-vat-row"><td /><td><b>รวมทั้งสิ้น (รวม VAT) / GRAND TOTAL</b></td><td /><td /><td><b>{money(inv.net)}</b></td></tr>
+              <tr className="bill-vat-row"><td /><td>มูลค่าที่เสียภาษีมูลค่าเพิ่ม (ก่อน VAT) / VATABLE AMOUNT</td><td /><td /><td /><td>{money(tax.base)}</td></tr>
+              {tax.rates.map((x) => <tr key={x.rate} className="bill-vat-row"><td /><td>ภาษีมูลค่าเพิ่ม {x.rate}% / VAT {x.rate}%</td><td /><td /><td /><td>{money(x.vat)}</td></tr>)}
+              {tax.exempt > 0 && <tr className="bill-vat-row"><td /><td>มูลค่าที่ไม่มีภาษีมูลค่าเพิ่ม / NON-VAT AMOUNT</td><td /><td /><td /><td>{money(tax.exempt)}</td></tr>}
+              <tr className="bill-vat-row"><td /><td><b>รวมทั้งสิ้น (รวม VAT) / GRAND TOTAL</b></td><td /><td /><td /><td><b>{money(inv.net)}</b></td></tr>
             </>}
           </tbody>
         </table>
@@ -112,30 +121,33 @@ export default function BillDoc({ inv, branch, format, copy, slips = [], payment
         <div className="text-right"><p>Bill No: <b>{inv.no ?? "-"}</b></p><p>วันที่ /Date : {date}</p></div>
       </div>
       <table className="bill-table">
-        <thead><tr><th>No.</th><th>รายการ (Description)</th><th>จำนวน (Qty)</th><th>จำนวนเงิน (Amount)</th></tr></thead>
+        <thead><tr><th>No.</th><th>รายการ (Description)</th><th>จำนวน (Qty)</th><th>VAT</th><th>จำนวนเงิน (Amount)</th></tr></thead>
         <tbody>
-          {items.map((i, k) => <tr key={k}><td>{k + 1}</td><td>{i.desc}{i.vat ? ` (+VAT ${i.vat}%)` : ""}{inv.who ? ` — ผู้รับบริการ: ${inv.who}` : ""}</td><td>{i.qty}</td><td>{money(lineAmount(i))}</td></tr>)}
-          <tr><td colSpan={3}>ยอดรวมทั้งสิ้น/Total</td><td>{money(inv.total)}</td></tr>
-          <tr><td colSpan={3}>ส่วนลดที่ได้รับ/Discount</td><td>{money(inv.discount)}</td></tr>
-          <tr><td colSpan={3}>รวมเงิน(หลังหักส่วนลด)/Sub Total</td><td>{money(inv.total - inv.discount)}</td></tr>
+          {items.map((i, k) => <tr key={k}><td>{k + 1}</td><td>{i.desc}{inv.who ? ` — ผู้รับบริการ: ${inv.who}` : ""}{discNote(i)}</td><td>{i.qty}</td><td className="bill-vat-col">{i.vat ? `${i.vat}%` : "-"}</td><td>{money(lineAmount(i))}</td></tr>)}
+          <tr><td colSpan={4}>ยอดรวมทั้งสิ้น/Total</td><td>{money(inv.total)}</td></tr>
+          <tr><td colSpan={4}>ส่วนลดที่ได้รับ/Discount</td><td>{money(inv.discount)}</td></tr>
+          <tr><td colSpan={4}>รวมเงิน(หลังหักส่วนลด)/Sub Total</td><td>{money(inv.total - inv.discount)}</td></tr>
           {tax.vat > 0 && <>
-            <tr><td colSpan={3}>มูลค่าที่เสียภาษีมูลค่าเพิ่ม (ก่อน VAT)/Vatable Amount</td><td>{money(tax.base)}</td></tr>
-            {tax.rates.map((x) => <tr key={x.rate}><td colSpan={3}>ภาษีมูลค่าเพิ่ม {x.rate}%/VAT {x.rate}%</td><td>{money(x.vat)}</td></tr>)}
-            {tax.exempt > 0 && <tr><td colSpan={3}>มูลค่าที่ไม่มีภาษีมูลค่าเพิ่ม/Non-VAT Amount</td><td>{money(tax.exempt)}</td></tr>}
-            <tr><td colSpan={3}><b>รวมทั้งสิ้น (รวม VAT)/Grand Total</b></td><td><b>{money(inv.net)}</b></td></tr>
+            <tr><td colSpan={4}>มูลค่าที่เสียภาษีมูลค่าเพิ่ม (ก่อน VAT)/Vatable Amount</td><td>{money(tax.base)}</td></tr>
+            {tax.rates.map((x) => <tr key={x.rate}><td colSpan={4}>ภาษีมูลค่าเพิ่ม {x.rate}%/VAT {x.rate}%</td><td>{money(x.vat)}</td></tr>)}
+            {tax.exempt > 0 && <tr><td colSpan={4}>มูลค่าที่ไม่มีภาษีมูลค่าเพิ่ม/Non-VAT Amount</td><td>{money(tax.exempt)}</td></tr>}
+            <tr><td colSpan={4}><b>รวมทั้งสิ้น (รวม VAT)/Grand Total</b></td><td><b>{money(inv.net)}</b></td></tr>
           </>}
           {showBal ? <>
-            {payment && <tr><td colSpan={3}>รับชำระครั้งนี้ (งวดที่ {payment.n})/This payment</td><td><b>{money(thisAmt)}</b></td></tr>}
-            <tr><td colSpan={3}>ชำระสะสม/Paid to date</td><td>{money(paidTo)}</td></tr>
-            <tr><td colSpan={3}>{owe > 0 ? "ยอดคงเหลือที่ต้องชำระ/Balance Due" : "ยอดคงเหลือ/Balance"}</td><td><b>{money(owe)}</b></td></tr>
-            <tr><td colSpan={4} className="bill-words">( {bahtText(payment ? thisAmt : owe)} )</td></tr>
+            {payment && <tr><td colSpan={4}>รับชำระครั้งนี้ (งวดที่ {payment.n})/This payment</td><td><b>{money(thisAmt)}</b></td></tr>}
+            <tr><td colSpan={4}>ชำระสะสม/Paid to date</td><td>{money(paidTo)}</td></tr>
+            <tr><td colSpan={4}>{owe > 0 ? "ยอดคงเหลือที่ต้องชำระ/Balance Due" : "ยอดคงเหลือ/Balance"}</td><td><b>{money(owe)}</b></td></tr>
+            <tr><td colSpan={5} className="bill-words">( {bahtText(payment ? thisAmt : owe)} )</td></tr>
           </> : <>
-            <tr><td colSpan={3}>{paid ? "รับชำระแล้ว/Paid" : "ยอดที่ต้องชำระ/Amount Due"}</td><td><b>{money(inv.net)}</b></td></tr>
-            <tr><td colSpan={4} className="bill-words">( {bahtText(inv.net)} )</td></tr>
+            <tr><td colSpan={4}>{paid ? "รับชำระแล้ว/Paid" : "ยอดที่ต้องชำระ/Amount Due"}</td><td><b>{money(inv.net)}</b></td></tr>
+            <tr><td colSpan={5} className="bill-words">( {bahtText(inv.net)} )</td></tr>
           </>}
         </tbody>
       </table>
-      {paid && <p className="bill-line">{methods.map(([th, en, v]) => <span key={en}>{th === "บัตรเครดิต" ? "บัตรเครดิต/Credit Card" : th === "โอนเงิน" ? "โอน/Transfer" : "เงินสด Cash"}={v ? money(v) : ""}</span>)}</p>}
+      {paid && <div className="bill-pay2 bill-pay-cust">
+        <span>วิธีการชำระ :</span>
+        {methods.map(([th, en, v]) => <span key={en}>{box(!!v)} {th}<small>{en}{v ? ` - ${money(v)} บาท` : ""}</small></span>)}
+      </div>}
       <p className="bill-line">{paid ? "ได้รับเงินจาก (Received from)" : "เรียกเก็บจาก (Bill to)"} คุณ {inv.payer || "-"}</p>
       <p className="bill-line">หมายเหตุ : {inv.note}</p>
       <div className="bill-sign">

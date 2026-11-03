@@ -2,7 +2,7 @@
 import { ReactNode } from "react";
 import Icon from "../Icon";
 import { Modal } from "../ui";
-import { bahtText, money } from "@/lib/billing";
+import { bahtText, money, svcDiscount, svcNet } from "@/lib/billing";
 import { EXTRA_SERVICES, PACKAGES, rateColumns, ROOMS } from "@/lib/priceList";
 import { isNoAllergy } from "@/lib/medicalLists";
 import { ACCEPT, CONSENT, CONSENT_MARKETING, DOC_RECEIPT, EXCLUDED, EXCLUDED_NOTE, FINES, HOSPITAL_STEPS, INCLUDED, INCLUDED_NOTE, PAY_CHANNELS, REHAB_CHECKS, ROOM_CHECK, ROOM_CHECK_NOTE,
@@ -82,7 +82,7 @@ export const DEFAULT_TERMS = "";
 
 /** แถวสัญญา: [เลขที่, สาขา, ผู้รับบริการ, ผู้ว่าจ้าง, ราคาโปรแกรม, สถานะ, ห้อง, วันเริ่ม, บัตรผู้ว่าจ้าง, โทร, ที่อยู่, ความเกี่ยวข้อง, บัตรผู้รับบริการ, อายุ, บริการพื้นฐาน, รายการเพิ่มเติม, ค่าเพิ่มเติม, แพ็กเกจ, ล่วงหน้า, ประกัน, หมายเหตุ,
  *  โปรแกรม, วันสิ้นสุด, รายการ (JSON), โรงพยาบาลตามสิทธิ์, แพ้ยา, แพ้อาหาร, หักมัดจำห้อง, ยา/เวชภัณฑ์ที่ใช้ประจำ] */
-export type ContractLine = { desc: string; qty: number; unit: string; price: number };
+export type ContractLine = { desc: string; qty: number; unit: string; price: number; discount?: number; pct?: number };
 /** รายการค่าบริการของสัญญา · สัญญาเก่าที่ยังไม่มีรายการ: แปลงจากค่าบริการเพิ่มเติมรายเดือนเดิม */
 export function contractLines(r: string[]): ContractLine[] {
   try { const x = JSON.parse(r[23] || "[]"); if (Array.isArray(x)) return x; } catch { /* สัญญาเก่า */ }
@@ -90,7 +90,7 @@ export function contractLines(r: string[]): ContractLine[] {
   return extra ? [{ desc: blank(r[15]) ? `ค่าบริการเพิ่มเติม (${r[15]})` : "ค่าบริการเพิ่มเติม", qty: 1, unit: "เดือน", price: extra }] : [];
 }
 /** ยอดรวม = ราคาโปรแกรม + รายการค่าบริการ (ก่อนหักมัดจำห้อง) */
-export const contractTotal = (r: string[]) => numOf(r[4]) + contractLines(r).reduce((n, x) => n + x.qty * x.price, 0);
+export const contractTotal = (r: string[]) => numOf(r[4]) + contractLines(r).reduce((n, x) => n + svcNet(x), 0);
 
 const Num = ({ n, children }: { n: string; children: ReactNode }) => <div className="doc-num"><b>{n}</b><div>{children}</div></div>;
 const Fill = ({ v, w }: { v?: string | null; w?: string }) => <span className="doc-fill" style={w ? { minWidth: w } : undefined}>{blank(v) || " "}</span>;
@@ -125,7 +125,7 @@ export function ContractDoc({ r, hn, bed, branch, terms, by, copy, chronic }: { 
         <thead><tr><th>รายการ</th><th className="n">จำนวนเงิน (บาท)</th></tr></thead>
         <tbody>
           <tr><td><b>{val(r[21]) === "-" ? "ค่าบริการ" : r[21]}</b></td><td className="n">{fee ? money(fee) : ""}</td></tr>
-          {lines.map((x, i) => <tr key={i}><td>&nbsp;- {x.desc}{x.qty !== 1 || !["เดือน", "แพ็กเกจ"].includes(x.unit) ? ` (${x.qty.toLocaleString("en-US")} ${x.unit}${x.price ? ` × ${money(x.price)}` : ""})` : ""}</td><td className="n">{x.price ? money(x.qty * x.price) : "รวมในโปรแกรม"}</td></tr>)}
+          {lines.map((x, i) => <tr key={i}><td>&nbsp;- {x.desc}{x.qty !== 1 || !["เดือน", "แพ็กเกจ"].includes(x.unit) ? ` (${x.qty.toLocaleString("en-US")} ${x.unit}${x.price ? ` × ${money(x.price)}` : ""})` : ""}{svcDiscount(x) ? ` ส่วนลด${x.pct ? ` ${x.pct}%` : ""} ${money(svcDiscount(x))}` : ""}</td><td className="n">{x.price ? money(svcNet(x)) : "รวมในโปรแกรม"}</td></tr>)}
         </tbody>
         <tfoot>
           <tr><td>ยอดรวมทั้งหมด</td><td className="n">{money(total)}</td></tr>
@@ -265,7 +265,7 @@ export function ContractDoc({ r, hn, bed, branch, terms, by, copy, chronic }: { 
 
 /* ---------- บันทึกต่อท้ายสัญญา (ต่อสัญญา / เปลี่ยนเงื่อนไข) ---------- */
 const DIFF: [number, string][] = [[21, "โปรแกรม"], [7, "วันเริ่มสัญญา"], [22, "วันสิ้นสุดสัญญา"], [6, "ห้องพัก"], [4, "ราคาโปรแกรม"], [23, "รายการค่าบริการ"], [27, "หักมัดจำห้องพัก"], [19, "เงินประกัน"]];
-const linesText = (r: string[]) => contractLines(r).map((x) => `${x.desc}${x.price ? ` ${money(x.qty * x.price)}` : ""}`).join(" · ") || "-";
+const linesText = (r: string[]) => contractLines(r).map((x) => `${x.desc}${x.price ? ` ${money(svcNet(x))}` : ""}`).join(" · ") || "-";
 export function RenewDoc({ before, after, hn, branch, by }: { before: string[]; after: string[]; hn?: string; branch?: DocBranch; by?: string }) {
   const show = (k: number, v?: string, r?: string[]) => (k === 23 && r ? linesText(r) : [7, 22].includes(k) ? (blank(v) ? longDate(v, true) : "-") : [4, 19, 27].includes(k) && numOf(v) ? money(numOf(v)) : val(v));
   const rows = DIFF.filter(([k]) => (k === 23 ? linesText(before) !== linesText(after) : (before[k] ?? "") !== (after[k] ?? "")));
@@ -321,11 +321,12 @@ export function DischargeDoc({ d, branch, by }: { d: DcData; branch?: DocBranch;
 }
 
 /* ---------- ใบเสนอราคา ---------- */
-export type QuoteItem = { desc: string; qty: number; unit: string; price: number };
+export type QuoteItem = { desc: string; qty: number; unit: string; price: number; discount?: number; pct?: number };
 export function QuoteDoc({ no, date, validDays, payer, resident, age, chronic, level, items, note, branch, by }: {
   no: string; date: string; validDays: number; payer: string; resident: string; age?: string; chronic?: string; level?: string; items: QuoteItem[]; note?: string; branch?: DocBranch; by?: string;
 }) {
-  const total = items.reduce((n, i) => n + i.qty * i.price, 0);
+  const total = items.reduce((n, i) => n + svcNet(i), 0);
+  const disc = items.some((i) => svcDiscount(i));
   const LEVELS = ["ช่วยเหลือตัวเองได้", "ต้องการความช่วยเหลือบางส่วน", "ติดเตียง", "ฟื้นฟูหลังโรคหลอดเลือดสมอง"];
   return (
     <Paper>
@@ -336,9 +337,9 @@ export function QuoteDoc({ no, date, validDays, payer, resident, age, chronic, l
       <p className="doc-box doc-checks">{LEVELS.map((l) => <span key={l}>{level === l ? "☑" : "☐"} {l}</span>)}</p>
       <DocH>รายการบริการ</DocH>
       <div className="doc-tbl"><table>
-        <thead><tr><th>รายการ</th><th className="n">จำนวน</th><th className="n">ราคา/หน่วย</th><th className="n">รวม (บาท)</th></tr></thead>
-        <tbody>{items.map((i, k) => <tr key={k}><td>{i.desc}</td><td className="n">{i.qty} {i.unit}</td><td className="n">{money(i.price)}</td><td className="n">{money(i.qty * i.price)}</td></tr>)}</tbody>
-        <tfoot><tr><td colSpan={3}>รวมทั้งสิ้น ({bahtText(total)})</td><td className="n">{money(total)}</td></tr></tfoot>
+        <thead><tr><th>รายการ</th><th className="n">จำนวน</th><th className="n">ราคา/หน่วย</th>{disc && <th className="n">ส่วนลด</th>}<th className="n">รวม (บาท)</th></tr></thead>
+        <tbody>{items.map((i, k) => <tr key={k}><td>{i.desc}</td><td className="n">{i.qty} {i.unit}</td><td className="n">{money(i.price)}</td>{disc && <td className="n">{svcDiscount(i) ? `${i.pct ? `${i.pct}% · ` : ""}${money(svcDiscount(i))}` : "-"}</td>}<td className="n">{money(svcNet(i))}</td></tr>)}</tbody>
+        <tfoot><tr><td colSpan={disc ? 4 : 3}>รวมทั้งสิ้น ({bahtText(total)})</td><td className="n">{money(total)}</td></tr></tfoot>
       </table></div>
       <p className="doc-note">ราคานี้ยังไม่รวมค่ายา เวชภัณฑ์ และค่ารักษาพยาบาลภายนอก{note ? ` · ${note}` : ""}</p>
       <Signs people={[["ผู้เสนอราคา", by], ["ผู้รับใบเสนอราคา", payer]]} />

@@ -5,7 +5,7 @@ import { ASSESSMENTS } from "@/lib/mock";
 import { downloadCsv, useCrud } from "@/lib/store";
 import { useApp } from "@/lib/app";
 import { useSession } from "@/lib/session";
-import { money } from "@/lib/billing";
+import { money, svcNet } from "@/lib/billing";
 import { handoff } from "@/lib/handoff";
 import { longDate, PrintModal, QuoteDoc, QuoteItem } from "../print/Docs";
 import { useBranchInfo } from "./Billing";
@@ -26,7 +26,7 @@ const itemsOf = (r: string[]): QuoteItem[] => {
 };
 const today = () => new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10);
 const expired = (r: string[]) => has(r[7]) && new Date(r[7]).getTime() + (Number(r[8]) || 30) * 864e5 < Date.now();
-const totalOf = (items: QuoteItem[]) => items.reduce((n, x) => n + x.qty * x.price, 0);
+const totalOf = (items: QuoteItem[]) => items.reduce((n, x) => n + svcNet(x), 0);
 type QForm = { i: number | null; plan: string; who: string; chronic: string; phone: string; payer: string; level: string; date: string; days: string; note: string; items: QuoteItem[] };
 
 export function Quotations() {

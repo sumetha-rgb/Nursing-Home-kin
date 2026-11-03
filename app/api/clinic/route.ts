@@ -14,6 +14,7 @@ export const fetchCache = "force-no-store";
  * งานพยาบาลและกายภาพรายบุคคล (เห็นเฉพาะสาขาตัวเอง ยกเว้นผู้บริหาร)
  *  GET  ?op=resident&id=…           ประเมินแรกรับ บันทึกทางคลินิก คอร์สกายภาพ เวชภัณฑ์ที่เบิก
  *  GET  ?op=supplies                 รายการเวชภัณฑ์ในคลังของสาขา
+ *  GET  ?op=courses&branch=…         คอร์สกายภาพที่ขายไปทั้งหมด (ผู้ซื้อ ใช้แล้ว คงเหลือ ใช้ล่าสุด) · แดชบอร์ด
  *  GET  ?op=unbilled&resident=…      เวชภัณฑ์และคอร์สกายภาพที่ยังไม่ออกใบแจ้งหนี้ (หน้าการเงิน)
  *  GET  ?op=doc_file&id=…          ไฟล์แนบของเอกสารระเบียบ
  *  POST { op: "doc_file", id, name, data }   แนบ/เปลี่ยนไฟล์ (data URL ไม่เกิน 4 MB · รูปหรือ PDF)
@@ -61,6 +62,15 @@ export async function GET(req: NextRequest) {
         const courses = await sql(`SELECT id, name, total, used, price::float, status, created_by, invoice_id, ${TH_AT("created_at")} AS at FROM physio_courses WHERE resident_id = $1 ORDER BY created_at DESC`, [id]);
         const supplies = await sql(`SELECT id, item_name, unit, qty, price::float, issued_by, invoice_id, ${TH_AT("created_at")} AS at FROM supply_issues WHERE resident_id = $1 ORDER BY created_at DESC LIMIT 200`, [id]);
         return NextResponse.json({ admission: adm ?? null, notes, courses, supplies });
+      }
+      case "courses": {
+        if (!canRead(me) && !can(me, "billing") && !can(me, "dashboard")) return forbidden();
+        const br = scoped(me) ? me.branch : q.get("branch") || null;
+        const rows = await sql(`SELECT c.id, c.resident_name, c.branch_name, c.name, c.total, c.used, coalesce(c.price, 0)::float AS price, c.status, c.created_by,
+            c.invoice_id IS NOT NULL AS billed, to_char(c.created_at AT TIME ZONE 'Asia/Bangkok', 'YYYY-MM-DD') AS day,
+            (SELECT to_char(max(n.created_at) AT TIME ZONE 'Asia/Bangkok', 'YYYY-MM-DD') FROM clinical_notes n WHERE n.kind = 'physio' AND n.data->>'course_id' = c.id) AS last_used
+          FROM physio_courses c ${br ? "WHERE c.branch_name = $1" : ""} ORDER BY c.created_at DESC LIMIT 500`, br ? [br] : []);
+        return NextResponse.json({ items: rows });
       }
       case "supplies": {
         if (!canRead(me) && !can(me, "app.pharmacy")) return forbidden();
