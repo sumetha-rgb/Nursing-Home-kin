@@ -946,6 +946,7 @@ ALTER TABLE contracts ADD COLUMN IF NOT EXISTS food_allergy  text;
 ALTER TABLE contracts ADD COLUMN IF NOT EXISTS room_deposit  numeric(12,2);
 ALTER TABLE contracts ADD COLUMN IF NOT EXISTS regular_meds  text;
 ALTER TABLE contracts ADD COLUMN IF NOT EXISTS hospital_alt  text;  -- โรงพยาบาลสำรอง (ใกล้เคียง) ข้อ 3.8
+ALTER TABLE contracts ADD COLUMN IF NOT EXISTS room_vat      numeric(5,2);  -- อัตรา VAT ค่าห้อง (%) บวกเพิ่มในใบแจ้งหนี้ · ว่าง = อัตราเริ่มต้น 7 · 0 = ไม่มี VAT
 
 -- บันทึกการทำงานส่วนกลาง (KinApp กด "ทำแล้ว · ถ่ายรูป") · นับเป็นผลงานใน KPI ส่วน "งานที่ส่ง"
 CREATE TABLE IF NOT EXISTS facility_logs (

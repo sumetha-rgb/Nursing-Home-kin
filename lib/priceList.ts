@@ -18,6 +18,11 @@ export const ROOMS: { name: string; day: number; month: number; promo: number }[
   { name: "ห้องเดี่ยว (Superior Room)", day: 4000, month: 71000, promo: 58000 },
   { name: "ห้องเดี่ยว (Grand Suite Room)", day: 5000, month: 90000, promo: 70000 },
 ];
+/** ห้องจากราคาต่อเดือน (ราคาในใบราคาไม่ซ้ำกัน) · ใช้ตั้งชื่อบรรทัดค่าห้องในใบแจ้งหนี้จากราคาที่เลือกในสัญญา */
+export function roomByPrice(price: number): { name: string; promo: boolean } | null {
+  const r = ROOMS.find((x) => x.month === price || x.promo === price);
+  return r ? { name: r.name, promo: r.promo === price && r.month !== price } : null;
+}
 /** บริการที่รวมในค่าห้อง (ใบอัตราค่าบริการ) */
 export const ROOM_SERVICES = ["การพยาบาลขั้นพื้นฐาน", "กิจกรรมสันทนาการ", "กิจกรรมกลุ่มโดยนักกิจกรรมบำบัด 4 ครั้ง/เดือน", "พลิกตะแคงตัว", "วัด V/S ทุก 4 ชม.", "ดูแลด้านอาหารให้เหมาะสมตามโรคโดยนักโภชนาการ"];
 

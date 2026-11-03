@@ -1,7 +1,14 @@
 /** ใบแจ้งหนี้ / ใบเสร็จรับเงิน (ชุดข้อมูล "invoices") ใช้ได้ทั้งหน้าเว็บและ server */
 
-/** discount = ส่วนลดเป็นบาท · pct = ส่วนลดเป็น % ของยอดบรรทัด (ใช้ได้ทั้งสองอย่างพร้อมกัน) */
-export type BillItem = { desc: string; qty: number; price: number; discount: number; pct?: number };
+/**
+ * discount = ส่วนลดเป็นบาท · pct = ส่วนลดเป็น % ของยอดบรรทัด (ใช้ได้ทั้งสองอย่างพร้อมกัน)
+ * vat = อัตราภาษีมูลค่าเพิ่ม (%) ที่บวกเพิ่มจากยอดหลังส่วนลด · 0 / ไม่มี = ไม่มี VAT · เก็บอัตราไว้ในบรรทัด ใบเก่าไม่เปลี่ยนเมื่อปรับอัตรา
+ */
+export type BillItem = { desc: string; qty: number; price: number; discount: number; pct?: number; vat?: number };
+/** อัตรา VAT เริ่มต้นของใบใหม่ (%) · แก้ได้ในฟอร์มใบแจ้งหนี้และสัญญา */
+export const DEFAULT_VAT = 7;
+/** อัตรา VAT ค่าห้องของสัญญา (คอลัมน์ room_vat) · ว่าง (สัญญาเก่า) = อัตราเริ่มต้น */
+export const contractVat = (r: string[]) => { const v = r[30]; return v === undefined || v === "" || v === "-" ? DEFAULT_VAT : Number(v) || 0; };
 export type Invoice = {
   id: string; no?: string; date: string; who: string; hn: string; payer: string; address: string;
   kind: string; contract: string; items: string; total: number; discount: number; net: number;
@@ -18,16 +25,34 @@ export const balanceOf = (x: { net: number; paid?: number }) => Math.max(0, Math
 export type Payment = { id: string; n: number; date: string; cash: number; credit: number; transfer: number; amount: number; cashier: string; note: string; slip: string | null; slipAt: string | null; paidBefore: number };
 
 export const parseItems = (json: string): BillItem[] => {
-  try { const x = JSON.parse(json || "[]"); return Array.isArray(x) ? x.map((i) => ({ desc: String(i.desc ?? ""), qty: Number(i.qty) || 0, price: Number(i.price) || 0, discount: Number(i.discount) || 0, pct: Number(i.pct) || 0 })) : []; }
+  try { const x = JSON.parse(json || "[]"); return Array.isArray(x) ? x.map((i) => ({ desc: String(i.desc ?? ""), qty: Number(i.qty) || 0, price: Number(i.price) || 0, discount: Number(i.discount) || 0, pct: Number(i.pct) || 0, vat: i.vat === true ? DEFAULT_VAT : Number(i.vat) || 0 })) : []; }
   catch { return []; }
 };
 export const lineAmount = (i: BillItem) => i.qty * i.price;
 /** ส่วนลดรวมของบรรทัด = บาท + % ของยอดบรรทัด (ปัดเป็นสตางค์) */
 export const lineDiscount = (i: BillItem) => Math.round((i.discount + (lineAmount(i) * (i.pct ?? 0)) / 100) * 100) / 100;
+/**
+ * ยอดของใบ: total = ก่อนส่วนลด · discount = ส่วนลด · net = ยอดที่ต้องชำระ (หลังส่วนลด + VAT)
+ * VAT คิดแบบบวกเพิ่ม 7% จากยอดหลังส่วนลดของบรรทัดที่ติ๊ก vat (ปัดเป็นสตางค์)
+ */
 export function totals(items: BillItem[]) {
   const total = items.reduce((n, i) => n + lineAmount(i), 0);
   const discount = items.reduce((n, i) => n + lineDiscount(i), 0);
-  return { total, discount, net: Math.max(0, total - discount) };
+  return { total, discount, net: Math.max(0, Math.round((total - discount + vatOf(items).vat) * 100) / 100) };
+}
+/** ยอดบรรทัดหลังส่วนลด (ก่อน VAT) */
+export const lineNet = (i: BillItem) => Math.max(0, lineAmount(i) - lineDiscount(i));
+const r2 = (n: number) => Math.round(n * 100) / 100;
+/**
+ * แยกยอด VAT ของใบ: rates = แต่ละอัตรา {rate, base, vat} · base / vat = รวมทุกอัตรา · exempt = มูลค่าที่ไม่มี VAT (หลังส่วนลด)
+ * ภาษีคิดรวมต่ออัตราแล้วปัดเป็นสตางค์
+ */
+export function vatOf(items: BillItem[]) {
+  const rates = [...new Set(items.filter((i) => i.vat).map((i) => i.vat!))].sort((a, b) => a - b).map((rate) => {
+    const base = r2(items.filter((i) => i.vat === rate).reduce((n, i) => n + lineNet(i), 0));
+    return { rate, base, vat: r2((base * rate) / 100) };
+  });
+  return { rates, base: r2(rates.reduce((n, x) => n + x.base, 0)), vat: r2(rates.reduce((n, x) => n + x.vat, 0)), exempt: r2(items.filter((i) => !i.vat).reduce((n, i) => n + lineNet(i), 0)) };
 }
 
 export const money = (n: number | undefined) => (n ?? 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });

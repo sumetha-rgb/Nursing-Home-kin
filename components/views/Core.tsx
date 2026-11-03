@@ -5,7 +5,7 @@ import Link from "next/link";
 import Icon from "../Icon";
 import { APPOINTMENTS, CONTRACTS, DAILY_LIST, RESIDENTS, BRANCH_NAMES } from "@/lib/mock";
 import { downloadCsv, useCrud, useRecords } from "@/lib/store";
-import { balanceOf, docDate, Invoice, isOpen, money, todayIso, UNPAID, VOID } from "@/lib/billing";
+import { balanceOf, contractVat, DEFAULT_VAT, docDate, Invoice, isOpen, money, todayIso, UNPAID, VOID } from "@/lib/billing";
 import { contractInvoice, useBranchInfo } from "./Billing";
 import { ContractDoc, contractLines, contractTotal, DcData, DischargeDoc, PrintModal, RenewDoc } from "../print/Docs";
 import { ServiceLine, ServiceLines } from "../ServicePicker";
@@ -246,12 +246,20 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, on
   // รายการค่าบริการจากใบราคา (ต่อสัญญา / เปิดจากใบเสนอราคา = ดึงรายการเดิมมาให้)
   const [items, setItems] = useState<ServiceLine[]>(() => (initial ? contractLines(initial) : []));
   const [fee, setFee] = useState(() => initial?.[4] && initial[4] !== "-" ? initial[4].replace(/,/g, "") : "");
+  // ช่องค่าห้อง: ตรงกับราคาในใบราคา = เลือกห้องนั้นไว้ · ราคาอื่น = กำหนดเอง
+  const pickOf = (f: number) => { if (!f) return ""; const i = ROOMS.findIndex((x) => x.month === f || x.promo === f); return i < 0 ? "custom" : `${i}:${ROOMS[i].month === f ? "m" : "p"}`; };
+  const [feePick, setFeePick] = useState(() => pickOf(Number(fee) || 0));
+  // VAT ค่าห้อง (%) บวกเพิ่มในใบแจ้งหนี้ · ต่อสัญญาใช้อัตราเดิม
+  const [roomVat, setRoomVat] = useState(() => (initial ? String(contractVat(initial)) : String(DEFAULT_VAT)));
+  const vatAmt = Math.round((Number(fee) || 0) * (Number(roomVat) || 0)) / 100;
   const [roomDep, setRoomDep] = useState(() => initial?.[27] && initial[27] !== "-" ? initial[27].replace(/,/g, "") : "");
   const sum = (Number(fee) || 0) + items.reduce((n, x) => n + x.qty * x.price, 0);
   const branchNames = useBranchNames();
   const { go, toast } = useApp();
   const { user } = useSession();
-  const [step, setStep] = useState<1 | 2>(1);
+  const [step, setStep] = useState<1 | 2 | 3>(1);
+  /** ห้องที่กด "ราคาถูกแล้ว" (ไม่เตือนค่าห้องไม่ตรงซ้ำ) */
+  const [priceOk, setPriceOk] = useState("");
   const [row, setRow] = useState<string[] | null>(null);
   const [room, setRoom] = useState("");
   const [warn, setWarn] = useState("");
@@ -265,40 +273,64 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, on
   const free = options.filter((r) => !r.closed).reduce((n, r) => n + r.free, 0);
   const existing = row ? residents.find((r) => norm(r[0]) === row[2] && r[3] === row[1] && staying(r[5] ?? "")) : undefined;
 
-  const next = (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const f = new FormData(e.currentTarget);
+  /** แถวสัญญาจากค่าที่กรอกทุกขั้น (ห้องใส่ตอนบันทึก) */
+  const buildRow = () => {
+    const f = new FormData(formRef.current ?? undefined);
     const g = (k: string) => String(f.get(k) ?? "").trim();
     const lines = items.filter((x) => x.desc.trim());
-    if (lines.some((x) => !(x.qty > 0) || x.price < 0)) return toast("กรุณาตรวจจำนวนและราคาของรายการค่าบริการ");
-    const end = endDate;
-    if (end && end < start) return toast("วันสิ้นสุดสัญญาต้องไม่ก่อนวันเริ่มสัญญา");
-    if (!drugA.trim()) return toast(`กรุณาระบุประวัติแพ้ยา หรือกด "${NO_ALLERGY}"`);
-    if (!foodA.trim()) return toast(`กรุณาระบุประวัติแพ้อาหาร หรือกด "${NO_ALLERGY}"`);
-    const r = [
+    return [
       "", g("branch"), norm(who), norm(boss), fee || "-", g("status") || CONTRACT_STATUSES[0],
       NO_ROOM, start, g("employer_id"), g("phone"), addr.trim(), relation.trim(),
       g("resident_id"), g("age"), initial?.[14] ?? "", lines.map((x) => x.desc).join(", "), lines.length ? String(lines.reduce((n, x) => n + x.qty * x.price, 0)) : "", initial?.[17] ?? "",
       prepaid, deposit, g("note"),
-      g("program"), end, JSON.stringify(lines), [hosp.trim(), right ? `(${right})` : ""].filter(Boolean).join(" "), drugA.trim(), foodA.trim(), roomDep, meds.trim(), hospAlt.trim(),
+      g("program"), endDate, JSON.stringify(lines), [hosp.trim(), right ? `(${right})` : ""].filter(Boolean).join(" "), drugA.trim(), foodA.trim(), roomDep, meds.trim(), hospAlt.trim(),
+      String(Number(roomVat) || 0),
     ];
+  };
+
+  /** ขั้น 1 → 2: ตรวจรายละเอียดแล้วไปกรอกค่าใช้จ่าย */
+  const toCosts = () => {
+    if (endDate && endDate < start) return toast("วันสิ้นสุดสัญญาต้องไม่ก่อนวันเริ่มสัญญา");
+    if (!drugA.trim()) return toast(`กรุณาระบุประวัติแพ้ยา หรือกด "${NO_ALLERGY}"`);
+    if (!foodA.trim()) return toast(`กรุณาระบุประวัติแพ้อาหาร หรือกด "${NO_ALLERGY}"`);
+    const r = buildRow();
     if (!r[1]) return toast("กรุณาเลือกสาขา");
+    setRow(r);
+    setStep(2);
+    window.scrollTo(0, 0);
+  };
+
+  /** ขั้น 2 → 3: ตรวจค่าใช้จ่ายแล้วไปเลือกห้อง */
+  const toRooms = () => {
+    if (items.some((x) => x.desc.trim() && (!(x.qty > 0) || x.price < 0))) return toast("กรุณาตรวจจำนวนและราคาของรายการค่าบริการ");
+    const r = buildRow();
     setRow(r);
     // ผู้รับบริการที่มีห้องอยู่แล้ว (ต่อสัญญา): เลือกห้องเดิมไว้ให้
     const cur = residents.find((x) => norm(x[0]) === r[2] && x[3] === r[1] && staying(x[5] ?? ""));
     const curRoom = cur ? findRoom(all, r[1], cur[2]) : undefined;
     setRoom(curRoom ? curRoom.no : room && findRoom(all, r[1], room) ? room : "");
     setWarn("");
-    setStep(2);
+    setStep(3);
     window.scrollTo(0, 0);
   };
 
-  const pick = (r: RoomInfo) => {
-    const problem = roomProblem(r, row?.[2]);
-    if (problem) { setWarn(problem); toast(problem); return; }
-    setWarn(""); setRoom(r.no);
+  /**
+   * ค่าห้องจากห้องที่เลือก (ประเภทห้องต้องตรงหมวดในใบราคาก่อน เช่น ห้องเดี่ยวไม่เลือกราคาห้องคู่แม้ราคาเท่ากัน)
+   *  ค่าห้องที่ตั้งไว้ตรงราคาในหมวด > ชื่อห้องตรงใบราคา (ราคาปกติ) > ค่าห้องที่ตั้งไว้ (กำหนดเอง)
+   */
+  const roomPrice = (r: RoomInfo): { fee: number; pick: string } | null => {
+    const rate = Number(String(r.rate ?? "").replace(/,/g, "")) || 0;
+    const cat = (n: string) => (/คู่|twin/i.test(n) ? "คู่" : /รวม|shared/i.test(n) ? "รวม" : /เดี่ยว|deluxe|superior|suite/i.test(n) ? "เดี่ยว" : "");
+    const tc = cat(r.type), t = r.type.toLowerCase();
+    const named = ROOMS.findIndex((x) => { const en = x.name.match(/\(([^)]+?)(?: Room)?\)/)?.[1]; return !!en && t.includes(en.toLowerCase()); });
+    const byRate = ROOMS.findIndex((x, i) => (named < 0 ? !tc || cat(x.name) === tc : i === named) && (x.month === rate || x.promo === rate));
+    if (rate && byRate >= 0) return { fee: rate, pick: `${byRate}:${ROOMS[byRate].month === rate ? "m" : "p"}` };
+    const i = named >= 0 ? named : tc === "คู่" || tc === "รวม" ? ROOMS.findIndex((x) => cat(x.name) === tc) : -1;
+    if (i >= 0) return { fee: ROOMS[i].month, pick: `${i}:m` };
+    return rate ? { fee: rate, pick: "custom" } : null;
   };
 
+  /** ขั้น 3: บันทึกสัญญา (มีห้อง / ยังไม่มีห้อง) */
   const finish = (withRoom: boolean) => {
     if (!row) return;
     if (withRoom) {
@@ -307,17 +339,35 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, on
       const problem = roomProblem(r, row[2]);
       if (problem) { setWarn(problem); return toast(problem); }
     }
-    onSave(row.map((x, i) => (i === 6 ? (withRoom ? room : NO_ROOM) : x)), photos);
+    onSave(buildRow().map((x, i) => (i === 6 ? (withRoom ? room : NO_ROOM) : x)), photos);
+  };
+
+  // ค่าห้องที่เลือกในขั้นที่ 2 เทียบกับห้องที่เลือก (เตือนเท่านั้น)
+  const picked = row && room ? findRoom(all, row[1], room) : undefined;
+  const suggest = picked ? roomPrice(picked) : null;
+  const mismatch = picked && suggest && suggest.fee !== (Number(fee) || 0) && priceOk !== picked.no ? suggest : null;
+  const applyRoomPrice = (x: { fee: number; pick: string }) => {
+    setFee(String(x.fee)); setFeePick(x.pick);
+    if (row) setRow(row.map((v, k) => (k === 4 ? String(x.fee) : v)));
+    toast(`เปลี่ยนค่าห้องเป็น ${money(x.fee)} บาท/เดือนแล้ว`);
+  };
+
+  const pick = (r: RoomInfo) => {
+    const problem = roomProblem(r, row?.[2]);
+    if (problem) { setWarn(problem); toast(problem); return; }
+    setWarn(""); setRoom(r.no);
   };
 
   return (
     <Section title={fromQuote !== undefined ? `เปิดสัญญาใหม่ · จากใบเสนอราคา ${fromQuote}` : initial ? `ต่อสัญญา · ${initial[2]} (สัญญาเดิม ${initial[0]})` : "เปิดสัญญาใหม่"}>
       <div className="contract-steps" aria-label="ขั้นตอน">
         <span className={step === 1 ? "is-active" : ""}><b>1</b>รายละเอียดสัญญา</span>
-        <span className={step === 2 ? "is-active" : ""}><b>2</b>เลือกห้องผู้ป่วย</span>
+        <span className={step === 2 ? "is-active" : ""}><b>2</b>ค่าใช้จ่าย</span>
+        <span className={step === 3 ? "is-active" : ""}><b>3</b>เลือกห้องผู้ป่วย</span>
       </div>
 
-      <form ref={formRef} className={`space-y-8 ${step === 1 ? "" : "hidden"}`} onSubmit={next}>
+      <form ref={formRef} className={`space-y-8 ${step === 3 ? "hidden" : ""}`} onSubmit={(e) => { e.preventDefault(); if (step === 1) toCosts(); else toRooms(); }}>
+        <div className={step === 1 ? "space-y-8" : "hidden"}>
         <div className="grid gap-4 md:grid-cols-2">
           <Field label="สาขา (Branch)" required className="md:col-span-2"><select name="branch" defaultValue={d(1) ?? ""}><option value="">-- กรุณาเลือกสาขา --</option>{branchNames.map((b) => <option key={b}>{b}</option>)}</select></Field>
           <Field label="ชื่อ นามสกุล ผู้จ้าง" required>{initial ? <input value={boss} onChange={(e) => setBoss(e.target.value)} required />
@@ -361,29 +411,49 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, on
                 {hosp.trim() ? <>ในสัญญาข้อ 3.8 จะพิมพ์ว่า ให้นำส่งโรงพยาบาล <b className="text-gold-900">{[hosp.trim(), right ? `(${right})` : ""].filter(Boolean).join(" ")}</b>{hosp.trim() === HOSP_LATER && " · อย่าลืมตามชื่อโรงพยาบาลจากญาติแล้วแก้ไขสัญญา"}</> : <>เลือกสิทธิ์ <b>{right}</b> แล้ว · ยังไม่ได้ใส่ชื่อโรงพยาบาล · ถ้ายังไม่รู้ กด &quot;{HOSP_LATER}&quot;</>}</p>}
               <p className="field-hint">โรงพยาบาลที่นำส่งเมื่อเจ็บป่วย · พิมพ์ 2 ตัวแล้วขึ้นชื่อที่เคยกรอกในสัญญาอื่น</p></Field>
             <Field label="โรงพยาบาลสำรอง (ใกล้เคียง)"><SuggestText value={hospAlt} onChange={setHospAlt} options={pastHosp} label="โรงพยาบาลสำรอง" placeholder="เช่น รพ.ใกล้ศูนย์ ส่งได้เร็วกรณีฉุกเฉิน" /><p className="field-hint">พิมพ์ในข้อ 3.8 บรรทัด &quot;หรือให้นำส่งโรงพยาบาลใกล้เคียงชื่อ&quot; · ว่างได้ (เว้นเส้นให้เขียนตอนเซ็น)</p></Field>
-            <Field label="ยา / เวชภัณฑ์ที่ใช้ประจำ"><TagInput label="ยาที่ใช้ประจำ" value={meds} onChange={setMeds} suggestions={COMMON_MEDS} quick={["ยาความดัน", "ยาเบาหวาน", "ยาไขมัน"]} placeholder="พิมพ์ชื่อยา เช่น aml แล้วเลือก หรือพิมพ์เองแล้วกด Enter" /></Field>
+            <Field label="ยา / เวชภัณฑ์ที่ใช้ประจำ"><TagInput label="ยาที่ใช้ประจำ" value={meds} onChange={setMeds} suggestions={COMMON_MEDS} quick={["ยาความดัน", "ยาเบาหวาน", "ยาไขมัน"]} none="ไม่มียาประจำ" placeholder="พิมพ์ชื่อยา เช่น aml แล้วเลือก หรือพิมพ์เองแล้วกด Enter" /><p className="field-hint">ไม่มียาที่ใช้ประจำ กด &quot;ไม่มียาประจำ&quot; · ยังไม่ทราบ ปล่อยว่างได้ (สัญญาพิมพ์เป็น -) · ช่องนี้พิมพ์ในสัญญาเท่านั้น ยาที่ต้องจัดให้ผู้ป่วยเพิ่มที่ประวัติผู้รับบริการ แท็บยา</p></Field>
             <Field label="ประวัติแพ้ยา" required><TagInput label="ประวัติแพ้ยา" value={drugA} onChange={setDrugA} suggestions={ALLERGY_DRUGS} none={NO_ALLERGY} quick={["Penicillin", "Sulfonamide (Sulfa)", "Aspirin", "NSAIDs"]} placeholder="พิมพ์ชื่อยาที่แพ้ เช่น pen แล้วเลือก" /><p className="field-hint">ต้องเลือกอย่างใดอย่างหนึ่ง · ไม่แพ้ให้กด &quot;{NO_ALLERGY}&quot; (สัญญาพิมพ์ว่า ปฏิเสธ)</p></Field>
             <Field label="ประวัติแพ้อาหาร" required><TagInput label="ประวัติแพ้อาหาร" value={foodA} onChange={setFoodA} suggestions={FOOD_ALLERGENS} none={NO_ALLERGY} quick={["อาหารทะเล", "นมวัว", "ไข่", "ถั่วลิสง"]} placeholder="พิมพ์อาหารที่แพ้ แล้วกด Enter" /><p className="field-hint">ต้องเลือกอย่างใดอย่างหนึ่ง · ไม่แพ้ให้กด &quot;{NO_ALLERGY}&quot;</p></Field>
           </div>
           <p className="mt-3 rounded-xl bg-cream-50 px-4 py-2.5 text-sm text-gold-700">โรคประจำตัว ไม่ต้องกรอกที่นี่ · ระบบดึงจากข้อมูลผู้รับบริการ (เมนูผู้รับบริการ) มาพิมพ์ในสัญญาให้เอง</p>
+          <div className="mt-4 grid gap-4 md:grid-cols-2">
+            <Field label="หมายเหตุ" className="md:col-span-2"><textarea name="note" rows={2} placeholder="เช่น แพ้ยาเพนิซิลลิน, ญาติมาเยี่ยมทุกวันเสาร์" defaultValue={initial ? `ต่อจากสัญญา ${initial[0]}` : undefined} /></Field>
+          </div>
+        </div>
         </div>
 
-        <div>
+        <div className={step === 2 ? "" : "hidden"}>
+          {row && <div className="mb-5 rounded-2xl border border-cream-200 bg-cream-50/60 px-4 py-3 text-sm text-gold-700">
+            <p><span className="text-gold-500">ผู้รับบริการ</span> <b className="font-medium text-gold-800">{row[2]}</b> · <span className="text-gold-500">สาขา</span> {row[1]} · <span className="text-gold-500">ผู้ว่าจ้าง</span> {row[3]}</p>
+          </div>}
           <h3 className="mb-3 font-semibold text-gold-800">โปรแกรมและค่าบริการ</h3>
           <div className="grid gap-4 md:grid-cols-2">
             <Field label="โปรแกรม"><input name="program" list="contract-programs" placeholder="เลือกหรือพิมพ์ชื่อโปรแกรม" defaultValue={d(21) ?? PROGRAMS[0]} /><datalist id="contract-programs">{PROGRAMS.map((x) => <option key={x} value={x} />)}</datalist></Field>
-            <Field label="ราคาโปรแกรม (บาท)"><input type="number" min={0} value={fee} onChange={(e) => setFee(e.target.value)} placeholder="เช่น 14000 · ว่างได้ถ้าคิดตามรายการด้านล่าง" /></Field>
+            <Field label="ค่าห้อง (บาท/เดือน)">
+              <select aria-label="ค่าห้อง" value={feePick} onChange={(e) => { setFeePick(e.target.value); const [i, k] = e.target.value.split(":"); if (k) setFee(String(k === "p" ? ROOMS[+i].promo : ROOMS[+i].month)); else if (!e.target.value) setFee(""); }}>
+                <option value="">-- เลือกประเภทห้อง --</option>
+                {ROOMS.map((x, i) => <optgroup key={x.name} label={x.name}><option value={`${i}:m`}>{x.name} · ราคาปกติ {x.month.toLocaleString()} บาท</option><option value={`${i}:p`}>{x.name} · ราคาโปรโมชัน {x.promo.toLocaleString()} บาท</option></optgroup>)}
+                <option value="custom">กำหนดราคาเอง</option>
+              </select>
+              {feePick === "custom" && <input className="mt-2" type="number" min={0} value={fee} onChange={(e) => setFee(e.target.value)} placeholder="เช่น 14000" aria-label="ราคาที่กำหนดเอง" />}
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-gold-700">
+                <span>VAT ค่าห้อง</span>
+                <input type="number" min={0} max={30} step="0.5" className="!w-20" value={roomVat} onChange={(e) => setRoomVat(e.target.value)} aria-label="VAT ค่าห้อง (%)" />
+                <span>%</span>
+                {Number(fee) > 0 && <span className="text-gold-600">· {money(Number(fee))} + VAT {money(vatAmt)} = <b className="text-gold-900">{money(Number(fee) + vatAmt)}</b> บาท/เดือน</span>}
+              </div>
+              <p className="field-hint">ค่าห้องรวมค่าดูแลพื้นฐานแล้ว · VAT บวกเพิ่มจากค่าห้องในใบแจ้งหนี้ (ใส่ 0 = ไม่มี VAT) · ใบแจ้งหนี้จะขึ้นเป็นชื่อห้องนี้</p>
+            </Field>
           </div>
-          <p className="label mt-4">รายการบริการและค่าบริการเพิ่มเติม <small className="font-normal text-gold-500">· พิมพ์ค้นหาอย่างน้อย 2 ตัวอักษร แล้วกดราคาที่ต้องการ · ราคา 0 = รวมในโปรแกรม (เช่น ห้องพัก)</small></p>
-          <ServiceLines items={items} onChange={setItems} total={false} />
+          <p className="label mt-4">รายการบริการและค่าบริการเพิ่มเติม <small className="font-normal text-gold-500">· พิมพ์ค้นหา หรือกดปุ่มหมวดเพื่อดูทุกรายการ แล้วกดราคาที่ต้องการ · ราคาเป็นราคาต่อหน่วย ช่องรวมคำนวณจากจำนวนให้ · ค่าห้องเลือกที่ช่องด้านบน</small></p>
+          <ServiceLines items={items} onChange={setItems} total={false} exclude={["ห้องพัก"]} />
           <div className="mt-4 grid gap-4 md:grid-cols-2">
             <Field label="หักค่ามัดจำห้องพัก (บาท)"><input type="number" min={0} value={roomDep} onChange={(e) => setRoomDep(e.target.value)} placeholder="เช่น 3000" /><p className="field-hint">มัดจำที่จ่ายตอนจองห้อง หักออกจากยอดในสัญญา</p></Field>
             <div className="self-end rounded-2xl bg-cream-50 px-4 py-3 text-sm text-gold-700">
-              ยอดรวมทั้งหมด <b className="text-gold-900">{money(sum)}</b> บาท{Number(roomDep) > 0 && <> · หักมัดจำ {money(Number(roomDep))} · <b className="text-gold-900">คงเหลือ {money(sum - Number(roomDep))}</b> บาท</>}
+              ยอดรวม{vatAmt > 0 ? "ก่อน VAT" : "ทั้งหมด"} <b className="text-gold-900">{money(sum)}</b> บาท{vatAmt > 0 && <> · VAT {roomVat}% {money(vatAmt)} · <b className="text-gold-900">รวม VAT {money(sum + vatAmt)}</b> บาท/เดือน</>}{Number(roomDep) > 0 && <> · หักมัดจำ {money(Number(roomDep))} · <b className="text-gold-900">คงเหลือ {money(sum + vatAmt - Number(roomDep))}</b> บาท</>}
             </div>
-            <Field label="หมายเหตุ" className="md:col-span-2"><textarea name="note" rows={2} placeholder="เช่น แพ้ยาเพนิซิลลิน, ญาติมาเยี่ยมทุกวันเสาร์" defaultValue={initial ? `ต่อจากสัญญา ${initial[0]}` : undefined} /></Field>
             <Field label="ชำระค่าบริการล่วงหน้า (บาท)"><input type="number" min={0} value={prepaid} onChange={(e) => setPrepaid(e.target.value)} placeholder="เช่น 30000" aria-label="ชำระค่าบริการล่วงหน้า" />
-              {sum > 0 && <div className="mt-2 flex flex-wrap gap-1.5">{[1, 2].map((n) => { const v = Math.max(0, sum * n - (Number(roomDep) || 0)); return <button key={n} type="button" onClick={() => setPrepaid(String(v))} className="rounded-full border border-cream-300 bg-white px-3 py-1 text-xs text-gold-700 hover:border-gold-300">{n} เดือน · {money(v)}</button>; })}</div>}
+              {sum > 0 && <div className="mt-2 flex flex-wrap gap-1.5">{[1, 2].map((n) => { const v = Math.max(0, (sum + vatAmt) * n - (Number(roomDep) || 0)); return <button key={n} type="button" onClick={() => setPrepaid(String(v))} className="rounded-full border border-cream-300 bg-white px-3 py-1 text-xs text-gold-700 hover:border-gold-300">{n} เดือน · {money(v)}</button>; })}</div>}
               <p className="field-hint">ใส่ยอดแล้ว ระบบออกใบแจ้งหนี้ให้ที่เมนูการเงิน{Number(roomDep) > 0 ? " · ปุ่มลัดหักมัดจำห้องให้แล้ว" : ""}</p></Field>
             <Field label="ชำระเงินประกัน (บาท)"><input type="number" min={0} value={deposit} onChange={(e) => setDeposit(e.target.value)} placeholder="เช่น 60000" aria-label="ชำระเงินประกัน" />
               {sum > 0 && <div className="mt-2 flex flex-wrap gap-1.5">{[1, 2].map((n) => <button key={n} type="button" onClick={() => setDeposit(String(sum * n))} className="rounded-full border border-cream-300 bg-white px-3 py-1 text-xs text-gold-700 hover:border-gold-300">{n} เดือน · {money(sum * n)}</button>)}</div>}
@@ -392,15 +462,18 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, on
           </div>
         </div>
 
-        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+        {step === 1 ? <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           <button type="button" className="btn-soft" onClick={onClose}>ยกเลิก</button>
+          <button className="btn-primary">ถัดไป: ค่าใช้จ่าย <Icon name="arrow" className="h-4 w-4" /></button>
+        </div> : <div className="flex flex-col-reverse gap-2 border-t border-cream-200 pt-4 sm:flex-row sm:justify-end">
+          <button type="button" className="btn-soft" onClick={() => { setStep(1); window.scrollTo(0, 0); }}>ย้อนกลับไปแก้รายละเอียด</button>
           <button className="btn-primary">ถัดไป: เลือกห้องผู้ป่วย <Icon name="arrow" className="h-4 w-4" /></button>
-        </div>
+        </div>}
       </form>
 
-      {step === 2 && row && <div className="space-y-5">
+      {step === 3 && row && <div className="space-y-5">
         <div className="rounded-2xl border border-cream-200 bg-cream-50/60 px-4 py-3 text-sm text-gold-700">
-          <p><span className="text-gold-500">ผู้รับบริการ</span> <b className="font-medium text-gold-800">{row[2]}</b>{row[13] ? ` · ${row[13]} ปี` : ""} · <span className="text-gold-500">สาขา</span> {row[1]} · <span className="text-gold-500">ผู้ว่าจ้าง</span> {row[3]}{contractTotal(row) ? ` · ยอดรวม ${money(contractTotal(row))} บาท` : ""}</p>
+          <p><span className="text-gold-500">ผู้รับบริการ</span> <b className="font-medium text-gold-800">{row[2]}</b>{row[13] ? ` · ${row[13]} ปี` : ""} · <span className="text-gold-500">สาขา</span> {row[1]} · <span className="text-gold-500">ผู้ว่าจ้าง</span> {row[3]}{contractTotal(row) ? <> · <span className="text-gold-500">ยอดรวม</span> {money(contractTotal(row))} บาท/เดือน</> : ""}</p>
           {existing && <p className="mt-1 text-xs text-gold-500">มีชื่อนี้ในทะเบียนผู้รับบริการแล้ว ระบบจะอัปเดตห้องให้คนเดิม ไม่สร้างรายชื่อซ้ำ</p>}
         </div>
         {warn && <p role="alert" className="room-warn">{warn}</p>}
@@ -410,41 +483,21 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, on
             <p className="text-sm text-gold-600">เลือกห้องที่ยังว่าง · สาขา{row[1]} ว่าง {free} เตียง จาก {options.length} ห้อง</p>
             {free === 0 && <p role="alert" className="room-warn">ห้องของสาขา{row[1]}เต็มทุกห้องแล้ว บันทึกสัญญาโดยยังไม่เลือกห้อง แล้วแจ้งผู้จัดการสาขาให้เพิ่มห้องหรือเพิ่มจำนวนผู้ป่วยต่อห้อง</p>}
             <div className="room-grid">{options.map((r) => <RoomCard key={r.i} room={r} selected={roomKey(r.no) === roomKey(room)} onClick={() => pick(r)} />)}</div>
-            <RoomPriceCheck info={findRoom(all, row[1], room)} fee={Number(row[4]) || 0} onUse={(v) => { setFee(String(v)); setRow(row.map((x, k) => (k === 4 ? String(v) : x))); toast(`ใช้ราคาโปรแกรม ${money(v)} บาท/เดือนแล้ว · ยอดรวมใหม่ ${money(contractTotal(row.map((x, k) => (k === 4 ? String(v) : x))))} บาท`); }} />
+            {picked && mismatch && <div role="status" className="space-y-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
+              <p className="text-sm text-amber-950"><b>ห้อง {picked.no} ({picked.type}) ค่าห้องคือ {money(mismatch.fee)} บาท/เดือน</b> {Number(fee) ? <>แต่ค่าห้องที่เลือกในขั้นที่ 2 คือ <b>{money(Number(fee))} บาท</b></> : "แต่ยังไม่ได้เลือกค่าห้องในขั้นที่ 2"} · ตรวจอีกครั้งก่อนบันทึก</p>
+              <div className="flex flex-wrap gap-2">
+                <button type="button" className="btn-primary !min-h-0 !py-2 !text-sm" onClick={() => applyRoomPrice(mismatch)}>ใช้ค่าห้อง {money(mismatch.fee)}</button>
+                {Number(fee) > 0 && <button type="button" className="btn-soft !min-h-0 !py-2 !text-sm" onClick={() => setPriceOk(picked.no)}>ราคาเดิมถูกแล้ว ไม่ต้องเปลี่ยน</button>}
+              </div>
+            </div>}
           </>}
         <div className="flex flex-col-reverse gap-2 border-t border-cream-200 pt-4 sm:flex-row sm:justify-end">
-          <button type="button" className="btn-soft" onClick={() => setStep(1)}>ย้อนกลับไปแก้รายละเอียด</button>
+          <button type="button" className="btn-soft" onClick={() => { setStep(2); window.scrollTo(0, 0); }}>ย้อนกลับไปแก้ค่าใช้จ่าย</button>
           <button type="button" className="btn-soft" onClick={() => finish(false)}>บันทึกโดยยังไม่เลือกห้อง</button>
           <button type="button" className="btn-primary" disabled={!room} onClick={() => finish(true)}>{room ? `บันทึกสัญญา · ห้อง ${room}` : "เลือกห้องก่อนบันทึก"}</button>
         </div>
       </div>}
     </Section>
-  );
-}
-
-/**
- * ขั้นเลือกห้อง: เทียบค่าห้อง (ตั้งไว้ที่เมนูห้องผู้ป่วย) กับราคาโปรแกรมที่กรอกในขั้นที่ 1 · เตือนเท่านั้น ไม่บังคับ
- * แสดงราคาห้องประเภทเดียวกันจากใบราคาให้เทียบ (ชื่อประเภทในระบบกับใบราคาไม่ตรงกันทุกห้อง จึงจับคู่จากคำ เดี่ยว / คู่ / รวม)
- */
-function RoomPriceCheck({ info, fee, onUse }: { info?: RoomInfo; fee: number; onUse: (v: number) => void }) {
-  const [ok, setOk] = useState("");
-  if (!info) return null;
-  const rate = Number(String(info.rate ?? "").replace(/,/g, "")) || 0;
-  const kw = /เดี่ยว/.test(info.type) ? "เดี่ยว" : /คู่/.test(info.type) ? "คู่" : /รวม/.test(info.type) ? "รวม" : "";
-  const list = kw ? ROOMS.filter((x) => x.name.includes(kw)) : [];
-  const chip = (label: string, v: number) => <button key={label} type="button" onClick={() => onUse(v)} className="rounded-full border border-gold-300 bg-white px-2.5 py-1 text-xs text-gold-800 hover:border-gold-600">{label} {money(v)}</button>;
-  const ref = list.length > 0 && <div className="flex flex-wrap items-center gap-1.5"><span className="text-xs text-gold-600">ใบราคา ({kw === "เดี่ยว" ? "ห้องเดี่ยว" : kw === "คู่" ? "ห้องคู่" : "ห้องรวม"}):</span>{list.flatMap((x) => { const n = x.name.replace(/^.*\(|\)$/g, ""); return [chip(n, x.month), chip(`${n} โปร`, x.promo)]; })}</div>;
-  if (!rate) return <div className="mt-4 space-y-2 rounded-2xl border border-cream-300 bg-cream-50 px-4 py-3 text-sm text-gold-700"><p>ห้อง {info.no} ยังไม่ได้ตั้งค่าห้อง (ตั้งได้ที่เมนูห้องผู้ป่วย)</p>{ref}</div>;
-  if (fee === rate || ok === info.no) return <p role="status" className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">{fee === rate ? `ราคาโปรแกรมตรงกับค่าห้อง ${info.no} (${money(rate)} บาท/เดือน)` : `ยืนยันราคาโปรแกรม ${money(fee)} บาท/เดือนแล้ว (ค่าห้อง ${info.no} คือ ${money(rate)})`}</p>;
-  return (
-    <div role="status" className="mt-4 space-y-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
-      <p className="text-sm text-amber-950">{fee ? <><b>ค่าห้อง {info.no} คือ {money(rate)} บาท/เดือน</b> แต่ราคาโปรแกรมที่กรอกไว้คือ <b>{money(fee)} บาท</b> · ตรวจอีกครั้งก่อนบันทึก</> : <><b>ยังไม่ได้กรอกราคาโปรแกรม</b> · ค่าห้อง {info.no} คือ {money(rate)} บาท/เดือน</>}</p>
-      <div className="flex flex-wrap gap-2">
-        <button type="button" className="btn-primary !min-h-0 !py-2 !text-sm" onClick={() => onUse(rate)}>{fee ? `ใช้ ${money(rate)} เป็นราคาโปรแกรม` : `ใส่ค่าห้อง ${money(rate)}`}</button>
-        {fee > 0 && <button type="button" className="btn-soft !min-h-0 !py-2 !text-sm" onClick={() => setOk(info.no)}>ราคาถูกแล้ว ไม่ต้องเปลี่ยน</button>}
-      </div>
-      {ref}
-    </div>
   );
 }
 

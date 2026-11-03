@@ -1,5 +1,5 @@
 "use client";
-import { bahtText, docDate, Invoice, lineAmount, lineDiscount, money, PAID, PARTIAL, parseItems, Payment } from "@/lib/billing";
+import { bahtText, docDate, Invoice, lineAmount, lineDiscount, money, PAID, PARTIAL, parseItems, Payment, vatOf } from "@/lib/billing";
 import { COMPANY } from "../ui";
 
 export type Branch = { name: string; legal: string; address: string; phone: string };
@@ -23,8 +23,10 @@ export default function BillDoc({ inv, branch, format, copy, slips = [], payment
   const partial = !payment && inv.status === PARTIAL;
   const paid = inv.status === PAID || inv.status === PARTIAL || !!payment;
   const full = payment ? payment.paidBefore + payment.amount >= inv.net - 0.005 : inv.status === PAID;
-  const title = payment ? [full ? "ใบเสร็จรับเงิน" : `ใบรับเงิน (งวดที่ ${payment.n})`, "RECEIPT"] : full ? ["ใบเสร็จรับเงิน", "RECEIPT"] : partial ? ["ใบแจ้งหนี้ (ชำระบางส่วน)", "INVOICE"] : ["ใบแจ้งหนี้", "INVOICE"];
+  const RECEIPT = ["ใบเสร็จรับเงิน / ใบกำกับภาษี", "RECEIPT / TAX INVOICE"];
+  const title = payment ? (full ? RECEIPT : [`ใบรับเงิน (งวดที่ ${payment.n})`, "RECEIPT"]) : full ? RECEIPT : partial ? ["ใบแจ้งหนี้ (ชำระบางส่วน)", "INVOICE"] : ["ใบแจ้งหนี้", "INVOICE"];
   const items = parseItems(inv.items);
+  const tax = vatOf(items);
   const legal = branch.legal || COMPANY.th;
   const m = payment ?? { cash: inv.cash, credit: inv.credit, transfer: inv.transfer };
   const methods = [["เงินสด", "Cash", m.cash], ["บัตรเครดิต", "Credit", m.credit], ["โอนเงิน", "Transfer", m.transfer]] as const;
@@ -67,8 +69,14 @@ export default function BillDoc({ inv, branch, format, copy, slips = [], payment
         <table className="bill-table bill-table2">
           <thead><tr><th>ลำดับ<br />NO.</th><th>รายการ<br />DESCRIPTION</th><th>จำนวนเงิน<br />AMOUNT</th><th>ส่วนลด<br />DISCOUNT</th><th>คงเหลือ<br />NET AMOUNT</th></tr></thead>
           <tbody>
-            {items.map((i, k) => <tr key={k}><td>{k + 1}</td><td>{i.desc}{i.qty !== 1 ? ` · ${i.qty} หน่วย` : ""}{inv.who ? ` — ผู้รับบริการ: ${inv.who}` : ""}</td><td>{money(lineAmount(i))}</td><td>{money(lineDiscount(i))}{i.pct ? <small> ({i.pct}%{i.discount ? ` + ${money(i.discount)}` : ""})</small> : null}</td><td>{money(lineAmount(i) - lineDiscount(i))}</td></tr>)}
+            {items.map((i, k) => <tr key={k}><td>{k + 1}</td><td>{i.desc}{i.qty !== 1 ? ` · ${i.qty} หน่วย` : ""}{i.vat ? ` (+VAT ${i.vat}%)` : ""}{inv.who ? ` — ผู้รับบริการ: ${inv.who}` : ""}</td><td>{money(lineAmount(i))}</td><td>{money(lineDiscount(i))}{i.pct ? <small> ({i.pct}%{i.discount ? ` + ${money(i.discount)}` : ""})</small> : null}</td><td>{money(lineAmount(i) - lineDiscount(i))}</td></tr>)}
             <tr className="bill-filler"><td /><td /><td /><td /><td /></tr>
+            {tax.vat > 0 && <>
+              <tr className="bill-vat-row"><td /><td>มูลค่าที่เสียภาษีมูลค่าเพิ่ม (ก่อน VAT) / VATABLE AMOUNT</td><td /><td /><td>{money(tax.base)}</td></tr>
+              {tax.rates.map((x) => <tr key={x.rate} className="bill-vat-row"><td /><td>ภาษีมูลค่าเพิ่ม {x.rate}% / VAT {x.rate}%</td><td /><td /><td>{money(x.vat)}</td></tr>)}
+              {tax.exempt > 0 && <tr className="bill-vat-row"><td /><td>มูลค่าที่ไม่มีภาษีมูลค่าเพิ่ม / NON-VAT AMOUNT</td><td /><td /><td>{money(tax.exempt)}</td></tr>}
+              <tr className="bill-vat-row"><td /><td><b>รวมทั้งสิ้น (รวม VAT) / GRAND TOTAL</b></td><td /><td /><td><b>{money(inv.net)}</b></td></tr>
+            </>}
           </tbody>
         </table>
         <div className="bill-sum2">
@@ -93,7 +101,7 @@ export default function BillDoc({ inv, branch, format, copy, slips = [], payment
     <div className="bill-doc">
       <div className="bill-head">
         <Logo />
-        <h2>{title[0]} /{title[1][0] + title[1].slice(1).toLowerCase()}</h2>
+        <h2>{title[0].includes("/") ? title[0] : `${title[0]} /${title[1][0] + title[1].slice(1).toLowerCase()}`}</h2>
         <b>{copy ? "สำเนา" : "ต้นฉบับ"}</b>
         <p>{legal}</p>
         <p>{branch.address}</p>
@@ -106,10 +114,16 @@ export default function BillDoc({ inv, branch, format, copy, slips = [], payment
       <table className="bill-table">
         <thead><tr><th>No.</th><th>รายการ (Description)</th><th>จำนวน (Qty)</th><th>จำนวนเงิน (Amount)</th></tr></thead>
         <tbody>
-          {items.map((i, k) => <tr key={k}><td>{k + 1}</td><td>{i.desc}{inv.who ? ` — ผู้รับบริการ: ${inv.who}` : ""}</td><td>{i.qty}</td><td>{money(lineAmount(i))}</td></tr>)}
+          {items.map((i, k) => <tr key={k}><td>{k + 1}</td><td>{i.desc}{i.vat ? ` (+VAT ${i.vat}%)` : ""}{inv.who ? ` — ผู้รับบริการ: ${inv.who}` : ""}</td><td>{i.qty}</td><td>{money(lineAmount(i))}</td></tr>)}
           <tr><td colSpan={3}>ยอดรวมทั้งสิ้น/Total</td><td>{money(inv.total)}</td></tr>
           <tr><td colSpan={3}>ส่วนลดที่ได้รับ/Discount</td><td>{money(inv.discount)}</td></tr>
-          <tr><td colSpan={3}>รวมเงิน(หลังหักส่วนลด)/Sub Total</td><td>{money(inv.net)}</td></tr>
+          <tr><td colSpan={3}>รวมเงิน(หลังหักส่วนลด)/Sub Total</td><td>{money(inv.total - inv.discount)}</td></tr>
+          {tax.vat > 0 && <>
+            <tr><td colSpan={3}>มูลค่าที่เสียภาษีมูลค่าเพิ่ม (ก่อน VAT)/Vatable Amount</td><td>{money(tax.base)}</td></tr>
+            {tax.rates.map((x) => <tr key={x.rate}><td colSpan={3}>ภาษีมูลค่าเพิ่ม {x.rate}%/VAT {x.rate}%</td><td>{money(x.vat)}</td></tr>)}
+            {tax.exempt > 0 && <tr><td colSpan={3}>มูลค่าที่ไม่มีภาษีมูลค่าเพิ่ม/Non-VAT Amount</td><td>{money(tax.exempt)}</td></tr>}
+            <tr><td colSpan={3}><b>รวมทั้งสิ้น (รวม VAT)/Grand Total</b></td><td><b>{money(inv.net)}</b></td></tr>
+          </>}
           {showBal ? <>
             {payment && <tr><td colSpan={3}>รับชำระครั้งนี้ (งวดที่ {payment.n})/This payment</td><td><b>{money(thisAmt)}</b></td></tr>}
             <tr><td colSpan={3}>ชำระสะสม/Paid to date</td><td>{money(paidTo)}</td></tr>

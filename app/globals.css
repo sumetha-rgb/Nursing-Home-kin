@@ -1186,11 +1186,16 @@ button.room-card:hover:not(.is-full):not(.is-closed) { border-color:#c9a96a; box
 }
 
 /* ใบเสนอราคา: บรรทัดรายการ (รายการ · จำนวน · หน่วย · ราคา · ลบ) */
-.quote-line { display:grid; grid-template-columns:minmax(0,1fr) 80px 100px 120px auto; gap:8px; align-items:center; padding:10px; border:1px solid #e9e1d4; border-radius:12px; }
-@media (max-width:640px) { .quote-line { grid-template-columns:1fr 1fr; } .quote-line > input:first-child { grid-column:1/-1; } }
+.quote-line { display:grid; grid-template-columns:minmax(0,1fr) 80px 100px 120px 110px 48px; gap:8px; align-items:center; padding:10px; border:1px solid #e9e1d4; border-radius:12px; }
+.quote-line.quote-head { padding:0 10px; border:0; font-size:12px; color:#9a8566; }
+.quote-sum { text-align:right; font-size:14px; color:#3a2d1b; font-variant-numeric:tabular-nums; }
+@media (max-width:640px) { .quote-line { grid-template-columns:1fr 1fr; } .quote-line > input:first-child { grid-column:1/-1; } .quote-line.quote-head { display:none; } .quote-sum { text-align:left; } }
 
 /* ใบแจ้งหนี้: บรรทัดรายการ (รายการ · จำนวน · ราคา · ส่วนลดบาท · ส่วนลด % · ลบ) */
-.bill-line { display:grid; gap:8px; padding:12px; border:1px solid #efe9df; border-radius:12px; grid-template-columns:minmax(0,1fr) 76px 110px 104px 88px auto; align-items:end; }
+.bill-line { display:grid; gap:8px; padding:12px; border:1px solid #efe9df; border-radius:12px; grid-template-columns:minmax(0,1fr) 76px 110px 104px 88px auto auto; align-items:end; }
+.bill-vat { display:inline-flex; align-items:center; gap:6px; min-height:44px; white-space:nowrap; font-size:13px; color:#5f4c30; cursor:pointer; }
+.bill-vat input { width:16px; height:16px; min-height:0; accent-color:var(--gold); }
+.bill-vat-row td { font-size:12px; color:#5f4c30; }
 .bill-line-sum { grid-column:1/-1; margin:0; font-size:12.5px; color:#6b5a3f; text-align:right; }
 @media (max-width:760px) { .bill-line { grid-template-columns:1fr 1fr; } .bill-line > :first-child { grid-column:1/-1; } }
 

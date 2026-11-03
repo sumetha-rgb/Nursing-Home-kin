@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import Icon from "../Icon";
 import PhotoPicker from "../PhotoPicker";
 import BillDoc, { Branch, DocFormat } from "../billing/BillDoc";
-import { balanceOf, BILL_KINDS, BillItem, docDate, Invoice, isOpen, lineAmount, lineDiscount, money, PAID, PARTIAL, Payment, todayIso, totals, UNPAID, VOID } from "@/lib/billing";
+import { balanceOf, BILL_KINDS, BillItem, docDate, Invoice, isOpen, lineAmount, lineDiscount, money, PAID, PARTIAL, Payment, todayIso, totals, UNPAID, DEFAULT_VAT, contractVat, lineNet, vatOf, VOID } from "@/lib/billing";
 import { CONTRACTS, RESIDENTS } from "@/lib/mock";
 import { newId, useCrud, useRecords, downloadCsv, refreshData } from "@/lib/store";
 import { useApp } from "@/lib/app";
@@ -14,7 +14,7 @@ import { billHandoff } from "@/lib/handoff";
 import { contractLines } from "../print/Docs";
 import { DataTable, Field, MetricGrid, Modal, PageHeader, Section, Tabs } from "../ui";
 import { ResidentPicker } from "../SearchSelect";
-import { rateText, searchPrices } from "@/lib/priceList";
+import { rateText, roomByPrice, searchPrices } from "@/lib/priceList";
 
 const blankItem = (): BillItem => ({ desc: "", qty: 1, price: 0, discount: 0, pct: 0 });
 
@@ -46,19 +46,44 @@ function LineDesc({ value, onText, onPick }: { value: string; onText: (v: string
 const num = (x: string) => Number(String(x).replace(/,/g, "")) || 0;
 const val = (x?: string) => num(x && x !== "-" ? x : "");
 
+const isRoomLine = (d: string) => /ห้อง|room/i.test(d);
+
 /**
- * รายการใบแจ้งหนี้จากสัญญา (ปุ่ม "ออกใบแจ้งหนี้" ในทะเบียนสัญญา)
- *  มีค่าบริการล่วงหน้า = ใช้ยอดนั้น · ไม่มี = ราคาโปรแกรม + รายการในสัญญา หักมัดจำห้องที่จ่ายตอนจอง · บวกเงินประกัน
+ * ค่าบริการต่อเดือนตามสัญญา (แจกแจงรายการ)
+ *  มีรายการค่าห้องในสัญญา = ค่าห้องรวมค่าดูแลแล้ว ไม่ใส่ราคาโปรแกรมซ้ำ · ไม่มี = ราคาโปรแกรม + รายการอื่น
+ */
+export function contractMonthLines(r: string[]): BillItem[] {
+  const no = r[6] && r[6] !== "-" ? r[6] : "";
+  const items = contractLines(r).filter((x) => x.price > 0);
+  const hasRoom = items.some((x) => isRoomLine(x.desc));
+  const fee = val(r[4]), kind = roomByPrice(fee);
+  const feeDesc = kind ? `ค่า${kind.name}${kind.promo ? " ราคาโปรโมชัน" : ""}` : r[21] && r[21] !== "-" ? r[21] : "ค่าบริการรายเดือน";
+  return [
+    ...(!hasRoom && fee ? [{ desc: `${feeDesc}${no ? ` · ห้อง ${no}` : ""}`, qty: 1, price: fee, discount: 0, vat: contractVat(r) }] : []),
+    ...items.map((x) => ({ desc: no && isRoomLine(x.desc) && !x.desc.includes(no) ? `${x.desc} · ห้อง ${no}` : x.desc, qty: x.qty, price: x.price, discount: 0, vat: isRoomLine(x.desc) ? contractVat(r) : 0 })),
+  ];
+}
+
+/**
+ * รายการใบแจ้งหนี้แรกเข้าจากสัญญา: ค่าบริการแจกแจง หักมัดจำห้องที่จ่ายตอนจอง (ที่บรรทัดค่าห้อง) · บวกเงินประกัน
+ *  ยอด "ชำระล่วงหน้า" ใช้เมื่อสัญญาไม่มีรายการค่าบริการเลย
  */
 export function contractStartLines(r: string[]): BillItem[] {
   const prepaid = val(r[18]), deposit = val(r[19]), dep = val(r[27]);
-  const room = r[6] && r[6] !== "-" ? ` ห้อง ${r[6]}` : "";
-  const service: BillItem[] = prepaid ? [{ desc: `ชำระค่าบริการล่วงหน้า${room}`, qty: 1, price: prepaid, discount: 0 }] : [
-    ...(val(r[4]) ? [{ desc: `${r[21] && r[21] !== "-" ? r[21] : "ค่าบริการรายเดือน"}${room}`, qty: 1, price: val(r[4]), discount: 0 }] : []),
-    ...contractLines(r).filter((x) => x.price > 0).map((x) => ({ desc: x.desc, qty: x.qty, price: x.price, discount: 0 })),
-  ];
-  if (dep && !prepaid) { const k = service.findIndex((l) => l.qty * l.price >= dep); if (k >= 0) service[k] = { ...service[k], discount: dep }; }
+  const service = contractMonthLines(r);
+  if (!service.length && prepaid) service.push({ desc: "ชำระค่าบริการล่วงหน้า", qty: 1, price: prepaid, discount: 0 });
+  if (dep) {
+    const fits = (l: BillItem) => l.qty * l.price >= dep;
+    const k = service.findIndex((l) => isRoomLine(l.desc) && fits(l)) >= 0 ? service.findIndex((l) => isRoomLine(l.desc) && fits(l)) : service.findIndex(fits);
+    if (k >= 0) service[k] = { ...service[k], discount: dep };
+  }
   return [...service, ...(deposit ? [{ desc: "เงินประกัน", qty: 1, price: deposit, discount: 0 }] : [])];
+}
+
+/** หมายเหตุใบแจ้งหนี้แรกเข้า: มัดจำห้องที่หักแล้ว และยอดชำระล่วงหน้าที่ตกลงในสัญญา */
+export function contractStartNote(r: string[]): string {
+  const prepaid = val(r[18]), dep = val(r[27]);
+  return [dep ? `หักมัดจำห้องพักที่ชำระตอนจอง ${money(dep)} บาท` : "", prepaid && contractMonthLines(r).length ? `ตามสัญญาชำระล่วงหน้า ${money(prepaid)} บาท` : ""].filter(Boolean).join(" · ");
 }
 
 /** ข้อมูลหัวกระดาษของสาขา จากหน้า "สาขาของเรา" (แถว: รหัส, ชื่อ, นิติบุคคล, โทร, ที่อยู่, ...) */
@@ -82,6 +107,8 @@ export function Billing() {
   const [tab, setTab] = useState("ทั้งหมด");
   const [form, setForm] = useState<Invoice | null>(null);
   const [lines, setLines] = useState<BillItem[]>([blankItem()]);
+  /** อัตรา VAT ของใบที่กำลังออก (%) · ใช้กับบรรทัดที่ติ๊ก VAT */
+  const [vatRate, setVatRate] = useState(DEFAULT_VAT);
   const [pay, setPay] = useState<Invoice | null>(null);
   const [amt, setAmt] = useState({ cash: "", credit: "", transfer: "", date: todayIso() });
   const [slip, setSlip] = useState("");
@@ -111,15 +138,15 @@ export function Billing() {
     if (k < 0) return;
     setBillFor(null);
     const c = con.rows[k], p = res.rows.find((r) => r[0] === c[2] && r[3] === c[1]);
-    const dep = val(c[27]), items = contractStartLines(c);
-    setForm({ id: newId(), date: todayIso(), who: c[2], hn: p?.[6] ?? "", payer: c[3] ?? "", address: c[10] ?? "", kind: c[5] === "รอชำระเงินมัดจำ" ? BILL_KINDS[0] : BILL_KINDS[1], contract: c[0] ?? "", items: "[]", total: 0, discount: 0, net: 0, status: UNPAID, note: dep && !val(c[18]) ? `หักมัดจำห้องพักที่ชำระตอนจอง ${money(dep)} บาท` : "" });
-    setLines(items.length ? items : [blankItem()]);
+    const items = contractStartLines(c);
+    setForm({ id: newId(), date: todayIso(), who: c[2], hn: p?.[6] ?? "", payer: c[3] ?? "", address: c[10] ?? "", kind: c[5] === "รอชำระเงินมัดจำ" ? BILL_KINDS[0] : BILL_KINDS[1], contract: c[0] ?? "", items: "[]", total: 0, discount: 0, net: 0, status: UNPAID, note: contractStartNote(c) });
+    setLines(items.length ? items : [blankItem()]); setVatRate(contractVat(c) || DEFAULT_VAT);
     loadUnbilled(c[2]);
   }, [billFor, con.ids, con.rows, res.rows]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const startNew = () => {
     setForm({ id: newId(), date: todayIso(), who: "", hn: "", payer: "", address: "", kind: BILL_KINDS[1], contract: "", items: "[]", total: 0, discount: 0, net: 0, status: UNPAID, note: "" });
-    setLines([blankItem()]);
+    setLines([blankItem()]); setVatRate(DEFAULT_VAT);
   };
   // เวชภัณฑ์ที่เบิกแล้วยังไม่เรียกเก็บ ของผู้รับบริการที่เลือก (ดึงเข้าใบแจ้งหนี้ได้ในคลิกเดียว)
   const [unbilled, setUnbilled] = useState<{ id: string; item_name: string; unit: string; qty: number; price: number; at: string; course?: boolean; med?: boolean; session?: boolean }[]>([]);
@@ -142,7 +169,7 @@ export function Billing() {
     loadUnbilled(name);
     const r = residentOf(name), c = contractOf(name);
     setForm({ ...form, who: name, hn: r?.[6] ?? "", payer: c?.[3] ?? form.payer, address: c?.[10] ?? form.address, contract: c?.[0] ?? "" });
-    if (c && lines.length === 1 && !lines[0].desc && form.kind === BILL_KINDS[1] && c[4] !== "-") setLines([{ desc: `ค่าบริการรายเดือน ${c[6] && c[6] !== "-" ? `ห้อง ${c[6]}` : ""}`.trim(), qty: 1, price: num(c[4]), discount: 0 }]);
+    if (c && lines.length === 1 && !lines[0].desc && form.kind === BILL_KINDS[1]) { const m = contractMonthLines(c); if (m.length) setLines(m); }
   };
   // ขายคอร์สกายภาพจากหน้าการเงิน: สร้างคอร์ส (นักกายภาพตัดครั้งที่แท็บกายภาพ) แล้วเปิดใบแจ้งหนี้ที่ใส่คอร์สไว้ให้
   const [course, setCourse] = useState<{ who: string; name: string; total: string; price: string; busy: boolean } | null>(null);
@@ -173,6 +200,7 @@ export function Billing() {
     toast(`บันทึกคอร์สแล้ว · ${name} ${total} ครั้ง · ${course.who} · ตรวจใบแจ้งหนี้แล้วกดบันทึก`);
   };
   const sum = totals(lines.filter((l) => l.desc.trim()));
+  const vatSum = vatOf(lines.filter((l) => l.desc.trim()));
   const saveNew = () => {
     if (!form) return;
     const items = lines.filter((l) => l.desc.trim());
@@ -282,16 +310,27 @@ export function Billing() {
             <div className="space-y-3">{lines.map((l, i) => {
               const set = (p: Partial<BillItem>) => setLines(lines.map((x, j) => (j === i ? { ...x, ...p } : x)));
               return <div key={i} className="bill-line">
-                <Field label="รายการ"><LineDesc value={l.desc} onText={(desc) => set({ desc })} onPick={(desc, price) => set({ desc, price })} /></Field>
+                <Field label="รายการ"><LineDesc value={l.desc} onText={(desc) => set({ desc })} onPick={(desc, price) => set({ desc, price, vat: isRoomLine(desc) ? vatRate : 0 })} /></Field>
                 <Field label="จำนวน"><input type="number" min={0} value={l.qty} onChange={(e) => set({ qty: num(e.target.value) })} /></Field>
                 <Field label="ราคา/หน่วย"><input type="number" min={0} value={l.price} onChange={(e) => set({ price: num(e.target.value) })} /></Field>
                 <Field label="ส่วนลด (บาท)"><input type="number" min={0} value={l.discount} onChange={(e) => set({ discount: num(e.target.value) })} /></Field>
                 <Field label="ส่วนลด (%)"><input type="number" min={0} max={100} step="0.5" value={l.pct ?? 0} onChange={(e) => set({ pct: Math.min(100, num(e.target.value)) })} /></Field>
+                <label className="bill-vat" title="บวกภาษีมูลค่าเพิ่มจากยอดหลังส่วนลด (ค่าห้อง)"><input type="checkbox" checked={!!l.vat} onChange={(e) => set({ vat: e.target.checked ? vatRate : 0 })} /> VAT {l.vat || vatRate}%</label>
                 <button type="button" className="row-action danger" disabled={lines.length === 1} onClick={() => setLines(lines.filter((_, j) => j !== i))}>ลบ</button>
-                {lineDiscount(l) > 0 && <p className="bill-line-sum">ยอด {money(lineAmount(l))} · ลด {money(lineDiscount(l))}{l.pct ? ` (รวม ${l.pct}%)` : ""} · <b>สุทธิ {money(Math.max(0, lineAmount(l) - lineDiscount(l)))}</b>{lineDiscount(l) > lineAmount(l) ? <span className="text-red-700"> · ส่วนลดเกินยอด</span> : null}</p>}
+                {(lineDiscount(l) > 0 || l.vat) && <p className="bill-line-sum">ยอด {money(lineAmount(l))}{lineDiscount(l) > 0 ? <> · ลด {money(lineDiscount(l))}{l.pct ? ` (รวม ${l.pct}%)` : ""}</> : null}{l.vat ? <> · ก่อน VAT {money(lineNet(l))} · VAT {l.vat}% {money(Math.round(lineNet(l) * l.vat) / 100)}</> : null} · <b>สุทธิ {money(Math.round(lineNet(l) * (100 + (l.vat ?? 0))) / 100)}</b>{lineDiscount(l) > lineAmount(l) ? <span className="text-red-700"> · ส่วนลดเกินยอด</span> : null}</p>}
               </div>;
             })}</div>
-            <p className="mt-3 text-right text-sm text-gold-700">รวม {money(sum.total)} · ส่วนลด {money(sum.discount)} · <b className="text-base text-gold-800">สุทธิ {money(sum.net)} บาท</b></p>
+            <div className="mt-3 flex flex-wrap items-end justify-between gap-3">
+              <label className="flex items-center gap-2 text-sm text-gold-700">อัตรา VAT (%)
+                <input type="number" min={0} max={30} step="0.5" className="!w-20" value={vatRate} aria-label="อัตรา VAT"
+                  onChange={(e) => { const v = Math.max(0, Math.min(30, num(e.target.value))); setVatRate(v); setLines(lines.map((l) => (l.vat ? { ...l, vat: v } : l))); }} />
+                <small className="text-gold-500">ใช้กับบรรทัดที่ติ๊ก VAT · ค่าห้องติ๊กให้เอง</small></label>
+              <div className="text-right text-sm text-gold-700">
+                <p>รวม {money(sum.total)} · ส่วนลด {money(sum.discount)}</p>
+                {vatSum.vat > 0 && <p>มูลค่าก่อน VAT {money(vatSum.base)}{vatSum.rates.map((x) => ` · VAT ${x.rate}% ${money(x.vat)}`).join("")}{vatSum.exempt > 0 ? ` · ไม่มี VAT ${money(vatSum.exempt)}` : ""}</p>}
+                <b className="text-base text-gold-800">สุทธิ{vatSum.vat > 0 ? " (รวม VAT)" : ""} {money(sum.net)} บาท</b>
+              </div>
+            </div>
           </div>
           <Field label="หมายเหตุ"><input value={form.note ?? ""} onChange={(e) => setForm({ ...form, note: e.target.value })} /></Field>
         </div>}
@@ -362,13 +401,10 @@ export function Billing() {
   );
 }
 
-/** ใบแจ้งหนี้ใหม่จากสัญญา (ค่าบริการล่วงหน้า + เงินประกัน) · คืน null ถ้าไม่มียอด */
+/** ใบแจ้งหนี้แรกเข้าจากสัญญาใหม่ (ออกให้เมื่อกรอกยอดล่วงหน้าหรือเงินประกัน) · แจกแจงค่าห้องตามสัญญา · คืน null ถ้าไม่มียอด */
 export function contractInvoice(row: string[], hn: string): Invoice | null {
-  const prepaid = num(row[18] === "-" ? "" : row[18]), deposit = num(row[19] === "-" ? "" : row[19]);
-  const items = [
-    ...(prepaid ? [{ desc: `ชำระค่าบริการล่วงหน้า${row[6] && row[6] !== "-" ? ` ห้อง ${row[6]}` : ""}`, qty: 1, price: prepaid, discount: 0 }] : []),
-    ...(deposit ? [{ desc: "เงินประกัน", qty: 1, price: deposit, discount: 0 }] : []),
-  ];
+  if (!val(row[18]) && !val(row[19])) return null;
+  const items = contractStartLines(row);
   if (!items.length) return null;
-  return { id: newId(), date: todayIso(), who: row[2], hn, payer: row[3], address: row[10] ?? "", kind: BILL_KINDS[0], contract: row[0], items: JSON.stringify(items), ...totals(items), status: UNPAID, note: "" };
+  return { id: newId(), date: todayIso(), who: row[2], hn, payer: row[3], address: row[10] ?? "", kind: BILL_KINDS[0], contract: row[0], items: JSON.stringify(items), ...totals(items), status: UNPAID, note: contractStartNote(row) };
 }
