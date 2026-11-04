@@ -164,6 +164,17 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   const [myRev, setMyRev] = useState<{ reviews: number; avg: number | null; recent: StaffReview[] } | null>(null);
   useEffect(() => { fetch("/api/reviews?op=mine", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).then(setMyRev).catch(() => {}); }, []);
   const myStars = myRev?.avg ? myRev.avg.toFixed(1) : "-";
+  // ผลตรวจงานของฉันจากหัวหน้า ย้อนหลัง 7 วัน (ดาว 1–2 ดวง = ต้องแก้ไข ขึ้นก่อน)
+  type MyReview = { id: string; date: string; task: string; name: string; stars: number; note: string | null; by: string | null; at: string | null };
+  const [myReviews, setMyReviews] = useState<MyReview[]>([]);
+  useEffect(() => {
+    const load = () => fetch("/api/care?op=my_reviews", { cache: "no-store" }).then((r) => (r.ok ? r.json() : { items: [] })).then((d) => setMyReviews(d.items ?? [])).catch(() => {});
+    load();
+    const t = setInterval(() => { if (document.visibilityState === "visible") load(); }, 120_000);
+    return () => clearInterval(t);
+  }, []);
+  const reviewOf = (rid?: string) => (rid ? myReviews.find((x) => x.id === rid) : undefined);
+  const starText = (n: number) => `${"★".repeat(n)}${"☆".repeat(Math.max(0, 5 - n))}`;
   // KPI เดือนนี้: อันดับในสาขา (รายละเอียดแยกส่วนเห็นเฉพาะของตัวเอง)
   const [kpi, setKpi] = useState<KpiResp | null>(null);
   useEffect(() => {
@@ -302,7 +313,14 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
                   <div className="min-w-0 flex-1">
                     <p className="truncate font-medium text-gold-900">{k.title}</p>
                     <p className="text-xs text-gold-600">{k.who} · ส่ง {k.done} น.{(k.note ?? "").startsWith("ทำแทน") ? " · ทำแทน" : ""}</p>
-                    <span className={`mt-1 inline-block rounded-full px-2 py-0.5 text-[11px] font-medium ${k.status === "ตรวจแล้ว" ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-900"}`}>{k.status === "ตรวจแล้ว" ? "ตรวจแล้ว" : "รอหัวหน้าตรวจ"}</span>
+                    {(() => {
+                      const rv = reviewOf(k.rid);
+                      if (!rv) return <span className={`mt-1 inline-block rounded-full px-2 py-0.5 text-[11px] font-medium ${k.status === "ตรวจแล้ว" ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-900"}`}>{k.status === "ตรวจแล้ว" ? "ตรวจแล้ว" : "รอหัวหน้าตรวจ"}</span>;
+                      return <>
+                        <span className={`mt-1 inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium ${rv.stars <= 2 ? "bg-amber-50 text-amber-900" : "bg-emerald-50 text-emerald-800"}`}>{rv.stars <= 2 ? "ต้องแก้ไข" : "ตรวจแล้ว"} <span className="review-stars">{starText(rv.stars)}</span></span>
+                        {rv.note && <p className="mt-1 line-clamp-2 text-xs text-gold-700">&ldquo;{rv.note}&rdquo;</p>}
+                      </>;
+                    })()}
                   </div>
                   <button className="btn-soft shrink-0 !min-h-0 !px-3 !py-2 text-xs" onClick={() => open("viewtask", k.id)}>ดูรายละเอียด</button>
                 </li>
@@ -310,7 +328,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
             </Card>
 
             <Card title="งานส่วนกลางตามรอบ" icon="building" right={<Count n={facLeft.length} />}>
-              {fac.length === 0 ? <Empty t="ยังไม่มีงานส่วนกลางของสาขา (ผู้จัดการเพิ่มได้ที่เมนูงานทั่วไปของสาขา)" /> : <ul className="space-y-2">{[...fac].sort((a, b) => Number(a.done) - Number(b.done) || Number(b.late) - Number(a.late)).map((f) => (
+              {fac.length === 0 ? <Empty t="ยังไม่มีงานส่วนกลางของสาขา (ผู้จัดการเพิ่มได้ที่เมนูงานส่วนกลางของสาขา)" /> : <ul className="space-y-2">{[...fac].sort((a, b) => Number(a.done) - Number(b.done) || Number(b.late) - Number(a.late)).map((f) => (
                 <li key={f.id} className={`flex items-center justify-between gap-3 rounded-2xl px-4 py-3 text-sm ${f.done ? "bg-emerald-50/70" : f.late ? "border border-red-200 bg-red-50" : "bg-cream-50"}`}>
                   <span className="min-w-0">{f.name}{f.manual && <span className="ml-1.5 rounded-full bg-gold-700 px-2 py-0.5 align-[2px] text-[11px] font-semibold text-white">มอบหมายให้คุณ</span>}<span className="block text-xs text-gold-500">{[f.category, f.schedule].filter((x) => x && x !== "-").join(" · ")}</span>
                     {f.done && f.last && <span className="block text-xs font-medium text-emerald-800">ทำแล้ว {f.last.at.slice(11)} น. โดย {f.last.by}</span>}
@@ -393,6 +411,18 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
                   <span className="shrink-0 text-xs text-gold-600">{k.done}</span>
                 </button></li>
               ))}</ul>
+            </Card>
+            <Card title="ผลตรวจงานของฉัน (7 วัน)" icon="check" right={myReviews.length ? <Count n={myReviews.length} /> : undefined}>
+              {!myReviews.length ? <Empty t="ยังไม่มีงานที่หัวหน้าตรวจในสัปดาห์นี้" /> : (
+                <ul className="space-y-2">{myReviews.slice(0, 8).map((r) => (
+                  <li key={r.id} className={`rounded-2xl px-4 py-3 text-sm ${r.stars <= 2 ? "border border-amber-200 bg-amber-50" : "bg-cream-50"}`}>
+                    <div className="flex items-center justify-between gap-2"><b className="truncate font-medium text-gold-900">{r.task}</b><span className="review-stars shrink-0">{starText(r.stars)}</span></div>
+                    <p className="text-xs text-gold-600">{r.name} · {r.date.split("-").reverse().slice(0, 2).join("/")}{r.by ? ` · ตรวจโดย ${r.by}` : ""}</p>
+                    {r.stars <= 2 && <p className="mt-1 text-xs font-semibold text-amber-900">ต้องแก้ไข · ทำตามความเห็นของหัวหน้าในงานครั้งถัดไป</p>}
+                    {r.note && <p className="mt-1 text-gold-900">&ldquo;{r.note}&rdquo;</p>}
+                  </li>
+                ))}</ul>
+              )}
             </Card>
             <Card title="รีวิวจากครอบครัว (ของฉัน)" icon="trophy" right={myRev?.reviews ? <span className="review-stars text-sm">{"★".repeat(Math.floor(myRev.avg ?? 0))}</span> : undefined}>
               {!myRev?.recent.length ? <Empty t="ยังไม่มีรีวิว · ผู้จัดการสาขาส่งลิงก์รีวิวให้ญาติได้ที่เมนู &quot;รีวิวพนักงาน&quot;" /> : (

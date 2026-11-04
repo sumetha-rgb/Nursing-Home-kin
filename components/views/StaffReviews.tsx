@@ -61,7 +61,7 @@ export function StaffReviews() {
         <Section title="รีวิวล่าสุด">
           <DataTable columns={["วันเวลา", "พนักงาน", "ดาว", "ผู้รับบริการ", "ผู้รีวิว", "ความเห็น"]} search={recent.length > 8}
             rows={recent.map((r) => [r.at, r.staff_name, stars(r.rating), r.resident_name ?? "-", [r.rater_name || "ไม่ระบุชื่อ", r.relation].filter(Boolean).join(" · "), r.comment || (r.tags.length ? r.tags.join(", ") : "-")])}
-            empty="ยังไม่มีรีวิว" actions={[{ label: "ดู", onClick: (i) => setView(recent[i]) }]} />
+            empty="ยังไม่มีรีวิว" actions={[{ label: "อ่านรีวิว", onClick: (i) => setView(recent[i]) }]} />
         </Section>
       </div>
 

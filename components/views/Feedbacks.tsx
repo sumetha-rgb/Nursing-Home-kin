@@ -78,7 +78,7 @@ export function Feedbacks() {
     <>
       <PageHeader
         title="เสียงจากครอบครัว"
-        sub="ญาติสแกน QR หรือเปิดลิงก์ของสาขา เพื่อประเมินความพึงพอใจหรือแจ้งเรื่อง โดยไม่ต้องสมัครสมาชิก · เรื่องที่แจ้งเข้าตารางด้านล่างทันที"
+        sub="ญาติประเมินหรือแจ้งเรื่องผ่าน QR ของสาขา"
         actions={<>
           <button className="btn-primary" onClick={() => setModal("share")}><Icon name="qr" className="h-4 w-4" /> ลิงก์และป้าย QR</button>
           <button className="btn-soft" onClick={() => setHub(true)}><Icon name="chat" className="h-4 w-4" /> ข่าวและลิงก์ญาติ</button>
@@ -161,7 +161,7 @@ export function Feedbacks() {
         <DataTable columns={["วันเวลา", "สาขา", "ผู้ประเมิน", "โดยรวม", "ข้อเสนอแนะ"]} search={surveys.length > 5}
           rows={surveys.map((x) => [x.at, x.branch_name, [x.rater_name || "ไม่ระบุชื่อ", x.relation].filter(Boolean).join(" · "), starText(x.score_overall), x.comment || "-"])}
           empty="ยังไม่มีผลประเมิน · ส่งลิงก์หรือตั้งป้าย QR ให้ญาติ"
-          actions={[{ label: "ดู", onClick: (n) => setOpen(surveys[n]) }]} />
+          actions={[{ label: "อ่านผลประเมิน", onClick: (n) => setOpen(surveys[n]) }]} />
       </Modal>
 
       <Modal open={!!open} title="รายละเอียดผลประเมิน" onClose={() => setOpen(null)} footer={<button className="btn-primary" onClick={() => setOpen(null)}>ปิด</button>}>

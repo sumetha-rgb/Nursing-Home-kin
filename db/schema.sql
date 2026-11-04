@@ -972,3 +972,22 @@ CREATE TABLE IF NOT EXISTS facility_assignees (
   updated_at   timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (task_id, branch_name)
 );
+
+-- ปิดยอดเงินรายวัน (หน้าการเงิน): แคชเชียร์นับเงินสดสิ้นวันเทียบกับยอดที่บันทึกรับชำระ · ผู้จัดการตรวจรับรอง
+-- system_* = ยอดจากการรับชำระของวันนั้น ณ ตอนปิดยอด · ถ้ารับเงินของวันนั้นเพิ่มภายหลัง หน้าจอจะเตือนให้ปิดยอดใหม่
+CREATE TABLE IF NOT EXISTS cash_closes (
+  id               text PRIMARY KEY,
+  branch_name      text NOT NULL,
+  close_date       date NOT NULL,
+  payments         int NOT NULL DEFAULT 0,
+  system_cash      numeric(12,2) NOT NULL DEFAULT 0,
+  system_transfer  numeric(12,2) NOT NULL DEFAULT 0,
+  system_credit    numeric(12,2) NOT NULL DEFAULT 0,
+  counted_cash     numeric(12,2) NOT NULL DEFAULT 0,
+  note             text,
+  closed_by        text,
+  closed_at        timestamptz NOT NULL DEFAULT now(),
+  approved_by      text,
+  approved_at      timestamptz,
+  UNIQUE (branch_name, close_date)
+);

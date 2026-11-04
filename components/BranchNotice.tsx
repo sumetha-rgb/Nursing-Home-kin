@@ -34,11 +34,19 @@ export default function BranchNotice({ user }: { user: SessionUser }) {
   const [show, setShow] = useState(false);
   useEffect(() => {
     if (check === "missing" || check === "closed") { setShow(true); return; }
-    try { setShow(!sessionStorage.getItem(key)); } catch { setShow(true); }
+    // สาขาปกติ: แสดงครั้งแรกครั้งเดียว (จำไว้ทันที) เปลี่ยนหน้า/รีเฟรชแล้วไม่ขึ้นอีกจนกว่าจะเข้าระบบใหม่
+    try { const seen = !!sessionStorage.getItem(key); setShow(!seen); if (!seen && check !== "upcoming") sessionStorage.setItem(key, "1"); } catch { setShow(true); }
   }, [check, key]);
   if (!show) return null;
   const t = TEXT[check](user.branch);
   const close = () => { try { sessionStorage.setItem(key, "1"); } catch { /* ignore */ } setShow(false); };
+  // สาขาปกติ: บรรทัดเดียว ไม่กินพื้นที่หน้า
+  if (check === "ok" || check === "all") return (
+    <div role="status" className="branch-notice-slim">
+      <span className="branch-notice-dot" aria-hidden />{check === "all" ? "กำลังดูข้อมูลทุกสาขา" : `กำลังดูข้อมูลสาขา${user.branch} · บันทึกได้เฉพาะสาขานี้`}
+      <button type="button" className="branch-notice-close" onClick={close} aria-label="ปิดข้อความ"><Icon name="close" className="h-3.5 w-3.5" /></button>
+    </div>
+  );
   return (
     <div role={t.tone === "bad" ? "alert" : "status"} className={`branch-notice is-${t.tone}`}>
       <Icon name={t.tone === "ok" ? "building" : "alert"} className="mt-0.5 h-5 w-5 shrink-0" />

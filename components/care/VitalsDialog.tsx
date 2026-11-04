@@ -5,7 +5,7 @@ import { Field, Modal } from "@/components/ui";
 import { ResidentPicker } from "../SearchSelect";
 import { useApp } from "@/lib/app";
 import { nowTh } from "@/lib/pharmacy";
-import { evaluateVitals, flagText, levelOf, LEVEL_TH, parseVitals, vitalText } from "@/lib/vitals";
+import { evaluateVitals, flagText, implausible, levelOf, LEVEL_TH, LIMITS, parseVitals, vitalText } from "@/lib/vitals";
 
 const BLANK = { bp: "", pr: "", rr: "", bt: "", o2: "", dtx: "", weight: "", height: "", note: "" };
 const FIELDS: { k: keyof typeof BLANK; label: string; ph: string; mode?: "decimal" | "text" }[] = [
@@ -31,8 +31,12 @@ export default function VitalsDialog({ open, residents, resident, recorder, onCl
   const { toast } = useApp();
   const [who, setWho] = useState("");
   const [f, setF] = useState(BLANK);
-  useEffect(() => { if (open) { setWho(resident ?? ""); setF(BLANK); } }, [open, resident]);
-  const flags = useMemo(() => evaluateVitals(parseVitals(vitalText(f), f.o2, f.dtx)), [f]);
+  // ค่าที่เป็นไปไม่ได้: กดบันทึกครั้งแรกขึ้นเตือนให้ตรวจ กดอีกครั้งจึงบันทึก
+  const [doubt, setDoubt] = useState(false);
+  useEffect(() => { if (open) { setWho(resident ?? ""); setF(BLANK); setDoubt(false); } }, [open, resident]);
+  const parsed = useMemo(() => parseVitals(vitalText(f), f.o2, f.dtx), [f]);
+  const flags = useMemo(() => evaluateVitals(parsed), [parsed]);
+  const odd = implausible(parsed);
   const level = levelOf(flags);
   const filled = Object.entries(f).some(([k, v]) => k !== "note" && v.trim());
 
@@ -42,6 +46,7 @@ export default function VitalsDialog({ open, residents, resident, recorder, onCl
     if (f.bp && !/^\d{2,3}\s*\/\s*\d{2,3}$/.test(f.bp.trim())) return toast("กรุณากรอกความดันเป็นตัวบน/ตัวล่าง เช่น 120/80");
     const bad = (["pr", "rr", "bt", "o2", "dtx", "weight", "height"] as const).find((k) => f[k].trim() && Number.isNaN(Number(f[k])));
     if (bad) return toast(`กรุณากรอก${FIELDS.find((x) => x.k === bad)!.label.split(" (")[0]}เป็นตัวเลข`);
+    if (odd.length && !doubt) { setDoubt(true); return; }
     const wh = [f.weight && `${f.weight} กก.`, f.height && `${f.height} ซม.`].filter(Boolean).join(" / ");
     onSave([nowTh(), who, vitalText({ bp: f.bp.replace(/\s/g, ""), pr: f.pr, rr: f.rr, bt: f.bt }) || "-", f.o2 ? `${f.o2}%` : "-", f.dtx || "-", wh || "-", "-", f.note.trim() || "-", recorder]);
     onClose();
@@ -50,17 +55,21 @@ export default function VitalsDialog({ open, residents, resident, recorder, onCl
 
   return (
     <Modal open={open} title="บันทึกสัญญาณชีพ" onClose={onClose}
-      footer={<><button className="btn-soft" onClick={onClose}>ยกเลิก</button><button className={level === "critical" ? "btn-danger" : "btn-primary"} onClick={save}>{level === "normal" ? "บันทึก" : "บันทึกและแจ้งพยาบาล"}</button></>}>
+      footer={<><button className="btn-soft" onClick={onClose}>ยกเลิก</button><button className={level === "critical" ? "btn-danger" : "btn-primary"} onClick={save}>{doubt && odd.length ? "ยืนยันค่าที่กรอก" : level === "normal" ? "บันทึก" : "บันทึกและแจ้งพยาบาล"}</button></>}>
       <div className="space-y-4">
         <Field label="ผู้รับบริการ" required><ResidentPicker names={residents} value={who} onChange={setWho} /></Field>
         <div className="grid grid-cols-2 gap-3">
           {FIELDS.map((x) => (
             <Field key={x.k} label={x.label}>
-              <input inputMode={x.mode ?? "decimal"} value={f[x.k]} placeholder={x.ph} onChange={(e) => setF({ ...f, [x.k]: e.target.value })} />
+              <input inputMode={x.mode ?? "decimal"} value={f[x.k]} placeholder={x.ph} onChange={(e) => { setF({ ...f, [x.k]: e.target.value }); setDoubt(false); }} />
             </Field>
           ))}
         </div>
         <Field label="อาการ / หมายเหตุ"><textarea rows={2} value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} placeholder="เช่น ทานอาหารได้ดี หลับสนิท" /></Field>
+        {doubt && odd.length > 0 && (
+          <p role="alert" className="form-error"><Icon name="alert" className="h-4 w-4 shrink-0" />
+            <span>ค่านี้ไม่น่าเป็นไปได้: {odd.map((k) => `${LIMITS[k].label.split(" (")[0]} ${parsed[k]} ${LIMITS[k].unit}`).join(" · ")} · ตรวจตัวเลขอีกครั้ง ถ้าถูกต้องกด &quot;ยืนยันค่าที่กรอก&quot;</span></p>
+        )}
         {filled && (
           <div className={`vitals-verdict is-${level}`} role="status">
             <p className="flex items-center gap-2 font-semibold"><Icon name={level === "normal" ? "check" : "alert"} className="h-4 w-4" />ผลประเมิน: {LEVEL_TH[level]}</p>

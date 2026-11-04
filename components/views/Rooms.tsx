@@ -102,7 +102,7 @@ export function Rooms() {
     const taken = room.beds.find((x) => x.label === b)?.who;
     if (taken && taken !== name) return toast(`ไม่สามารถเลือกเตียง ${b} ได้ มี ${taken} พักอยู่`);
     setRoom(i, room.no, b);
-    toast(`เพิ่มผู้ป่วยเข้าห้องแล้ว · ${name} · ห้อง ${room.no} เตียง ${b}`);
+    toast(`เพิ่มผู้รับบริการเข้าห้องแล้ว · ${name} · ห้อง ${room.no} เตียง ${b}`);
     setAssign(null); setPlace(null); setWho("");
   };
   const moveOut = (name: string, r: RoomInfo) => confirm({ title: "ย้ายออกจากห้อง", message: `ย้าย ${name} ออกจากห้อง ${r.no} ใช่หรือไม่ (ข้อมูลผู้รับบริการยังอยู่ เพิ่มเข้าห้องใหม่ได้ภายหลัง)`, okLabel: "ย้ายออก", onOk: () => { const i = res.rows.findIndex((x) => x[0] === name && x[3] === r.branch); if (i >= 0) { setRoom(i, "-"); toast(`ย้ายผู้ป่วยออกจากห้องแล้ว · ${name} · ห้อง ${r.no} ว่าง 1 เตียง`); } } });
@@ -150,7 +150,7 @@ export function Rooms() {
     <RoomCard key={r.i} room={r} onClick={pick} selected={!pick && sel === r.i}
       people={!pick && r.people.length > 0 && <div className="room-people">{r.beds.filter((b) => b.who).map((b) => <span key={b.label}><i className="not-italic text-gold-500">{b.label}</i> {b.who}{move && <button type="button" aria-label={`ย้าย ${b.who} ออกจากห้อง`} onClick={() => moveOut(b.who!, r)}>✕</button>}</span>)}</div>}>
       {(admin || move) && !pick && <div className="mt-1 flex flex-wrap gap-2 border-t border-cream-200 pt-2">
-        {move && !r.full && !r.closed && <button type="button" className="row-action" onClick={() => { setWho(""); setAssign({ room: r, bed: freeBed(r) }); }}>+ เพิ่มผู้ป่วยเข้าห้อง</button>}
+        {move && !r.full && !r.closed && <button type="button" className="row-action" onClick={() => { setWho(""); setAssign({ room: r, bed: freeBed(r) }); }}>+ เพิ่มผู้รับบริการเข้าห้อง</button>}
         {admin && <button type="button" className="row-action" onClick={() => setDlg({ mode: "edit", i: r.i })}>แก้ไข</button>}
         {admin && <button type="button" className="row-action danger" onClick={() => removeRoom(r)}>ลบ</button>}
       </div>}
@@ -183,7 +183,7 @@ export function Rooms() {
 
   return (
     <>
-      <PageHeader title="ห้องผู้ป่วย" sub={admin ? "สร้างห้อง กำหนดจำนวนเตียง และเพิ่มผู้ป่วยเข้าเตียง" : move ? "ดูห้องและเตียง เพิ่มผู้ป่วยเข้าเตียงหรือย้ายห้อง" : "ดูห้องว่างของสาขา เพื่อเลือกห้องตอนเปิดสัญญา"}
+      <PageHeader title="ห้องพักและเตียง" sub={admin ? "สร้างห้อง กำหนดจำนวนเตียง และเพิ่มผู้ป่วยเข้าเตียง" : move ? "ดูห้องและเตียง เพิ่มผู้ป่วยเข้าเตียงหรือย้ายห้อง" : "ดูห้องว่างของสาขา เพื่อเลือกห้องตอนเปิดสัญญา"}
         actions={<>
           <Tabs tabs={VIEWS} value={view} onChange={setView} />
           {branchNames.length > 1 && <div className="min-w-44"><Select options={branchNames} placeholder="รวมทุกสาขา" value={branch} onChange={setBranch} /></div>}
@@ -200,8 +200,10 @@ export function Rooms() {
         {admin && missing.length > 0 && <div className="mb-4 flex flex-wrap items-center gap-2 text-sm text-gold-600">สร้างห้องจากข้อมูลเดิม:
           {missing.map(([no, b]) => <button key={`${b}|${no}`} type="button" className="row-action" onClick={() => setDlg({ mode: "add", preset: [no, b, ROOM_TYPES[0], "1", "", ROOM_STATUSES[0], "", ""] })}>+ {no} ({b})</button>)}
         </div>}
+        {/* สถานะเป็นสีส้ม "รอจัดห้อง" (เรื่องที่ต้องทำ) แทนสีเขียว "เข้าอยู่" */}
         <DataTable search={false} columns={["ชื่อ-นามสกุล", "สาขา", "ห้องที่บันทึกไว้", "สถานะ"]}
           rows={noRoom.map(({ r }) => [r[0], r[3], r[2] && r[2].trim() !== "-" ? `${r[2]} (ยังไม่ได้สร้างห้องนี้)` : "ยังไม่ระบุ", r[5]])}
+          render={(k, col) => (col === 3 ? <span className="status-badge status-warning">{/^มัดจำ/.test(noRoom[k]?.r[5] ?? "") ? "มัดจำ · รอจัดห้อง" : "รอจัดห้อง"}</span> : undefined)}
           actions={move ? [{ label: "จัดห้อง", onClick: (k) => setPlace(noRoom[k].i) }] : undefined} />
       </Section></div>}
       {!rooms.loaded ? <Section><p className="py-8 text-center text-sm text-gold-500">กำลังโหลดห้อง…</p></Section>
@@ -250,10 +252,10 @@ export function Rooms() {
         })()}
       </Modal>
       <ResidentProfile id={profileId} onClose={() => setProfileId(null)} />
-      <FormDialog open={!!dlg} mode={dlg?.mode ?? "add"} title={dlg?.mode === "edit" ? "แก้ไขห้อง" : "สร้างห้องผู้ป่วย"} fields={fields} value={formValue}
+      <FormDialog open={!!dlg} mode={dlg?.mode ?? "add"} title={dlg?.mode === "edit" ? "แก้ไขห้อง" : "สร้างห้องพัก"} fields={fields} value={formValue}
         onClose={() => setDlg(null)} onSave={save} saveLabel={dlg?.mode === "edit" ? "บันทึก" : "สร้างห้อง"} />
 
-      <Modal open={!!assign} title={`เพิ่มผู้ป่วยเข้าห้อง ${assign?.room.no ?? ""}`} onClose={() => setAssign(null)}
+      <Modal open={!!assign} title={`เพิ่มผู้รับบริการเข้าห้อง ${assign?.room.no ?? ""}`} onClose={() => setAssign(null)}
         footer={<><button className="btn-soft" onClick={() => setAssign(null)}>ยกเลิก</button><button className="btn-primary" disabled={!who || !assign?.bed} onClick={() => { if (assign) putIn(Number(who), assign.room, assign.bed); }}>เพิ่มเข้าเตียง {assign?.bed}</button></>}>
         {assign && <div className="space-y-4">
           <p className="text-sm text-gold-600">ห้อง {assign.room.no} · สาขา{assign.room.branch} · ว่าง {assign.room.free} จาก {assign.room.capacity} เตียง</p>

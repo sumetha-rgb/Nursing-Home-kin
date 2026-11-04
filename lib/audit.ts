@@ -1,4 +1,4 @@
-// ใช้ฝั่ง server เท่านั้น: บันทึกประวัติการแก้ไขลงตาราง audit_logs
+// ใช้ฝั่ง server เท่านั้น: บันทึกประวัติการใช้งานลงตาราง audit_logs
 import { NextRequest } from "next/server";
 import { sql } from "./db";
 import type { SessionUser } from "./roles";

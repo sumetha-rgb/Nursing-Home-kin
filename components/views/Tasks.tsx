@@ -107,11 +107,11 @@ export function FacilityTasks() {
   return (
     <>
       <PageHeader
-        title="งานทั่วไปของสาขา"
-        sub="งานสถานที่ งานทำความสะอาด และงานทั่วไปที่ไม่ผูกกับผู้รับบริการ · พยาบาลทำแล้วถ่ายรูปส่งใน KinApp รอบละ 1 ครั้ง"
+        title="งานส่วนกลางของสาขา"
+        sub="งานสถานที่และทำความสะอาด · ส่งรูปใน KinApp"
         actions={<>
           <button className="btn-soft" onClick={() => go("master_tasks")}>จัดการแม่แบบงานมาตรฐาน</button>
-          <button className="btn-soft" onClick={() => downloadCsv("งานทั่วไปของสาขา", FAC_COLS, rows)}><Icon name="download" className="h-4 w-4" /> ส่งออก CSV (Excel)</button>
+          <button className="btn-soft" onClick={() => downloadCsv("งานส่วนกลางของสาขา", FAC_COLS, rows)}><Icon name="download" className="h-4 w-4" /> ส่งออก CSV (Excel)</button>
           <button className="btn-primary" onClick={() => setDlg({ mode: "add", i: -1 })}><Icon name="plus" className="h-4 w-4" /> เพิ่มงานทั่วไป</button>
         </>}
       />
@@ -227,7 +227,7 @@ export function MasterTasks() {
     <>
       <PageHeader
         title="แม่แบบงานมาตรฐาน"
-        sub="จัดการชื่องานและคำสั่งงานที่เป็นมาตรฐานของศูนย์"
+        sub="ชื่องานและคำสั่งงานมาตรฐาน"
         actions={<>
           <button className="btn-soft" onClick={() => downloadCsv("แม่แบบงานมาตรฐาน", MT_COLS, rows.map((r) => r.slice(0, 6)))}><Icon name="download" className="h-4 w-4" /> ส่งออก CSV</button>
           <button className="btn-soft" onClick={() => setGroup(true)}>สร้างกลุ่มงานใหม่</button>

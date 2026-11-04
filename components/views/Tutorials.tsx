@@ -10,7 +10,7 @@ export function Tutorials() {
   const only = user ? TUTORIALS.filter((t) => t.roles.includes(user.role)).map((t) => t.no) : undefined;
   return (
     <>
-      <PageHeader title="วิดีโอสอนใช้งาน" sub="คลิปสั้นทีละขั้นตอนของแต่ละตำแหน่ง กดที่คลิปเพื่อเล่น · ส่งต่อให้พนักงานใหม่ดูก่อนเริ่มงานได้" />
+      <PageHeader title="วิดีโอสอนใช้งาน" sub="คลิปสั้นทีละขั้นของแต่ละตำแหน่ง" />
       <TutorialVideos only={only} />
     </>
   );

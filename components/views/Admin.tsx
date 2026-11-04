@@ -11,6 +11,7 @@ import { RESIDENTS } from "@/lib/mock";
 import { downloadCsv, useCrud } from "@/lib/store";
 import { useApp } from "@/lib/app";
 import { DataTable, Field, FieldDef, FormDialog, Modal, PageHeader, Section, MetricGrid, StatusBadge, Tabs } from "../ui";
+import { Group, Item } from "./ContractView";
 
 /* ---------- จัดการสาขา ---------- */
 const BRANCH_FIELDS: FieldDef[] = [
@@ -41,12 +42,12 @@ export function Branches() {
   // ข้อมูลสาขาเป็นของระดับองค์กร: ผู้จัดการสาขาดูได้อย่างเดียว เพิ่ม/แก้/ลบได้เฉพาะผู้บริหาร (server บังคับด้วย)
   const {user}=useSession();
   const canEdit=user?.role==="Global Admin";
-  /** เตียงของสาขา: ถ้ามีห้องในเมนูห้องผู้ป่วย นับจากห้อง (ไม่ต้องพิมพ์เอง) ไม่มี = ใช้ค่าที่กรอกไว้ */
+  /** เตียงของสาขา: ถ้ามีห้องในเมนูห้องพักและเตียง นับจากห้อง (ไม่ต้องพิมพ์เอง) ไม่มี = ใช้ค่าที่กรอกไว้ */
   const roomRows=useCrud("rooms",[]).rows, resRows=useCrud("residents",RESIDENTS).rows;
   const beds=new Map(branchBeds(roomInfos(roomRows,resRows)).map(b=>[b.branch,b]));
   const bedsOf=(r:string[])=>beds.get(r[1])?beds.get(r[1])!.capacity:Number(r[5])||0;
   const [dlg,setDlg]=useState<{mode:"add"|"edit";i:number}|null>(null);
-  const bedFields=BRANCH_FIELDS.map((f,k)=>k===5?{...f,label:"จำนวนเตียงรองรับ (นับจากห้องผู้ป่วยอัตโนมัติ)",readOnly:!!(dlg&&beds.get(rows[dlg.i]?.[1]))}:f);
+  const bedFields=BRANCH_FIELDS.map((f,k)=>k===5?{...f,label:"จำนวนเตียงรองรับ (นับจากห้องพักและเตียงอัตโนมัติ)",readOnly:!!(dlg&&beds.get(rows[dlg.i]?.[1]))}:f);
   const [layout,setLayout]=useState("การ์ดสาขา");
   const [query,setQuery]=useState("");
   const table=rows.map(r=>BRANCH_IDX.map(k=>r[k]));
@@ -54,11 +55,36 @@ export function Branches() {
   const deleteBranch=(i:number)=>confirm({title:"ลบสาขา",message:`ต้องการลบสาขา ${rows[i][1]} ใช่หรือไม่`,danger:true,okLabel:"ลบสาขา",onOk:()=>{const n=rows[i][1];remove(i);toast(`ลบสาขาแล้ว · ${n}`);}});
   return <>
     <PageHeader title="สาขาของเรา" sub={canEdit?"ทุกพื้นที่ของ KIN เชื่อมต่อกันด้วยมาตรฐานการดูแลเดียวกัน":"ข้อมูลสาขาของคุณ (ดูได้อย่างเดียว) · ต้องการแก้ไขเบอร์โทร ที่อยู่ หรือข้อมูลอื่น แจ้งผู้บริหาร"} actions={<><button className="btn-soft" onClick={()=>downloadCsv("สาขา",BRANCH_COLS,table)}><Icon name="download" className="h-4 w-4" />ส่งออกข้อมูล</button>{canEdit&&<button className="btn-primary" onClick={()=>setDlg({mode:"add",i:-1})}><Icon name="plus" className="h-4 w-4" />เพิ่มสาขา</button>}</>} />
-    <MetricGrid items={[{label:"สาขาในเครือ",value:rows.length,unit:"สาขา",accent:true,icon:"building"},{label:"เปิดให้บริการ",value:rows.filter(r=>r[10]==="เปิด").length,unit:"สาขา",icon:"check"},{label:"จำนวนเตียงรองรับ",value:rows.reduce((n,r)=>n+bedsOf(r),0),unit:"เตียง",icon:"heart",note:beds.size?"นับจากห้องผู้ป่วย":undefined},{label:"สำนักงานและสาขาภายใน",value:rows.filter(r=>r[10]==="ภายใน").length,unit:"แห่ง",icon:"id"}]} />
+    <MetricGrid items={[{label:"สาขาในเครือ",value:rows.length,unit:"สาขา",accent:true,icon:"building"},{label:"เปิดให้บริการ",value:rows.filter(r=>r[10]==="เปิด").length,unit:"สาขา",icon:"check"},{label:"จำนวนเตียงรองรับ",value:rows.reduce((n,r)=>n+bedsOf(r),0),unit:"เตียง",icon:"heart",note:beds.size?"นับจากห้องพักและเตียง":undefined},{label:"สำนักงานและสาขาภายใน",value:rows.filter(r=>r[10]==="ภายใน").length,unit:"แห่ง",icon:"id"}]} />
     <div className="mb-5 flex flex-wrap items-center justify-between gap-4"><h2 className="text-[17px] font-medium text-gold-800">พื้นที่แห่งความใส่ใจ</h2><Tabs tabs={["การ์ดสาขา","ตารางข้อมูล"]} value={layout} onChange={setLayout} /></div>
     {layout==="การ์ดสาขา"?<><div className="table-search mb-5"><Icon name="search" /><input aria-label="ค้นหาสาขา" placeholder="ค้นหาชื่อหรือรหัสสาขา…" value={query} onChange={e=>setQuery(e.target.value)} /></div><div className="branch-grid">{shown.map(({r,i})=><article className="branch-card" key={i}><div className="branch-card-head"><span><Icon name="building" className="h-6 w-6" /></span><StatusBadge value={r[10]} /></div><div className="branch-card-body"><h3>{r[1]}</h3><p className="branch-card-id">KIN HOMECARE · {r[0]}</p><dl><div><dt>รองรับการดูแล</dt><dd>{bedsOf(r)} เตียง{beds.get(r[1])?` · พักอยู่ ${beds.get(r[1])!.people} (${beds.get(r[1])!.pct}%)`:""}</dd></div><div><dt>ติดต่อสาขา</dt><dd>{r[3]||"—"}</dd></div><div><dt>ประเภทสาขา</dt><dd>{r[6]||"—"}</dd></div></dl><p className="mb-5 text-xs leading-7 text-gold-500">{r[8]||r[4]}</p><div className="branch-card-footer"><button className="btn-soft" onClick={()=>setDlg({mode:"edit",i})}>{canEdit?"รายละเอียดและแก้ไข":"ดูรายละเอียด"} <Icon name="arrow" className="h-4 w-4" /></button>{canEdit&&<button className="row-action danger" onClick={()=>deleteBranch(i)}>ลบ</button>}</div></div></article>)}</div>{!shown.length&&<div className="card empty-state">ไม่พบสาขาที่ค้นหา</div>}</>:<Section title="ทะเบียนสาขา"><DataTable columns={BRANCH_COLS} rows={table} actions={canEdit?[{label:"แก้ไข",onClick:i=>setDlg({mode:"edit",i})},{label:"ลบ",danger:true,onClick:deleteBranch}]:[{label:"ดู",onClick:i=>setDlg({mode:"edit",i})}]} /></Section>}
     <details className="mt-8 text-xs text-gold-500"><summary className="cursor-pointer">การจัดการข้อมูลขั้นสูง</summary><div className="mt-4 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-red-100 bg-red-50/40 p-5"><p>ลบข้อมูลทุกสาขาออกจากระบบตัวอย่าง</p><button className="btn-danger" onClick={()=>confirm({title:"ล้างสาขาทั้งหมด",message:"ต้องการลบข้อมูลสาขาทั้งหมดใช่หรือไม่",danger:true,okLabel:"ล้างทั้งหมด",onOk:()=>{clear();toast("ล้างข้อมูลแล้ว");}})}>ล้างข้อมูลสาขา</button></div></details>
-    <FormDialog open={!!dlg} mode={dlg?.mode==="edit"&&!canEdit?"view":dlg?.mode??"add"} title={dlg?.mode==="edit"?"รายละเอียดสาขา":"เพิ่มพื้นที่แห่งการดูแล"} fields={bedFields} value={dlg?.mode==="edit"?rows[dlg.i].map((v,k)=>k===5?String(bedsOf(rows[dlg.i])):v):undefined} onClose={()=>setDlg(null)} onSave={v=>{if(dlg?.mode==="edit")update(dlg.i,v);else add(v);setDlg(null);setTimeout(reloadBranches,1500);toast(`${dlg?.mode==="edit"?"แก้ไขข้อมูลสาขาแล้ว":"เพิ่มสาขาแล้ว"} · ${v[1]}`);}} />
+    {/* ผู้จัดการสาขาแก้ไม่ได้: แสดงเป็นหน้าอ่านแบ่งกลุ่ม */}
+    <Modal open={!!dlg&&!canEdit} wide title="รายละเอียดสาขา" onClose={()=>setDlg(null)} footer={<button className="btn-primary" onClick={()=>setDlg(null)}>ปิด</button>}>
+      {dlg&&!canEdit&&rows[dlg.i]&&(()=>{const r=rows[dlg.i],b=beds.get(r[1]),tel=(r[3]??"").replace(/\D/g,""),has=(v?:string)=>!!v&&v.trim()!==""&&v.trim()!=="-";return <div className="space-y-5">
+        <div className="cv-head"><div className="min-w-0"><p className="text-xs text-gold-500">{r[0]||"-"} · {r[7]||"-"}</p><h3 className="truncate text-lg font-semibold text-gold-900">สาขา{r[1]}</h3>{has(r[2])&&<p className="text-sm text-gold-600">{r[2]}</p>}</div>
+          <div className="text-right"><StatusBadge value={r[10]||"-"} />{b&&<p className="mt-2 text-sm text-gold-700">เตียง <b className="text-gold-900">{b.people}/{b.capacity}</b> · ว่าง {b.free}</p>}</div></div>
+        <Group title="ติดต่อ">
+          <Item k="เบอร์ติดต่อศูนย์" v={tel?<a className="underline-offset-2 hover:underline" href={`tel:${tel}`}>{r[3]}</a>:"-"} />
+          <Item k="อีเมล" v={has(r[9])?<a className="underline-offset-2 hover:underline" href={`mailto:${r[9]}`}>{r[9]}</a>:"-"} />
+          <Item k="ที่อยู่ศูนย์" v={r[4]} wide />
+          <Item k="พิกัด" v={has(r[11])?<a className="underline-offset-2 hover:underline" target="_blank" rel="noreferrer" href={`https://maps.google.com/?q=${encodeURIComponent(r[11])}`}>เปิดแผนที่ ({r[11]})</a>:"-"} wide />
+        </Group>
+        <Group title="นิติบุคคลและใบอนุญาต">
+          <Item k="นิติบุคคลหรือผู้แทน" v={r[2]} />
+          <Item k="ประเภทเจ้าของ" v={r[6]} />
+          <Item k="ใบอนุญาตประกอบกิจการ" v={r[13]} wide />
+        </Group>
+        <Group title="บัญชีรับโอน">
+          <Item k="ธนาคารและชื่อบัญชี" v={r[14]} wide />
+          <Item k="เลขบัญชีหลัก" v={r[15]} />
+          <Item k="เลขบัญชีสำรอง" v={r[16]} />
+        </Group>
+        {has(r[8])&&<Group title="จุดเด่นของสาขา"><Item k="" v={r[8]} wide /></Group>}
+        <p className="text-xs text-gold-500">ข้อมูลสาขาแก้ไขได้เฉพาะผู้บริหาร</p>
+      </div>;})()}
+    </Modal>
+    <FormDialog open={!!dlg&&(canEdit||dlg.mode==="add")} mode={dlg?.mode??"add"} title={dlg?.mode==="edit"?"รายละเอียดสาขา":"เพิ่มพื้นที่แห่งการดูแล"} fields={bedFields} value={dlg?.mode==="edit"?rows[dlg.i].map((v,k)=>k===5?String(bedsOf(rows[dlg.i])):v):undefined} onClose={()=>setDlg(null)} onSave={v=>{if(dlg?.mode==="edit")update(dlg.i,v);else add(v);setDlg(null);setTimeout(reloadBranches,1500);toast(`${dlg?.mode==="edit"?"แก้ไขข้อมูลสาขาแล้ว":"เพิ่มสาขาแล้ว"} · ${v[1]}`);}} />
   </>;
 }
 

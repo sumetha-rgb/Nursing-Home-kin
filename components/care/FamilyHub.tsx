@@ -81,7 +81,7 @@ export default function FamilyHub({ open, onClose }: { open: boolean; onClose: (
                   rows={shownLinks.map((l) => [`${l.at}${l.created_by ? `\nสร้างโดย ${l.created_by}` : ""}`, l.resident_name, l.expires ?? "-", !l.active ? "ยกเลิกแล้ว" : l.expired ? "หมดอายุ" : "ใช้งานได้", `${l.reviews} ครั้ง`])}
                   badgeCols={[3]} empty={loaded ? "ไม่มีลิงก์ที่ใช้งานอยู่" : "กำลังโหลด…"}
                   actions={[
-                    { label: "ดู", hidden: (i) => !(shownLinks[i].active && !shownLinks[i].expired), onClick: (i) => openHere(familyUrl(shownLinks[i].token)) },
+                    { label: "เปิดหน้าญาติ", hidden: (i) => !(shownLinks[i].active && !shownLinks[i].expired), onClick: (i) => openHere(familyUrl(shownLinks[i].token)) },
                     { label: "คัดลอก", hidden: (i) => !(shownLinks[i].active && !shownLinks[i].expired), onClick: (i) => copy(shownLinks[i]) },
                     { label: "ยกเลิกลิงก์", danger: true, hidden: (i) => !shownLinks[i].active, onClick: (i) => revoke(shownLinks[i]) },
                   ]} />

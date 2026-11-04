@@ -10,6 +10,7 @@ import { useSession } from "@/lib/session";
 import { ADMISSION_FIELDS } from "@/lib/clinic";
 import { fetchProfile, Profile, thDate, thWhen } from "@/lib/care";
 import { evaluateVitals, LEVEL_TH, levelOf, LIMITS, parseVitals, Vitals } from "@/lib/vitals";
+import { isNoAllergy } from "@/lib/medicalLists";
 
 type Row = Record<string, unknown>;
 const str = (v: unknown) => (v === null || v === undefined || v === "" ? "-" : Array.isArray(v) ? (v.length ? v.join(", ") : "-") : String(v));
@@ -96,6 +97,11 @@ export default function ResidentProfile({ id, onClose }: { id: string | null; on
   const activeMeds = (p?.meds ?? []).filter((m) => !m.on_hold && (m.status ?? "ปกติ") === "ปกติ");
   const today = new Date().toISOString().slice(0, 10);
   const nextAppt = (p?.appts ?? []).filter((a) => String(a.date ?? "") >= today).sort((a, b) => String(a.date).localeCompare(String(b.date)))[0];
+  // ข้อมูลสำคัญสำหรับการดูแลจากสัญญา · แพ้ยา/แพ้อาหาร ขึ้นแถบแดงทุกแท็บ
+  const ci = p?.careInfo ?? null;
+  const txt = (v: unknown) => { const s = String(v ?? "").trim(); return s && s !== "-" ? s : ""; };
+  const allergy = ci ? [isNoAllergy(txt(ci.drug_allergy)) ? "" : `แพ้ยา: ${txt(ci.drug_allergy)}`, isNoAllergy(txt(ci.food_allergy)) ? "" : `แพ้อาหาร: ${txt(ci.food_allergy)}`].filter(Boolean) : [];
+  const phone = ci ? txt(ci.employer_phone).replace(/\D/g, "") : "";
 
   return (
     <>
@@ -114,6 +120,7 @@ export default function ResidentProfile({ id, onClose }: { id: string | null; on
             </div>
             {r.status && <StatusBadge value={r.status} />}
           </div>
+          {allergy.length > 0 && <p role="alert" className="care-allergy"><Icon name="alert" className="h-5 w-5 shrink-0" /><span><b>ระวัง · {allergy.join(" · ")}</b><small>ข้อมูลจากสัญญา · ตรวจก่อนให้ยาและอาหารทุกครั้ง</small></span></p>}
 
           <div className="print-hide space-y-2 rounded-2xl border border-cream-300 bg-cream-50 p-3" role="group" aria-label="เลือกหัวข้อ">
             {TAB_GROUPS.map((g) => <div key={g.label} className="flex flex-col gap-1.5 sm:flex-row sm:items-center">
@@ -125,6 +132,16 @@ export default function ResidentProfile({ id, onClose }: { id: string | null; on
 
           {tab === TABS[0] && (
             <div className="grid gap-4 md:grid-cols-2">
+              {ci && <section className="profile-box md:col-span-2">
+                <h4>ข้อมูลสำคัญสำหรับการดูแล</h4>
+                <dl className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
+                  <div><dt className="text-xs text-gold-500">แพ้ยา</dt><dd className={isNoAllergy(txt(ci.drug_allergy)) ? "text-gold-800" : "font-semibold text-red-700"}>{isNoAllergy(txt(ci.drug_allergy)) ? "ไม่มีประวัติแพ้ยา" : txt(ci.drug_allergy)}</dd></div>
+                  <div><dt className="text-xs text-gold-500">แพ้อาหาร</dt><dd className={isNoAllergy(txt(ci.food_allergy)) ? "text-gold-800" : "font-semibold text-red-700"}>{isNoAllergy(txt(ci.food_allergy)) ? "ไม่มีประวัติแพ้อาหาร" : txt(ci.food_allergy)}</dd></div>
+                  <div><dt className="text-xs text-gold-500">ยา / เวชภัณฑ์ที่ใช้ประจำ (แจ้งตอนเปิดสัญญา)</dt><dd className="text-gold-800">{txt(ci.regular_meds) || "ไม่มี"}</dd></div>
+                  <div><dt className="text-xs text-gold-500">โรงพยาบาลตามสิทธิ์</dt><dd className="text-gold-800">{[txt(ci.hospital), txt(ci.hospital_alt) ? `สำรอง ${txt(ci.hospital_alt)}` : ""].filter(Boolean).join(" · ") || "-"}</dd></div>
+                  <div className="sm:col-span-2"><dt className="text-xs text-gold-500">ผู้ติดต่อฉุกเฉิน</dt><dd className="text-gold-800">{txt(ci.employer_name) || "-"}{txt(ci.relationship) ? ` (${txt(ci.relationship)})` : ""}{phone ? <> · <a className="font-medium text-gold-900 underline underline-offset-2" href={`tel:${phone}`}>{phone.length === 10 ? `${phone.slice(0, 3)}-${phone.slice(3, 6)}-${phone.slice(6)}` : phone}</a></> : ""}</dd></div>
+                </dl>
+              </section>}
               <section className="profile-box">
                 <h4>สัญญาณชีพล่าสุด</h4>
                 {last ? <>

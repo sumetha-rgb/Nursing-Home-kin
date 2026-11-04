@@ -63,7 +63,7 @@ function branchOf(s: Spec, data: unknown) {
   return i < 0 ? null : values(s, data)[i];
 }
 
-/* ---------- ประวัติการแก้ไข ---------- */
+/* ---------- ประวัติการใช้งาน ---------- */
 type Rec = Record<string, unknown>;
 /** ค่าของรายการตามชื่อคอลัมน์ในฐานข้อมูล */
 const asRec = (s: Spec, vals: unknown[]): Rec => Object.fromEntries(s.cols.map((c, i) => [c.col, vals[i] ?? null] as const).filter((_, i) => !s.cols[i].ro));

@@ -5,14 +5,17 @@ import { currentUser, forbidden, unauthorized } from "@/lib/auth";
 import { audit } from "@/lib/audit";
 import { can } from "@/lib/perms";
 import type { SessionUser } from "@/lib/roles";
+import { insights } from "@/lib/insights";
+import { attention } from "@/lib/attention";
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
 
 /**
- * ผลการดำเนินงานจากข้อมูลจริง และกำลังใจของทีม
- *  GET  ?op=dashboard&range=today|month[&branch=]  สรุปรายสาขา สถานะกะวันนี้ งานที่เพิ่งส่ง (ผู้มีเมนูผลการดำเนินงาน)
+ * ภาพรวมและรายงานจากข้อมูลจริง และกำลังใจของทีม
+ *  GET  ?op=dashboard&range=today|month[&branch=]  สรุปรายสาขา สถานะกะวันนี้ งานที่เพิ่งส่ง (ผู้มีเมนูภาพรวมและรายงาน)
  *  GET  ?op=tasklog&from=&to=[&branch=]           ทะเบียนงานย้อนหลัง (งานประจำวันทุกวันในช่วง)
+ *  GET  ?op=insights&from=&to=&pfrom=&pto=[&branch=]  แถบต้องจัดการ สุขภาพ คุณภาพการดูแล ทีมงาน รับเข้า-จำหน่าย อัตราเข้าพัก (เทียบช่วงก่อน)
  *  GET  ?op=feed                                    KinApp: คำชมถึงฉัน ข้อความกำลังใจของสาขา ผลงานพิเศษของฉันวันนี้
  *  POST { op: "kudos", taskId }                     ชื่นชมงานที่พนักงานส่ง (ผู้จัดการ/หัวหน้าพยาบาล)
  *  POST { op: "cheer", branch, message }            ส่งกำลังใจถึงสาขา
@@ -49,12 +52,23 @@ export async function GET(req: NextRequest) {
         ORDER BY work_date DESC, scheduled_time, resident_name LIMIT 3000`, br ? [from, to, br] : [from, to]);
       return NextResponse.json({ rows });
     }
+    if (q.get("op") === "insights") {
+      if (!can(me, "dashboard")) return forbidden();
+      const ok = (v: string | null) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
+      const from = ok(q.get("from")), to = ok(q.get("to")), pfrom = ok(q.get("pfrom")), pto = ok(q.get("pto"));
+      if (!from || !to || !pfrom || !pto || to < from || pto < pfrom) return bad("ช่วงวันที่ไม่ถูกต้อง");
+      const br = scoped(me) ? me.branch : q.get("branch") || null;
+      const [data, att] = await Promise.all([insights(br, { from, to, pfrom, pto }), attention(me, br)]);
+      return NextResponse.json({ ...data, attention: att });
+    }
     if (q.get("op") !== "dashboard") return bad("unknown op");
     if (!can(me, "dashboard")) return forbidden();
     const month = q.get("range") === "month";
     const br = scoped(me) ? me.branch : q.get("branch") || null;
     const [{ today, mstart }] = (await sql`SELECT to_char(now() AT TIME ZONE 'Asia/Bangkok', 'YYYY-MM-DD') AS today, to_char(date_trunc('month', now() AT TIME ZONE 'Asia/Bangkok'), 'YYYY-MM-DD') AS mstart`) as { today: string; mstart: string }[];
-    const from = month ? mstart : today;
+    const okd = (v: string | null) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
+    const from = okd(q.get("from")) ?? (month ? mstart : today);
+    const until = okd(q.get("to")) ?? today;
     const bp = br ? [from, br] : [from];
     const bw = (col: string) => (br ? `AND ${col} = $2` : "");
     const tsFrom = `$1::date::timestamp AT TIME ZONE 'Asia/Bangkok'`;
@@ -62,10 +76,10 @@ export async function GET(req: NextRequest) {
     // สรุปรายสาขา
     const tasks = (await sql(`SELECT branch_name AS b, count(*)::int AS total, count(*) FILTER (WHERE status IN ('เสร็จแล้ว','ตรวจแล้ว'))::int AS done,
         count(*) FILTER (WHERE status = 'ตรวจแล้ว')::int AS checked, avg(review_stars)::float AS mstars
-      FROM daily_tasks WHERE work_date >= $1::date AND work_date <= (now() AT TIME ZONE 'Asia/Bangkok')::date ${bw("branch_name")} GROUP BY branch_name`, bp)) as Record<string, number & string>[];
-    const fam = (await sql(`SELECT branch_name AS b, avg(rating)::float AS v, count(*)::int AS n FROM staff_reviews WHERE created_at >= ${tsFrom} ${bw("branch_name")} GROUP BY branch_name`, bp)) as Record<string, number & string>[];
-    const sat = (await sql(`SELECT branch_name AS b, avg(score_overall)::float AS v, count(*)::int AS n FROM satisfaction_surveys WHERE created_at >= ${tsFrom} ${bw("branch_name")} GROUP BY branch_name`, bp)) as Record<string, number & string>[];
-    const comp = (await sql(`SELECT branch_name AS b, count(*)::int AS n FROM complaints WHERE coalesce(reported_at, created_at AT TIME ZONE 'Asia/Bangkok') >= $1::date ${bw("branch_name")} GROUP BY branch_name`, bp)) as Record<string, number & string>[];
+      FROM daily_tasks WHERE work_date >= $1::date AND work_date <= LEAST('${until}'::date, (now() AT TIME ZONE 'Asia/Bangkok')::date) ${bw("branch_name")} GROUP BY branch_name`, bp)) as Record<string, number & string>[];
+    const fam = (await sql(`SELECT branch_name AS b, avg(rating)::float AS v, count(*)::int AS n FROM staff_reviews WHERE created_at >= ${tsFrom} AND (created_at AT TIME ZONE 'Asia/Bangkok')::date <= '${until}'::date ${bw("branch_name")} GROUP BY branch_name`, bp)) as Record<string, number & string>[];
+    const sat = (await sql(`SELECT branch_name AS b, avg(score_overall)::float AS v, count(*)::int AS n FROM satisfaction_surveys WHERE created_at >= ${tsFrom} AND (created_at AT TIME ZONE 'Asia/Bangkok')::date <= '${until}'::date ${bw("branch_name")} GROUP BY branch_name`, bp)) as Record<string, number & string>[];
+    const comp = (await sql(`SELECT branch_name AS b, count(*)::int AS n FROM complaints WHERE coalesce(reported_at, created_at AT TIME ZONE 'Asia/Bangkok') >= $1::date AND coalesce(reported_at, created_at AT TIME ZONE 'Asia/Bangkok')::date <= '${until}'::date ${bw("branch_name")} GROUP BY branch_name`, bp)) as Record<string, number & string>[];
     const res = (await sql(`SELECT branch_name AS b, count(*)::int AS n FROM residents WHERE coalesce(status, '') NOT LIKE 'ย้ายออก%' ${br ? "AND branch_name = $1" : ""} GROUP BY branch_name`, br ? [br] : [])) as Record<string, number & string>[];
     const names = [...new Set([...tasks, ...fam, ...sat, ...comp, ...res].map((x) => x.b).filter(Boolean))].sort();
     const one = (list: Record<string, number & string>[], b: string) => list.find((x) => x.b === b);
@@ -95,7 +109,7 @@ export async function GET(req: NextRequest) {
         EXISTS (SELECT 1 FROM kudos k WHERE k.task_id = d.id) AS praised
       FROM daily_tasks d WHERE d.work_date >= (now() AT TIME ZONE 'Asia/Bangkok')::date - 1 AND d.status IN ('เสร็จแล้ว','ตรวจแล้ว') AND d.done_by IS NOT NULL AND d.done_by <> '-' ${br ? "AND d.branch_name = $1" : ""}
       ORDER BY d.work_date DESC, d.submitted_time DESC NULLS LAST LIMIT 12`, br ? [br] : []);
-    return NextResponse.json({ range: month ? "month" : "today", from, branches, shifts, activity });
+    return NextResponse.json({ range: month ? "month" : "today", from, to: until, branches, shifts, activity });
   } catch (e) {
     console.error("[api/ops]", e);
     return bad("database error", 500);

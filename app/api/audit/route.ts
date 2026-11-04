@@ -3,6 +3,7 @@ import { sql } from "@/lib/db";
 import { currentUser, forbidden, unauthorized } from "@/lib/auth";
 import { ACTION_GROUPS } from "@/lib/auditLabels";
 import { can } from "@/lib/perms";
+import { audit } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
@@ -10,12 +11,30 @@ export const fetchCache = "force-no-store";
 const PAGE = 50;
 
 /**
- * ประวัติการแก้ไข
+ * ประวัติการใช้งาน
  *  Global Admin : ทุกสาขา (กรองตามสาขาได้) รวมข้อมูลส่วนกลาง
  *  Branch Admin : เฉพาะรายการของสาขาตัวเอง (ข้อมูลที่เป็นของสาขา หรือผู้ทำรายการอยู่สาขานี้และไม่ระบุสาขาของข้อมูล)
  *  Nurse / Cashier : ไม่มีสิทธิ์
  * ตัวกรอง: ?group= &area= &branch= &q= &date=YYYY-MM-DD &before=<id>
  */
+/**
+ * บันทึกการส่งออกไฟล์ที่มีข้อมูลส่วนบุคคล (เช่น ทะเบียนสัญญา CSV)
+ *  POST { what: "contracts" | "health", count }
+ */
+export async function POST(req: NextRequest) {
+  const me = await currentUser(req);
+  if (!me) return unauthorized();
+  const b = (await req.json().catch(() => ({}))) as { what?: string; count?: number };
+  const n = Math.max(0, Math.floor(Number(b.count) || 0));
+  const branch = me.role === "Global Admin" ? null : me.branch;
+  if (b.what === "contracts" && can(me, "contracts")) {
+    await audit(req, me, [{ area: "contracts", action: "export", recordId: null, summary: `ส่งออกทะเบียนสัญญา CSV ${n} สัญญา (มีเลขบัตรประชาชนและที่อยู่)`, branch }]);
+  } else if (b.what === "health" && can(me, "health_logs")) {
+    await audit(req, me, [{ area: "health", action: "export", recordId: null, summary: `ส่งออกรายงานสุขภาพ CSV ${n} รายการ (ข้อมูลสุขภาพ)`, branch }]);
+  } else return forbidden();
+  return NextResponse.json({ ok: true });
+}
+
 export async function GET(req: NextRequest) {
   const me = await currentUser(req);
   if (!me) return unauthorized();

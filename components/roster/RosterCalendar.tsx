@@ -6,9 +6,10 @@ import { Attendance, monthCells, monthTitle, Shift, shiftMonth, shortName, SHIFT
  * ปฏิทินเวรรายเดือน ใช้ทั้งระบบจัดการและ KinApp
  * แต่ละวันแสดงชื่อคนเข้าเวรเช้า/ดึก · mine = เน้นเวรของฉัน · ติ๊กถูกเมื่อเช็คชื่อเข้างานแล้ว
  */
-export default function RosterCalendar({ ym, onMonth, shifts, attendance = [], mineId, onlyMine = false, today, selected, onDay, compact = false }: {
+/** gaps (หน้าจัดเวรของผู้จัดการ): วันนี้และวันข้างหน้าที่ยังไม่มีคนเข้าเวร ขอบแดง · ขาดกะใดกะหนึ่ง ขอบส้ม */
+export default function RosterCalendar({ ym, onMonth, shifts, attendance = [], mineId, onlyMine = false, today, selected, onDay, compact = false, gaps = false }: {
   ym: string; onMonth: (ym: string) => void; shifts: Shift[]; attendance?: Attendance[]; mineId?: string; onlyMine?: boolean;
-  today: string; selected?: string | null; onDay?: (date: string) => void; compact?: boolean;
+  today: string; selected?: string | null; onDay?: (date: string) => void; compact?: boolean; gaps?: boolean;
 }) {
   const cells = monthCells(ym);
   const list = onlyMine && mineId ? shifts.filter((s) => s.staff_id === mineId) : shifts;
@@ -26,10 +27,13 @@ export default function RosterCalendar({ ym, onMonth, shifts, attendance = [], m
           if (!d) return <div key={i} className="roster-cell is-empty" />;
           const day = list.filter((s) => s.date === d);
           const mine = mineId ? shifts.some((s) => s.date === d && s.staff_id === mineId) : false;
+          const missing = gaps && d >= today ? SHIFTS.filter((sh) => !day.some((s) => s.shift === sh.key)) : [];
+          const gap = missing.length === SHIFTS.length ? "is-gap" : missing.length ? "is-half" : "";
           return (
             <button type="button" key={d} onClick={() => onDay?.(d)}
-              className={`roster-cell ${d === today ? "is-today" : ""} ${d === selected ? "is-selected" : ""} ${mine ? "is-mine" : ""}`}>
+              className={`roster-cell ${d === today ? "is-today" : ""} ${d === selected ? "is-selected" : ""} ${mine ? "is-mine" : ""} ${gap}`}>
               <span className="roster-num">{Number(d.slice(8))}</span>
+              {gap && <span className={`roster-miss ${gap}`}>{gap === "is-gap" ? "ยังไม่จัดเวร" : `ขาดเวร${missing[0].key}`}</span>}
               {SHIFTS.map((sh) => {
                 const who = day.filter((s) => s.shift === sh.key);
                 if (!who.length) return null;
@@ -43,7 +47,8 @@ export default function RosterCalendar({ ym, onMonth, shifts, attendance = [], m
           );
         })}
       </div>
-      <div className="roster-legend"><span className="is-day">เวรเช้า 07:00–19:00</span><span className="is-night">เวรดึก 19:00–07:00</span>{mineId && <span className="is-me">เวรของฉัน</span>}<span>✓ เช็คชื่อเข้างานแล้ว</span></div>
+      <div className="roster-legend"><span className="is-day">เวรเช้า 07:00–19:00</span><span className="is-night">เวรดึก 19:00–07:00</span>{mineId && <span className="is-me">เวรของฉัน</span>}<span>✓ เช็คชื่อเข้างานแล้ว</span>
+        {gaps && <><span className="roster-key is-gap">ยังไม่จัดเวร</span><span className="roster-key is-half">ขาดบางกะ</span></>}</div>
     </div>
   );
 }

@@ -8,7 +8,9 @@ export type Note = { id: string; kind: NoteKind; title: string | null; body: str
 export type Course = { id: string; name: string; total: number; used: number; price: number; status: string; created_by: string | null; invoice_id: string | null; at: string };
 export type SupplyIssue = { id: string; item_name: string; unit: string; qty: number; price: number; issued_by: string | null; invoice_id: string | null; at: string };
 export type SupplyItem = { id: string; branch_name: string; name: string; unit: string; price: number; stock: number };
-export type Clinic = { admission: { data: Record<string, string>; assessed_by: string | null; at: string } | null; notes: Note[]; courses: Course[]; supplies: SupplyIssue[] };
+export type Clinic = { admission: { data: Record<string, string>; assessed_by: string | null; at: string } | null; notes: Note[]; courses: Course[]; supplies: SupplyIssue[];
+  /** แพ้ยา / แพ้อาหารที่กรอกตอนเปิดสัญญา (ใช้เติมแบบประเมินแรกรับ) */
+  contractAllergy?: { drug_allergy: string | null; food_allergy: string | null } | null };
 
 /** ช่องในแบบประวัติและประเมินแรกรับ (เก็บเป็น JSON ตาม key) */
 export type AdmField = { key: string; label: string; options?: string[]; area?: boolean; placeholder?: string };

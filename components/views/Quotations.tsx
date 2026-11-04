@@ -77,7 +77,7 @@ export function Quotations() {
     <>
       <PageHeader
         title="ใบเสนอราคา / แผนดูแล"
-        sub="ประเมินระดับการดูแล เสนอราคา พิมพ์ให้ลูกค้า แล้วกดเปิดสัญญาได้ทันทีโดยไม่ต้องกรอกซ้ำ"
+        sub="ประเมิน เสนอราคา แล้วเปิดสัญญาต่อได้ทันที"
         actions={<>
           <button className="btn-soft" onClick={() => downloadCsv("ใบเสนอราคา", ["เลขที่", "วันที่", "ผู้รับบริการ", "ผู้ชำระ", "แผน", "รวม (บาท)", "สัญญา"], rows.map((x) => [x[6], x[7], x[1], x[9], x[0], x[4], x[12]]))}><Icon name="download" className="h-4 w-4" /> ส่งออก CSV</button>
           <button className="btn-primary" onClick={() => open(null)}><Icon name="plus" className="h-4 w-4" /> สร้างใบเสนอราคา</button>

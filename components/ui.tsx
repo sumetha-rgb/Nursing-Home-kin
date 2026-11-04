@@ -12,15 +12,19 @@ export function PageHeader({ title, sub, actions }: { title: string; sub?: strin
 export function Section({ title, sub, children, actions }: { title?: string; sub?: string; children: ReactNode; actions?: ReactNode }) {
   return <section className="card section-surface">{(title || actions) && <div className="section-heading"><div>{title && <h2>{title.replace(/\s*\([^)]*\)/g, "").trim()}</h2>}{sub && <p>{sub}</p>}</div>{actions && <div className="section-actions">{actions}</div>}</div>}{children}</section>;
 }
-export function MetricGrid({items}:{items:{label:string;value:string|number;unit?:string;note?:string;icon?:string;accent?:boolean}[]}) {
+/** การ์ดตัวเลข 1 ช่อง (ใช้ซ้ำในแดชบอร์ด และส่งออก CSV หน้าภาพรวม) */
+export type Tile={label:string;value:string|number;unit?:string;note?:string;icon?:string;accent?:boolean};
+export function MetricGrid({items}:{items:Tile[]}) {
   return <div className="metrics-grid">{items.map(item=><div key={item.label} className={"metric "+(item.accent?"accent":"")}><div className="metric-top"><span>{item.label}</span><Icon name={item.icon||"chart"} /></div><div className="metric-value">{item.value}<small>{item.unit}</small></div>{item.note&&<p className="metric-note">{item.note}</p>}</div>)}</div>;
 }
 export function StatusBadge({value}:{value:string}) {
   // เขียว = เสร็จ/ใช้งานได้ · ส้ม = รอ/ใกล้ถึงเกณฑ์ · แดง = ปัญหาที่ต้องจัดการ · เทา = จบแล้ว/ไม่ใช้งาน (สิ้นสุดสัญญา ลาออก ย้ายออก หมดอายุ)
   const success=/^(เพิ่ม|อนุมัติ|สมัครสมาชิก|เข้าสู่ระบบ$|ตรวจแล้ว|เสร็จแล้ว|เสร็จสิ้น|แก้ไขแล้ว|ใช้งานอยู่|ทำงาน|เปิด|เข้าอยู่|สำเร็จ|ตรวจผ่าน|จัดยาแล้ว|จ่ายยาแล้ว|ปกติ|ชำระแล้ว|ทำแล้ว|พร้อมใช้งาน|เผยแพร่แล้ว)/.test(value);
-  const warning=/^(เฝ้าระวัง|รอ|กำลัง|แอดมิท|ค้างชำระ|ชำระบางส่วน|มัดจำ|แก้ไข$|แทนที่|เปลี่ยนรหัส|รีเซตรหัส|ใกล้หมด|เหลือน้อย|เตรียมเปิด|พักงาน)/.test(value);
-  const danger=/^(ผิดปกติ|ลบ|ล้างข้อมูล|เข้าสู่ระบบไม่สำเร็จ|ปิด|งด|ยาหมด|ยางด|แจ้งจัดยาผิด|ยกเลิก|เลยเวลา|ไม่มีคนทำ|หมด$)/.test(value);
-  return <span className={"status-badge "+(success?"status-success":warning?"status-warning":danger?"status-danger":"status-neutral")}>{value.replace(/\s*\([^)]*\)/g, "")}</span>;
+  const warning=/^(เฝ้าระวัง|รอ|กำลัง|แอดมิท|ค้าง|ชำระบางส่วน|มัดจำ|แก้ไข$|แทนที่|เปลี่ยนรหัส|รีเซตรหัส|ใกล้หมด|เหลือน้อย|เตรียมเปิด|พักงาน)/.test(value);
+  const danger=/^(เกินกำหนด|ผิดปกติ|ลบ|ล้างข้อมูล|เข้าสู่ระบบไม่สำเร็จ|ปิด|งด|ยาหมด|ยางด|แจ้งจัดยาผิด|ยกเลิก|เลยเวลา|ไม่มีคนทำ|หมด$)/.test(value);
+  // งานที่ส่งแล้วรอตรวจ = ส้ม (ถึงตาผู้ตรวจ) · งานที่ยังไม่ได้ทำแต่ยังไม่เลยเวลา = เทา (เลยเวลา = แดง จากคำว่า "เลยเวลา")
+  const review=/^ส่งแล้ว รอตรวจ$/.test(value), todo=/^ยังไม่ได้ทำ$/.test(value);
+  return <span className={"status-badge "+(review?"status-warning":todo?"status-neutral":success?"status-success":warning?"status-warning":danger?"status-danger":"status-neutral")}>{value.replace(/\s*\([^)]*\)/g, "")}</span>;
 }
 
 export function Field({label,required,children,className=""}:{label:string;required?:boolean;children:ReactNode;className?:string}) {
@@ -75,8 +79,29 @@ function RowMenu({ items, i }: { items: RowAction[]; i: number }) {
   </>;
 }
 
-/** Table on desktop, stacked label/value cards on mobile. */
-export function DataTable({ columns, rows = [], empty = "ไม่พบข้อมูล", actions, badgeCols = [], search = true }: { columns: string[]; rows?: string[][]; empty?: string; actions?: RowAction[]; badgeCols?: number[]; search?: boolean }) {
+/** ปุ่มที่กดแล้วเปิดเมนูย่อย (รวมปุ่มที่ใช้ไม่บ่อยไว้ปุ่มเดียว เช่น ส่งออก ▾) · hint = คำอธิบายสั้นต่อท้ายในเมนู */
+export function MenuButton({ label, icon, items }: { label: string; icon?: ReactNode; items: { label: string; hint?: string; onClick: () => void }[] }) {
+  const [at, setAt] = useState<{ x: number; y: number } | null>(null);
+  useEffect(() => {
+    if (!at) return;
+    const close = () => setAt(null);
+    window.addEventListener("scroll", close, true); window.addEventListener("resize", close);
+    return () => { window.removeEventListener("scroll", close, true); window.removeEventListener("resize", close); };
+  }, [at]);
+  return <>
+    <button type="button" className="btn-soft" aria-haspopup="menu" aria-expanded={!!at}
+      onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setAt(at ? null : { x: Math.min(r.left, window.innerWidth - 270), y: r.bottom }); }}>{icon}{label} <span aria-hidden="true" className="text-[10px]">▾</span></button>
+    {at && <>
+      <button type="button" aria-label="ปิดเมนู" className="fixed inset-0 z-40 cursor-default" onClick={() => setAt(null)} />
+      <div role="menu" className="fixed z-50 min-w-60 rounded-2xl border border-cream-300 bg-white py-1 shadow-lg" style={{ left: Math.max(8, at.x), top: at.y + 6 }}>
+        {items.map((x) => <button key={x.label} type="button" role="menuitem" className="block w-full whitespace-nowrap px-4 py-2 text-left text-sm text-gold-800 hover:bg-cream-50" onClick={() => { setAt(null); x.onClick(); }}>{x.label}{x.hint && <span className="ml-2 text-xs text-gold-500">{x.hint}</span>}</button>)}
+      </div>
+    </>}
+  </>;
+}
+
+/** Table on desktop, stacked label/value cards on mobile. · render(แถว, คอลัมน์, ค่า) คืน element แทนข้อความ (undefined = แสดงแบบปกติ) */
+export function DataTable({ columns, rows = [], empty = "ไม่พบข้อมูล", actions, badgeCols = [], search = true, render }: { columns: string[]; rows?: string[][]; empty?: string; actions?: RowAction[]; badgeCols?: number[]; search?: boolean; render?: (row: number, col: number, value: string) => ReactNode | undefined }) {
   const [query,setQuery]=useState("");
   const [page,setPage]=useState(0);
   const PAGE_SIZE=8;
@@ -87,9 +112,9 @@ export function DataTable({ columns, rows = [], empty = "ไม่พบข้�
   const searchId=useId();
   const buttons=(i:number)=><>{actions!.filter(x=>!x.more).map(x=>button(x,i))}{actions!.some(x=>x.more)&&<RowMenu items={actions!.filter(x=>x.more)} i={i} />}</>;
   const button=(x:RowAction,i:number)=>x.hidden?.(i)?null:<button type="button" key={x.label} onClick={()=>x.onClick(i)} className={"row-action "+(x.danger?"danger":"")}>{x.label}</button>;
-  const cell=(value:string,col:number)=>columns[col]?.includes("สถานะ")||badgeCols.includes(col)?<StatusBadge value={value} />:value;
+  const cell=(value:string,col:number,row=-1)=>{const x=render&&row>=0?render(row,col,value):undefined;return x!==undefined?x:value!=="-"&&(columns[col]?.includes("สถานะ")||badgeCols.includes(col))?<StatusBadge value={value} />:value;};
   const blank=<div className="empty-state"><Icon name="search" /><p>{query?"ไม่พบรายการที่ตรงกับคำค้นหา":empty}</p>{query&&<button className="mt-3 text-sm text-plum-700" onClick={()=>{setQuery("");setPage(0);}}>ล้างคำค้นหา</button>}</div>;
-  return <div className="data-table-container"><div className="table-toolbar">{search?<div className="table-search"><Icon name="search" /><input id={searchId} aria-label="ค้นหาในรายการ" placeholder="ค้นหาในรายการ…" value={query} onChange={e=>{setQuery(e.target.value);setPage(0);}} /></div>:<span />}<span className="table-count" aria-live="polite">{filtered.length} รายการ</span></div><div className="table-scroll hidden md:block"><table className="data-table"><thead><tr>{columns.map((c,i)=><th scope="col" key={i}>{c.replace(/\s*\([^)]*\)/g,"")}</th>)}{actions&&<th scope="col" className="cell-actions">จัดการ</th>}</tr></thead><tbody>{shown.length?shown.map(({r,i})=><tr key={i}>{r.map((c,j)=><td key={j}>{cell(c,j)}</td>)}{actions&&<td className="cell-actions"><div className="row-actions">{buttons(i)}</div></td>}</tr>):<tr><td colSpan={columns.length+(actions?1:0)}>{blank}</td></tr>}</tbody></table></div><div className="space-y-3 md:hidden">{shown.length?shown.map(({r,i})=><dl className="mobile-data-row" key={i}>{r.map((c,j)=><div key={j}><dt>{columns[j]?.replace(/\s*\([^)]*\)/g,"")}</dt><dd>{cell(c,j)}</dd></div>)}{actions&&<div className="row-actions border-t border-cream-200 pt-3">{buttons(i)}</div>}</dl>):blank}</div><div className="table-pagination"><span>{filtered.length?(current*PAGE_SIZE+1)+"–"+Math.min((current+1)*PAGE_SIZE,filtered.length)+" จาก "+filtered.length+" รายการ":"0 รายการ"}</span><div className="table-pagination-controls"><button type="button" disabled={current===0} aria-label="หน้าก่อนหน้า" onClick={()=>setPage(current-1)}><Icon name="chevron" className="h-3.5 w-3.5 rotate-90" /></button><span>หน้า {current+1} / {pages}</span><button type="button" disabled={current>=pages-1} aria-label="หน้าถัดไป" onClick={()=>setPage(current+1)}><Icon name="chevron" className="h-3.5 w-3.5 -rotate-90" /></button></div></div></div>;
+  return <div className="data-table-container"><div className="table-toolbar">{search?<div className="table-search"><Icon name="search" /><input id={searchId} aria-label="ค้นหาในรายการ" placeholder="ค้นหาในรายการ…" value={query} onChange={e=>{setQuery(e.target.value);setPage(0);}} /></div>:<span />}<span className="table-count" aria-live="polite">{filtered.length} รายการ</span></div><div className="table-scroll hidden md:block"><table className="data-table"><thead><tr>{columns.map((c,i)=><th scope="col" key={i}>{c.replace(/\s*\([^)]*\)/g,"")}</th>)}{actions&&<th scope="col" className="cell-actions">จัดการ</th>}</tr></thead><tbody>{shown.length?shown.map(({r,i})=><tr key={i}>{r.map((c,j)=><td key={j}>{cell(c,j,i)}</td>)}{actions&&<td className="cell-actions"><div className="row-actions">{buttons(i)}</div></td>}</tr>):<tr><td colSpan={columns.length+(actions?1:0)}>{blank}</td></tr>}</tbody></table></div><div className="space-y-3 md:hidden">{shown.length?shown.map(({r,i})=><dl className="mobile-data-row" key={i}>{r.map((c,j)=><div key={j}><dt>{columns[j]?.replace(/\s*\([^)]*\)/g,"")}</dt><dd>{cell(c,j,i)}</dd></div>)}{actions&&<div className="row-actions border-t border-cream-200 pt-3">{buttons(i)}</div>}</dl>):blank}</div><div className="table-pagination"><span>{filtered.length?(current*PAGE_SIZE+1)+"–"+Math.min((current+1)*PAGE_SIZE,filtered.length)+" จาก "+filtered.length+" รายการ":"0 รายการ"}</span><div className="table-pagination-controls"><button type="button" disabled={current===0} aria-label="หน้าก่อนหน้า" onClick={()=>setPage(current-1)}><Icon name="chevron" className="h-3.5 w-3.5 rotate-90" /></button><span>หน้า {current+1} / {pages}</span><button type="button" disabled={current>=pages-1} aria-label="หน้าถัดไป" onClick={()=>setPage(current+1)}><Icon name="chevron" className="h-3.5 w-3.5 -rotate-90" /></button></div></div></div>;
 }
 
 /** readOnly: ระบบเป็นคนกำหนดค่า (เช่น เลขที่เอกสาร) แสดงอย่างเดียวแม้ในโหมดแก้ไข */

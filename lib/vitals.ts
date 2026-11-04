@@ -55,6 +55,9 @@ export function evaluateVitals(v: Vitals): Flag[] {
   return flags.sort((a, b) => (a.level === b.level ? 0 : a.level === "critical" ? -1 : 1));
 }
 
+/** ช่วงค่าที่เป็นไปได้ · นอกช่วงนี้น่าจะพิมพ์ผิด (เช่น O2 9 แทน 99) ให้ถามยืนยันก่อนบันทึก และขึ้นป้าย "ตรวจค่า" */
+const SANE: Record<keyof Vitals, [number, number]> = { sys: [50, 260], dia: [25, 160], pr: [25, 220], rr: [5, 60], bt: [30, 43], o2: [50, 100], dtx: [20, 700] };
+export const implausible = (v: Vitals) => (Object.keys(SANE) as (keyof Vitals)[]).filter((k) => v[k] !== undefined && (v[k]! < SANE[k][0] || v[k]! > SANE[k][1]));
 export const levelOf = (flags: Flag[]): Level => (flags.some((f) => f.level === "critical") ? "critical" : flags.length ? "watch" : "normal");
 export const LEVEL_TH: Record<Level, string> = { normal: "ปกติ", watch: "เฝ้าระวัง", critical: "ผิดปกติ" };
 export const flagText = (f: Flag) => `${f.label} ${f.value} ${f.unit} (${f.note})`;

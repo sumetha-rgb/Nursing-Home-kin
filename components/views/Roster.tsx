@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Icon from "@/components/Icon";
 import { MetricGrid, Modal, PageHeader, Section, Select } from "@/components/ui";
+import { downloadCsv } from "@/lib/store";
 import RosterCalendar from "@/components/roster/RosterCalendar";
 import { useApp } from "@/lib/app";
 import { useAutoRefresh } from "@/lib/autoRefresh";
@@ -81,12 +82,37 @@ export function Roster() {
     return [...by.values()].sort((a, b) => b.missed - a.missed || b.late - a.late || a.name.localeCompare(b.name));
   })();
   const missedMonth = report.reduce((n, r) => n + r.missed, 0);
+  // วันนี้และวันข้างหน้าของเดือนที่ดู ที่ยังไม่มีคนเข้าเวรครบทั้งเช้าและดึก
+  const [yy, mm] = ym.split("-").map(Number);
+  const monthDays = Array.from({ length: new Date(yy, mm, 0).getDate() }, (_, i) => `${ym}-${String(i + 1).padStart(2, "0")}`).filter((d) => d >= today);
+  const gapDays = monthDays.filter((d) => SHIFTS.some((sh) => !shifts.some((s) => s.date === d && s.shift === sh.key))).length;
+  // ส่งออก CSV ของเดือนที่ดู: ทุกเวร (เช็คชื่อ สาย ขาด) และสรุปรายคน
+  const fileTag = `${ym}${data?.branch ? `-${data.branch}` : ""}`;
+  const exportShifts = () => {
+    const rows = [...shifts].sort((a, b) => a.date.localeCompare(b.date) || a.shift.localeCompare(b.shift) || a.staff_name.localeCompare(b.staff_name)).map((s) => {
+      const a = attendance.find((x) => x.staff_id === s.staff_id && x.date === s.date && x.shift === s.shift && x.kind === "in");
+      const out = attendance.find((x) => x.staff_id === s.staff_id && x.date === s.date && x.shift === s.shift && x.kind === "out");
+      const st = a ? ((a.late_min ?? 0) > 0 ? "สาย" : "ตรงเวลา") : due(s) ? "ขาด (ไม่ได้เช็คชื่อ)" : "ยังไม่ถึงเวลา";
+      return [((d) => `${d[2]}/${d[1]}/${Number(d[0]) + 543}`)(s.date.split("-")), `เวร${s.shift}`, s.staff_name, a?.time ?? "", out?.time ?? "", a && (a.late_min ?? 0) > 0 ? String(a.late_min) : "", st];
+    });
+    downloadCsv(`ตารางเวร-${fileTag}`, ["วันที่", "เวร", "พนักงาน", "เช็คชื่อเข้า", "เช็คชื่อออก", "สาย (นาที)", "สถานะ"], rows);
+    toast(`ส่งออกตารางเวรแล้ว ${rows.length} เวร`);
+  };
+  const exportReport = () => {
+    downloadCsv(`สรุปการมาทำงาน-${fileTag}`, ["พนักงาน", "เวรที่ถึงเวลาแล้ว", "ตรงเวลา", "สาย (ครั้ง)", "สายรวม (นาที)", "ขาด (ครั้ง)", "เช็คชื่อนอกตาราง"],
+      report.map((r) => [r.name, String(r.due), String(r.ontime), String(r.late), String(r.lateMin), String(r.missed), String(r.extra)]));
+    toast(`ส่งออกสรุปรายคนแล้ว ${report.length} คน`);
+  };
   // จัดเวรเฉพาะพยาบาล (พนักงานพยาบาลและหัวหน้าพยาบาล)
   const team = (data?.team ?? []).filter((t) => t.role === "Nurse" || t.role === "Head Nurse");
 
   return (
     <>
-      <PageHeader title="ตารางเวร" sub="ภาพรวมเวรเช้า/ดึกของทั้งเดือน กดวันที่เพื่อจัดคนเข้าเวร และดูรูปถ่ายตอนเช็คชื่อพร้อมวันเวลา" />
+      <PageHeader title="ตารางเวร" sub="กดวันที่เพื่อจัดเวรหรือดูการเช็คชื่อ"
+        actions={<>
+          <button className="btn-soft" disabled={!shifts.length} title="ทุกเวรของเดือนที่ดู พร้อมเวลาเช็คชื่อ สาย ขาด" onClick={exportShifts}><Icon name="download" className="h-4 w-4" /> ส่งออกตารางเวร</button>
+          <button className="btn-soft" disabled={!report.length} title="สรุปการมาทำงานรายคนของเดือนที่ดู" onClick={exportReport}><Icon name="download" className="h-4 w-4" /> ส่งออกสรุปรายคน</button>
+        </>} />
       {isGlobal && (
         <div className="mb-4 max-w-xs">
           <Select aria-label="เลือกสาขา" options={branches} value={branch} onChange={setBranch} />
@@ -98,12 +124,13 @@ export function Roster() {
         { label: "เข้างานสายเดือนนี้", value: lateMonth, unit: "ครั้ง", icon: "history", note: "เกิน 15 นาทีจากเวลาเริ่มเวร" },
         { label: "ขาดงานเดือนนี้", value: missedMonth, unit: "ครั้ง", icon: "alert", note: "ถึงเวลาเข้าเวรแล้วไม่ได้เช็คชื่อ" },
       ]} />
-      <Section title={`ตารางเวร${data?.branch ? ` · สาขา${data.branch}` : ""}`} sub="กดวันที่เพื่อจัดเวรหรือดูการเช็คชื่อ">
+      <Section title={`ตารางเวร${data?.branch ? ` · สาขา${data.branch}` : ""}`}
+        actions={data && monthDays.length > 0 ? <span className={`rounded-full px-3 py-1 text-sm font-semibold ${gapDays ? "bg-red-50 text-red-800" : "bg-emerald-50 text-emerald-800"}`}>{gapDays ? `ยังจัดเวรไม่ครบ ${gapDays} วัน` : "จัดเวรครบทุกวันแล้ว"}</span> : undefined}>
         {error && <p role="alert" className="form-error mb-3"><Icon name="alert" className="h-4 w-4 shrink-0" />{error}</p>}
-        <RosterCalendar ym={ym} onMonth={setYm} shifts={shifts} attendance={attendance} today={today} selected={day} onDay={openDay} />
+        <RosterCalendar ym={ym} onMonth={setYm} shifts={shifts} attendance={attendance} today={today} selected={day} onDay={openDay} gaps={!!data} />
       </Section>
 
-      <Section title="สรุปการมาทำงานรายคน" sub="นับเฉพาะเวรที่ถึงเวลาเข้างานแล้ว · ชื่อสีแดง = ขาด 2 ครั้งขึ้นไปในเดือนนี้ · เรียงคนที่ขาดและสายมากที่สุดขึ้นก่อน">
+      <Section title="สรุปการมาทำงานรายคน" sub="ชื่อสีแดง = ขาด 2 ครั้งขึ้นไปในเดือนนี้">
         {report.length ? <div className="overflow-x-auto rounded-2xl border border-cream-300">
           <table className="data-table w-full min-w-[640px]">
             <thead><tr><th scope="col">พนักงาน</th><th scope="col">เวรที่ถึงเวลาแล้ว</th><th scope="col">ตรงเวลา</th><th scope="col">สาย</th><th scope="col">ขาด</th><th scope="col">เช็คชื่อนอกตาราง</th></tr></thead>

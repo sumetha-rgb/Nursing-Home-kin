@@ -259,7 +259,9 @@ export function useRecords<T extends { id: string | number }>(key: string, initi
 }
 
 export function downloadCsv(name: string, columns: string[], rows: string[][]) {
-  const esc = (v: string) => `"${String(v).replace(/"/g, '""')}"`;
+  // ค่าที่ขึ้นต้นด้วย = + @ หรือ - ตามด้วยตัวอักษร Excel จะตีความเป็นสูตร (CSV injection) · ใส่ ' นำหน้า
+  const safe = (v: string) => (/^[=+@\t\r]/.test(v) || /^-[^\d.]/.test(v) ? `'${v}` : v);
+  const esc = (v: string) => `"${safe(String(v ?? "")).replace(/"/g, '""')}"`;
   const csv = "﻿" + [columns, ...rows].map((r) => r.map(esc).join(",")).join("\r\n");
   const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
   const a = document.createElement("a");

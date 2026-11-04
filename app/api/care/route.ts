@@ -13,13 +13,14 @@ export const fetchCache = "force-no-store";
  *  GET  ?op=residents           รายชื่อผู้รับบริการ (KinApp / ตัวเลือกชื่อ)
  *  GET  ?op=profile&id=…        ประวัติรายบุคคล: สัญญาณชีพ ยา การให้ยา นัดหมาย งานดูแล ส่งเวร แจ้งเตือน
  *  GET  ?op=nurses              รายชื่อพยาบาล/ทีมดูแลของสาขา (ตัวเลือกผู้ดูแลในนัดหมาย)
+ *  GET  ?op=allergies           ประวัติแพ้ยา/อาหารจากสัญญาล่าสุดของแต่ละคน (ป้าย "แพ้ยา" ในทะเบียนผู้รับบริการ) · ไม่มีข้อมูลอื่นของสัญญา
  *  GET  ?op=family_updates&resident=…  อัปเดตที่ส่งถึงครอบครัวของผู้รับบริการคนนี้
  *  GET  ?op=family_updates_all    ข่าวที่ทีมส่งถึงญาติ ล่าสุด 150 รายการของสาขา (ผู้จัดการ/หัวหน้าพยาบาล ตรวจสอบ)
  *  GET  ?op=family_update_photo&id=…  รูปของข่าวนั้น
  *  POST { op: "family_update", residentId, text?, photo? }  พยาบาลส่งข้อความ/รูปถึงครอบครัว (ขึ้นในสมุดภาพของญาติ)
  *  POST { op: "family_update_delete", id }  ลบอัปเดตที่ส่งไป (คนส่งเอง หรือผู้ที่มีสิทธิ์ผู้รับบริการ)
  *  GET  ?op=alerts              แจ้งเตือนสัญญาณชีพที่ยังไม่มีคนรับทราบ
- *  POST { op: "ack", id, note } รับทราบแจ้งเตือน (บันทึกประวัติการแก้ไข)
+ *  POST { op: "ack", id, note } รับทราบแจ้งเตือน (บันทึกประวัติการใช้งาน)
  *  GET  ?op=routines            งานประจำ (ทำซ้ำทุกวัน) ที่ยังใช้อยู่
  *  POST { op: "routines_add", items: [{ resident, task, ins, shift, time }] }  เพิ่มงานประจำ (ผู้จัดการขึ้นไป)
  *  POST { op: "routine_stop", id }  หยุดทำซ้ำ
@@ -28,11 +29,12 @@ export const fetchCache = "force-no-store";
  *  GET  ?op=task_photo&id=…      รูปหลักฐานของงานประจำวัน (ผู้จัดการเปิดตอนตรวจงาน)
  *  POST { op: "task_photo", id, photo, share? }  แนบรูปหลักฐานตอนส่งงานจาก KinApp (share = แชร์ให้ครอบครัว)
  *  POST { op: "task_review", id, stars, note? }  ผู้จัดการให้ดาวตอนตรวจงาน (ใช้คิด KPI)
+ *  GET  ?op=my_reviews          ผลตรวจงานที่ฉันส่ง ย้อนหลัง 7 วัน (ดาว ความเห็น ผู้ตรวจ) · KinApp
  *  POST { op: "task_share", id, share }  ผู้จัดการซ่อน/แสดงรูปในสมุดภาพของครอบครัว
  *  GET  ?op=facility[&mine=1]    งานส่วนกลางของสาขา + ทำล่าสุด + ถึงรอบหรือยัง (ทุกวัน / ทุกสัปดาห์ / ทุกเดือน)
  *                                mine=1 (KinApp): งานแบบมอบหมายขึ้นเฉพาะคนที่ได้รับมอบหมาย
  *  GET  ?op=facility_photo&id=…  รูปหลักฐานงานส่วนกลาง (บันทึกนั้น)
- *  GET  ?op=facility_history&id=…&month=YYYY-MM  ทุกครั้งที่ทำงานนี้ในเดือนนั้น (ผู้มีสิทธิ์เมนูงานทั่วไปของสาขา)
+ *  GET  ?op=facility_history&id=…&month=YYYY-MM  ทุกครั้งที่ทำงานนี้ในเดือนนั้น (ผู้มีสิทธิ์เมนูงานส่วนกลางของสาขา)
  *  POST { op: "facility_done", taskId, photo, note? }  พยาบาลทำงานส่วนกลางแล้ว (รอบละครั้ง · นับใน KPI)
  *  POST { op: "facility_assign", taskId, assignee, branch? }  มอบหมายคนรับผิดชอบงานแบบมอบหมายของสาขา (assignee ว่าง = ยกเลิก)
  */
@@ -57,7 +59,7 @@ async function profile(me: SessionUser, id: string) {
   if (scoped(me) && r.branch_name !== me.branch) return "forbidden";
   const p = [r.id, r.full_name];
   const q = (text: string) => sql(text, p) as Promise<Record<string, unknown>[]>;
-  const [health, daily, meds, packs, appts, tasks, handovers, alerts, contracts, plans, stockMeds] = await Promise.all([
+  const [health, daily, meds, packs, appts, tasks, handovers, alerts, contracts, plans, stockMeds, care] = await Promise.all([
     q(`SELECT id, recorded_at::text AS at, vital_signs, o2_sat, dtx, weight_height, note, recorded_by FROM health_logs WHERE ${MINE} ORDER BY recorded_at DESC NULLS LAST LIMIT 90`),
     q(`SELECT id, work_date::text AS work_date, scheduled_time::text AS time, task_name, assignee, shift, status, vital_signs FROM daily_tasks WHERE ${MINE} ORDER BY work_date DESC, scheduled_time DESC LIMIT 40`),
     q(`SELECT id, drug_name, indication, dose, unit, timing, meals, stock, on_hold, status, warnings, needs_fridge, source FROM resident_medications WHERE ${MINE} ORDER BY on_hold, drug_name`),
@@ -74,8 +76,11 @@ async function profile(me: SessionUser, id: string) {
         to_char(m.created_at AT TIME ZONE 'Asia/Bangkok', 'DD/MM/') || (extract(year FROM m.created_at AT TIME ZONE 'Asia/Bangkok')::int + 543) || to_char(m.created_at AT TIME ZONE 'Asia/Bangkok', ' HH24:MI') AS at
       FROM stock_moves m JOIN stock_drugs d ON d.id = m.drug_id WHERE m.resident_id = $1 AND m.reason = 'เบิกให้ผู้ป่วย'
       GROUP BY m.created_at, d.name, d.unit, m.moved_by, m.note, m.med_id ORDER BY m.created_at DESC LIMIT 60`, [r.id]) as Promise<Record<string, unknown>[]>,
+    // ข้อมูลสำคัญสำหรับการดูแลจากสัญญาล่าสุด (ทีมดูแลทุกคนเห็น) · ไม่ส่งเลขบัตร ที่อยู่ หรือยอดเงิน
+    q(`SELECT drug_allergy, food_allergy, regular_meds, hospital, hospital_alt, employer_name, relationship, employer_phone FROM contracts
+        WHERE ${MINE} AND coalesce(status, '') <> 'ยกเลิกสัญญา' ORDER BY created_at DESC LIMIT 1`),
   ]);
-  return { resident: r, health, daily, meds, packs, appts, tasks, handovers, alerts, contracts, plans, stockMeds };
+  return { resident: r, health, daily, meds, packs, appts, tasks, handovers, alerts, contracts, plans, stockMeds, careInfo: care[0] ?? null };
 }
 
 export async function GET(req: NextRequest) {
@@ -123,6 +128,20 @@ export async function GET(req: NextRequest) {
         if (!r) return bad("ไม่พบบันทึก", 404);
         if (scoped(me) && r.branch_name !== me.branch) return forbidden();
         return NextResponse.json({ photo: r.photo });
+      }
+      case "my_reviews": {
+        const rows = await sql(`SELECT id, work_date::text AS date, task_name AS task, resident_name AS name, review_stars AS stars, review_note AS note, reviewed_by AS by,
+            to_char(reviewed_at AT TIME ZONE 'Asia/Bangkok', 'DD/MM HH24:MI') AS at
+          FROM daily_tasks WHERE done_by = $1 AND review_stars IS NOT NULL AND work_date >= (now() AT TIME ZONE 'Asia/Bangkok')::date - 6
+          ORDER BY (review_stars <= 2) DESC, reviewed_at DESC NULLS LAST LIMIT 30`, [me.name]);
+        return NextResponse.json({ items: rows });
+      }
+      case "allergies": {
+        if (!can(me, "residents")) return forbidden();
+        const rows = await sql(`SELECT DISTINCT ON (resident_name, branch_name) resident_name AS name, branch_name AS branch, drug_allergy AS drug, food_allergy AS food
+            FROM contracts WHERE coalesce(status, '') <> 'ยกเลิกสัญญา' ${scoped(me) ? "AND branch_name = $1" : ""}
+            ORDER BY resident_name, branch_name, created_at DESC`, scoped(me) ? [me.branch] : []);
+        return NextResponse.json({ items: rows });
       }
       case "residents": {
         const rows = scoped(me)
@@ -249,7 +268,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, id });
   }
   if (b.op === "facility_assign") {
-    if (!can(me, "facility_tasks")) return forbidden("มอบหมายได้เฉพาะผู้ที่มีสิทธิ์เมนูงานทั่วไปของสาขา");
+    if (!can(me, "facility_tasks")) return forbidden("มอบหมายได้เฉพาะผู้ที่มีสิทธิ์เมนูงานส่วนกลางของสาขา");
     const branch = scoped(me) ? me.branch : String(b.branch ?? "").trim();
     if (!branch || branch === "ทุกสาขา") return bad("กรุณาเลือกสาขา");
     const [f] = (await sql`SELECT id, task_name, branch_name FROM facility_tasks WHERE id = ${String(b.taskId ?? "")}`) as Record<string, string>[];

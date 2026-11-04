@@ -3,11 +3,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Icon from "../Icon";
 import { MASTER_TASKS } from "@/lib/mock";
 import { useCrud } from "@/lib/store";
+import { taskHandoff } from "@/lib/handoff";
 import { useApp } from "@/lib/app";
 import { fetchNurses, useResidents } from "@/lib/care";
 import { fetchMonth, Month } from "@/lib/roster";
 import { staying } from "@/lib/rooms";
-import { DataTable, Field, FieldDef, FormDialog, MetricGrid, Modal, PageHeader, Section, Select, Tabs, TimeInput } from "../ui";
+import { DataTable, Field, FieldDef, FormDialog, MetricGrid, Modal, PageHeader, Section, StatusBadge, Tabs, TimeInput } from "../ui";
 
 /**
  * งานประจำวัน: ผู้จัดการมอบหมายงาน → ขึ้นใน "งานวันนี้" ของ KinApp → พนักงานส่งงาน → ผู้จัดการตรวจ
@@ -19,6 +20,20 @@ const COLS = ["มอบหมายเมื่อ", "ผู้รับบร�
 const ANYONE = "ทุกคนในเวร (ไม่ระบุคน)";
 const owner = (r: string[]) => (r[10] && r[10] !== "-" ? `${r[10]} (ส่งแล้ว)` : r[2] && r[2] !== "-" ? r[2] : `ทีม${r[4] || "เวร"}`);
 const SHIFTS = ["ทั้งหมด", "กะเช้า", "กะดึก"];
+/**
+ * สถานะที่แสดงในหน้านี้ (ข้อมูลจริงยังเป็น รอทำ / เสร็จแล้ว / ตรวจแล้ว)
+ *  เลยเวลา = แดง (เลยเวลาที่กำหนดเกิน LATE_MIN นาทียังไม่ส่ง) · ยังไม่ได้ทำ = เทา · ส่งแล้ว รอตรวจ = ส้ม · ตรวจแล้ว = เขียว
+ */
+const LATE_MIN = 30;
+type Phase = "late" | "todo" | "review" | "done";
+const PHASE_TEXT: Record<Phase, string> = { late: "เลยเวลา ยังไม่ได้ทำ", todo: "ยังไม่ได้ทำ", review: "ส่งแล้ว รอตรวจ", done: "ตรวจแล้ว" };
+const STAT_FILTERS: { k: Phase | ""; t: string }[] = [
+  { k: "", t: "ทุกสถานะ" },
+  { k: "late", t: "เลยเวลา" },
+  { k: "review", t: "ยังไม่ได้ตรวจ" },
+  { k: "todo", t: "ยังไม่ได้ทำ" },
+  { k: "done", t: "ตรวจแล้ว" },
+];
 const SHIFT_TIME: Record<string, string> = { กะเช้า: "08:00", กะดึก: "20:00" };
 /** เวลาที่มอบหมาย (ระบบบันทึกเอง) · "dd/mm/yyyy HH:MM" → เทียบเรียงด้วย yyyy-mm-dd HH:MM */
 const stamp = (r: string[]) => { const m = String(r[11] ?? "").match(/^(\d{2})\/(\d{2})\/(\d{4}) (\d{2}:\d{2})/); return m ? `${m[3]}-${m[2]}-${m[1]} ${m[4]}` : "9999"; };
@@ -32,10 +47,28 @@ const thaiDate = (iso: string) =>
   iso ? new Date(iso + "T00:00:00").toLocaleDateString("th-TH", { year: "numeric", month: "long", day: "numeric", weekday: "long" }) : "";
 const shiftOf = (time: string) => { const h = Number(time.slice(0, 2)); return h >= 7 && h < 19 ? "กะเช้า" : "กะดึก"; };
 
+/** หน้าต่างตรวจงาน: ระดับดาว และข้อความสำเร็จรูป (กดแล้วต่อท้ายความคิดเห็น) */
+const STAR_TEXT = ["", "ไม่ผ่าน ต้องทำใหม่", "ต้องปรับปรุง", "พอใช้", "ดี", "ดีมาก"];
+const QUICK_NOTES = ["ทำครบตามคำสั่ง", "ส่งตรงเวลา", "รูปหลักฐานชัดเจน", "รูปไม่ชัด ครั้งหน้าถ่ายใหม่", "ส่งช้ากว่ากำหนด", "บันทึกไม่ครบ"];
+const filled = (x?: string) => (x && x.trim() && x.trim() !== "-" ? x.trim() : "");
+/** ส่งจริงเทียบเวลาที่กำหนด (นาที) · ข้ามเที่ยงคืนได้ · อ่านเวลาไม่ได้ = null */
+const lateBy = (sched: string, sent: string) => {
+  const m = (t: string) => { const x = String(t ?? "").match(/(\d{1,2})[:.](\d{2})(?!.*\d{1,2}[:.]\d{2})/); return x ? Number(x[1]) * 60 + Number(x[2]) : null; };
+  const a = m(sched), b = m(sent);
+  if (a === null || b === null) return null;
+  let d = b - a; if (d < -720) d += 1440; if (d > 720) d -= 1440;
+  return d;
+};
+
 export function DailyTasks() {
   const [date, setDate] = useState(todayIso);
   const [shift, setShift] = useState("ทั้งหมด");
   const [kind, setKind] = useState("ทั้งหมด"); // งานประจำ (ระบบสร้างทุกวัน) / งานรายครั้ง
+  // กรองสถานะ: เลยเวลา / ยังไม่ได้ตรวจ / ยังไม่ได้ทำ / ตรวจแล้ว · มาจากการ์ดหน้าแรกเปิดตัวกรองไว้ให้
+  const [stat, setStat] = useState<Phase | "">(() => (taskHandoff.take() as Phase | null) ?? "");
+  // เวลาปัจจุบัน (อัปเดตทุกนาที ให้งานที่เลยเวลาเปลี่ยนเป็นสีแดงเอง)
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 60_000); return () => clearInterval(t); }, []);
   // งานแยกตามวันที่ · วันที่ยังไม่มีงานจะว่าง (ไม่ใส่ข้อมูลตัวอย่างให้เอง) สร้างจากคลังงานหรือคัดลอกจากวันก่อน
   const { rows, ids, add, update, remove } = useCrud(`daily-${date}`, []);
   const { rows: master } = useCrud("master", MASTER_TASKS);
@@ -76,13 +109,25 @@ export function DailyTasks() {
   // งานประจำ = มีรายการทำซ้ำของผู้รับบริการ + งาน + กะ เดียวกัน
   const routine = (r: string[]) => routines.some((x) => x.resident_name === r[0] && x.task_name === r[1] && x.shift === r[4]);
   const kindOf = (r: string[]) => (routine(r) ? "งานประจำ" : "งานรายครั้ง");
-  const shown = rows.map((r, k) => ({ r, k })).filter(({ r }) => (shift === "ทั้งหมด" || r[4] === shift) && (kind === "ทั้งหมด" || kindOf(r) === kind))
+  /** เวลาที่ต้องทำงาน · งานกะดึกหลังเที่ยงคืน (ก่อน 07:00) เป็นของวันถัดไป */
+  const dueAt = (r: string[]) => {
+    const m = String(r[3] ?? "").match(/^(\d{1,2}):(\d{2})/);
+    if (!m) return null;
+    const d = new Date(`${date}T00:00:00`);
+    if (r[4] === "กะดึก" && Number(m[1]) < 7) d.setDate(d.getDate() + 1);
+    d.setHours(Number(m[1]), Number(m[2]), 0, 0);
+    return d.getTime();
+  };
+  const phase = (r: string[]): Phase => (r[5] === "ตรวจแล้ว" ? "done" : r[5] === "เสร็จแล้ว" ? "review" : (dueAt(r) ?? Infinity) + LATE_MIN * 60e3 < now ? "late" : "todo");
+  const base = rows.map((r, k) => ({ r, k })).filter(({ r }) => (shift === "ทั้งหมด" || r[4] === shift) && (kind === "ทั้งหมด" || kindOf(r) === kind));
+  const statCount = (k: Phase | "") => base.filter(({ r }) => !k || phase(r) === k).length;
+  const shown = base.filter(({ r }) => !stat || phase(r) === stat)
     // มอบหมายล่าสุดอยู่บนสุด (งานที่ยังไม่บันทึกขึ้นระบบ = เพิ่งมอบหมาย) · มอบหมายพร้อมกันเรียงตามเวลางาน
     .sort((a, b) => stamp(b.r).localeCompare(stamp(a.r)) || String(a.r[3]).localeCompare(String(b.r[3])));
-  const checked = shown.filter(({ r }) => r[5] === "ตรวจแล้ว").length;
-  const pending = shown.filter(({ r }) => r[5] === "เสร็จแล้ว").length;
-  const waiting = shown.filter(({ r }) => r[5] === "รอทำ").length;
-  const pct = shown.length ? Math.round((checked / shown.length) * 100) : 0;
+  const checked = statCount("done");
+  const pending = statCount("review");
+  const waiting = statCount("todo") + statCount("late");
+  const pct = base.length ? Math.round((checked / base.length) * 100) : 0;
   const count = (s: string) => rows.filter((r) => s === "ทั้งหมด" || r[4] === s).length;
   const kindCount = (s: string) => rows.filter((r) => (shift === "ทั้งหมด" || r[4] === shift) && (s === "ทั้งหมด" || kindOf(r) === s)).length;
   const cur = i !== null ? rows[i] : null;
@@ -151,7 +196,7 @@ export function DailyTasks() {
     <>
       <PageHeader
         title="มอบหมายและตรวจงาน"
-        sub="มอบหมายงานให้ทีมดูแล งานจะขึ้นใน KinApp ของพนักงาน ส่งงานแล้วกลับมาให้ตรวจที่หน้านี้"
+        sub="งานของทีมดูแล · ส่งแล้วตรวจที่หน้านี้"
         actions={<>
           <button className="btn-soft" onClick={() => { loadRoutines(); setRoutineOpen(true); }}><Icon name="refresh" className="h-4 w-4" /> งานประจำ ({routines.length})</button>
           <button className="btn-soft" onClick={copyPrev}><Icon name="files" className="h-4 w-4" /> คัดลอกงานจากวันก่อน</button>
@@ -169,17 +214,24 @@ export function DailyTasks() {
         <p className="text-sm text-gold-600">{thaiDate(date)} <span className="text-gold-500">· ตัดกะ 07:00 น.</span></p>
       </div>
 
-      <MetricGrid items={[{ label: "งานในกะที่เลือก", value: shown.length, unit: "งาน", accent: true, icon: "check" }, { label: "รอพนักงานทำ", value: waiting, unit: "งาน", icon: "calendar" }, { label: "ส่งแล้ว รอผู้จัดการตรวจ", value: pending, unit: "งาน", icon: "search" }, { label: "ตรวจเรียบร้อย", value: checked, unit: "งาน", icon: "check", note: `ความคืบหน้า ${pct}%` }]} />
+      <MetricGrid items={[{ label: "งานในกะที่เลือก", value: base.length, unit: "งาน", accent: true, icon: "check" }, { label: "รอพนักงานทำ", value: waiting, unit: "งาน", icon: "calendar" }, { label: "ส่งแล้ว รอผู้จัดการตรวจ", value: pending, unit: "งาน", icon: "search" }, { label: "ตรวจเรียบร้อย", value: checked, unit: "งาน", icon: "check", note: `ความคืบหน้า ${pct}%` }]} />
       <div className="mt-6">
         <Section title="รายการงาน" actions={<div className="flex flex-wrap gap-2">
           <Tabs tabs={["ทั้งหมด", "งานประจำ", "งานรายครั้ง"].map((s) => `${s === "ทั้งหมด" ? "ทุกประเภท" : s} (${kindCount(s)})`)} value={`${kind === "ทั้งหมด" ? "ทุกประเภท" : kind} (${kindCount(kind)})`} onChange={(t) => { const v = t.split(" (")[0]; setKind(v === "ทุกประเภท" ? "ทั้งหมด" : v); }} />
           <Tabs tabs={SHIFTS.map((s) => `${s} (${count(s)})`)} value={`${shift} (${count(shift)})`} onChange={(t) => setShift(t.split(" (")[0])} />
         </div>}>
+          <div className="stat-filter" role="radiogroup" aria-label="กรองตามสถานะ">
+            {STAT_FILTERS.map((f) => (
+              <button key={f.t} type="button" role="radio" aria-checked={stat === f.k} className={`is-${f.k || "all"} ${stat === f.k ? "is-on" : ""}`} onClick={() => setStat(f.k)}>
+                {f.k && <i aria-hidden />}{f.t} <b>{statCount(f.k)}</b>
+              </button>
+            ))}
+          </div>
           <DataTable
             columns={COLS}
-            rows={shown.map(({ r }) => [assignedAt(r), r[0], r[1], kindOf(r), owner(r), r[3], r[4], r[5]])}
-            badgeCols={[3]}
-            empty="ยังไม่มีงานของวันนี้ · กด &quot;มอบหมายจากแม่แบบงานมาตรฐาน&quot; หรือ &quot;คัดลอกงานจากวันก่อน&quot;"
+            rows={shown.map(({ r }) => [assignedAt(r), r[0], r[1], kindOf(r), owner(r), r[3], r[4], PHASE_TEXT[phase(r)]])}
+            render={(_, col, v) => (col === 3 ? <span className={`kind-badge ${v === "งานประจำ" ? "is-routine" : "is-once"}`}>{v === "งานประจำ" ? <><Icon name="refresh" className="h-3 w-3" />งานประจำ</> : "งานรายครั้ง"}</span> : undefined)}
+            empty={stat ? `ไม่มีงานที่${STAT_FILTERS.find((f) => f.k === stat)?.t} ในกะที่เลือก` : "ยังไม่มีงานของวันนี้ · กด \"มอบหมายจากแม่แบบงานมาตรฐาน\" หรือ \"คัดลอกงานจากวันก่อน\""}
             actions={[
               { label: "ตรวจงาน", onClick: (n) => { setI(shown[n].k); setStar("5"); setNote(""); } },
               { label: "มอบหมายคน", onClick: (n) => { const r = rows[shown[n].k]; setWho({ k: shown[n].k, v: r[2] && r[2] !== "-" ? r[2] : ANYONE }); } },
@@ -259,8 +311,8 @@ export function DailyTasks() {
       <Modal
         open={cur !== null} wide title="ตรวจสอบผลการปฏิบัติงาน" onClose={() => setI(null)}
         footer={<>
-          <button className="btn-soft" onClick={() => setI(null)}>ยกเลิก</button>
-          <button className="btn-primary" onClick={() => {
+          <button className={cur?.[5] === "รอทำ" ? "btn-primary" : "btn-soft"} onClick={() => setI(null)}>{cur?.[5] === "รอทำ" ? "ปิด" : "ยกเลิก"}</button>
+          {cur?.[5] !== "รอทำ" && <button className="btn-primary" onClick={() => {
             if (i === null || !cur) return;
             if (cur[5] === "รอทำ") { toast("งานนี้พนักงานยังไม่ได้ส่ง ยังตรวจไม่ได้"); return; }
             update(i, cur.map((c, j) => (j === 5 ? "ตรวจแล้ว" : c)));
@@ -269,25 +321,39 @@ export function DailyTasks() {
               .then((r) => toast(r.ok ? `บันทึกผลการตรวจแล้ว · ${star} ดาวนับเข้า KPI ของ${cur[10] && cur[10] !== "-" ? cur[10] : "พนักงาน"}` : "เปลี่ยนสถานะแล้ว แต่บันทึกดาวไม่สำเร็จ"))
               .catch(() => toast("เปลี่ยนสถานะแล้ว แต่บันทึกดาวไม่สำเร็จ"));
             setI(null);
-          }}>บันทึกผลการตรวจ</button>
+          }}>{cur?.[5] === "ตรวจแล้ว" ? "บันทึกผลการตรวจใหม่" : "บันทึกผลการตรวจ"}</button>}
         </>}
       >
-        {cur && (
+        {cur && (() => {
+          const notSent = cur[5] === "รอทำ";
+          const doer = filled(cur[10]) || filled(cur[2]) || `ทีม${cur[4] || "เวร"}`;
+          const late = notSent ? null : lateBy(cur[3], cur[8]);
+          return (
           <div className="space-y-5">
-            <dl className="grid gap-3 rounded-xl bg-cream-50 p-4 text-sm sm:grid-cols-2">
-              <div><dt className="text-gold-500">ผู้รับบริการ</dt><dd className="font-medium">{cur[0]}</dd></div>
-              <div><dt className="text-gold-500">ชื่องาน</dt><dd className="font-medium">{cur[1]}</dd></div>
-              <div className="sm:col-span-2"><dt className="text-gold-500">คำสั่งงาน</dt><dd className="font-medium">{cur[6]}</dd></div>
-              <div className="sm:col-span-2"><dt className="text-gold-500">บันทึกจากผู้ทำ</dt><dd className="font-medium">{cur[9] || "-"}</dd></div>
-              <div className="sm:col-span-2"><dt className="text-gold-500">บันทึกค่าสัญญาณชีพ (Vital Signs)</dt><dd className="font-medium">{cur[7]}</dd></div>
-              <div><dt className="text-gold-500">ผู้ปฏิบัติงาน</dt><dd className="font-medium">{cur[10] && cur[10] !== "-" ? cur[10] : cur[2]}</dd></div>
-              <div><dt className="text-gold-500">เวลาที่กำหนด</dt><dd className="font-medium">{cur[3]} ({cur[4]})</dd></div>
-              <div><dt className="text-gold-500">เวลาที่ส่งจริง</dt><dd className="font-medium">{cur[8]}</dd></div>
-              <div><dt className="text-gold-500">สถานะ</dt><dd className="font-medium">{cur[5]}</dd></div>
-            </dl>
-            {cur[5] !== "รอทำ" && (
+            {/* หัวสรุป: ผู้รับบริการ งาน สถานะ แล้วแถวเวลา/ผู้ทำ */}
+            <div className="review-head">
+              <div className="min-w-0">
+                <p className="review-who">{cur[0]}</p>
+                <h3>{cur[1]}</h3>
+              </div>
+              <StatusBadge value={PHASE_TEXT[phase(cur)]} />
+            </div>
+            <div className="review-meta">
+              <div><span>ผู้ปฏิบัติงาน</span><b>{doer}</b></div>
+              <div><span>เวลาที่กำหนด</span><b>{cur[3]} น. · {cur[4]}</b></div>
+              <div><span>ส่งงานเมื่อ</span><b>{notSent ? "ยังไม่ส่ง" : filled(cur[8]) ? `${cur[8]} น.` : "-"}</b>
+                {late !== null && <em className={late > 15 ? "is-late" : "is-ok"}>{late > 15 ? `ช้า ${late} นาที` : "ตรงเวลา"}</em>}</div>
+            </div>
+            {filled(cur[6]) && <div className="review-order"><span>คำสั่งงาน</span><p>{cur[6]}</p></div>}
+
+            {notSent ? (
+              <p role="status" className="review-wait"><Icon name="calendar" className="h-5 w-5 shrink-0" /><span><b>พนักงานยังไม่ได้ส่งงานนี้</b>ตรวจได้หลังพนักงานกดส่งงานใน KinApp · ถ้าเลยเวลาแล้ว ลองกด &quot;มอบหมายคน&quot; เพื่อระบุคนรับผิดชอบ</span></p>
+            ) : (<div className="review-cols">
+            <section className="review-sec">
+              <h4>สิ่งที่พนักงานส่งมา</h4>
+              {filled(cur[9]) && <blockquote className="review-quote">{cur[9]}</blockquote>}
+              {filled(cur[7]) && <div className="review-order"><span>สัญญาณชีพ (Vital Signs)</span><p>{cur[7]}</p></div>}
               <div>
-                <p className="label">รูปหลักฐานจากผู้ปฏิบัติงาน</p>
                 {shot === null ? <p className="text-sm text-gold-500">กำลังโหลดรูป…</p>
                   : shot.photo ? (<>
                     <button type="button" className={`task-proof ${big ? "is-big" : ""}`} onClick={() => setBig(!big)}>
@@ -299,14 +365,35 @@ export function DailyTasks() {
                       const share = e.target.checked;
                       const r = await fetch("/api/care", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "task_share", id: curId, share }) });
                       if (r.ok) { setShot({ ...shot, share }); toast(share ? "แสดงรูปนี้ในสมุดภาพของครอบครัวแล้ว" : "ซ่อนรูปนี้จากครอบครัวแล้ว"); } else toast("เปลี่ยนการแชร์ไม่สำเร็จ");
-                    }} /><span><b>แสดงในสมุดภาพของครอบครัว</b><small>เอาติ๊กออกเพื่อซ่อนรูปนี้จากญาติ (บันทึกในประวัติการแก้ไข)</small></span></label>
-                  </>) : <p className="rounded-xl bg-cream-50 px-4 py-3 text-sm text-gold-600">งานนี้ไม่มีรูปหลักฐาน (ส่งก่อนระบบเก็บรูป หรืออัปโหลดไม่สำเร็จ)</p>}
+                    }} /><span><b>แสดงในสมุดภาพของครอบครัว</b><small>เอาติ๊กออกเพื่อซ่อนรูปนี้จากญาติ (บันทึกในประวัติการใช้งาน)</small></span></label>
+                  </>) : <p className="rounded-xl bg-cream-50 px-4 py-3 text-sm text-gold-600">ไม่มีรูปหลักฐาน (ส่งก่อนระบบเก็บรูป หรืออัปโหลดไม่สำเร็จ)</p>}
+                {!filled(cur[9]) && !filled(cur[7]) && shot && !shot.photo && <p className="mt-2 text-xs text-gold-500">พนักงานไม่ได้เขียนบันทึกเพิ่ม</p>}
               </div>
-            )}
-            <Field label="ให้ดาว (ความพึงพอใจ)"><Select options={["5", "4", "3", "2", "1"]} value={star} onChange={setStar} /></Field>
-            <Field label="ความคิดเห็น / ข้อเสนอแนะ"><textarea rows={3} value={note} onChange={(e) => setNote(e.target.value)} /></Field>
+            </section>
+
+            <section className="review-sec">
+              <h4>ผลการตรวจ</h4>
+              <div className="review-rate" role="radiogroup" aria-label="ให้ดาว">
+                {[1, 2, 3, 4, 5].map((n) => (
+                  <button key={n} type="button" role="radio" aria-checked={star === String(n)} aria-label={`${n} ดาว · ${STAR_TEXT[n]}`}
+                    className={Number(star) >= n ? "is-on" : ""} onClick={() => setStar(String(n))}><Icon name="star" className="h-8 w-8" /></button>
+                ))}
+                <span className="review-star-text"><b>{star} ดาว</b> · {STAR_TEXT[Number(star)]}</span>
+              </div>
+              <p className="text-xs text-gold-500">ดาวนับเข้า KPI ของ {doer}</p>
+              <div className="flex flex-wrap gap-1.5">
+                {QUICK_NOTES.map((q) => {
+                  const on = note.includes(q);
+                  return <button key={q} type="button" aria-pressed={on} className={`review-chip ${on ? "is-on" : ""}`}
+                    onClick={() => setNote(on ? note.replace(q, "").replace(/\s*·\s*·\s*/g, " · ").replace(/^\s*·\s*|\s*·\s*$/g, "").trim() : note.trim() ? `${note.trim()} · ${q}` : q)}>{on ? "✓ " : "+ "}{q}</button>;
+                })}
+              </div>
+              <textarea rows={3} value={note} onChange={(e) => setNote(e.target.value)} aria-label="ความคิดเห็น / ข้อเสนอแนะ" placeholder="ความคิดเห็นถึงพนักงาน (ไม่บังคับ) · กดข้อความด้านบนเพื่อเติมเร็ว" />
+            </section>
+            </div>)}
           </div>
-        )}
+          );
+        })()}
       </Modal>
     </>
   );

@@ -36,6 +36,16 @@ function fieldRows(l: Log) {
     .filter(({ b, a }) => (l.before && l.after ? normValue(b) !== normValue(a) : normValue(l.after ? a : b) !== ""));
 }
 
+/** สรุปการแก้ไขในแถว: "ช่อง ก่อน → หลัง" สูงสุด 2 ช่อง (ดูครบในรายละเอียด) · เพิ่ม/ลบ ไม่สรุป */
+function changes(l: Log) {
+  if (!l.before || !l.after) return "-";
+  // ช่องที่ไม่ได้ส่งมาตอนแก้ (เช่น เลขที่เอกสารที่ระบบออกให้) ไม่ใช่การเปลี่ยนค่า
+  const f = fieldRows(l).filter(({ k }) => l.after && k in l.after);
+  if (!f.length) return "-";
+  const cut = (v: unknown) => { const s = String(displayValue(v)); return s.length > 24 ? `${s.slice(0, 24)}…` : s; };
+  return f.slice(0, 2).map(({ k, b, a }) => `${FIELD_LABEL[k] ?? k}: ${cut(b)} → ${cut(a)}`).join(" · ") + (f.length > 2 ? ` · และอีก ${f.length - 2} ช่อง` : "");
+}
+
 export function AuditLog() {
   const [group, setGroup] = useState(ALL);
   const [area, setArea] = useState("");
@@ -72,19 +82,19 @@ export function AuditLog() {
   const global = data?.scope.role === "Global Admin";
   const s = data?.stats;
   const columns = global
-    ? ["วันเวลา", "ผู้ทำรายการ", "สาขาของข้อมูล", "ส่วนของระบบ", "การกระทำ", "รายการ"]
-    : ["วันเวลา", "ผู้ทำรายการ", "ส่วนของระบบ", "การกระทำ", "รายการ"];
+    ? ["วันเวลา", "ผู้ทำรายการ", "สาขาของข้อมูล", "ส่วนของระบบ", "การกระทำ", "รายการ", "สิ่งที่เปลี่ยน"]
+    : ["วันเวลา", "ผู้ทำรายการ", "ส่วนของระบบ", "การกระทำ", "รายการ", "สิ่งที่เปลี่ยน"];
   const rows = items.map((l) => {
     const who = `${l.actor_name ?? "-"}${l.actor_role ? ` (${roleTh(l.actor_role)})` : ""}`;
     const base = [when(l.at), who];
-    const rest = [areaLabel(l.area), ACTION_LABEL[l.action] ?? l.action, l.summary ?? "-"];
+    const rest = [areaLabel(l.area), ACTION_LABEL[l.action] ?? l.action, l.summary ?? "-", changes(l)];
     return global ? [...base, l.branch_name ?? "ส่วนกลาง", ...rest] : [...base, ...rest];
   });
 
   return (
     <>
       <PageHeader
-        title="ประวัติการแก้ไข"
+        title="ประวัติการใช้งาน"
         sub={global
           ? "ทุกการเพิ่ม แก้ไข ลบข้อมูล การจัดการบัญชี และการเข้าสู่ระบบ ของทุกสาขา"
           : `ทุกการเพิ่ม แก้ไข ลบข้อมูล และการเข้าสู่ระบบ เฉพาะสาขา${data?.scope.branch ?? ""}`}
@@ -125,7 +135,7 @@ export function AuditLog() {
           </div>
         </div>
         {error && <p role="alert" className="mb-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
-        <DataTable search={false} columns={columns} rows={rows} badgeCols={[global ? 4 : 3]} empty={busy ? "กำลังโหลด…" : "ยังไม่มีประวัติตามเงื่อนไขนี้"} actions={[{ label: "ดู", onClick: (i) => setOpen(items[i]) }]} />
+        <DataTable search={false} columns={columns} rows={rows} badgeCols={[global ? 4 : 3]} empty={busy ? "กำลังโหลด…" : "ยังไม่มีประวัติตามเงื่อนไขนี้"} actions={[{ label: "รายละเอียด", onClick: (i) => setOpen(items[i]) }]} />
         {data?.more && <div className="mt-4 text-center"><button className="btn-soft" disabled={busy} onClick={() => load(items[items.length - 1]?.id)}>{busy ? "กำลังโหลด…" : "โหลดรายการก่อนหน้า"}</button></div>}
       </Section>
 

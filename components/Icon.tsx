@@ -42,6 +42,9 @@
   refresh: "M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7",
   qr: "M4 4h6v6H4V4Zm10 0h6v6h-6V4ZM4 14h6v6H4v-6Zm10 0h2v2h-2v-2Zm4 0h2v2h-2v-2Zm-4 4h2v2h-2v-2Zm4 0h2v2h-2v-2Z",
   print: "M7 9V3h10v6M7 17H4v-7h16v7h-3m-10-3h10v7H7v-7Z",
+  star: "M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8L3.5 9.7l5.9-.9L12 3.5Z",
+  clock: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Zm0-13v4.5l3 2",
+  wrench: "M14.7 6.3a4 4 0 0 0 5 5L21 13l-8 8-3-3 6.3-6.3a4 4 0 0 1-5-5L14.7 6.3Zm0 0L12 3.6M5 19l3-3",
 };
 
 export default function Icon({ name, className = "h-5 w-5" }: { name: string; className?: string }) {

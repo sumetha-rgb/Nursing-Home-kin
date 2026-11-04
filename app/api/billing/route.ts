@@ -10,9 +10,13 @@ export const fetchCache = "force-no-store";
 /**
  * รับชำระใบแจ้งหนี้ (รับได้หลายงวด) และหลักฐานการโอนเงิน (เก็บแยกจากรายการ เพราะรูปใหญ่) · ผู้มีสิทธิ์การเงินหรือสัญญา
  *  GET  ?id=…                          รายการรับชำระทั้งหมดของใบนี้ (งวด วันที่ วิธี ยอด สลิป)
+ *  GET  ?op=payments[&branch=]          การรับเงินทุกงวด (ส่งออก CSV กระทบยอดเงินสด/โอน) · ไม่ส่งรูปสลิป
  *  POST { op: "pay", id, cash, credit, transfer, date, slip?, note? }  รับชำระ 1 งวด · ยอดรวมต้องไม่เกินยอดคงเหลือ
  *                                       ครบยอด = ชำระแล้ว (เป็นใบเสร็จ) · ยังไม่ครบ = ชำระบางส่วน
  *  POST { id, slip }                   แนบ/เปลี่ยนรูปของใบที่รับชำระครั้งเดียว (slip = "" ลบรูป)
+ *  GET  ?op=closes[&branch=]            ปิดยอดรายวัน 60 วันล่าสุด + ยอดรับชำระจริงของแต่ละวัน (เทียบว่ามีรับเพิ่มหลังปิดยอดไหม)
+ *  POST { op: "close", date, branch?, counted, note? }  ปิดยอดวันนั้น (ปิดซ้ำได้ = ปิดใหม่ ล้างการตรวจรับรอง) · เงินสดไม่ตรงต้องมีหมายเหตุ
+ *  POST { op: "close_approve", id }     ผู้จัดการสาขา / ผู้บริหาร ตรวจรับรองการปิดยอด
  * ใบแจ้งหนี้อื่น ๆ บันทึกผ่าน /api/data/invoices
  */
 const bad = (msg: string, status = 400) => NextResponse.json({ error: msg }, { status });
@@ -27,7 +31,92 @@ async function owned(req: NextRequest, id: string) {
   return { me, inv };
 }
 
+/** ยอดรับชำระของวันนั้นในสาขานั้น (จาก invoice_payments) */
+const DAY_SUM = `SELECT count(*)::int AS payments, coalesce(sum(p.cash), 0)::float AS cash, coalesce(sum(p.transfer), 0)::float AS transfer, coalesce(sum(p.credit), 0)::float AS credit
+  FROM invoice_payments p JOIN invoices i ON i.id = p.invoice_id WHERE i.branch_name = $1 AND p.pay_date = $2::date`;
+const noTable = (e: unknown) => /cash_closes/.test(String((e as Error)?.message ?? "")) && /does not exist/.test(String((e as Error)?.message ?? ""));
+const NO_TABLE = "ยังไม่ได้สร้างตารางปิดยอดในฐานข้อมูล · ให้ผู้ดูแลระบบรัน npm run db:setup ก่อน";
+
+async function closes(req: NextRequest) {
+  const me = await currentUser(req);
+  if (!me) return unauthorized();
+  if (!can(me, "billing")) return forbidden();
+  const br = me.role === "Global Admin" ? req.nextUrl.searchParams.get("branch") || null : me.branch;
+  try {
+    const rows = await sql(`SELECT c.id, c.branch_name AS branch, c.close_date::text AS date, c.payments, c.system_cash::float AS cash, c.system_transfer::float AS transfer, c.system_credit::float AS credit,
+        c.counted_cash::float AS counted, coalesce(c.note, '') AS note, c.closed_by AS "closedBy", to_char(c.closed_at AT TIME ZONE 'Asia/Bangkok', 'DD/MM HH24:MI') AS "closedAt",
+        c.approved_by AS "approvedBy", to_char(c.approved_at AT TIME ZONE 'Asia/Bangkok', 'DD/MM HH24:MI') AS "approvedAt"
+      FROM cash_closes c WHERE c.close_date >= (now() AT TIME ZONE 'Asia/Bangkok')::date - 60 ${br ? "AND c.branch_name = $1" : ""} ORDER BY c.close_date DESC, c.branch_name`, br ? [br] : []);
+    return NextResponse.json({ items: rows, canApprove: me.role === "Branch Admin" || me.role === "Global Admin" });
+  } catch (e) {
+    if (noTable(e)) return NextResponse.json({ items: [], missing: NO_TABLE, canApprove: false });
+    throw e;
+  }
+}
+
+async function closeDay(req: NextRequest, b: Record<string, unknown>) {
+  const me = await currentUser(req);
+  if (!me) return unauthorized();
+  if (!can(me, "billing")) return forbidden();
+  const branch = me.role === "Global Admin" ? String(b.branch ?? "") : me.branch;
+  const date = typeof b.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(b.date) ? b.date : "";
+  if (!branch) return bad("กรุณาเลือกสาขา");
+  if (!date) return bad("วันที่ไม่ถูกต้อง");
+  const today = new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10);
+  if (date > today) return bad("ปิดยอดล่วงหน้าไม่ได้");
+  const counted = money(b.counted ?? 0);
+  if (Number.isNaN(counted)) return bad("ยอดเงินสดที่นับได้ไม่ถูกต้อง");
+  const note = typeof b.note === "string" ? b.note.trim().slice(0, 300) : "";
+  const [s] = (await sql(DAY_SUM, [branch, date])) as { payments: number; cash: number; transfer: number; credit: number }[];
+  const diff = Math.round((counted - s.cash) * 100) / 100;
+  if (diff !== 0 && !note) return bad(`เงินสดที่นับได้${diff > 0 ? "เกิน" : "ขาด"} ${Math.abs(diff).toLocaleString("en-US", { minimumFractionDigits: 2 })} บาท · กรุณาใส่หมายเหตุ`);
+  try {
+    // ปิดซ้ำ = ปิดใหม่ด้วยยอดล่าสุด และต้องให้ผู้จัดการตรวจรับรองใหม่
+    await sql(`INSERT INTO cash_closes (id, branch_name, close_date, payments, system_cash, system_transfer, system_credit, counted_cash, note, closed_by)
+        VALUES ($1, $2, $3::date, $4, $5, $6, $7, $8, $9, $10)
+      ON CONFLICT (branch_name, close_date) DO UPDATE SET payments = EXCLUDED.payments, system_cash = EXCLUDED.system_cash, system_transfer = EXCLUDED.system_transfer,
+        system_credit = EXCLUDED.system_credit, counted_cash = EXCLUDED.counted_cash, note = EXCLUDED.note, closed_by = EXCLUDED.closed_by, closed_at = now(), approved_by = NULL, approved_at = NULL`,
+      [crypto.randomUUID(), branch, date, s.payments, s.cash, s.transfer, s.credit, counted, note || null, me.name]);
+  } catch (e) {
+    if (noTable(e)) return bad(NO_TABLE, 503);
+    throw e;
+  }
+  await audit(req, me, [{ area: "invoices", action: "update", recordId: null, branch,
+    summary: `ปิดยอดรายวัน ${date} · รับ ${s.payments} รายการ · เงินสดในระบบ ${s.cash.toFixed(2)} นับได้ ${counted.toFixed(2)}${diff ? ` (${diff > 0 ? "เกิน" : "ขาด"} ${Math.abs(diff).toFixed(2)})` : " ตรงยอด"}` }]);
+  return NextResponse.json({ ok: true, diff });
+}
+
+async function approveClose(req: NextRequest, b: Record<string, unknown>) {
+  const me = await currentUser(req);
+  if (!me) return unauthorized();
+  if (me.role !== "Branch Admin" && me.role !== "Global Admin") return forbidden();
+  try {
+    const [c] = (await sql`SELECT id, branch_name, close_date::text AS date FROM cash_closes WHERE id = ${String(b.id ?? "")}`) as { id: string; branch_name: string; date: string }[];
+    if (!c) return bad("ไม่พบการปิดยอดนี้", 404);
+    if (me.role !== "Global Admin" && c.branch_name !== me.branch) return forbidden();
+    await sql`UPDATE cash_closes SET approved_by = ${me.name}, approved_at = now() WHERE id = ${c.id}`;
+    await audit(req, me, [{ area: "invoices", action: "update", recordId: null, branch: c.branch_name, summary: `ตรวจรับรองการปิดยอดรายวัน ${c.date}` }]);
+  } catch (e) {
+    if (noTable(e)) return bad(NO_TABLE, 503);
+    throw e;
+  }
+  return NextResponse.json({ ok: true });
+}
+
 export async function GET(req: NextRequest) {
+  if (req.nextUrl.searchParams.get("op") === "closes") return closes(req);
+  if (req.nextUrl.searchParams.get("op") === "payments") {
+    const me = await currentUser(req);
+    if (!me) return unauthorized();
+    if (!can(me, "billing")) return forbidden();
+    const br = me.role === "Global Admin" ? req.nextUrl.searchParams.get("branch") || null : me.branch;
+    const rows = await sql(`SELECT p.pay_date::text AS date, i.doc_no AS no, row_number() OVER (PARTITION BY p.invoice_id ORDER BY p.created_at, p.id)::int AS n,
+        i.branch_name AS branch, i.resident_name AS who, i.hn, i.payer_name AS payer, i.category AS kind, i.status,
+        p.cash::float, p.transfer::float, p.credit::float, p.amount::float, coalesce(p.cashier, '') AS cashier, coalesce(p.note, '') AS note, (p.slip IS NOT NULL AND p.slip <> '') AS slip
+      FROM invoice_payments p JOIN invoices i ON i.id = p.invoice_id ${br ? "WHERE i.branch_name = $1" : ""}
+      ORDER BY p.pay_date DESC NULLS LAST, p.created_at DESC LIMIT 5000`, br ? [br] : []);
+    return NextResponse.json({ items: rows });
+  }
   const o = await owned(req, req.nextUrl.searchParams.get("id") ?? "");
   if (!o.inv) return o.res;
   const payments = await sql`
@@ -41,6 +130,8 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   const b = await req.json().catch(() => ({}));
+  if (b.op === "close") return closeDay(req, b);
+  if (b.op === "close_approve") return approveClose(req, b);
   const o = await owned(req, String(b.id ?? ""));
   if (!o.inv) return o.res;
   if (b.op === "pay") return pay(req, o.me, o.inv.id, b);

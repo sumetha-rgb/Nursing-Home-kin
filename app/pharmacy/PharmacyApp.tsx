@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState, createContext, useContext } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import Icon from "@/components/Icon";
-import { DataTable, Field, MetricGrid, Modal, PageHeader, PrintLetterhead, Section, Select, StatusBadge, Tabs } from "@/components/ui";
+import { DataTable, Field, Modal, PageHeader, PrintLetterhead, Section, Select, StatusBadge, Tabs } from "@/components/ui";
 import { AppProvider, useApp } from "@/lib/app";
 import { downloadCsv, refreshData, useCrud, useRecords } from "@/lib/store";
 import { OfflineBar } from "@/components/Pwa";
@@ -143,23 +143,28 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
 /* ---------- แดชบอร์ด ---------- */
 function Dashboard({ go, need, packed, low, waitQa }: { go: (p: Page) => void; need: number; packed: number; low: Drug[]; waitQa: number }) {
   const { items: stock } = useStockAlerts();
-  const steps: { n: string; t: string; staff: string; sys: string; p: Page | "kinapp"; cta: string }[] = [
-    { n: "01", t: "รับยาเข้าตะกร้าผู้ป่วย", staff: "ยาที่ญาติหรือโรงพยาบาลนำมา: ถ่ายรูปฉลากแล้วกรอกมื้อยา · ยาของศูนย์: เลือก \"เบิกจากคลังกลาง\"", sys: "สร้างตารางมื้อยาให้เอง เก็บรูปฉลากไว้ตรวจ · ยาคลังกลางหักคลังและขึ้นค่ายาที่การเงินให้", p: "inventory", cta: "ไปที่ยาของผู้ป่วย" },
-    { n: "02", t: "จัดยารายวัน", staff: "เลือกผู้ป่วยและมื้อ ติ๊กยาที่หยิบ แล้วถ่ายรูปซองยาที่จัดเสร็จ · ยาน้ำหรือยาขวดกด \"เบิกยาตามจำนวน\"", sys: "หักยาในตะกร้าผู้ป่วย เก็บรูปซอง และส่งซองเข้าตะกร้ารอตรวจ QA", p: "dispense", cta: "ไปที่จัดยารายวัน" },
-    { n: "03", t: "ตรวจ QA", staff: "ดูรูปซองเทียบรายการยาและรูปฉลาก ถูกต้องกด \"ตรวจผ่าน\" · ผิดกด \"แจ้งจัดยาผิด\" แล้วกด \"รีเซตซองนี้แล้วจัดใหม่\" ที่การ์ดเดียวกัน", sys: "ซองที่ตรวจผ่านขึ้นคิวจ่ายยาใน KinApp · ซองที่จัดผิดบันทึกเป็น Near Miss", p: "qa", cta: "ไปที่ตรวจซองยา (QA)" },
-    { n: "04", t: "ให้ยา (KinApp)", staff: "พยาบาลเปิด \"คิวจ่ายยาวันนี้\" ในแอปพยาบาล ให้ยาแล้วกดบันทึก", sys: "บันทึกผู้ให้ยาและเวลา ขึ้นในบันทึกการให้ยา (MAR) ของประวัติผู้ป่วย", p: "kinapp", cta: "เปิด KinApp" },
-    { n: "05", t: "เติมยาเมื่อใกล้หมด", staff: "ดูรายการยาผู้ป่วยใกล้หมด · ยาคลังศูนย์กด \"เติมจากคลังกลาง\" · ยาของญาติแจ้งญาตินำมาเพิ่ม", sys: "เตือนยาที่เหลือไม่ถึง 2 วัน และยาคลังกลางที่ถึงจุดสั่งซื้อหรือใกล้หมดอายุ", p: "inventory", cta: "ไปที่ยาของผู้ป่วย" },
-    { n: "06", t: "สุ่มนับยา (ทำเป็นครั้งคราว)", staff: "นับยาจริงเทียบกับระบบ แก้ยอดหรือสถานะ เช่น ยาหมด ยาหมดอายุ ยางดใช้", sys: "อัปเดตยอดคงเหลือให้ตรงของจริง", p: "audit", cta: "ไปที่ตรวจนับและปรับยอดยา" },
+  // แถบขั้นตอนพร้อมตัวเลขของวันนี้ · วิธีทำแต่ละขั้น (พนักงาน / ระบบ) อยู่ที่หน้าคู่มือ
+  const steps: { t: string; note: string; tone?: "now" | "warn" | "done"; p: Page | "kinapp" }[] = [
+    { t: "รับยา", note: "ยาของผู้ป่วย", p: "inventory" },
+    { t: "จัดยา", note: need ? `จัดแล้ว ${packed}/${need} ซอง` : "วันนี้ไม่มีซองต้องจัด", tone: need && packed >= need ? "done" : need ? "now" : undefined, p: "dispense" },
+    { t: "ตรวจ QA", note: waitQa ? `รอตรวจ ${waitQa} ซอง` : "ไม่มีซองรอตรวจ", tone: waitQa ? "warn" : undefined, p: "qa" },
+    { t: "ให้ยา", note: "KinApp", p: "kinapp" },
   ];
   return (
     <>
-      <PageHeader title="แดชบอร์ด & เส้นทางทำงาน" sub="เรียนรู้ขั้นตอนการทำงานและเข้าสู่เมนูต่างๆ ได้ทันที (คลิกที่การ์ดเพื่อไปยังเมนู)" />
-      <MetricGrid items={[
-        { label: "ซองยาที่ต้องจัดวันนี้", value: need, unit: "ซอง", icon: "pill", accent: true },
-        { label: "จัดแล้ววันนี้", value: packed, unit: `/ ${need}`, icon: "check", note: need ? `${Math.round((packed / need) * 100)}% ของทั้งหมด` : undefined },
-        { label: "รอตรวจ QA", value: waitQa, unit: "ซอง", icon: "eye" },
-        { label: "ยาผู้ป่วยใกล้หมด", value: low.length, unit: "รายการ", icon: "alert", note: "เหลือไม่ถึง 2 วัน" },
-      ]} />
+      <PageHeader title="แดชบอร์ด" sub="งานจัดยาวันนี้" />
+      <ol className="rx-steps">
+        {steps.map((s, i) => (
+          <li key={s.t}><button type="button" className={s.tone ? `is-${s.tone}` : ""} onClick={() => (s.p === "kinapp" ? window.location.assign("/staff") : go(s.p))}>
+            <span className="rx-n">{s.tone === "done" ? <Icon name="check" className="h-3.5 w-3.5" /> : i + 1}</span><b>{s.t}</b><small>{s.note}</small>
+          </button></li>
+        ))}
+      </ol>
+      <div className="mb-6 flex flex-wrap items-center gap-2">
+        <button className="btn-soft" onClick={() => go("inventory")}><Icon name="alert" className="h-4 w-4" /> เติมยาใกล้หมด{low.length ? ` ${low.length}` : ""}</button>
+        <button className="btn-soft" onClick={() => go("audit")}><Icon name="check" className="h-4 w-4" /> สุ่มนับยา</button>
+        <button className="step-link ml-auto !mt-0" onClick={() => go("manual")}>วิธีทำแต่ละขั้น<Icon name="arrow" className="h-3.5 w-3.5" /></button>
+      </div>
       {stock.length > 0 && (
         <button type="button" onClick={() => go("central")} className="card mb-6 flex w-full flex-wrap items-center gap-4 border-amber-200 bg-amber-50/70 p-5 text-left transition hover:border-amber-300">
           <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-amber-100 text-amber-800"><Icon name="alert" className="h-5 w-5" /></span>
@@ -170,21 +175,8 @@ function Dashboard({ go, need, packed, low, waitQa }: { go: (p: Page) => void; n
           <span className="step-link">ไปที่คลังยากลาง<Icon name="arrow" className="h-3.5 w-3.5" /></span>
         </button>
       )}
-      <div className="grid gap-4 md:grid-cols-2">
-        {steps.map((s) => (
-          <button key={s.n} onClick={() => (s.p === "kinapp" ? window.location.assign("/staff") : go(s.p))} className="card group flex min-w-0 flex-col p-6 text-left transition hover:-translate-y-0.5 hover:border-gold-300">
-            <span className="step-number">{s.n}</span>
-            <h2 className="mt-4 text-[17px] font-medium text-gold-800">{s.t}</h2>
-            <dl className="mt-3 space-y-2 text-sm">
-              <div><dt className="inline font-medium text-gold-700">พนักงาน: </dt><dd className="inline text-gold-600">{s.staff}</dd></div>
-              <div><dt className="inline font-medium text-gold-700">ระบบ: </dt><dd className="inline text-gold-600">{s.sys}</dd></div>
-            </dl>
-            <span className="step-link mt-auto pt-4">{s.cta}<Icon name="arrow" className="h-3.5 w-3.5 transition group-hover:translate-x-1" /></span>
-          </button>
-        ))}
-      </div>
       {low.length > 0 && (
-        <div className="mt-6"><Section title="ยาใกล้หมด" sub="ยาคลังศูนย์กด &quot;เติมจากคลังกลาง&quot; ที่เมนูยาของผู้ป่วย · ยาของญาติแจ้งญาตินำมาเพิ่มก่อนรอบจัดยาถัดไป">
+        <div className="mt-6"><Section title="ยาใกล้หมด" sub="เหลือไม่ถึง 2 วัน · ยาของญาติแจ้งญาตินำมาเพิ่ม">
           <DataTable columns={["ผู้รับบริการ", "ชื่อยา", "คงเหลือ", "สถานะ"]} rows={low.map((x) => [x.who, x.name, `${x.stock} ${x.unit}`, x.stock === 0 ? "ยาหมด" : "รอเติมยา"])} />
         </Section></div>
       )}
@@ -275,7 +267,7 @@ function Dispense({ drugs, setDrugs, packs, setPacks, go, me, focus, onAddDrug }
 
   return (
     <>
-      <PageHeader title="จัดยาใหม่ (Dispense)" sub="เลือกผู้สูงอายุและวันที่กินยา แล้วแตะที่การ์ดมื้อยาเพื่อเริ่มจัด"
+      <PageHeader title="จัดยาใหม่ (Dispense)" sub="เลือกผู้ป่วยและวันที่ แล้วแตะมื้อยาเพื่อเริ่มจัด"
         actions={<><button className="btn-soft" onClick={() => onAddDrug(who)}><Icon name="plus" className="h-4 w-4" /> เพิ่มยาให้ {who || "ผู้ป่วย"}</button><button className="btn-soft" onClick={() => setPreview(true)}><Icon name="eye" className="h-4 w-4" /> ตรวจสอบซองมื้อยาก่อนจัด</button><button className="btn-soft" onClick={() => setBulk(true)}><Icon name="pill" className="h-4 w-4" /> เบิกยาตามจำนวน</button></>} />
       <div className="card mb-6 grid gap-4 p-5 sm:grid-cols-2">
         <Field label="เลือกผู้สูงอายุ"><ResidentPicker names={RESIDENTS} requireRoom clearable={false} value={who} onChange={(v) => { setWho(v || RESIDENTS[0]); }} /></Field>
@@ -361,7 +353,7 @@ function QA({ packs, setPacks, drugs, setDrugs, go, me, onRedo }: { packs: Pack[
   const count = (t: string) => packs.filter((p) => t === "ทั้งหมด" || p.qa === t).length;
   return (
     <>
-      <PageHeader title="ตรวจซองยา (QA)" sub="ตรวจสอบซองยาทั้งหมดที่จัดเสร็จแล้วในตะกร้า แยกตามผู้สูงอายุและวันที่ เพื่อเช็คความถูกต้องก่อนจบงาน"
+      <PageHeader title="ตรวจซองยา (QA)" sub="ตรวจซองที่จัดเสร็จก่อนส่งให้ยา"
         actions={<button className="btn-soft" onClick={() => { go("audit"); toast("สุ่มตรวจสต็อก: เลือกผู้รับบริการเพื่อนับยาเทียบกับระบบ"); }}><Icon name="refresh" className="h-4 w-4" /> สุ่มตรวจ (Cycle Count)</button>} />
       <div className="mb-5"><Tabs tabs={["รอตรวจ", "ตรวจผ่าน", "แจ้งจัดยาผิด", "ทั้งหมด"].map((t) => `${t} (${count(t)})`)} value={`${tab} (${count(tab)})`} onChange={(v) => setTab(v.split(" (")[0])} /></div>
       {list.length === 0 ? (
@@ -507,14 +499,14 @@ function Inventory({ drugs, setDrugs, master, addFor, onAdded }: { drugs: Drug[]
   };
   return (
     <>
-      <PageHeader title="ยาของผู้ป่วย (รับเข้า · แก้ไข)" sub="บันทึกสต็อกยาและข้อมูลจากโรงพยาบาล เพื่อเป็นฐานข้อมูลหลักให้ระบบจัดยารายวันดึงไปใช้ และคำนวณการหักสต็อก"
+      <PageHeader title="ยาของผู้ป่วย (รับเข้า · แก้ไข)" sub="รับยาเข้าและแก้ยอดยาของแต่ละคน"
         actions={<><button className="btn-soft" onClick={() => window.print()}><Icon name="print" className="h-4 w-4" /> พิมพ์ใบรับยาเข้า</button><button className="btn-primary" onClick={() => { setF(blankForm()); setOpen(true); }}><Icon name="plus" className="h-4 w-4" /> บันทึกข้อมูลยาใหม่จากโรงพยาบาล</button></>} />
       <Section title="คลังยาทั้งหมด (แยกตามผู้สูงอายุ)" actions={<div className="min-w-52"><Select options={RESIDENTS} placeholder="ผู้สูงอายุทั้งหมด" value={filter} onChange={setFilter} /></div>}>
         <DataTable
           columns={["ผู้สูงอายุ", "ชื่อยา", "วิธีทาน", "มื้อ", "คงเหลือ", "สถานะ"]}
           rows={shown.map((x) => [x.who, `${x.name} · [${x.src === CENTRAL ? CENTRAL : "ญาตินำมา"}]`, x.how || "-", x.bulk ? "ยาขวด / ไม่แพ็คซอง" : `${x.meals.join(", ")} · ครั้งละ ${x.dose} ${x.unit}`, stockText(x), x.hold ? "งดยาชั่วคราว" : x.status])}
           actions={[
-            { label: "ดู", onClick: (i) => setView(shown[i]) },
+            { label: "รายละเอียดยา", onClick: (i) => setView(shown[i]) },
             { label: "แก้ไข", onClick: (i) => setEdit({ ...shown[i], doseText: String(shown[i].dose), tag: "" }) },
             { label: "เติมจากคลังกลาง", hidden: (i) => !shown[i].sdid, onClick: (i) => setRefill({ x: shown[i], qty: "" }) },
             { label: "ลบ", danger: true, onClick: (i) => confirm({ title: "ลบยาออกจากตะกร้า", message: `ต้องการลบ ${shown[i].name} ของ ${shown[i].who} ใช่หรือไม่`, danger: true, okLabel: "ลบ", onOk: () => { setDrugs(drugs.filter((x) => x.id !== shown[i].id)); toast("ลบยาแล้ว"); } }) },
@@ -730,7 +722,7 @@ function Templates({ drugs, setDrugs }: { drugs: Drug[]; setDrugs: (x: Drug[]) =
   const mine = drugs.filter((x) => x.who === who);
   return (
     <>
-      <PageHeader title="ซองมื้อยา" sub="ใช้สำหรับตั้งค่าและตรวจสอบยาที่จะถูกจัดลงในแต่ละซอง" />
+      <PageHeader title="ซองมื้อยา" sub="ยาที่จัดลงแต่ละซอง" />
       <div className="card mb-6 p-5"><Field label="เลือกผู้สูงอายุ"><ResidentPicker names={RESIDENTS} value={who} onChange={setWho} /></Field></div>
       {!who ? <div className="card empty-state"><Icon name="files" /><p>กรุณาเลือกผู้สูงอายุด้านบนเพื่อแสดงแม่แบบซองยา</p></div> : (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -774,7 +766,7 @@ function Master({ master, setMaster, drugs }: { master: string[][]; setMaster: (
   const [use, setUse] = useState("");
   return (
     <>
-      <PageHeader title="ฐานข้อมูลยา (Master Drugs)" sub="จัดการรายชื่อยาที่เป็นพจนานุกรมส่วนกลางของระบบ" actions={<button className="btn-primary" onClick={() => { setName(""); setUse(""); setOpen(true); }}><Icon name="plus" className="h-4 w-4" /> เพิ่มยาตัวใหม่</button>} />
+      <PageHeader title="ฐานข้อมูลยา (Master Drugs)" sub="รายชื่อยากลางของระบบ" actions={<button className="btn-primary" onClick={() => { setName(""); setUse(""); setOpen(true); }}><Icon name="plus" className="h-4 w-4" /> เพิ่มยาตัวใหม่</button>} />
       <Section title="รายชื่อยาทั้งหมด">
         <DataTable columns={["ชื่อยา", "สรรพคุณ / การออกฤทธิ์", "ผู้ป่วยที่ใช้", "คงเหลือรวม", "ใช้ไปแล้ว"]} rows={rows}
           actions={[{ label: "ดูรายคน", hidden: (i) => !usersOf(master[i][0]).length, onClick: (i) => setOpen2(master[i][0]) },{ label: "ลบ", danger: true, onClick: (i) => confirm({ title: "ลบยาจากฐานข้อมูล", message: `ต้องการลบ ${master[i][0]} ใช่หรือไม่`, danger: true, okLabel: "ลบ", onOk: () => { setMaster(master.filter((_, j) => j !== i)); toast("ลบแล้ว"); } }) }]} />
@@ -811,7 +803,7 @@ function Report({ packs }: { packs: Pack[] }) {
     .map((p) => [thai(p.date), p.who, p.meal, p.items.join(", "), p.by || "-", p.qby || "-", p.gby || "-", p.gat || "-", p.given ? "จ่ายยาแล้ว" : "รอจ่าย"]), [packs, q]);
   return (
     <>
-      <PageHeader title="รายงานการจัดยา" sub="ดูประวัติและรายงานการจัดยาทั้งหมด แยกตามวันเวลา สาขา และผู้จัดยา"
+      <PageHeader title="รายงานการจัดยา" sub="ประวัติการจัดยา แยกตามวัน สาขา และผู้จัด"
         actions={<><button className="btn-soft" onClick={() => downloadCsv("รายงานการจัดยา", cols, rows)}><Icon name="download" className="h-4 w-4" /> ดาวน์โหลด CSV</button><button className="btn-primary" onClick={() => window.print()}><Icon name="print" className="h-4 w-4" /> พิมพ์รายงานจัดยา (A4)</button></>} />
       <form className="card mb-6 grid gap-4 p-5 sm:grid-cols-2 lg:grid-cols-[1.3fr_1fr_1fr_1fr_auto] lg:items-end" onSubmit={(e) => { e.preventDefault(); setQ({ who, from, to, status }); }}>
         <Field label="ค้นหาผู้สูงอายุ"><Select options={RESIDENTS} placeholder="-- ทั้งหมด --" value={who} onChange={setWho} /></Field>
@@ -839,7 +831,7 @@ function Manual() {
   ];
   return (
     <>
-      <PageHeader title="คู่มือผู้ใช้งานระบบ (User Manual)" sub="ระบบถูกออกแบบมาเพื่อความถูกต้อง ปลอดภัย และสืบย้อนข้อมูลได้ ตั้งแต่ตอนรับยาจากโรงพยาบาล จนถึงตอนที่ผู้สูงอายุทานยา" />
+      <PageHeader title="คู่มือผู้ใช้งานระบบ (User Manual)" sub="วิธีทำแต่ละขั้น ตั้งแต่รับยาจนถึงให้ยา" />
       <div className="mb-6"><TutorialVideos only={[5, 4]} /></div>
       <div className="grid gap-4 lg:grid-cols-2">{parts.map(([t, p]) => <section key={t} className="card p-6"><h2 className="text-[17px] font-medium text-gold-800">{t}</h2><p className="mt-2 text-sm leading-7 text-gold-600">{p}</p></section>)}</div>
     </>

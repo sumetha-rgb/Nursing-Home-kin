@@ -1,9 +1,9 @@
 "use client";
-import { ReactNode } from "react";
+import { ReactNode, useEffect, useRef } from "react";
 import Icon from "../Icon";
 import { Modal } from "../ui";
 import { bahtText, money, svcDiscount, svcNet } from "@/lib/billing";
-import { EXTRA_SERVICES, PACKAGES, rateColumns, ROOMS } from "@/lib/priceList";
+import { EXTRA_SERVICES, PACKAGES, rateColumns, roomByPrice, ROOMS } from "@/lib/priceList";
 import { isNoAllergy } from "@/lib/medicalLists";
 import { ACCEPT, CONSENT, CONSENT_MARKETING, DOC_RECEIPT, EXCLUDED, EXCLUDED_NOTE, FINES, HOSPITAL_STEPS, INCLUDED, INCLUDED_NOTE, PAY_CHANNELS, REHAB_CHECKS, ROOM_CHECK, ROOM_CHECK_NOTE,
   RULES_CENTER, RULES_FINANCE_AFTER, RULES_FINANCE_BEFORE, RULES_NURSING, RULES_REFUND, RULES_REHAB, VISIT_EFFECTIVE, VISIT_RULES } from "@/lib/contractText";
@@ -66,12 +66,44 @@ export const DocFoot = ({ left, by }: { left: string; by?: string }) => (
   <footer className="doc-foot"><span>{left}</span><span>พิมพ์เมื่อ {nowTh()}{by ? ` โดย ${by}` : ""}</span></footer>
 );
 
+/**
+ * ก่อนพิมพ์: แต่ละหน้าของเอกสาร (ส่วนที่คั่นด้วย doc-break) ที่ยาวเกิน A4 ไม่มาก ย่อลงให้จบในแผ่นเดียว
+ *  วัดที่ความกว้างพื้นที่พิมพ์จริง (A4 หักขอบ 14 มม. = 182 มม.) · ต้องย่อเกิน 20% ปล่อยขึ้นแผ่นใหม่ตามปกติ (ไม่ย่อจนอ่านยาก)
+ */
+// PRINT_H เผื่อระยะที่หน้าจอวัดได้น้อยกว่าตอนพิมพ์จริง (ตัวอักษรตอนพิมพ์ใหญ่กว่า ~5% และช่องลงชื่อ/แถวตารางห้ามตัดข้ามหน้า)
+const MM = 96 / 25.4, PRINT_W = 182, PRINT_H = 262, PRINT_GROW = 1.05, MIN_ZOOM = 0.8;
+function fitPages(stage: HTMLElement) {
+  stage.querySelectorAll<HTMLElement>(".doc-paper").forEach((paper) => {
+    const kids = [...paper.children] as HTMLElement[];
+    kids.forEach((k) => { k.style.zoom = ""; });
+    const keep = paper.getAttribute("style") ?? "";
+    paper.style.cssText += `;width:${PRINT_W}mm;max-width:none;padding:0;font-size:14.5px;box-shadow:none`;
+    const segs: HTMLElement[][] = [[]];
+    kids.forEach((k) => (k.classList.contains("doc-break") ? segs.push([]) : segs[segs.length - 1].push(k)));
+    const plan = segs.filter((s) => s.length).map((s) => {
+      const h = (s[s.length - 1].getBoundingClientRect().bottom - s[0].getBoundingClientRect().top) * PRINT_GROW;
+      const z = (PRINT_H * MM) / h;
+      return { s, z: z < 1 && z >= MIN_ZOOM ? z : 1 };
+    });
+    paper.setAttribute("style", keep);
+    plan.forEach(({ s, z }) => { if (z < 1) s.forEach((k) => { k.style.zoom = String(z); }); });
+  });
+}
+
 /** หน้าต่างแสดงเอกสาร + ปุ่มพิมพ์ */
 export function PrintModal({ open, title, onClose, children, extra }: { open: boolean; title: string; onClose: () => void; children: ReactNode; extra?: ReactNode }) {
+  const stage = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const before = () => { if (stage.current) fitPages(stage.current); };
+    const after = () => stage.current?.querySelectorAll<HTMLElement>(".doc-paper > *").forEach((k) => { k.style.zoom = ""; });
+    window.addEventListener("beforeprint", before); window.addEventListener("afterprint", after);
+    return () => { window.removeEventListener("beforeprint", before); window.removeEventListener("afterprint", after); };
+  }, [open]);
   return (
     <Modal open={open} wide title={title} onClose={onClose}
       footer={<>{extra}<button className="btn-soft" onClick={onClose}>ปิด</button><button className="btn-primary" onClick={() => window.print()}><Icon name="print" className="h-4 w-4" /> พิมพ์</button></>}>
-      <div className="doc-stage">{children}</div>
+      <div className="doc-stage" ref={stage}>{children}</div>
     </Modal>
   );
 }
@@ -82,12 +114,24 @@ export const DEFAULT_TERMS = "";
 
 /** แถวสัญญา: [เลขที่, สาขา, ผู้รับบริการ, ผู้ว่าจ้าง, ราคาโปรแกรม, สถานะ, ห้อง, วันเริ่ม, บัตรผู้ว่าจ้าง, โทร, ที่อยู่, ความเกี่ยวข้อง, บัตรผู้รับบริการ, อายุ, บริการพื้นฐาน, รายการเพิ่มเติม, ค่าเพิ่มเติม, แพ็กเกจ, ล่วงหน้า, ประกัน, หมายเหตุ,
  *  โปรแกรม, วันสิ้นสุด, รายการ (JSON), โรงพยาบาลตามสิทธิ์, แพ้ยา, แพ้อาหาร, หักมัดจำห้อง, ยา/เวชภัณฑ์ที่ใช้ประจำ] */
-export type ContractLine = { desc: string; qty: number; unit: string; price: number; discount?: number; pct?: number };
+/** room = ชื่อห้องที่ตั้งเองเมื่อกำหนดค่าห้องเอง (เก็บใน items_json ไม่ใช่รายการค่าบริการ) */
+export type ContractLine = { desc: string; qty: number; unit: string; price: number; discount?: number; pct?: number; room?: boolean };
+const rawLines = (r: string[]): ContractLine[] | null => { try { const x = JSON.parse(r[23] || "[]"); if (Array.isArray(x)) return x; } catch { /* สัญญาเก่า */ } return null; };
 /** รายการค่าบริการของสัญญา · สัญญาเก่าที่ยังไม่มีรายการ: แปลงจากค่าบริการเพิ่มเติมรายเดือนเดิม */
 export function contractLines(r: string[]): ContractLine[] {
-  try { const x = JSON.parse(r[23] || "[]"); if (Array.isArray(x)) return x; } catch { /* สัญญาเก่า */ }
+  const x = rawLines(r);
+  if (x) return x.filter((l) => !l.room);
   const extra = numOf(r[16]);
   return extra ? [{ desc: blank(r[15]) ? `ค่าบริการเพิ่มเติม (${r[15]})` : "ค่าบริการเพิ่มเติม", qty: 1, unit: "เดือน", price: extra }] : [];
+}
+/** ชื่อห้องที่ตั้งเอง (ค่าห้องกำหนดเอง) */
+export const contractRoomName = (r: string[]) => rawLines(r)?.find((l) => l.room)?.desc?.trim() ?? "";
+/** ชื่อห้องของค่าห้อง: ตั้งเอง > ประเภทห้องในใบราคาจากราคา */
+export function contractRoomTitle(r: string[]) {
+  const own = contractRoomName(r);
+  if (own) return own;
+  const k = roomByPrice(numOf(r[4]));
+  return k ? `${k.name}${k.promo ? " ราคาโปรโมชัน" : ""}` : "";
 }
 /** ยอดรวม = ราคาโปรแกรม + รายการค่าบริการ (ก่อนหักมัดจำห้อง) */
 export const contractTotal = (r: string[]) => numOf(r[4]) + contractLines(r).reduce((n, x) => n + svcNet(x), 0);
@@ -124,7 +168,7 @@ export function ContractDoc({ r, hn, bed, branch, terms, by, copy, chronic }: { 
       <div className="doc-tbl"><table>
         <thead><tr><th>รายการ</th><th className="n">จำนวนเงิน (บาท)</th></tr></thead>
         <tbody>
-          <tr><td><b>{val(r[21]) === "-" ? "ค่าบริการ" : r[21]}</b></td><td className="n">{fee ? money(fee) : ""}</td></tr>
+          <tr><td><b>{val(r[21]) === "-" ? "ค่าบริการ" : r[21]}</b>{contractRoomTitle(r) && ` · ${contractRoomTitle(r)}`}</td><td className="n">{fee ? money(fee) : ""}</td></tr>
           {lines.map((x, i) => <tr key={i}><td>&nbsp;- {x.desc}{x.qty !== 1 || !["เดือน", "แพ็กเกจ"].includes(x.unit) ? ` (${x.qty.toLocaleString("en-US")} ${x.unit}${x.price ? ` × ${money(x.price)}` : ""})` : ""}{svcDiscount(x) ? ` ส่วนลด${x.pct ? ` ${x.pct}%` : ""} ${money(svcDiscount(x))}` : ""}</td><td className="n">{x.price ? money(svcNet(x)) : "รวมในโปรแกรม"}</td></tr>)}
         </tbody>
         <tfoot>
@@ -290,7 +334,11 @@ export type DcData = {
   contract: string[]; hn?: string; age?: string; date: string; reason: string; days?: number; chronic?: string;
   vitals?: { at: string; text: string } | null; meds: { name: string; how: string; meals: string }[]; nextAppt?: string | null; advice?: string;
   owing: number; deposit: number;
+  /** เงินประกันที่รับไว้จริง (บรรทัด "เงินประกัน" ในใบที่ชำระแล้ว) · รายการยังไม่เรียกเก็บ (ประมาณ) */
+  depositPaid?: number; unbilled?: number;
 };
+/** คืนเงินประกัน = เงินประกันที่รับไว้ − ยอดค้างชำระ − รายการยังไม่เรียกเก็บ · ติดลบ = ต้องเรียกเก็บเพิ่ม */
+export const dcRefund = (d: { owing: number; depositPaid?: number; unbilled?: number }) => (d.depositPaid ?? 0) - d.owing - (d.unbilled ?? 0);
 export function DischargeDoc({ d, branch, by }: { d: DcData; branch?: DocBranch; by?: string }) {
   const c = d.contract;
   return (
@@ -313,7 +361,14 @@ export function DischargeDoc({ d, branch, by }: { d: DcData; branch?: DocBranch;
       <DocH>คำแนะนำและนัดติดตาม</DocH>
       <p>{[d.advice, d.nextAppt ? `นัดถัดไป: ${d.nextAppt}` : ""].filter(Boolean).join(" · ") || "-"}</p>
       <DocH>สรุปค่าใช้จ่าย</DocH>
-      <p className="doc-box">ยอดค้างชำระ ณ วันจำหน่าย <b>{money(d.owing)} บาท</b>{d.deposit > 0 ? <> · เงินประกันตามสัญญา <b>{money(d.deposit)} บาท</b></> : null}</p>
+      <div className="doc-tbl"><table>
+        <tbody>
+          <tr><td>เงินประกันที่รับไว้{d.deposit > 0 && !d.depositPaid ? ` (ตามสัญญา ${money(d.deposit)} บาท ยังไม่ได้รับ)` : ""}</td><td className="n">{money(d.depositPaid ?? 0)}</td></tr>
+          <tr><td>หัก ยอดค้างชำระ ณ วันจำหน่าย</td><td className="n">-{money(d.owing)}</td></tr>
+          {(d.unbilled ?? 0) > 0 && <tr><td>หัก ค่าใช้จ่ายที่ยังไม่ได้ออกใบแจ้งหนี้ (ประมาณ)</td><td className="n">-{money(d.unbilled ?? 0)}</td></tr>}
+        </tbody>
+        <tfoot><tr><td>{dcRefund(d) >= 0 ? "คืนเงินประกันสุทธิ" : "ต้องชำระเพิ่ม"}</td><td className="n">{money(Math.abs(dcRefund(d)))}</td></tr></tfoot>
+      </table></div>
       <Signs people={[["ผู้รับบริการ / ญาติ", blank(c[3])], ["พยาบาลผู้จำหน่าย"], ["ฝ่ายการเงิน"]]} />
       <DocFoot left={`D/C · ${val(d.hn)}`} by={by} />
     </Paper>

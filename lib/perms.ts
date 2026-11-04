@@ -12,16 +12,21 @@ type Item = { id: Perm; label: string; hint?: string };
 export const PERM_GROUPS: { title: string; items: Item[] }[] = [
   { title: "เมนูพื้นที่ดูแล", items: [
     { id: "careplan", label: "หน้าแรก" }, { id: "residents", label: "ผู้รับบริการ", hint: "ดู/แก้ทะเบียนและประวัติผู้รับบริการ" },
-    { id: "rooms", label: "ห้องผู้ป่วย", hint: "ดูห้องว่างและคนในห้อง" }, { id: "tasks", label: "มอบหมายและตรวจงาน" }, { id: "roster", label: "ตารางเวร" },
+    { id: "rooms", label: "ห้องพักและเตียง", hint: "ดูห้องว่างและคนในห้อง" }, { id: "tasks", label: "มอบหมายและตรวจงาน" }, { id: "roster", label: "ตารางเวร" },
     { id: "appointments", label: "ตารางนัดหมาย" }, { id: "health_logs", label: "รายงานสุขภาพ" }, { id: "quotations", label: "ใบเสนอราคา / แผนดูแล" },
   ] },
-  { title: "เมนูบริหารองค์กร", items: [
-    { id: "contracts", label: "สัญญาบริการ", hint: "เปิด/แก้/ต่อสัญญา D/C ยกเลิกสัญญา" }, { id: "billing", label: "การเงิน", hint: "ออกใบแจ้งหนี้ รับชำระ ใบเสร็จ" },
-    { id: "dashboard", label: "ผลการดำเนินงาน" }, { id: "branches", label: "สาขาของเรา" }, { id: "staff", label: "ทีมและสิทธิ์การใช้งาน", hint: "สร้างบัญชีและกำหนดสิทธิ์" },
-    { id: "feedbacks", label: "เสียงจากครอบครัว" }, { id: "reviews", label: "รีวิวพนักงาน" }, { id: "kpi", label: "KPI พนักงาน" }, { id: "audit", label: "ประวัติการแก้ไข" },
+  { title: "เมนูสัญญาและการเงิน", items: [
+    { id: "contracts", label: "สัญญาบริการ", hint: "เปิด/แก้/ต่อสัญญา D/C ยกเลิกสัญญา" }, { id: "billing", label: "การเงิน", hint: "ออกใบแจ้งหนี้ รับชำระ ใบเสร็จ ปิดยอดรายวัน" },
+  ] },
+  { title: "เมนูบริหาร", items: [
+    { id: "dashboard", label: "ภาพรวมและรายงาน", hint: "แดชบอร์ดและส่งออก CSV" }, { id: "branches", label: "สาขาของเรา" },
+  ] },
+  { title: "เมนูทีมงาน", items: [
+    { id: "staff", label: "ทีมและสิทธิ์การใช้งาน", hint: "สร้างบัญชีและกำหนดสิทธิ์" }, { id: "kpi", label: "KPI พนักงาน" }, { id: "reviews", label: "รีวิวพนักงาน" },
+    { id: "feedbacks", label: "เสียงจากครอบครัว" }, { id: "audit", label: "ประวัติการใช้งาน" },
   ] },
   { title: "เมนูเครื่องมือและระบบ", items: [
-    { id: "tasks_table", label: "ประวัติงานย้อนหลัง" }, { id: "facility_tasks", label: "งานทั่วไปของสาขา" }, { id: "master_tasks", label: "แม่แบบงานมาตรฐาน" },
+    { id: "tasks_table", label: "ประวัติงานดูแล" }, { id: "facility_tasks", label: "งานส่วนกลางของสาขา" }, { id: "master_tasks", label: "แม่แบบงานมาตรฐาน" },
     { id: "official-docs", label: "เอกสารและระเบียบ" }, { id: "tutorials", label: "วิดีโอสอนใช้งาน" },
   ] },
   { title: "สิทธิ์การทำงาน", items: [

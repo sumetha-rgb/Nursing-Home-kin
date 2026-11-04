@@ -1,10 +1,10 @@
 import { ROLE_INFO, Role } from "./roles";
-/** ชื่อภาษาไทยที่ใช้แสดงประวัติการแก้ไข (ใช้ได้ทั้งหน้าเว็บและ server) */
+/** ชื่อภาษาไทยที่ใช้แสดงประวัติการใช้งาน (ใช้ได้ทั้งหน้าเว็บและ server) */
 
 export const ACTION_LABEL: Record<string, string> = {
   create: "เพิ่ม", update: "แก้ไข", delete: "ลบ", clear: "ล้างข้อมูล", replace: "แทนที่ทั้งหมด",
   login: "เข้าสู่ระบบ", login_failed: "เข้าสู่ระบบไม่สำเร็จ", change_password: "เปลี่ยนรหัสผ่าน",
-  register: "สมัครสมาชิก", approve: "อนุมัติบัญชี", permissions: "กำหนดสิทธิ์", view_idcard: "เปิดดูรูปบัตรประชาชน", reset_password: "รีเซตรหัสผ่าน", acknowledge: "รับทราบแจ้งเตือน", checkin: "เช็คชื่อเข้างาน", checkout: "เช็คชื่อออกงาน",
+  register: "สมัครสมาชิก", approve: "อนุมัติบัญชี", permissions: "กำหนดสิทธิ์", export: "ส่งออกไฟล์", view_idcard: "เปิดดูรูปบัตรประชาชน", reset_password: "รีเซตรหัสผ่าน", acknowledge: "รับทราบแจ้งเตือน", checkin: "เช็คชื่อเข้างาน", checkout: "เช็คชื่อออกงาน",
 };
 
 /** กลุ่มตัวกรอง → action ที่อยู่ในกลุ่ม */
@@ -12,18 +12,19 @@ export const ACTION_GROUPS: Record<string, string[]> = {
   "เพิ่ม": ["create", "register"],
   "แก้ไข": ["update", "approve", "replace", "acknowledge", "permissions"],
   "ลบ": ["delete", "clear"],
-  "เปิดดูข้อมูลส่วนบุคคล": ["view_idcard"],
+  "เปิดดูข้อมูลส่วนบุคคล": ["view_idcard", "export"],
   "บัญชีและการเข้าสู่ระบบ": ["login", "login_failed", "change_password", "reset_password", "checkin", "checkout"],
 };
 
 export const AREA_LABEL: Record<string, string> = {
-  residents: "ผู้รับบริการ", contracts: "สัญญาบริการ", assessments: "ใบเสนอราคา / แผนดูแล", tasks_table: "ประวัติงานย้อนหลัง",
-  facility: "งานทั่วไปของสาขา", master: "แม่แบบงานมาตรฐาน", appointments: "ตารางนัดหมาย", health: "รายงานสุขภาพ",
+  residents: "ผู้รับบริการ", contracts: "สัญญาบริการ", assessments: "ใบเสนอราคา / แผนดูแล", tasks_table: "ประวัติงานดูแล",
+  facility: "งานส่วนกลางของสาขา", master: "แม่แบบงานมาตรฐาน", appointments: "ตารางนัดหมาย", health: "รายงานสุขภาพ",
   complaints: "เสียงจากครอบครัว", docs: "เอกสารและระเบียบ", branches: "สาขาของเรา", users: "ทีมและสิทธิ์การใช้งาน",
   auth: "การเข้าสู่ระบบ", "pharmacy-master": "แอปจัดยา · ฐานข้อมูลยา", "pharmacy-drugs": "แอปจัดยา · คลังยา",
   "pharmacy-packs": "แอปจัดยา · ซองยา", "staff-tasks": "KinApp · งานวันนี้", "staff-meds": "KinApp · คิวจ่ายยา",
   "staff-handover": "KinApp · สมุดส่งเวร", alerts: "แจ้งเตือนสัญญาณชีพ", routines: "งานประจำ (ทำซ้ำทุกวัน)", roster: "ตารางเวร", attendance: "เช็คชื่อเข้า-ออกงาน",
-  review_links: "ลิงก์ครอบครัว (สมุดภาพ/รีวิว)", family_photos: "สมุดภาพครอบครัว", kpi: "น้ำหนัก KPI พนักงาน", rooms: "ห้องผู้ป่วย", invoices: "การเงิน (ใบแจ้งหนี้/ใบเสร็จ)",
+  admissions: "ประเมินแรกรับ", clinical: "บันทึกทางคลินิก", physio: "กายภาพ / คอร์สกายภาพ", supplies: "เวชภัณฑ์", stock: "คลังยากลาง", bonus: "ผลงานพิเศษ", cheers: "ส่งกำลังใจ", doc_settings: "ข้อความในเอกสาร", family_updates: "อัปเดตถึงครอบครัว",
+  review_links: "ลิงก์ครอบครัว (สมุดภาพ/รีวิว)", family_photos: "สมุดภาพครอบครัว", kpi: "น้ำหนัก KPI พนักงาน", rooms: "ห้องพักและเตียง", invoices: "การเงิน (ใบแจ้งหนี้/ใบเสร็จ)",
 };
 export function areaLabel(area: string) {
   const d = area.match(/^daily-(\d{4})-(\d{2})-(\d{2})$/);
@@ -34,7 +35,7 @@ export function areaLabel(area: string) {
 export const FIELD_LABEL: Record<string, string> = {
   full_name: "ชื่อ-นามสกุล", resident_name: "ผู้รับบริการ", age: "อายุ", room: "ห้อง/เตียง", branch_name: "สาขา",
   chronic_diseases: "โรคประจำตัว", status: "สถานะ", contract_no: "เลขที่สัญญา", employer_name: "ผู้ว่าจ้าง",
-  monthly_fee: "ค่าบริการ/เดือน", work_date: "วันที่", category: "หมวด", task_name: "ชื่องาน", performed_by: "ผู้ปฏิบัติงาน",
+  monthly_fee: "ค่าห้อง/เดือน", room_vat: "VAT ค่าห้อง (%)", room_deposit: "มัดจำห้องพัก", drug_allergy: "แพ้ยา", food_allergy: "แพ้อาหาร", regular_meds: "ยาที่ใช้ประจำ", hospital: "โรงพยาบาลตามสิทธิ์", hospital_alt: "โรงพยาบาลสำรอง", work_date: "วันที่", category: "หมวด", task_name: "ชื่องาน", performed_by: "ผู้ปฏิบัติงาน",
   submitted_at: "เวลาที่ส่ง", appt_date: "วันที่นัด", appt_time: "เวลานัด", purpose: "วัตถุประสงค์", caregiver: "ผู้ดูแล",
   recorded_at: "วันเวลาที่บันทึก", vital_signs: "สัญญาณชีพ", o2_sat: "O2 Sat", dtx: "DTX", weight_height: "น้ำหนัก/ส่วนสูง",
   other_info: "ข้อมูลอื่น", note: "หมายเหตุ", recorded_by: "ผู้บันทึก", reported_at: "วันเวลาที่แจ้ง", issue: "ปัญหาที่ร้องเรียน",
