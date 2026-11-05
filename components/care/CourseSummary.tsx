@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import CsvIcon from "@/components/CsvIcon";
 import { DataTable, MetricGrid, Section, Tabs, Tile } from "../ui";
 import Icon from "../Icon";
 import { docDate, money } from "@/lib/billing";
@@ -47,7 +48,7 @@ export default function CourseSummary({ branch, compact, onTiles }: { branch: st
       <Section title="คอร์สกายภาพ" sub="ใครซื้อคอร์สอะไร ใช้ไปกี่ครั้ง เหลือกี่ครั้ง · ตัดคอร์สเมื่อนักกายภาพบันทึก Progress note"
         actions={<>
           <Tabs tabs={TABS} value={tab} onChange={setTab} />
-          <button className="btn-soft" onClick={() => downloadCsv(`คอร์สกายภาพ-${tab}`, cols, rows)}><Icon name="download" className="h-4 w-4" /> โหลด Excel</button>
+          <button className="btn-soft" onClick={() => downloadCsv(`คอร์สกายภาพ-${tab}`, cols, rows)}><CsvIcon /> ส่งออก CSV</button>
         </>}>
         <DataTable columns={cols} rows={rows} badgeCols={[cols.length - 1]} empty={items ? (tab === "ยังเหลือ" ? "ไม่มีคอร์สที่ยังใช้ไม่ครบ" : "ยังไม่มีคอร์สกายภาพ") : "กำลังโหลด…"} />
       </Section>

@@ -81,7 +81,7 @@ export async function POST(req: NextRequest) {
         if (!name) return bad("กรุณากรอกชื่อยา");
         const min = Math.max(0, Math.floor(Number(b.min) || 10));
         const priceIn = num(b.price);
-        const pricer = isManager(me); // ราคาเดียวทุกสาขา: ผู้จัดการสาขาหรือหัวหน้าพยาบาลแก้ = มีผลทุกสาขา (บันทึกในประวัติการใช้งาน)
+        const pricer = isManager(me); // ราคาเดียวทุกสาขา: ผู้จัดการสาขาหรือหัวหน้าพยาบาลแก้ = มีผลทุกสาขา (บันทึกในบันทึกการใช้งานระบบ)
         if (b.id) {
           const [d] = (await sql`SELECT id, price::float FROM stock_drugs WHERE id = ${String(b.id)}`) as { id: string; price: number | null }[];
           if (!d) return bad("ไม่พบรายการยา", 404);

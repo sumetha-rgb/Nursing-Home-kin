@@ -12,7 +12,7 @@ import { DataTable, Field, MetricGrid, Modal, PageHeader, Section, Select } from
 /**
  * คลังเวชภัณฑ์ของสาขา (ผ้าอ้อม ถุงมือ สายให้อาหาร ฯลฯ)
  *  เพิ่มรายการ ตั้งราคา เติมสต็อก = ผู้มีสิทธิ์ "ผู้รับบริการ" (หัวหน้าพยาบาล ผู้จัดการ)
- *  เบิกให้ผู้ป่วยยังทำที่ประวัติผู้รับบริการ แท็บเวชภัณฑ์ · ยอดเบิกขึ้นเป็น "ยังไม่เรียกเก็บ" ที่หน้าการเงิน
+ *  เบิกให้ผู้ป่วยยังทำที่ประวัติผู้รับบริการ แท็บเวชภัณฑ์ · ยอดเบิกขึ้นเป็น "ยังไม่เรียกเก็บ" ที่หน้าใบแจ้งหนี้และใบเสร็จ
  */
 type Item = { id: string; branch_name: string; name: string; unit: string; price: number; stock: number };
 type Form = { id?: string; branch: string; name: string; unit: string; price: string; stock: string; add: string };

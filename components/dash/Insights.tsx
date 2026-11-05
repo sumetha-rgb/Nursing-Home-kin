@@ -84,11 +84,11 @@ export function TargetsDialog({ open, onClose, branch, store, onSaved, isGlobal 
 /** delta.text = ▲▼ ส่วนต่าง (ว่าง = เท่ากัน · null = ช่วงที่เทียบไม่มีข้อมูล) · delta.vs = ช่วงที่เทียบของการ์ดนี้ (ไม่ใส่ = ช่วงที่เลือกบนหน้า) */
 export type Delta = { text: string | null; good: boolean | null; vs?: string };
 export type Kpi = { key: string; label: string; value: string; delta?: Delta; target?: { text: string; tone: "ok" | "warn" | "bad" }; note?: string; onClick?: () => void };
-/** ข้อความเทียบ เช่น "▲ 15% จาก 1–4 ต.ค." · "เท่ากับเมื่อวาน" · "1–4 ต.ค. ยังไม่มีข้อมูล" */
+/** ข้อความเทียบ เช่น "▲ เพิ่มขึ้น 15% จาก 1–4 ต.ค." · "เท่ากับเมื่อวาน" · "ไม่มีข้อมูล 1–4 ต.ค. ให้เทียบ" */
 export function deltaText(d: Delta | undefined, vs: string) {
   if (!d) return "";
   const v = d.vs ?? vs;
-  return d.text === null ? `${v.trim()} ยังไม่มีข้อมูล` : !d.text ? `เท่ากับ${v}` : `${d.text} จาก${v}`;
+  return d.text === null ? `ไม่มีข้อมูล${v.startsWith(" ") ? v : ` ${v}`} ให้เทียบ` : !d.text ? `เท่ากับ${v}` : `${d.text} จาก${v}`;
 }
 export function KpiGrid({ items, vs }: { items: Kpi[]; vs: string }) {
   return (
@@ -110,7 +110,7 @@ export function deltaOf(cur: number | null, prev: number | null, higherBetter: b
   if (cur === null || prev === null) return { text: null, good: null, vs };
   const d = Math.round((cur - prev) * 10) / 10;
   if (!d) return { text: "", good: null, vs };
-  return { text: `${d > 0 ? "▲" : "▼"} ${Math.abs(d)}${unit}`, good: d > 0 === higherBetter, vs };
+  return { text: `${d > 0 ? "▲ เพิ่มขึ้น" : "▼ ลดลง"} ${Math.abs(d)}${unit}`, good: d > 0 === higherBetter, vs };
 }
 /** ชื่อช่วงที่เอามาเทียบ: วันนี้ → "เมื่อวาน" · เดือนเต็ม → " ต.ค. 69" · บางวัน → " 1–4 ต.ค." (ขึ้นต้นด้วยช่องว่าง ต่อท้ายคำว่า "จาก") */
 export function vsLabel(pfrom: string, pto: string, today: boolean) {
@@ -121,12 +121,12 @@ export function vsLabel(pfrom: string, pto: string, today: boolean) {
   const m = TH_MON[Number(pto.slice(5, 7)) - 1];
   return pfrom === pto ? ` ${d2} ${m}` : pfrom.slice(0, 7) === pto.slice(0, 7) ? ` ${d1}–${d2} ${m}` : ` ${dayTh(pfrom)} – ${dayTh(pto)}`;
 }
-/** ป้ายเทียบเป้า: ถึงเป้า (เขียว) · ห่างไม่เกิน 5% ของเป้า (ส้ม) · ต่ำกว่า (แดง) */
+/** ป้ายเทียบเป้า: ถึงเป้า (เขียว) · ห่างไม่เกิน 5% ของเป้า = ใกล้เป้า (ส้ม) · ยังไม่ถึงเป้า (แดง) · คำเดียวกันทั้งตัวชี้วัดที่ยิ่งมากยิ่งดีและยิ่งน้อยยิ่งดี */
 export function targetOf(v: number | null, goal: number, higherBetter: boolean, unit: string): Kpi["target"] {
   if (v === null) return undefined;
   const ok = higherBetter ? v >= goal : v <= goal;
   const near = higherBetter ? v >= goal * 0.95 : v <= goal * 1.05;
-  return { text: `เป้า ${goal}${unit} · ${ok ? "ถึงเป้า" : near ? "ใกล้เป้า" : higherBetter ? "ต่ำกว่าเป้า" : "เกินเป้า"}`, tone: ok ? "ok" : near ? "warn" : "bad" };
+  return { text: `เป้า ${goal}${unit} · ${ok ? "ถึงเป้า" : near ? "ใกล้เป้า" : "ยังไม่ถึงเป้า"}`, tone: ok ? "ok" : near ? "warn" : "bad" };
 }
 export const pctOf = (a: number, b: number) => (b ? Math.round((a / b) * 100) : null);
 
@@ -335,7 +335,7 @@ export function ExecReportBody({ title, period, kpis, attn, d, head, vs }: { tit
   );
 }
 export const finKpis = (f: FinSummary | null, t: Targets, onClick?: () => void): Kpi[] => !f ? [] : [
-  { key: "paid", label: `รับชำระ ${monTh(f.month)}`, value: `${money(f.paid)} บาท`, delta: f.paidPrev ? { text: f.paid === f.paidPrev ? "" : `${f.paid > f.paidPrev ? "▲" : "▼"} ${Math.abs(Math.round(((f.paid - f.paidPrev) / f.paidPrev) * 100))}%`, good: f.paid === f.paidPrev ? null : f.paid > f.paidPrev, vs: ` ${monTh(f.prevMonth)}` } : { text: null, good: null, vs: ` ${monTh(f.prevMonth)}` }, onClick },
-  { key: "collect", label: `อัตราเก็บเงินได้ ${monTh(f.month)}`, value: f.collect === null ? "-" : `${f.collect}%`, delta: deltaOf(f.collect, f.collectPrev, true, "%", ` ${monTh(f.prevMonth)}`), target: targetOf(f.collect, t.collect, true, "%"), onClick },
+  { key: "paid", label: `รับชำระ ${monTh(f.month)}`, value: `${money(f.paid)} บาท`, delta: f.paidPrev ? { text: f.paid === f.paidPrev ? "" : `${f.paid > f.paidPrev ? "▲ เพิ่มขึ้น" : "▼ ลดลง"} ${Math.abs(Math.round(((f.paid - f.paidPrev) / f.paidPrev) * 100))}%`, good: f.paid === f.paidPrev ? null : f.paid > f.paidPrev, vs: ` ${f.prevLabel}` } : { text: null, good: null, vs: ` ${f.prevLabel}` }, onClick },
+  { key: "collect", label: `อัตราเก็บเงินได้ ${monTh(f.month)}`, value: f.collect === null ? "-" : `${f.collect}%`, delta: deltaOf(f.collect, f.collectPrev, true, "%", ` ${f.prevLabel}`), target: targetOf(f.collect, t.collect, true, "%"), onClick },
   { key: "owe", label: "ค้างชำระ ณ ตอนนี้", value: `${money(f.owe)} บาท`, note: `${f.openN} ใบ`, onClick },
 ];

@@ -10,24 +10,25 @@ export type Perm = ViewId | "rooms.manage" | "rooms.move" | "contracts.delete" |
 type Item = { id: Perm; label: string; hint?: string };
 
 export const PERM_GROUPS: { title: string; items: Item[] }[] = [
-  { title: "เมนูพื้นที่ดูแล", items: [
-    { id: "careplan", label: "หน้าแรก" }, { id: "residents", label: "ผู้รับบริการ", hint: "ดู/แก้ทะเบียนและประวัติผู้รับบริการ" },
+  { title: "เมนูงานดูแล", items: [
+    { id: "careplan", label: "งานวันนี้" }, { id: "residents", label: "ผู้รับบริการ", hint: "ดู/แก้ทะเบียนและประวัติผู้รับบริการ" },
     { id: "rooms", label: "ห้องพักและเตียง", hint: "ดูห้องว่างและคนในห้อง" }, { id: "tasks", label: "มอบหมายและตรวจงาน" }, { id: "roster", label: "ตารางเวร" },
-    { id: "appointments", label: "ตารางนัดหมาย" }, { id: "health_logs", label: "รายงานสุขภาพ" }, { id: "quotations", label: "ใบเสนอราคา / แผนดูแล" },
+    { id: "appointments", label: "ตารางนัดหมาย" }, { id: "health_logs", label: "บันทึกสุขภาพ" }, { id: "feedbacks", label: "เสียงจากครอบครัว" },
   ] },
-  { title: "เมนูสัญญาและการเงิน", items: [
-    { id: "contracts", label: "สัญญาบริการ", hint: "เปิด/แก้/ต่อสัญญา D/C ยกเลิกสัญญา" }, { id: "billing", label: "การเงิน", hint: "ออกใบแจ้งหนี้ รับชำระ ใบเสร็จ ปิดยอดรายวัน" },
+  { title: "เมนูขายและการเงิน", items: [
+    { id: "prices", label: "ราคาสินค้าและบริการ", hint: "ดูราคากลาง · ผู้จัดการสาขาและผู้บริหารแก้ราคาและรหัสได้" },
+    { id: "quotations", label: "ใบเสนอราคา / แผนดูแล" },
+    { id: "contracts", label: "สัญญาบริการ", hint: "เปิด/แก้/ต่อสัญญา D/C ยกเลิกสัญญา" }, { id: "billing", label: "ใบแจ้งหนี้และใบเสร็จ", hint: "ออกใบแจ้งหนี้ รับชำระ ใบเสร็จ ปิดยอดรายวัน" },
   ] },
   { title: "เมนูบริหาร", items: [
-    { id: "dashboard", label: "ภาพรวมและรายงาน", hint: "แดชบอร์ดและส่งออก CSV" }, { id: "branches", label: "สาขาของเรา" },
+    { id: "dashboard", label: "ภาพรวมและรายงาน", hint: "แดชบอร์ดและส่งออก CSV" }, { id: "branches", label: "ข้อมูลสาขา" },
   ] },
   { title: "เมนูทีมงาน", items: [
     { id: "staff", label: "ทีมและสิทธิ์การใช้งาน", hint: "สร้างบัญชีและกำหนดสิทธิ์" }, { id: "kpi", label: "KPI พนักงาน" }, { id: "reviews", label: "รีวิวพนักงาน" },
-    { id: "feedbacks", label: "เสียงจากครอบครัว" }, { id: "audit", label: "ประวัติการใช้งาน" },
   ] },
   { title: "เมนูเครื่องมือและระบบ", items: [
-    { id: "tasks_table", label: "ประวัติงานดูแล" }, { id: "facility_tasks", label: "งานส่วนกลางของสาขา" }, { id: "master_tasks", label: "แม่แบบงานมาตรฐาน" },
-    { id: "official-docs", label: "เอกสารและระเบียบ" }, { id: "tutorials", label: "วิดีโอสอนใช้งาน" },
+    { id: "tasks_table", label: "งานดูแลย้อนหลัง" }, { id: "facility_tasks", label: "งานส่วนกลางของสาขา" }, { id: "master_tasks", label: "แม่แบบงานมาตรฐาน" },
+    { id: "official-docs", label: "เอกสารและระเบียบ" }, { id: "tutorials", label: "วิดีโอสอนใช้งาน" }, { id: "audit", label: "บันทึกการใช้งานระบบ" },
   ] },
   { title: "สิทธิ์การทำงาน", items: [
     { id: "rooms.move", label: "จัดคนเข้าห้อง / ย้ายห้อง", hint: "ห้องเต็มย้ายเข้าไม่ได้" },
@@ -53,7 +54,7 @@ export const ROLE_PERMS: Record<Role, Perm[]> = {
   "Global Admin": ALL_PERMS,
   "Branch Admin": ALL_PERMS,
   "Head Nurse": [...CARE, "rooms.move", "rooms.manage", "tasks.review", ...TOOLS, "app.staff", "app.pharmacy"],
-  Cashier: ["contracts", "billing", "rooms", "contracts.delete"],
+  Cashier: ["contracts", "billing", "rooms", "contracts.delete", "prices"],
   Nurse: ["app.staff", "app.pharmacy"],
 };
 

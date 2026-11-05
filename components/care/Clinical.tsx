@@ -168,7 +168,7 @@ function Physio({ id, c, reload }: P) {
         </div>
       </div>
       {free > 0 && <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">ทำกายภาพไปแล้ว {free} ครั้งโดยยังไม่มีคอร์ส · แจ้งญาติเปิดคอร์ส · แคชเชียร์กำหนดราคาครั้งที่ทำไปแล้วตอนออกใบแจ้งหนี้</p>}
-      {!active && <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">{waiting ? "คอร์สกายภาพยังไม่ได้ออกใบแจ้งหนี้ · แจ้งแคชเชียร์ออกใบที่เมนูการเงินก่อนจึงจะบันทึกกายภาพได้" : <>{c.courses.length ? "คอร์สกายภาพใช้ครบแล้ว" : "ยังไม่มีคอร์สกายภาพ"} · ต้องซื้อคอร์สก่อนจึงจะบันทึกการทำกายภาพได้{canSell ? " · กดปุ่ม ซื้อคอร์ส ด้านบน" : " · แจ้งหัวหน้าพยาบาลหรือแคชเชียร์ให้เปิดคอร์สให้ก่อน"}</>}</p>}
+      {!active && <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">{waiting ? "คอร์สกายภาพยังไม่ได้ออกใบแจ้งหนี้ · แจ้งแคชเชียร์ออกใบที่เมนูใบแจ้งหนี้และใบเสร็จก่อนจึงจะบันทึกกายภาพได้" : <>{c.courses.length ? "คอร์สกายภาพใช้ครบแล้ว" : "ยังไม่มีคอร์สกายภาพ"} · ต้องซื้อคอร์สก่อนจึงจะบันทึกการทำกายภาพได้{canSell ? " · กดปุ่ม ซื้อคอร์ส ด้านบน" : " · แจ้งหัวหน้าพยาบาลหรือแคชเชียร์ให้เปิดคอร์สให้ก่อน"}</>}</p>}
       <div className="grid gap-3 md:grid-cols-2">{c.courses.map((k) => {
         const left = k.total - k.used, pct = Math.round((k.used / k.total) * 100);
         return (
@@ -189,12 +189,12 @@ function Physio({ id, c, reload }: P) {
           rows={sessions.map((n) => [n.at, n.title ?? "-", n.body ?? "-", String(n.data.pain || "-"), String(n.data.plan || "-"), n.author ?? "-"])} /></div>
 
       <Modal open={!!buy} title="ซื้อคอร์สกายภาพ" onClose={() => setBuy(null)}
-        footer={<><button className="btn-soft" onClick={() => setBuy(null)}>ยกเลิก</button><button className="btn-primary" onClick={() => buy && ((buy.free ? buy.why.trim() : Number(buy.price) > 0) ? run(toast, { op: "course", residentId: id, name: buy.name, total: Number(buy.total), price: buy.free ? 0 : Number(buy.price) || 0, freeReason: buy.free ? buy.why : "" }, `ซื้อคอร์สแล้ว · ${buy.name} ${buy.total} ครั้ง${buy.free ? " · ฟรี ใช้ได้ทันที" : " · แคชเชียร์ออกใบแจ้งหนี้ที่เมนูการเงินแล้วจึงใช้ได้"}`, () => { setBuy(null); reload(); }) : toast(buy.free ? "กรุณาระบุเหตุผลที่ให้ฟรี" : "กรุณากรอกราคาคอร์ส"))}>บันทึกคอร์ส</button></>}>
+        footer={<><button className="btn-soft" onClick={() => setBuy(null)}>ยกเลิก</button><button className="btn-primary" onClick={() => buy && ((buy.free ? buy.why.trim() : Number(buy.price) > 0) ? run(toast, { op: "course", residentId: id, name: buy.name, total: Number(buy.total), price: buy.free ? 0 : Number(buy.price) || 0, freeReason: buy.free ? buy.why : "" }, `ซื้อคอร์สแล้ว · ${buy.name} ${buy.total} ครั้ง${buy.free ? " · ฟรี ใช้ได้ทันที" : " · แคชเชียร์ออกใบแจ้งหนี้ที่เมนูใบแจ้งหนี้และใบเสร็จแล้วจึงใช้ได้"}`, () => { setBuy(null); reload(); }) : toast(buy.free ? "กรุณาระบุเหตุผลที่ให้ฟรี" : "กรุณากรอกราคาคอร์ส"))}>บันทึกคอร์ส</button></>}>
         {buy && <div className="form-grid">
           <Field label="ชื่อคอร์ส" className="md:col-span-2"><input value={buy.name} onChange={(e) => setBuy({ ...buy, name: e.target.value })} /></Field>
           <Field label="จำนวนครั้ง"><input type="number" min={1} value={buy.total} onChange={(e) => setBuy({ ...buy, total: e.target.value })} /></Field>
           <Field label="ราคาคอร์ส (บาท)" required={!buy.free}><input type="number" min={0} value={buy.free ? "" : buy.price} disabled={buy.free} onChange={(e) => setBuy({ ...buy, price: e.target.value })} placeholder="เช่น 8000" />
-            <p className="field-hint">ซื้อแล้วแคชเชียร์ออกใบแจ้งหนี้ที่เมนูการเงิน · ออกใบแล้วจึงบันทึกกายภาพได้</p></Field>
+            <p className="field-hint">ซื้อแล้วแคชเชียร์ออกใบแจ้งหนี้ที่เมนูใบแจ้งหนี้และใบเสร็จ · ออกใบแล้วจึงบันทึกกายภาพได้</p></Field>
           {boss && <label className="md:col-span-2 flex items-center gap-2 text-sm text-gold-700"><input type="checkbox" className="!h-4 !w-4 !min-h-0" checked={buy.free} onChange={(e) => setBuy({ ...buy, free: e.target.checked })} /> ให้คอร์สนี้ฟรี (ผู้จัดการอนุมัติ)</label>}
           {buy.free && <Field label="เหตุผลที่ให้ฟรี" required className="md:col-span-2"><input value={buy.why} onChange={(e) => setBuy({ ...buy, why: e.target.value })} placeholder="เช่น โปรโมชันเปิดสาขา, ทดลองครั้งแรก" /></Field>}
         </div>}
@@ -238,7 +238,7 @@ function Supplies({ id, c, reload }: P) {
         {!items.length && <p className="text-sm text-gold-600">ยังไม่มีเวชภัณฑ์ในคลังของสาขา{manage ? "" : " · แจ้งหัวหน้าพยาบาลหรือผู้จัดการให้เพิ่มรายการ"}</p>}
       </section>
       <div>
-        <div className="mb-2 flex flex-wrap items-center justify-between gap-2"><h4 className="profile-sub !mb-0">ประวัติการเบิก</h4>{unbilled.length > 0 && <span className="text-xs text-amber-800">ยังไม่เรียกเก็บ {unbilled.length} รายการ · {money(unbilled.reduce((n, s) => n + s.qty * s.price, 0))} บาท (ดึงเข้าใบแจ้งหนี้ได้ที่เมนูการเงิน)</span>}</div>
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2"><h4 className="profile-sub !mb-0">ประวัติการเบิก</h4>{unbilled.length > 0 && <span className="text-xs text-amber-800">ยังไม่เรียกเก็บ {unbilled.length} รายการ · {money(unbilled.reduce((n, s) => n + s.qty * s.price, 0))} บาท (ดึงเข้าใบแจ้งหนี้ได้ที่เมนูใบแจ้งหนี้และใบเสร็จ)</span>}</div>
         <DataTable search={false} columns={["วันเวลา", "รายการ", "จำนวน", "ราคารวม", "ผู้เบิก", "เรียกเก็บ"]} empty="ยังไม่มีการเบิก"
           rows={c.supplies.map((s) => [s.at, s.item_name, `${s.qty} ${s.unit}`, money(s.qty * s.price), s.issued_by ?? "-", s.invoice_id ? "ออกใบแจ้งหนี้แล้ว" : "ยังไม่เรียกเก็บ"])} />
       </div>

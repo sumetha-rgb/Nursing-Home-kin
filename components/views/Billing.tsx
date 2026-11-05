@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
+import CsvIcon from "@/components/CsvIcon";
 import Icon from "../Icon";
 import PhotoPicker from "../PhotoPicker";
 import BillDoc, { Branch, DocFormat } from "../billing/BillDoc";
@@ -17,13 +18,16 @@ import { exportInvoiceLines, exportPayments } from "@/lib/billingExport";
 import { contractLines, contractRoomName } from "../print/Docs";
 import { DataTable, Field, MenuButton, MetricGrid, Modal, PageHeader, Section, StatusBadge, Tabs } from "../ui";
 import { ResidentPicker } from "../SearchSelect";
-import { rateText, roomByPrice, searchPrices } from "@/lib/priceList";
+import { lineCode, pickName, rateCode, rateText, roomByPrice, searchPrices } from "@/lib/priceList";
+import { usePriceList } from "@/lib/usePrices";
+import { saveTaxInfo, useTaxInfo } from "@/lib/taxInfo";
 
 const blankItem = (): BillItem => ({ desc: "", qty: 1, price: 0, discount: 0, pct: 0 });
 
 /** ช่องชื่อรายการ: พิมพ์อย่างน้อย 2 ตัวแล้วขึ้นค่าบริการจากใบราคา กดราคาแล้วชื่อกับราคาลงให้ · ไม่มีในใบราคาพิมพ์เองได้ */
-function LineDesc({ value, onText, onPick }: { value: string; onText: (v: string) => void; onPick: (desc: string, price: number) => void }) {
+function LineDesc({ value, onText, onPick }: { value: string; onText: (v: string) => void; onPick: (desc: string, price: number, code: string) => void }) {
   const [open, setOpen] = useState(false);
+  usePriceList();
   const list = open ? searchPrices(value, 8) : [];
   return (
     <div className="relative">
@@ -34,10 +38,10 @@ function LineDesc({ value, onText, onPick }: { value: string; onText: (v: string
           <p className="sticky top-0 border-b border-cream-200 bg-cream-50 px-4 py-2 text-xs text-gold-600">จากใบราคาของศูนย์ · กดราคาแล้วชื่อกับราคาลงให้เลย</p>
           {list.map((x) => (
             <div key={x.code} className="border-b border-cream-100 px-4 py-2.5 last:border-0">
-              <p className="text-sm font-medium text-gold-800">{x.name}</p>
+              <p className="text-sm font-medium text-gold-800"><span className="pl-code mr-1.5">{x.code}</span>{x.name}</p>
               <div className="mt-1.5 flex flex-wrap gap-1.5">{x.rates.map((r, k) => (
                 <button key={k} type="button" className="rounded-lg border border-gold-300 bg-cream-50 px-2.5 py-1 text-xs font-medium text-gold-800 hover:border-gold-600 hover:bg-gold-100"
-                  onMouseDown={(e) => { e.preventDefault(); onPick(x.name, r.price); setOpen(false); }}>{rateText(r)}</button>
+                  onMouseDown={(e) => { e.preventDefault(); onPick(pickName(x), r.price, rateCode(x, k)); setOpen(false); }}>{rateText(r)}</button>
               ))}</div>
             </div>
           ))}
@@ -71,10 +75,10 @@ export function contractMonthLines(r: string[]): BillItem[] {
   // ชื่อห้องที่ตั้งเอง (ค่าห้องกำหนดเอง) > ประเภทห้องจากราคาในใบราคา > ชื่อโปรแกรม
   const feeDesc = own ? (/^ห้อง/.test(own) ? `ค่า${own}` : `ค่าห้อง ${own}`) : kind ? `ค่า${kind.name}${kind.promo ? " ราคาโปรโมชัน" : ""}` : r[21] && r[21] !== "-" ? r[21] : "ค่าบริการรายเดือน";
   return [
-    ...(!hasRoom && fee ? [{ desc: `${feeDesc}${no ? ` · ห้อง ${no}` : ""}`, qty: 1, price: fee, discount: 0, vat: rate }] : []),
+    ...(!hasRoom && fee ? [{ desc: `${feeDesc}${no ? ` · ห้อง ${no}` : ""}`, qty: 1, price: fee, discount: 0, vat: rate, code: lineCode({ desc: feeDesc, price: fee }) }] : []),
     ...items.map((x) => {
       const room = isRoomLine(x.desc);
-      return { desc: no && room && !x.desc.includes(no) ? `${x.desc} · ห้อง ${no}` : x.desc, qty: x.qty, price: x.price, discount: Number(x.discount) || 0, pct: Number(x.pct) || 0, vat: room ? rate : 0 };
+      return { desc: no && room && !x.desc.includes(no) ? `${x.desc} · ห้อง ${no}` : x.desc, qty: x.qty, price: x.price, discount: Number(x.discount) || 0, pct: Number(x.pct) || 0, vat: room ? rate : 0, ...(lineCode(x) ? { code: lineCode(x) } : {}) };
     }),
   ];
 }
@@ -91,9 +95,9 @@ export function contractStartLines(r: string[]): BillItem[] {
   if (!service.length && prepaid) service.push({ desc: "ชำระค่าบริการล่วงหน้า", qty: 1, price: prepaid, discount: 0 });
   return [
     ...service,
-    ...(deposit ? [{ desc: "เงินประกัน", qty: 1, price: deposit, discount: 0 }] : []),
+    ...(deposit ? [{ desc: "เงินประกัน", qty: 1, price: deposit, discount: 0, code: "DP-01" }] : []),
     // มัดจำห้องที่จ่ายตอนจอง = เงินที่รับไว้แล้ว หักหลังรวม VAT (VAT ค่าห้องคิดจากราคาเต็ม)
-    ...(dep ? [{ desc: "หัก มัดจำห้องพักที่ชำระตอนจอง", qty: 1, price: dep, discount: 0, credit: true }] : []),
+    ...(dep ? [{ desc: "หัก มัดจำห้องพักที่ชำระตอนจอง", qty: 1, price: dep, discount: 0, credit: true, code: "AD-01" }] : []),
   ];
 }
 /** ค่าบริการต่อเดือนตามสัญญา (รวม VAT) */
@@ -110,16 +114,17 @@ export function contractStartNote(r: string[]): string {
   return [prepaid && contractMonthLines(r).length ? `ชำระค่าบริการล่วงหน้า ${months} เดือน` : "", dep ? `หักมัดจำห้องพักที่ชำระตอนจอง ${money(dep)} บาท` : ""].filter(Boolean).join(" · ");
 }
 
-/** ข้อมูลหัวกระดาษของสาขา จากหน้า "สาขาของเรา" (แถว: รหัส, ชื่อ, นิติบุคคล, โทร, ที่อยู่, ...) */
+/** ข้อมูลหัวกระดาษของสาขา จากหน้า "ข้อมูลสาขา" (แถว: รหัส, ชื่อ, นิติบุคคล, โทร, ที่อยู่, ...) */
 export function useBranchInfo() {
   const { rows } = useCrud("branches", []);
+  const tax = useTaxInfo();
   return (name: string): Branch => {
     const r = rows.find((x) => x[1] === name);
-    return { name, legal: r?.[2] && r[2] !== "-" ? r[2] : "", address: r?.[4] && r[4] !== "-" ? r[4] : "", phone: r?.[3] && r[3] !== "-" ? r[3] : "" };
+    return { name, legal: r?.[2] && r[2] !== "-" ? r[2] : "", address: r?.[4] && r[4] !== "-" ? r[4] : "", phone: r?.[3] && r[3] !== "-" ? r[3] : "", taxId: tax[name]?.taxId ?? "", office: tax[name]?.office ?? "" };
   };
 }
 
-/** หน้าการเงิน: ออกใบแจ้งหนี้ รับชำระ (เป็นใบเสร็จ) แนบหลักฐานการโอน และพิมพ์ตามแบบของศูนย์ */
+/** หน้าใบแจ้งหนี้และใบเสร็จ: ออกใบแจ้งหนี้ รับชำระ (เป็นใบเสร็จ) แนบหลักฐานการโอน และพิมพ์ตามแบบของศูนย์ */
 export function Billing() {
   const { user } = useSession();
   const admin = can(user, "invoices.void");
@@ -139,6 +144,9 @@ export function Billing() {
   const [view, setView] = useState<Invoice | null>(null);
   const [format, setFormat] = useState<DocFormat>("customer");
   const [copy, setCopy] = useState(false);
+  /** ตั้งข้อมูลผู้ขายในใบกำกับภาษีของสาขา (ผู้จัดการสาขา / ผู้บริหาร) */
+  const [taxDlg, setTaxDlg] = useState<{ branch: string; taxId: string; office: string; hq: boolean } | null>(null);
+  const canTax = user?.role === "Global Admin" || user?.role === "Branch Admin";
   const [pays, setPays] = useState<Payment[]>([]);
   const [which, setWhich] = useState(0); // 0 = ใบรวม, n = ใบรับเงินงวดที่ n
   const [busy, setBusy] = useState(false);
@@ -226,7 +234,7 @@ export function Billing() {
     setForm({ ...form, who: name, hn: r?.[6] ?? "", payer: c?.[3] ?? form.payer, address: c?.[10] ?? form.address, contract: c?.[0] ?? "" });
     if (c && lines.length === 1 && !lines[0].desc && form.kind === BILL_KINDS[1]) { const m = contractMonthLines(c); if (m.length) setLines(m); }
   };
-  // ขายคอร์สกายภาพจากหน้าการเงิน: สร้างคอร์ส (นักกายภาพตัดครั้งที่แท็บกายภาพ) แล้วเปิดใบแจ้งหนี้ที่ใส่คอร์สไว้ให้
+  // ขายคอร์สกายภาพจากหน้าใบแจ้งหนี้และใบเสร็จ: สร้างคอร์ส (นักกายภาพตัดครั้งที่แท็บกายภาพ) แล้วเปิดใบแจ้งหนี้ที่ใส่คอร์สไว้ให้
   const [course, setCourse] = useState<{ who: string; name: string; total: string; price: string; busy: boolean } | null>(null);
   const saveCourse = async () => {
     if (!course || course.busy) return;
@@ -323,9 +331,9 @@ export function Billing() {
 
   return (
     <>
-      <PageHeader title="การเงิน" sub="ใบแจ้งหนี้ · รับชำระ · ใบเสร็จ"
+      <PageHeader title="ใบแจ้งหนี้และใบเสร็จ" sub="ใบแจ้งหนี้ · รับชำระ · ใบเสร็จ"
         actions={<>
-          <MenuButton label="ส่งออก" icon={<Icon name="download" className="h-4 w-4" />} items={[
+          <MenuButton label="ส่งออก CSV" icon={<CsvIcon />} items={[
             { label: "เอกสารทั้งหมด", hint: "1 แถวต่อใบ", onClick: () => downloadCsv("การเงิน", ["เลขที่เอกสาร", "วันที่", "HN", "ผู้รับบริการ", "ประเภท", "ยอดสุทธิ", "ชำระแล้ว", "คงเหลือ", "สถานะ"], rows) },
             { label: "รายการในใบ", hint: "แยกค่าห้อง คอร์ส ยา", onClick: () => { const n = exportInvoiceLines(list, (x) => con.rows.find((c) => c[0] === x.contract)?.[1] ?? res.rows.find((r) => r[0] === x.who)?.[3] ?? "", "การเงิน-รายการในใบ"); toast(`ส่งออกรายการในใบแล้ว ${n} บรรทัด`); } },
             { label: "การรับเงิน", hint: "แยกเงินสด โอน บัตร", onClick: () => exportPayments("", "การเงิน-การรับเงินรายงวด").then((n) => toast(`ส่งออกการรับเงินแล้ว ${n} งวด`)).catch((e) => toast((e as Error).message)) },
@@ -350,11 +358,13 @@ export function Billing() {
       <Section title="เอกสารการเงิน" actions={<Tabs tabs={["ทั้งหมด", DRAFT, UNPAID, PAID, VOID]} value={tab} onChange={setTab} />}>
         <DataTable columns={["เลขที่เอกสาร", "วันที่", "HN", "ผู้รับบริการ", "ประเภท", "ยอดสุทธิ (บาท)", "ชำระแล้ว", "คงเหลือ", "ค้างมา", "สถานะ"]} rows={rows} badgeCols={[8]}
           empty={meta.loaded ? "ยังไม่มีเอกสาร" : "กำลังโหลด…"}
+          onRow={(k) => { setFormat("customer"); setCopy(false); setView(shown[k]); }} rowLabel="กดเพื่อดูหรือพิมพ์เอกสาร"
           actions={[
-            { label: "ดู/พิมพ์", onClick: (k) => { setFormat("customer"); setCopy(false); setView(shown[k]); } },
-            { label: "ยืนยันยอด", hidden: (k) => shown[k].status !== DRAFT, onClick: (k) => { const x = shown[k]; if (x.status !== DRAFT) return toast("เอกสารนี้ยืนยันยอดแล้ว"); confirm({ title: "ยืนยันยอดใบแจ้งหนี้", okLabel: "ยืนยันยอด", message: `ตรวจรายการและยอด ${money(x.net)} บาท ของ ${x.who} ถูกต้องแล้วใช่หรือไม่ · ยืนยันแล้วจะเป็น "${UNPAID}" และรับชำระได้ · ถ้ายอดไม่ถูกให้ยกเลิกใบนี้แล้วออกใบใหม่`, onOk: () => { setList(list.map((y) => (y.id === x.id ? { ...x, status: UNPAID } : y))); setTab(UNPAID); toast(`ยืนยันยอดแล้ว · ${x.no ?? ""} · ${x.who} · พร้อมรับชำระ`); } }); } },
-            { label: "รับชำระ", onClick: (k) => isOpen(shown[k]) ? openPay(shown[k]) : toast(shown[k].status === DRAFT ? "กด ยืนยันยอด ก่อน จึงจะรับชำระได้" : "ไม่สามารถรับชำระได้ เอกสารนี้ชำระครบแล้วหรือถูกยกเลิก") },
-            ...(admin ? [{ label: "ยกเลิก", danger: true, onClick: (k: number) => { const x = shown[k]; if (x.status === VOID) return; confirm({ title: "ยกเลิกเอกสาร", message: `ต้องการยกเลิก ${x.no ?? ""} (${money(x.net)} บาท) ใช่หรือไม่ เอกสารยังเก็บไว้ในระบบพร้อมสถานะยกเลิก`, danger: true, okLabel: "ยกเลิกเอกสาร", onOk: () => { setList(list.map((y) => (y.id === x.id ? { ...x, status: VOID } : y))); toast(`ยกเลิกเอกสารแล้ว · ${x.no ?? ""} · ${x.who}`); } }); } }] : []),
+            // กดแถว = ดู/พิมพ์ · ปุ่มหลักขึ้นเฉพาะเมื่อมีงานต้องทำ (ยืนยันยอด / รับชำระ) · ยกเลิกอยู่ท้ายเมนู ⋯
+            { label: "ยืนยันยอด", tone: "primary", hidden: (k) => shown[k].status !== DRAFT, onClick: (k) => { const x = shown[k]; if (x.status !== DRAFT) return toast("เอกสารนี้ยืนยันยอดแล้ว"); confirm({ title: "ยืนยันยอดใบแจ้งหนี้", okLabel: "ยืนยันยอด", message: `ตรวจรายการและยอด ${money(x.net)} บาท ของ ${x.who} ถูกต้องแล้วใช่หรือไม่ · ยืนยันแล้วจะเป็น "${UNPAID}" และรับชำระได้ · ถ้ายอดไม่ถูกให้ยกเลิกใบนี้แล้วออกใบใหม่`, onOk: () => { setList(list.map((y) => (y.id === x.id ? { ...x, status: UNPAID } : y))); setTab(UNPAID); toast(`ยืนยันยอดแล้ว · ${x.no ?? ""} · ${x.who} · พร้อมรับชำระ`); } }); } },
+            { label: "รับชำระ", tone: "primary", hidden: (k) => !isOpen(shown[k]), onClick: (k) => openPay(shown[k]) },
+            { label: "ดู / พิมพ์", more: true, onClick: (k) => { setFormat("customer"); setCopy(false); setView(shown[k]); } },
+            ...(admin ? [{ label: "ยกเลิกใบนี้…", danger: true, more: true, hidden: (k: number) => shown[k].status === VOID, onClick: (k: number) => { const x = shown[k]; if (x.status === VOID) return; confirm({ title: "ยกเลิกเอกสาร", message: `ต้องการยกเลิก ${x.no ?? ""} (${money(x.net)} บาท) ใช่หรือไม่ เอกสารยังเก็บไว้ในระบบพร้อมสถานะยกเลิก`, danger: true, okLabel: "ยกเลิกเอกสาร", onOk: () => { setList(list.map((y) => (y.id === x.id ? { ...x, status: VOID } : y))); toast(`ยกเลิกเอกสารแล้ว · ${x.no ?? ""} · ${x.who}`); } }); } }] : []),
           ]} />
       </Section>
 
@@ -391,7 +401,7 @@ export function Billing() {
                 <button type="button" className="row-action danger" onClick={() => setLines(lines.filter((_, j) => j !== i))}>ลบ</button>
               </div>;
               return <div key={i} className="bill-item">
-                <Field label="รายการ"><LineDesc value={l.desc} onText={(desc) => set({ desc })} onPick={(desc, price) => set({ desc, price, vat: isRoomLine(desc) ? vatRate : 0 })} /></Field>
+                <Field label="รายการ"><LineDesc value={l.desc} onText={(desc) => set({ desc, code: undefined })} onPick={(desc, price, code) => set({ desc, price, code, vat: isRoomLine(desc) ? vatRate : 0 })} /></Field>
                 <Field label="จำนวน"><input type="number" min={0} value={l.qty} onChange={(e) => set({ qty: num(e.target.value) })} /></Field>
                 <Field label="ราคา/หน่วย"><input type="number" min={0} value={l.price} onChange={(e) => set({ price: num(e.target.value) })} /></Field>
                 <Field label="ส่วนลด (บาท)"><input type="number" min={0} value={l.discount} onChange={(e) => set({ discount: num(e.target.value) })} /></Field>
@@ -470,7 +480,14 @@ export function Billing() {
             <Tabs tabs={["สำหรับผู้ชำระ", "สำหรับฝ่ายการเงิน"]} value={format === "customer" ? "สำหรับผู้ชำระ" : "สำหรับฝ่ายการเงิน"} onChange={(t) => setFormat(t === "สำหรับผู้ชำระ" ? "customer" : "finance")} />
             <Tabs tabs={["ต้นฉบับ", "สำเนา"]} value={copy ? "สำเนา" : "ต้นฉบับ"} onChange={(t) => setCopy(t === "สำเนา")} />
             {view.status === VOID && <span className="status-badge status-danger">เอกสารนี้ถูกยกเลิก</span>}
+            {canTax && <button type="button" className="btn-soft !min-h-0 !py-2 !text-sm sm:ml-auto" onClick={() => {
+              const b = branchInfo(branchOfInv(view));
+              setTaxDlg({ branch: b.name, taxId: b.taxId ?? "", office: b.office && b.office !== "สำนักงานใหญ่" ? b.office.replace(/\D/g, "") : "", hq: !b.office || b.office === "สำนักงานใหญ่" });
+            }}>ข้อมูลผู้เสียภาษี</button>}
           </div>
+          {!branchInfo(branchOfInv(view)).taxId && <p className="bill-switch mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            ยังไม่ได้ตั้งเลขประจำตัวผู้เสียภาษีของสาขา {branchOfInv(view)} · ใบกำกับภาษีต้องมีเลขนี้{canTax ? " · กดปุ่ม \"ข้อมูลผู้เสียภาษี\"" : " · แจ้งผู้จัดการสาขาให้ตั้ง"}
+          </p>}
           {pays.length > 0 && (
             <div className="mb-4 space-y-2">
               <Tabs tabs={[view.status === PAID ? "ใบเสร็จรวม" : "ใบแจ้งหนี้", ...pays.map((p) => `ใบรับเงิน งวดที่ ${p.n}`)]}
@@ -486,6 +503,31 @@ export function Billing() {
             payment={which > 0 ? pays[which - 1] : undefined}
             slips={format === "finance" ? (which > 0 ? (pays[which - 1]?.slip ? [pays[which - 1]] : []) : pays.filter((p) => p.slip)) : []} />
         </>}
+      </Modal>
+
+      <Modal open={!!taxDlg} title="ข้อมูลผู้เสียภาษี" onClose={() => setTaxDlg(null)}
+        footer={<><button className="btn-soft" onClick={() => setTaxDlg(null)}>ยกเลิก</button><button className="btn-primary" onClick={async () => {
+          if (!taxDlg) return;
+          const id = taxDlg.taxId.replace(/\D/g, "");
+          if (id.length !== 13) return toast("เลขประจำตัวผู้เสียภาษีต้องมี 13 หลัก");
+          if (!taxDlg.hq && !/^\d{1,5}$/.test(taxDlg.office)) return toast("ใส่เลขสาขา 5 หลัก เช่น 00001");
+          try {
+            await saveTaxInfo(taxDlg.branch, { taxId: id, office: taxDlg.hq ? "สำนักงานใหญ่" : `สาขาที่ ${taxDlg.office.padStart(5, "0")}` });
+            toast(`บันทึกข้อมูลผู้เสียภาษีของสาขา ${taxDlg.branch} แล้ว`); setTaxDlg(null);
+          } catch (e) { toast((e as Error).message); }
+        }}>บันทึก</button></>}>
+        {taxDlg && <div className="space-y-4">
+          <p className="text-sm text-gold-700">ขึ้นที่หัวใบเสร็จรับเงิน / ใบกำกับภาษี ของสาขา <b className="font-semibold text-gold-800">{taxDlg.branch}</b></p>
+          <Field label="เลขประจำตัวผู้เสียภาษี (13 หลัก)" required>
+            <input inputMode="numeric" maxLength={17} value={taxDlg.taxId} onChange={(e) => setTaxDlg({ ...taxDlg, taxId: e.target.value })} placeholder="0105555000000" />
+          </Field>
+          <Field label="ที่ตั้งตามทะเบียนภาษี">
+            <div className="flex flex-wrap items-center gap-3">
+              <Tabs tabs={["สำนักงานใหญ่", "สาขา"]} value={taxDlg.hq ? "สำนักงานใหญ่" : "สาขา"} onChange={(t) => setTaxDlg({ ...taxDlg, hq: t === "สำนักงานใหญ่" })} />
+              {!taxDlg.hq && <input inputMode="numeric" maxLength={5} value={taxDlg.office} onChange={(e) => setTaxDlg({ ...taxDlg, office: e.target.value.replace(/\D/g, "") })} placeholder="เลขสาขา เช่น 00001" className="!w-48" aria-label="เลขสาขา" />}
+            </div>
+          </Field>
+        </div>}
       </Modal>
     </>
   );

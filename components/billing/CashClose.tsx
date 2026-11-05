@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
+import CsvIcon from "@/components/CsvIcon";
 import Icon from "../Icon";
 import { DataTable, Field, Modal, Section } from "../ui";
 import { docDate, money, todayIso } from "@/lib/billing";
@@ -34,7 +35,7 @@ export function CashCloseStatus({ branch, onOpen }: { branch: string; onOpen?: (
     rows.map((r) => [r.b, String(r.days), String(r.closed), String(r.open.length), r.open.map(docDate).join(" "), String(r.wait), String(r.short), money(r.diff), r.last ? docDate(r.last) : ""]));
   return (
     <Section title="สถานะปิดยอดรายวัน (30 วัน)" sub="ไม่นับวันนี้ · วันที่มีรับเงินแต่ยังไม่นับเงินสดปิดยอดเป็นสีแดง · ส่วนต่าง = เงินสดที่นับได้ลบยอดในระบบ"
-      actions={<><button className="btn-soft" disabled={!rows.length} onClick={exportCsv}><Icon name="download" className="h-4 w-4" /> ส่งออก CSV</button>{onOpen && <button className="btn-soft" onClick={onOpen}>ไปปิดยอด</button>}</>}>
+      actions={<><button className="btn-soft" disabled={!rows.length} onClick={exportCsv}><CsvIcon /> ส่งออก CSV</button>{onOpen && <button className="btn-soft" onClick={onOpen}>ไปปิดยอด</button>}</>}>
       <DataTable search={false} columns={["สาขา", "วันที่มีรับเงิน", "ปิดยอดแล้ว", "ยังไม่ปิดยอด", "รอตรวจรับรอง", "ส่วนต่างเงินสดรวม", "ปิดยอดล่าสุด"]} empty="ยังไม่มีการรับเงินใน 30 วัน"
         rows={rows.map((r) => [r.b, `${r.days} วัน`, `${r.closed} วัน`, r.open.length ? `${r.open.length} วัน` : "-", r.wait ? `${r.wait} วัน` : "-", r.diff ? money(r.diff) : "ตรงยอด", r.last ? docDate(r.last) : "-"])}
         render={(k, col) => {
@@ -55,7 +56,7 @@ const r2 = (n: number) => Math.round(n * 100) / 100;
 const num = (s: string) => Number(String(s).replace(/,/g, "")) || 0;
 
 /**
- * ปิดยอดเงินรายวัน (หน้าการเงิน)
+ * ปิดยอดเงินรายวัน (หน้าใบแจ้งหนี้และใบเสร็จ)
  *  แคชเชียร์เลือกวัน → เห็นยอดรับชำระของวันนั้นแยก เงินสด / โอน / บัตร → กรอกเงินสดที่นับได้จริง → ปิดยอด (ไม่ตรงต้องใส่หมายเหตุ)
  *  ผู้จัดการสาขาตรวจรับรอง · รับเงินของวันนั้นเพิ่มหลังปิดยอด ระบบเตือนให้ปิดยอดใหม่
  */
@@ -134,7 +135,7 @@ export default function CashClose({ open, onClose, isGlobal }: { open: boolean; 
 
   return (
     <Modal open={open} wide title="ปิดยอดเงินรายวัน" onClose={onClose}
-      footer={<><button className="btn-soft mr-auto" onClick={exportCsv}><Icon name="download" className="h-4 w-4" /> ส่งออก CSV</button><button className="btn-soft" onClick={onClose}>ปิดหน้าต่าง</button></>}>
+      footer={<><button className="btn-soft mr-auto" onClick={exportCsv}><CsvIcon /> ส่งออก CSV</button><button className="btn-soft" onClick={onClose}>ปิดหน้าต่าง</button></>}>
       <div className="space-y-5">
         {missing && <p role="alert" className="form-error"><Icon name="alert" className="h-4 w-4 shrink-0" />{missing}</p>}
         <div className="grid gap-3 sm:grid-cols-2">

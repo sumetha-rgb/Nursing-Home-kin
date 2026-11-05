@@ -221,6 +221,8 @@ export function useCrud(key: string, initial: string[][]) {
     rows, ids: items.map((x) => x.id), loaded, error, set,
     /** คืนรหัสรายการใหม่ (ใช้แนบข้อมูลที่เก็บแยก เช่น รูปบัตรของสัญญา) */
     add: (r: string[]) => { const it = { id: newId(), data: r }; local([it, ...items]); sync(key, { op: "upsert", items: [it] }); return it.id; },
+    /** เพิ่มหลายรายการในครั้งเดียว (เช่น สร้างห้อง 101–110) */
+    addMany: (rs: string[][]) => { const its = rs.map((data) => ({ id: newId(), data })); local([...its, ...items]); sync(key, { op: "upsert", items: its }); },
     update: (i: number, r: string[]) => { const it = { ...items[i], data: r }; local(items.map((x, j) => (j === i ? it : x))); sync(key, { op: "upsert", items: [it] }); },
     /** คืนฟังก์ชันกู้คืน (ปุ่ม "เลิกทำ" ในแจ้งเตือน): ใส่รายการเดิมกลับที่ตำแหน่งเดิมด้วยรหัสเดิม */
     remove: (i: number) => {
@@ -261,7 +263,13 @@ export function useRecords<T extends { id: string | number }>(key: string, initi
 export function downloadCsv(name: string, columns: string[], rows: string[][]) {
   // ค่าที่ขึ้นต้นด้วย = + @ หรือ - ตามด้วยตัวอักษร Excel จะตีความเป็นสูตร (CSV injection) · ใส่ ' นำหน้า
   const safe = (v: string) => (/^[=+@\t\r]/.test(v) || /^-[^\d.]/.test(v) ? `'${v}` : v);
-  const esc = (v: string) => `"${safe(String(v ?? "")).replace(/"/g, '""')}"`;
+  // ตัวเลขล้วนที่ขึ้นต้นด้วย 0 (เบอร์โทร รหัส) หรือยาว 12 หลักขึ้นไป (เลขบัตรประชาชน) Excel จะตัด 0 หน้า / แสดงเป็น 1.1E+12
+  // เขียนเป็น ="0812345678" ให้ Excel และ Google Sheets อ่านเป็นข้อความ (เป็นตัวเลขล้วน จึงไม่ใช่สูตรอันตราย)
+  const esc = (v: string) => {
+    const s = String(v ?? "");
+    if (/^(0\d+|\d{12,})$/.test(s)) return `"=""${s}"""`;
+    return `"${safe(s).replace(/"/g, '""')}"`;
+  };
   const csv = "﻿" + [columns, ...rows].map((r) => r.map(esc).join(",")).join("\r\n");
   const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
   const a = document.createElement("a");

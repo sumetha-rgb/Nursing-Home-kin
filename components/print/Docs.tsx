@@ -3,7 +3,8 @@ import { ReactNode, useEffect, useRef } from "react";
 import Icon from "../Icon";
 import { Modal } from "../ui";
 import { bahtText, money, svcDiscount, svcNet } from "@/lib/billing";
-import { EXTRA_SERVICES, PACKAGES, rateColumns, roomByPrice, ROOMS } from "@/lib/priceList";
+import { extraServices, packages, rateColumns, roomByPrice, rooms } from "@/lib/priceList";
+import { usePriceList } from "@/lib/usePrices";
 import { isNoAllergy } from "@/lib/medicalLists";
 import { ACCEPT, CONSENT, CONSENT_MARKETING, DOC_RECEIPT, EXCLUDED, EXCLUDED_NOTE, FINES, HOSPITAL_STEPS, INCLUDED, INCLUDED_NOTE, PAY_CHANNELS, REHAB_CHECKS, ROOM_CHECK, ROOM_CHECK_NOTE,
   RULES_CENTER, RULES_FINANCE_AFTER, RULES_FINANCE_BEFORE, RULES_NURSING, RULES_REFUND, RULES_REHAB, VISIT_EFFECTIVE, VISIT_RULES } from "@/lib/contractText";
@@ -115,7 +116,7 @@ export const DEFAULT_TERMS = "";
 /** แถวสัญญา: [เลขที่, สาขา, ผู้รับบริการ, ผู้ว่าจ้าง, ราคาโปรแกรม, สถานะ, ห้อง, วันเริ่ม, บัตรผู้ว่าจ้าง, โทร, ที่อยู่, ความเกี่ยวข้อง, บัตรผู้รับบริการ, อายุ, บริการพื้นฐาน, รายการเพิ่มเติม, ค่าเพิ่มเติม, แพ็กเกจ, ล่วงหน้า, ประกัน, หมายเหตุ,
  *  โปรแกรม, วันสิ้นสุด, รายการ (JSON), โรงพยาบาลตามสิทธิ์, แพ้ยา, แพ้อาหาร, หักมัดจำห้อง, ยา/เวชภัณฑ์ที่ใช้ประจำ] */
 /** room = ชื่อห้องที่ตั้งเองเมื่อกำหนดค่าห้องเอง (เก็บใน items_json ไม่ใช่รายการค่าบริการ) */
-export type ContractLine = { desc: string; qty: number; unit: string; price: number; discount?: number; pct?: number; room?: boolean };
+export type ContractLine = { desc: string; qty: number; unit: string; price: number; discount?: number; pct?: number; room?: boolean; code?: string };
 const rawLines = (r: string[]): ContractLine[] | null => { try { const x = JSON.parse(r[23] || "[]"); if (Array.isArray(x)) return x; } catch { /* สัญญาเก่า */ } return null; };
 /** รายการค่าบริการของสัญญา · สัญญาเก่าที่ยังไม่มีรายการ: แปลงจากค่าบริการเพิ่มเติมรายเดือนเดิม */
 export function contractLines(r: string[]): ContractLine[] {
@@ -141,6 +142,7 @@ const Fill = ({ v, w }: { v?: string | null; w?: string }) => <span className="d
 const Break = () => <div className="doc-break" aria-hidden="true" />;
 
 export function ContractDoc({ r, hn, bed, branch, terms, by, copy, chronic }: { r: string[]; hn?: string; bed?: string; branch?: DocBranch; terms?: string; by?: string; copy?: boolean; chronic?: string }) {
+  usePriceList();
   const lines = contractLines(r);
   const fee = numOf(r[4]), total = contractTotal(r), dep = numOf(r[27]), prepaid = numOf(r[18]), deposit = numOf(r[19]);
   const net = total - dep;
@@ -193,17 +195,17 @@ export function ContractDoc({ r, hn, bed, branch, terms, by, copy, chronic }: { 
       <DocH>อัตราค่าบริการห้องพัก</DocH>
       <div className="doc-tbl"><table>
         <thead><tr><th>รายการ</th><th className="n">ราคารายวัน</th><th className="n">ราคารายเดือน</th><th className="n">โปรโมชัน/เดือน</th></tr></thead>
-        <tbody>{ROOMS.map((x) => <tr key={x.name}><td>{x.name}</td><td className="n">{money(x.day)}</td><td className="n">{money(x.month)}</td><td className="n">{money(x.promo)}</td></tr>)}</tbody>
+        <tbody>{rooms().map((x) => <tr key={x.name}><td>{x.name}</td><td className="n">{money(x.day)}</td><td className="n">{money(x.month)}</td><td className="n">{money(x.promo)}</td></tr>)}</tbody>
       </table></div>
       <DocH>อัตราค่าบริการเพิ่มเติม</DocH>
       <div className="doc-tbl"><table>
         <thead><tr><th>รายการ</th><th className="n">รายครั้ง</th><th className="n">รายวัน</th><th className="n">รายเดือน</th></tr></thead>
-        <tbody>{EXTRA_SERVICES.map((x) => { const c = rateColumns(x); return <tr key={x.code}><td>{x.name}</td><td className="n">{c.once}</td><td className="n">{c.day}</td><td className="n">{c.month}</td></tr>; })}</tbody>
+        <tbody>{extraServices().map((x) => { const c = rateColumns(x); return <tr key={x.code}><td>{x.name}</td><td className="n">{c.once}</td><td className="n">{c.day}</td><td className="n">{c.month}</td></tr>; })}</tbody>
       </table></div>
       <DocH>แพ็กเกจฟื้นฟู</DocH>
       <div className="doc-tbl"><table>
         <thead><tr><th>แพ็กเกจ</th><th className="n">ราคา (บาท)</th></tr></thead>
-        <tbody>{PACKAGES.map((x) => <tr key={x.code}><td>{x.name}</td><td className="n">{money(x.rates[0].price)}</td></tr>)}</tbody>
+        <tbody>{packages().map((x) => <tr key={x.code}><td>{x.name}</td><td className="n">{money(x.rates[0].price)}</td></tr>)}</tbody>
       </table></div>
 
       {/* หน้า 3: อัตราค่าปรับทรัพย์สิน */}
@@ -376,7 +378,7 @@ export function DischargeDoc({ d, branch, by }: { d: DcData; branch?: DocBranch;
 }
 
 /* ---------- ใบเสนอราคา ---------- */
-export type QuoteItem = { desc: string; qty: number; unit: string; price: number; discount?: number; pct?: number };
+export type QuoteItem = { desc: string; qty: number; unit: string; price: number; discount?: number; pct?: number; code?: string };
 export function QuoteDoc({ no, date, validDays, payer, resident, age, chronic, level, items, note, branch, by }: {
   no: string; date: string; validDays: number; payer: string; resident: string; age?: string; chronic?: string; level?: string; items: QuoteItem[]; note?: string; branch?: DocBranch; by?: string;
 }) {

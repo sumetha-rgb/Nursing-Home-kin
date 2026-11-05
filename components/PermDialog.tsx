@@ -5,8 +5,14 @@ import { can, Perm, PERM_GROUPS, permsFor, ROLE_PERMS } from "@/lib/perms";
 import { ROLE_INFO, Role, SessionUser } from "@/lib/roles";
 import type { UserRow } from "@/lib/session";
 
+/** สิทธิ์การทำงานอยู่ใต้เมนูที่เกี่ยวข้อง */
+const SUB: Partial<Record<Perm, Perm[]>> = { rooms: ["rooms.move", "rooms.manage"], tasks: ["tasks.review"], contracts: ["contracts.delete"], billing: ["invoices.void"] };
+const SUB_IDS = new Set(Object.values(SUB).flat());
+const LABEL = Object.fromEntries(PERM_GROUPS.flatMap((g) => g.items.map((i) => [i.id, i]))) as Record<Perm, { id: Perm; label: string; hint?: string }>;
+
 /**
- * ติ๊กสิทธิ์รายคน: เมนูที่เห็น สิทธิ์การทำงาน และแอปในมือถือ
+ * สิทธิ์รายคนแบบสวิตช์ จัดกลุ่มตามเมนูด้านซ้าย · สิทธิ์การทำงานอยู่ใต้เมนูที่เกี่ยวข้อง
+ * สวิตช์ที่ต่างจากค่าเริ่มต้นของตำแหน่งมีป้าย "เพิ่มให้คนนี้" / "ปิดให้คนนี้"
  * ให้ได้เฉพาะสิทธิ์ที่ผู้แก้มีเอง · "ใช้ค่าเริ่มต้นของตำแหน่ง" = เลิกกำหนดรายคน (ตามตำแหน่งต่อไป แม้ภายหลังเปลี่ยนตำแหน่ง)
  */
 export default function PermDialog({ user, me, onClose, onSave }: {
@@ -17,42 +23,52 @@ export default function PermDialog({ user, me, onClose, onSave }: {
   useEffect(() => { if (user) setOn(new Set(permsFor(role, user.permissions))); }, [user]); // eslint-disable-line react-hooks/exhaustive-deps
   const top = role === "Global Admin";
   const mine = (p: Perm) => can(me, p);
-  const toggle = (p: Perm) => { const n = new Set(on); if (n.has(p)) n.delete(p); else n.add(p); setOn(n); };
-  const setGroup = (ids: Perm[], v: boolean) => { const n = new Set(on); ids.filter(mine).forEach((p) => (v ? n.add(p) : n.delete(p))); setOn(n); };
   const defaults = new Set(ROLE_PERMS[role]);
-  const changed = [...on].some((p) => !defaults.has(p)) || [...defaults].some((p) => !on.has(p));
+  const toggle = (p: Perm) => {
+    const n = new Set(on);
+    if (n.has(p)) { n.delete(p); (SUB[p] ?? []).forEach((s) => n.delete(s)); } else n.add(p);
+    setOn(n);
+  };
+  const diff = [...on].filter((p) => !defaults.has(p)).length + [...defaults].filter((p) => !on.has(p)).length;
+
+  const Row = ({ id, sub, parentOff }: { id: Perm; sub?: boolean; parentOff?: boolean }) => {
+    const i = LABEL[id], v = on.has(id), d = v !== defaults.has(id), dis = !mine(id) || !!parentOff;
+    return (
+      <div className={`perm-row ${sub ? "is-sub" : ""} ${dis ? "is-dis" : ""}`}>
+        <span className="perm-t">{i.label}{i.hint && <small>{i.hint}</small>}</span>
+        {d && <em className="perm-diff">{v ? "เพิ่มให้คนนี้" : "ปิดให้คนนี้"}</em>}
+        <button type="button" role="switch" aria-checked={v} aria-label={i.label} className="perm-sw" disabled={dis} onClick={() => toggle(id)}
+          title={!mine(id) ? "บัญชีของคุณไม่มีสิทธิ์นี้ จึงให้คนอื่นไม่ได้" : parentOff ? "เปิดเมนูด้านบนก่อน" : undefined}><i aria-hidden="true" /></button>
+      </div>
+    );
+  };
 
   return (
     <Modal open={!!user} wide title={`สิทธิ์การใช้งาน · ${user?.full_name ?? ""}`} onClose={onClose}
       footer={top ? <button className="btn-primary" onClick={onClose}>ปิด</button> : <>
+        {(diff > 0 || !!user?.permissions) && <button className="btn-soft mr-auto" onClick={() => onSave(null)}>ใช้ค่าเริ่มต้นของตำแหน่ง</button>}
         <button className="btn-soft" onClick={onClose}>ยกเลิก</button>
-        <button className="btn-soft" onClick={() => onSave(null)}>ใช้ค่าเริ่มต้นของตำแหน่ง</button>
         <button className="btn-primary" onClick={() => onSave([...on])}>บันทึกสิทธิ์</button>
       </>}>
-      {user && <div className="space-y-5">
-        <p className="rounded-xl bg-cream-50 px-4 py-3 text-sm leading-7 text-gold-700">
-          ตำแหน่ง <b className="font-medium text-gold-800">{ROLE_INFO[role].th}</b> · สาขา{user.branch_name ?? "-"} ·{" "}
-          {top ? "ผู้บริหารองค์กรได้ทุกสิทธิ์และเห็นทุกสาขาเสมอ" : user.permissions ? "กำหนดสิทธิ์รายคนไว้" : "ใช้ค่าเริ่มต้นของตำแหน่ง"}
-          {!top && changed && <span className="ml-1 text-gold-500">(ต่างจากค่าเริ่มต้นของตำแหน่ง)</span>}
+      {user && <div className="space-y-4">
+        <p className="text-sm text-gold-700">
+          <b className="font-medium text-gold-800">{ROLE_INFO[role].th}</b> · สาขา{user.branch_name ?? "-"} ·{" "}
+          {top ? "ผู้บริหารองค์กรได้ทุกสิทธิ์และเห็นทุกสาขาเสมอ" : diff ? `ต่างจากค่าเริ่มต้นของตำแหน่ง ${diff} รายการ` : "ตามค่าเริ่มต้นของตำแหน่ง"}
         </p>
-        {!top && PERM_GROUPS.map((g) => {
-          const ids = g.items.map((i) => i.id);
-          return <section key={g.title}>
-            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-              <h4 className="font-medium text-gold-800">{g.title}</h4>
-              <span className="flex gap-2"><button type="button" className="row-action" onClick={() => setGroup(ids, true)}>เลือกทั้งหมด</button><button type="button" className="row-action" onClick={() => setGroup(ids, false)}>ไม่เลือก</button></span>
-            </div>
-            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-              {g.items.map((i) => (
-                <label key={i.id} className={`flex items-start gap-3 rounded-xl border px-3 py-2.5 text-sm ${on.has(i.id) ? "border-gold-300 bg-cream-50" : "border-cream-200 bg-white"} ${mine(i.id) ? "cursor-pointer" : "opacity-50"}`}>
-                  <input type="checkbox" className="mt-1" checked={on.has(i.id)} disabled={!mine(i.id)} onChange={() => toggle(i.id)} />
-                  <span><span className="block text-gold-800">{i.label}</span>{i.hint && <span className="block text-xs text-gold-500">{i.hint}</span>}</span>
-                </label>
+        {!top && <div className="perm-grid">
+          {PERM_GROUPS.filter((g) => g.items.some((i) => !SUB_IDS.has(i.id))).map((g) => (
+            <section key={g.title} className="perm-box">
+              <h4>{g.title.replace(/^เมนู/, "")}</h4>
+              {g.items.filter((i) => !SUB_IDS.has(i.id)).map((i) => (
+                <div key={i.id}>
+                  <Row id={i.id} />
+                  {(SUB[i.id] ?? []).map((s) => <Row key={s} id={s} sub parentOff={!on.has(i.id)} />)}
+                </div>
               ))}
-            </div>
-          </section>;
-        })}
-        {!top && <p className="text-xs leading-6 text-gold-500">ช่องสีจาง = สิทธิ์ที่บัญชีของคุณไม่มี จึงให้คนอื่นไม่ได้ · ขอบเขตข้อมูลยังเป็นตามสาขาของบัญชี · ผู้ใช้ต้องรีเฟรชหน้าหรือเข้าสู่ระบบใหม่เพื่อเห็นเมนูที่เปลี่ยน</p>}
+            </section>
+          ))}
+        </div>}
+        {!top && <p className="text-xs leading-6 text-gold-500">สวิตช์จาง = สิทธิ์ที่บัญชีของคุณไม่มี หรือต้องเปิดเมนูด้านบนก่อน · ขอบเขตข้อมูลยังเป็นตามสาขาของบัญชี · ผู้ใช้ต้องรีเฟรชหน้าหรือเข้าสู่ระบบใหม่เพื่อเห็นเมนูที่เปลี่ยน</p>}
       </div>}
     </Modal>
   );

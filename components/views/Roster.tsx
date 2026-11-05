@@ -1,14 +1,17 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import CsvIcon from "@/components/CsvIcon";
 import Icon from "@/components/Icon";
-import { MetricGrid, Modal, PageHeader, Section, Select } from "@/components/ui";
+import { MenuButton, Modal, PageHeader, Section, Select, Tabs } from "@/components/ui";
 import { downloadCsv } from "@/lib/store";
 import RosterCalendar from "@/components/roster/RosterCalendar";
+import { TH_MONTHS } from "@/lib/appointments";
 import { useApp } from "@/lib/app";
 import { useAutoRefresh } from "@/lib/autoRefresh";
 import { ROLE_INFO, Role } from "@/lib/roles";
 import { useBranchNames } from "@/lib/branches";
-import { assignShift, Attendance, dayTitle, fetchDay, fetchMonth, isoDate, Month, SHIFTS, ymOf } from "@/lib/roster";
+import { assignShift, Attendance, dayTitle, fetchDay, fetchMonth, isoDate, Month, Shift, shortName, SHIFTS, WEEKDAYS, ymOf } from "@/lib/roster";
 
 /** ตารางเวรของสาขา: ผู้จัดการดูภาพรวมทั้งเดือน กดวันเพื่อจัดคนเข้าเวรและดูรูปเช็คชื่อ */
 export function Roster() {
@@ -24,12 +27,21 @@ export function Roster() {
   const [att, setAtt] = useState<Attendance[]>([]);
   const [photo, setPhoto] = useState<Attendance | null>(null);
   const [busy, setBusy] = useState(false);
+  /** มุมมอง: รายสัปดาห์ (แถว = คน · กดช่องแล้วเลือกเวรจากเมนู) หรือทั้งเดือน (ปฏิทินเดิม) */
+  const [view, setView] = useState<"สัปดาห์" | "ทั้งเดือน">("สัปดาห์");
+  const [week, setWeek] = useState(() => { const d = new Date(); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return isoDate(d); });
+  const [nextData, setNextData] = useState<Month | null>(null);
 
   const isGlobal = data?.me.role === "Global Admin";
+  const weekDays = Array.from({ length: 7 }, (_, i) => { const d = new Date(week + "T00:00:00"); d.setDate(d.getDate() + i); return isoDate(d); });
+  const loadYm = view === "สัปดาห์" ? week.slice(0, 7) : ym;
+  const crossYm = view === "สัปดาห์" && weekDays[6].slice(0, 7) !== loadYm ? weekDays[6].slice(0, 7) : "";
   const load = useCallback(async () => {
-    try { setData(await fetchMonth(ym, branch || undefined)); setError(""); }
-    catch (e) { setError((e as Error).message); }
-  }, [ym, branch]);
+    try {
+      setData(await fetchMonth(loadYm, branch || undefined)); setError("");
+      setNextData(crossYm ? await fetchMonth(crossYm, branch || undefined) : null);
+    } catch (e) { setError((e as Error).message); }
+  }, [loadYm, crossYm, branch]);
   useEffect(() => { load(); }, [load]);
   useAutoRefresh(load); // การเช็คชื่อของพยาบาลขึ้นเองระหว่างเปิดหน้าค้างไว้
   // ผู้บริหาร: เริ่มที่สาขาแรกเพื่อให้จัดเวรได้ทันที
@@ -63,9 +75,6 @@ export function Roster() {
 
   const shifts = data?.shifts ?? [];
   const attendance = data?.attendance ?? [];
-  const todays = shifts.filter((s) => s.date === today);
-  const inToday = attendance.filter((a) => a.date === today && a.kind === "in");
-  const lateMonth = attendance.filter((a) => a.kind === "in" && (a.late_min ?? 0) > 0).length;
   // สรุปการมาทำงานรายคน: นับเฉพาะเวรที่ถึงเวลาเข้างานแล้ว (+ผ่อนผัน 15 นาที) · ขาด 2 ครั้งขึ้นไปชื่อเป็นสีแดง
   const nowHm = new Date().toTimeString().slice(0, 5);
   const due = (s: { date: string; shift: string }) => s.date < today || (s.date === today && nowHm >= (s.shift === "ดึก" ? "19:15" : "07:15"));
@@ -81,7 +90,6 @@ export function Roster() {
     for (const a of attendance) if (a.kind === "in" && !a.shift) row(a.staff_id, a.staff_name).extra++;
     return [...by.values()].sort((a, b) => b.missed - a.missed || b.late - a.late || a.name.localeCompare(b.name));
   })();
-  const missedMonth = report.reduce((n, r) => n + r.missed, 0);
   // วันนี้และวันข้างหน้าของเดือนที่ดู ที่ยังไม่มีคนเข้าเวรครบทั้งเช้าและดึก
   const [yy, mm] = ym.split("-").map(Number);
   const monthDays = Array.from({ length: new Date(yy, mm, 0).getDate() }, (_, i) => `${ym}-${String(i + 1).padStart(2, "0")}`).filter((d) => d >= today);
@@ -106,29 +114,213 @@ export function Roster() {
   // จัดเวรเฉพาะพยาบาล (พนักงานพยาบาลและหัวหน้าพยาบาล)
   const team = (data?.team ?? []).filter((t) => t.role === "Nurse" || t.role === "Head Nurse");
 
+  // ---------- รายสัปดาห์ ----------
+  const weekShifts: Shift[] = [...shifts, ...(nextData?.shifts ?? [])];
+  const weekAtt: Attendance[] = [...attendance, ...(nextData?.attendance ?? [])];
+  const cellOf = (id: string, d: string) => SHIFTS.filter((sh) => weekShifts.some((x) => x.staff_id === id && x.date === d && x.shift === sh.key)).map((sh) => sh.key);
+  const [saving, setSaving] = useState("");
+  /** เมนูของช่อง: กดช่องแล้วเลือก เช้า / ดึก / เช้า+ดึก / เอาออก · บันทึกครั้งเดียว (ไม่มีสถานะระหว่างทาง) */
+  const [menu, setMenu] = useState<{ id: string; name: string; d: string; x: number; y: number } | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  /** เลือกคนทั้งกะ: กดแถว "คนเช้า / คนดึก" ของวันนั้น แล้วติ๊กพนักงาน · บันทึกครั้งเดียว */
+  const [crew, setCrew] = useState<{ d: string; sh: string; x: number; y: number; sel: string[] } | null>(null);
+  useEffect(() => {
+    if (!menu && !crew) return;
+    if (crew) menuRef.current?.querySelector<HTMLInputElement>("input")?.focus({ preventScroll: true });
+    else (menuRef.current?.querySelector<HTMLButtonElement>("button[aria-checked='true']") ?? menuRef.current?.querySelector<HTMLButtonElement>("button"))?.focus({ preventScroll: true });
+    const shut = () => { setMenu(null); setCrew(null); };
+    const close = (e: Event) => { if (!(e.target as HTMLElement)?.closest?.(".wk-menu")) shut(); };
+    const key = (e: KeyboardEvent) => {
+      if (e.key === "Escape") shut();
+      if (menu && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+        e.preventDefault();
+        const items = [...(menuRef.current?.querySelectorAll<HTMLButtonElement>("button") ?? [])];
+        const i = items.indexOf(document.activeElement as HTMLButtonElement);
+        items[(i + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length]?.focus();
+      }
+    };
+    document.addEventListener("mousedown", close); window.addEventListener("keydown", key); window.addEventListener("scroll", close, true);
+    return () => { document.removeEventListener("mousedown", close); window.removeEventListener("keydown", key); window.removeEventListener("scroll", close, true); };
+  }, [menu, !!crew]); // eslint-disable-line react-hooks/exhaustive-deps
+  const onShift = (d: string, sh: string) => weekShifts.filter((x) => x.date === d && x.shift === sh).map((x) => x.staff_id);
+  const openCrew = (e: React.MouseEvent<HTMLButtonElement>, d: string, sh: string) => {
+    if (!data?.branch) return toast("กรุณาเลือกสาขาก่อนจัดเวร");
+    setMenu(null);
+    const r = e.currentTarget.getBoundingClientRect(), H = Math.min(team.length * 44, 300) + 130;
+    setCrew({ d, sh, sel: onShift(d, sh), x: Math.max(8, Math.min(r.left + r.width / 2 - 140, window.innerWidth - 290)), y: r.bottom + H > window.innerHeight ? Math.max(8, r.top - H - 4) : r.bottom + 4 });
+  };
+  /** บันทึกรายชื่อทั้งกะ (แทนที่รายชื่อเดิมของกะนั้น) */
+  const saveCrew = async () => {
+    if (!crew || !data?.branch) return;
+    const { d, sh, sel } = crew, cur = onShift(d, sh);
+    setCrew(null);
+    if (cur.length === sel.length && cur.every((x) => sel.includes(x))) return;
+    setSaving(`cov|${d}|${sh}`);
+    try { await assignShift(d, sh, sel, data.branch ?? undefined); await load(); toast(`บันทึกเวร${sh} ${dm(d)} แล้ว · ${sel.length} คน`); }
+    catch (e) { toast((e as Error).message); }
+    finally { setSaving(""); }
+  };
+  const openMenu = (e: React.MouseEvent<HTMLButtonElement>, id: string, name: string, d: string) => {
+    if (!data?.branch) return toast("กรุณาเลือกสาขาก่อนจัดเวร");
+    if (d < today) return toast("วันที่ผ่านมาแล้ว · แก้ได้ที่มุมมองทั้งเดือน (กดวันที่)");
+    const r = e.currentTarget.getBoundingClientRect();
+    setMenu({ id, name, d, x: Math.min(r.left, window.innerWidth - 230), y: r.bottom + 230 > window.innerHeight ? r.top - 222 : r.bottom + 4 });
+  };
+  /** ตั้งเวรของคนนั้นในวันนั้น · บันทึกเฉพาะกะที่เปลี่ยน (แทนที่รายชื่อเดิมของกะนั้น) */
+  const setCell = async (id: string, d: string, next: string[]) => {
+    setMenu(null);
+    if (!data?.branch) return;
+    const cur = cellOf(id, d);
+    if (cur.length === next.length && cur.every((x) => next.includes(x))) return;
+    setSaving(`${id}|${d}`);
+    try {
+      for (const sh of SHIFTS) {
+        if (cur.includes(sh.key) === next.includes(sh.key)) continue;
+        const ids = weekShifts.filter((x) => x.date === d && x.shift === sh.key).map((x) => x.staff_id).filter((x) => x !== id);
+        await assignShift(d, sh.key, next.includes(sh.key) ? [...ids, id] : ids, data.branch ?? undefined);
+      }
+      await load();
+    } catch (e) { toast((e as Error).message); }
+    finally { setSaving(""); }
+  };
+  // ตัวกรองและกลุ่ม: ค้นหาชื่อ · เฉพาะคนที่มีเวรสัปดาห์นี้ · กลุ่มตามตำแหน่ง ย่อ/ขยายได้
+  const [who, setWho] = useState("");
+  const [onlyOn, setOnlyOn] = useState(false);
+  const [folded, setFolded] = useState<string[]>([]);
+  const ROLE_ORDER = ["Head Nurse", "Nurse"];
+  const shownTeam = team.filter((t) => (!who || t.name.toLowerCase().includes(who.trim().toLowerCase())) && (!onlyOn || weekDays.some((d) => cellOf(t.id, d).length)));
+  const groups = ROLE_ORDER.map((r) => ({ role: r, label: ROLE_INFO[r as Role]?.th ?? r, list: shownTeam.filter((t) => t.role === r) })).filter((g) => g.list.length);
+  const MENU_OPTS: { k: string[]; t: string; sub: string; c: string }[] = [
+    { k: ["เช้า"], t: "เช้า", sub: "07:00–19:00", c: "is-d" },
+    { k: ["ดึก"], t: "ดึก", sub: "19:00–07:00", c: "is-n" },
+    { k: ["เช้า", "ดึก"], t: "เช้า+ดึก", sub: "ควบกะ 24 ชม.", c: "is-dn" },
+  ];
+  /** คัดลอกเวรของสัปดาห์ก่อนหน้า มาใส่วันที่ยังไม่ผ่านของสัปดาห์นี้ (แทนที่ของเดิม) */
+  const copyWeek = async () => {
+    if (!data?.branch) return toast("กรุณาเลือกสาขาก่อนจัดเวร");
+    const prevStart = (() => { const x = new Date(week + "T00:00:00"); x.setDate(x.getDate() - 7); return isoDate(x); })();
+    setBusy(true);
+    try {
+      const months = await Promise.all([...new Set([prevStart.slice(0, 7), weekDays[0].slice(0, 7)])].map((m) => fetchMonth(m, data.branch ?? undefined)));
+      const src = months.flatMap((m) => m.shifts);
+      const days = weekDays.filter((d) => d >= today);
+      if (!days.length) { toast("สัปดาห์นี้ผ่านไปแล้ว"); return; }
+      let n = 0;
+      for (const d of days) {
+        const from = (() => { const x = new Date(d + "T00:00:00"); x.setDate(x.getDate() - 7); return isoDate(x); })();
+        for (const sh of SHIFTS) { const ids = src.filter((x) => x.date === from && x.shift === sh.key).map((x) => x.staff_id); await assignShift(d, sh.key, ids, data.branch ?? undefined); n += ids.length; }
+      }
+      toast(n ? `คัดลอกเวรจากสัปดาห์ก่อนแล้ว · ${days.length} วัน ${n} เวร · ตรวจแล้วแก้เฉพาะช่องที่ต่าง` : "สัปดาห์ก่อนไม่มีเวรให้คัดลอก");
+      await load();
+    } catch (e) { toast((e as Error).message); }
+    finally { setBusy(false); }
+  };
+  const moveWeek = (n: number) => { const x = new Date(week + "T00:00:00"); x.setDate(x.getDate() + n * 7); setWeek(isoDate(x)); };
+  /** วันที่แบบไทย เช่น "5 พ.ย." · ช่วงสัปดาห์ "2 – 8 พ.ย. 2569" (ข้ามเดือน "27 ต.ค. – 2 พ.ย. 2569") */
+  const dm = (d: string) => `${Number(d.slice(8, 10))} ${TH_MONTHS[Number(d.slice(5, 7)) - 1]}`;
+  const weekRange = (a: string, b: string) => `${a.slice(0, 7) === b.slice(0, 7) ? Number(a.slice(8, 10)) : dm(a)} – ${dm(b)} ${Number(b.slice(0, 4)) + 543}`;
+  const DAY_FULL = ["จันทร์", "อังคาร", "พุธ", "พฤหัสบดี", "ศุกร์", "เสาร์", "อาทิตย์"];
+
   return (
     <>
-      <PageHeader title="ตารางเวร" sub="กดวันที่เพื่อจัดเวรหรือดูการเช็คชื่อ"
+      <PageHeader title="ตารางเวร" sub={view === "สัปดาห์" ? "กดช่องของแต่ละคน หรือกดแถวคนเช้า / คนดึก เพื่อเลือกพนักงานทั้งกะ" : "กดวันที่เพื่อจัดเวรหรือดูการเช็คชื่อ"}
         actions={<>
-          <button className="btn-soft" disabled={!shifts.length} title="ทุกเวรของเดือนที่ดู พร้อมเวลาเช็คชื่อ สาย ขาด" onClick={exportShifts}><Icon name="download" className="h-4 w-4" /> ส่งออกตารางเวร</button>
-          <button className="btn-soft" disabled={!report.length} title="สรุปการมาทำงานรายคนของเดือนที่ดู" onClick={exportReport}><Icon name="download" className="h-4 w-4" /> ส่งออกสรุปรายคน</button>
+          <Tabs tabs={["สัปดาห์", "ทั้งเดือน"]} value={view} onChange={(v) => setView(v as "สัปดาห์" | "ทั้งเดือน")} />
+          <MenuButton label="ส่งออก CSV" icon={<CsvIcon />} items={[
+            { label: "ตารางเวรของเดือน", hint: "เวลาเช็คชื่อ สาย ขาด", onClick: exportShifts },
+            { label: "สรุปการมาทำงานรายคน", onClick: exportReport },
+          ]} />
         </>} />
       {isGlobal && (
         <div className="mb-4 max-w-xs">
           <Select aria-label="เลือกสาขา" options={branches} value={branch} onChange={setBranch} />
         </div>
       )}
-      <MetricGrid items={[
-        { label: "เข้าเวรวันนี้", value: todays.length, unit: "คน", icon: "user" },
-        { label: "เช็คชื่อแล้ววันนี้", value: inToday.length, unit: `/ ${todays.length}`, icon: "check", accent: true },
-        { label: "เข้างานสายเดือนนี้", value: lateMonth, unit: "ครั้ง", icon: "history", note: "เกิน 15 นาทีจากเวลาเริ่มเวร" },
-        { label: "ขาดงานเดือนนี้", value: missedMonth, unit: "ครั้ง", icon: "alert", note: "ถึงเวลาเข้าเวรแล้วไม่ได้เช็คชื่อ" },
-      ]} />
-      <Section title={`ตารางเวร${data?.branch ? ` · สาขา${data.branch}` : ""}`}
+      {view === "สัปดาห์" && <Section title={`สัปดาห์ ${weekRange(weekDays[0], weekDays[6])}${data?.branch ? ` · สาขา${data.branch}` : ""}`}
+        actions={<div className="flex flex-wrap items-center gap-2">
+          <button type="button" className="icon-button" aria-label="สัปดาห์ก่อน" onClick={() => moveWeek(-1)}><Icon name="chevron" className="h-4 w-4 rotate-90" /></button>
+          <button type="button" className="btn-soft !min-h-0 !py-2" onClick={() => { const d = new Date(); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); setWeek(isoDate(d)); }}>สัปดาห์นี้</button>
+          <button type="button" className="icon-button" aria-label="สัปดาห์หน้า" onClick={() => moveWeek(1)}><Icon name="chevron" className="h-4 w-4 -rotate-90" /></button>
+          <button type="button" className="btn-primary !min-h-0 !py-2" disabled={busy || weekDays[6] < today} onClick={copyWeek}><Icon name="files" className="h-4 w-4" /> {busy ? "กำลังคัดลอก…" : "คัดลอกสัปดาห์ก่อน"}</button>
+        </div>}>
+        {error && <p role="alert" className="form-error mb-3"><Icon name="alert" className="h-4 w-4 shrink-0" />{error}</p>}
+        {team.length > 0 && <div className="wk-tools">
+          <div className="relative min-w-0 flex-1 basis-48">
+            <Icon name="search" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gold-400" />
+            <input type="search" value={who} onChange={(e) => setWho(e.target.value)} className="!pl-9" placeholder="ค้นหาชื่อพนักงาน" aria-label="ค้นหาชื่อพนักงาน" />
+          </div>
+          <label className="wk-only"><input type="checkbox" checked={onlyOn} onChange={(e) => setOnlyOn(e.target.checked)} /> เฉพาะคนที่มีเวรสัปดาห์นี้</label>
+          <span className="text-sm text-gold-500">{shownTeam.length} จาก {team.length} คน</span>
+        </div>}
+        {!team.length ? <p className="rounded-xl bg-cream-50 px-4 py-6 text-center text-sm text-gold-600">ยังไม่มีพยาบาลที่ทำงานอยู่ในสาขานี้</p> : <div className="wk-wrap">
+          <table className="wk">
+            <thead>
+              <tr><th scope="col">พนักงาน</th>{weekDays.map((d, i) => <th key={d} scope="col" className={d === today ? "is-today" : d < today ? "is-past" : ""}>{DAY_FULL[i]}{d === today && <em>วันนี้</em>}<b>{dm(d)}</b></th>)}<th scope="col">รวม</th></tr>
+              {SHIFTS.map((sh) => <tr key={sh.key} className="wk-cov"><th scope="row">คน{sh.key}</th>{weekDays.map((d) => {
+                const ids = onShift(d, sh.key), n = ids.length, open = crew?.d === d && crew.sh === sh.key, names = team.filter((t) => ids.includes(t.id)).map((t) => shortName(t.name));
+                return <td key={d} className={!n && d >= today ? "is-gap" : ""}>{d < today ? (n || "-")
+                  : <button type="button" className={`wk-covb ${open ? "is-open" : ""}`} aria-haspopup="dialog" aria-expanded={open} title={names.length ? names.join(", ") : undefined}
+                    aria-label={`เลือกพนักงานเวร${sh.key} ${dm(d)} · ตอนนี้ ${n} คน`} onClick={(e) => (open ? setCrew(null) : openCrew(e, d, sh.key))}>
+                    {saving === `cov|${d}|${sh.key}` ? "…" : n ? `${n} คน` : "ไม่มี"}<Icon name="plus" className="h-3 w-3" /></button>}</td>;
+              })}<td /></tr>)}
+            </thead>
+            {groups.map((g) => {
+              const shut = folded.includes(g.role);
+              return (
+                <tbody key={g.role}>
+                  <tr className="wk-grp"><th colSpan={9}><button type="button" aria-expanded={!shut} onClick={() => setFolded(shut ? folded.filter((x) => x !== g.role) : [...folded, g.role])}>
+                    <Icon name="chevron" className={`h-3.5 w-3.5 transition ${shut ? "-rotate-90" : ""}`} />{g.label} <span>{g.list.length} คน</span></button></th></tr>
+                  {!shut && g.list.map((t) => (
+                    <tr key={t.id}>
+                      <th scope="row" title={t.name}>{shortName(t.name)}</th>
+                      {weekDays.map((d) => {
+                        const c = cellOf(t.id, d), k = c.length === 2 ? "dn" : c[0] === "เช้า" ? "d" : c[0] === "ดึก" ? "n" : "o";
+                        const ins = c.filter((sh) => weekAtt.some((a) => a.staff_id === t.id && a.date === d && a.shift === sh && a.kind === "in"));
+                        const missed = c.length > ins.length && due({ date: d, shift: c[c.length - 1] });
+                        const open = menu?.id === t.id && menu.d === d;
+                        return <td key={d}><button type="button" className={`wk-c is-${k} ${d < today ? "is-past" : ""} ${open ? "is-open" : ""}`} disabled={saving === `${t.id}|${d}`} aria-haspopup="menu" aria-expanded={open}
+                          aria-label={`${t.name} วันที่ ${Number(d.slice(8, 10))} ${c.length ? `เวร${c.join("+")}` : "ยังไม่มีเวร"}`} onClick={(e) => (open ? setMenu(null) : openMenu(e, t.id, t.name, d))}>
+                          {saving === `${t.id}|${d}` ? "…" : c.length ? c.join("+") : d < today ? "–" : "+"}{ins.length > 0 && <i className="ok" title="เช็คชื่อแล้ว">✓</i>}{missed && <i className="bad" title="ไม่ได้เช็คชื่อ">ขาด</i>}
+                        </button></td>;
+                      })}
+                      <td className="wk-tot">{weekDays.reduce((n, d) => n + cellOf(t.id, d).length, 0)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              );
+            })}
+          </table>
+          {!shownTeam.length && <p className="px-4 py-6 text-center text-sm text-gold-500">ไม่พบพนักงานตามตัวกรอง</p>}
+        </div>}
+        <p className="wk-leg"><span><i className="is-d" />เช้า 07:00–19:00</span><span><i className="is-n" />ดึก 19:00–07:00</span><span><i className="is-o" />+ ยังไม่มีเวร</span><span>กดช่องเพื่อเลือกเวรรายคน · กดแถว คนเช้า / คนดึก เพื่อเลือกพนักงานทั้งกะ · ✓ เช็คชื่อแล้ว · แดง = ยังไม่มีคน</span></p>
+        {menu && createPortal(<div ref={menuRef} className="wk-menu" role="menu" aria-label={`เวรของ ${menu.name}`} style={{ left: menu.x, top: menu.y }}>
+          <p>{shortName(menu.name)} · {WEEKDAYS[weekDays.indexOf(menu.d)]} {dm(menu.d)}</p>
+          {MENU_OPTS.map((o) => {
+            const cur = cellOf(menu.id, menu.d), on = cur.length === o.k.length && o.k.every((x) => (cur as string[]).includes(x));
+            return <button key={o.t} type="button" role="menuitemradio" aria-checked={on} onClick={() => setCell(menu.id, menu.d, o.k)}><i className={o.c} />{o.t}<small>{o.sub}</small>{on && <b>✓</b>}</button>;
+          })}
+          <hr />
+          <button type="button" role="menuitem" className="is-del" disabled={!cellOf(menu.id, menu.d).length} onClick={() => setCell(menu.id, menu.d, [])}>เอาออก</button>
+        </div>, document.body)}
+        {crew && createPortal(<div ref={menuRef} className="wk-menu wk-pick" role="dialog" aria-label={`เลือกพนักงานเวร${crew.sh} ${dm(crew.d)}`} style={{ left: crew.x, top: crew.y }}>
+          <p><b>เวร{crew.sh}</b> · {WEEKDAYS[weekDays.indexOf(crew.d)]} {dm(crew.d)}<small>{SHIFTS.find((x) => x.key === crew.sh)?.time}</small></p>
+          <ul>{ROLE_ORDER.flatMap((r) => team.filter((t) => t.role === r)).map((t) => {
+            const on = crew.sel.includes(t.id), other = SHIFTS.find((x) => x.key !== crew.sh && cellOf(t.id, crew.d).includes(x.key));
+            return <li key={t.id}><label className={on ? "is-on" : ""}>
+              <input type="checkbox" checked={on} onChange={() => setCrew({ ...crew, sel: on ? crew.sel.filter((x) => x !== t.id) : [...crew.sel, t.id] })} />
+              <span>{shortName(t.name)}<small>{ROLE_INFO[t.role as Role]?.th ?? t.role}</small></span>
+              {other && <em title={`มีเวร${other.key}วันนี้อยู่แล้ว`}>{on ? "ควบกะ" : `มีเวร${other.key}`}</em>}
+            </label></li>;
+          })}</ul>
+          <div className="wk-pick-f"><span>เลือก {crew.sel.length} คน</span><button type="button" className="btn-soft" onClick={() => setCrew(null)}>ยกเลิก</button><button type="button" className="btn-primary" onClick={saveCrew}>บันทึก</button></div>
+        </div>, document.body)}
+      </Section>}
+
+      {view === "ทั้งเดือน" && <Section title={`ตารางเวร${data?.branch ? ` · สาขา${data.branch}` : ""}`}
         actions={data && monthDays.length > 0 ? <span className={`rounded-full px-3 py-1 text-sm font-semibold ${gapDays ? "bg-red-50 text-red-800" : "bg-emerald-50 text-emerald-800"}`}>{gapDays ? `ยังจัดเวรไม่ครบ ${gapDays} วัน` : "จัดเวรครบทุกวันแล้ว"}</span> : undefined}>
         {error && <p role="alert" className="form-error mb-3"><Icon name="alert" className="h-4 w-4 shrink-0" />{error}</p>}
         <RosterCalendar ym={ym} onMonth={setYm} shifts={shifts} attendance={attendance} today={today} selected={day} onDay={openDay} gaps={!!data} />
-      </Section>
+      </Section>}
 
       <Section title="สรุปการมาทำงานรายคน" sub="ชื่อสีแดง = ขาด 2 ครั้งขึ้นไปในเดือนนี้">
         {report.length ? <div className="overflow-x-auto rounded-2xl border border-cream-300">

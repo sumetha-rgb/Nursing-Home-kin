@@ -11,7 +11,7 @@ import { ROLE_INFO, SessionUser } from "@/lib/roles";
 import { can } from "@/lib/perms";
 type Props={view:ViewId;views:ViewId[];onView:(v:ViewId)=>void;user:SessionUser;onLogout:()=>void;onChangePassword:()=>void;children:ReactNode};
 /** ลำดับกลุ่มบนเมนูซ้าย · บริหารอยู่บนสุด (เห็นเฉพาะผู้มีสิทธิ์ภาพรวมหรือสาขา) */
-const GROUPS=[{id:4,label:"บริหาร",en:"MANAGEMENT"},{id:0,label:"พื้นที่ดูแล",en:"CARE SPACE"},{id:1,label:"สัญญาและการเงิน",en:"BUSINESS"},{id:3,label:"ทีมงาน",en:"PEOPLE"},{id:2,label:"เครื่องมือและระบบ",en:"WORKSPACE"}];
+const GROUPS=[{id:4,label:"บริหาร",en:"MANAGEMENT"},{id:0,label:"งานดูแล",en:"CARE"},{id:1,label:"ขายและการเงิน",en:"SALES & FINANCE"},{id:3,label:"ทีมงาน",en:"PEOPLE"},{id:2,label:"เครื่องมือและระบบ",en:"TOOLS"}];
 export default function Shell({view,views,onView,user,onLogout,onChangePassword,children}:Props) {
   /** เมนูที่บัญชีนี้มีสิทธิ์ (ลิงก์แอปทีมดูแลแสดงเมื่อใช้ KinApp ได้) */
   const nav=NAV.filter(n=>n.kind==="view"?views.includes(n.id):can(user,n.perm));

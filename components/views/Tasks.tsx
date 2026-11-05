@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import CsvIcon from "@/components/CsvIcon";
 import { useBranchNames, withBranches } from "@/lib/branches";
 import Icon from "../Icon";
 import { BRANCH_NAMES, FACILITY_TASKS, MASTER_TASKS } from "@/lib/mock";
@@ -111,7 +112,7 @@ export function FacilityTasks() {
         sub="งานสถานที่และทำความสะอาด · ส่งรูปใน KinApp"
         actions={<>
           <button className="btn-soft" onClick={() => go("master_tasks")}>จัดการแม่แบบงานมาตรฐาน</button>
-          <button className="btn-soft" onClick={() => downloadCsv("งานส่วนกลางของสาขา", FAC_COLS, rows)}><Icon name="download" className="h-4 w-4" /> ส่งออก CSV (Excel)</button>
+          <button className="btn-soft" onClick={() => downloadCsv("งานส่วนกลางของสาขา", FAC_COLS, rows)}><CsvIcon /> ส่งออก CSV</button>
           <button className="btn-primary" onClick={() => setDlg({ mode: "add", i: -1 })}><Icon name="plus" className="h-4 w-4" /> เพิ่มงานทั่วไป</button>
         </>}
       />
@@ -154,7 +155,7 @@ export function FacilityTasks() {
         </div>}
       </Modal>
       <Modal open={!!hist} wide title={hist ? `ประวัติ · ${rows[hist.i]?.[0] ?? ""}` : ""} onClose={() => setHist(null)}
-        footer={<><button type="button" className="btn-soft" disabled={!histRows.length} onClick={() => hist && downloadCsv(`ประวัติงานส่วนกลาง-${rows[hist.i]?.[0] ?? ""}-${hist.month}`, histCols, histRows.map((x) => x.cells))}><Icon name="download" className="h-4 w-4" /> ส่งออก CSV (Excel)</button><button type="button" className="btn-primary" onClick={() => setHist(null)}>ปิด</button></>}>
+        footer={<><button type="button" className="btn-soft" disabled={!histRows.length} onClick={() => hist && downloadCsv(`ประวัติงานส่วนกลาง-${rows[hist.i]?.[0] ?? ""}-${hist.month}`, histCols, histRows.map((x) => x.cells))}><CsvIcon /> ส่งออก CSV</button><button type="button" className="btn-primary" onClick={() => setHist(null)}>ปิด</button></>}>
         {hist && <div className="space-y-4">
           <div className="flex flex-wrap items-end justify-between gap-3">
             <Field label="เดือน"><input type="month" value={hist.month} max={new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 7)} onChange={(e) => e.target.value && loadHist(hist.i, e.target.value)} aria-label="เลือกเดือน" /></Field>
@@ -229,7 +230,7 @@ export function MasterTasks() {
         title="แม่แบบงานมาตรฐาน"
         sub="ชื่องานและคำสั่งงานมาตรฐาน"
         actions={<>
-          <button className="btn-soft" onClick={() => downloadCsv("แม่แบบงานมาตรฐาน", MT_COLS, rows.map((r) => r.slice(0, 6)))}><Icon name="download" className="h-4 w-4" /> ส่งออก CSV</button>
+          <button className="btn-soft" onClick={() => downloadCsv("แม่แบบงานมาตรฐาน", MT_COLS, rows.map((r) => r.slice(0, 6)))}><CsvIcon /> ส่งออก CSV</button>
           <button className="btn-soft" onClick={() => setGroup(true)}>สร้างกลุ่มงานใหม่</button>
           <button className="btn-primary" onClick={() => setDlg({ mode: "add", i: -1 })}><Icon name="plus" className="h-4 w-4" /> เพิ่มงานมาตรฐาน</button>
         </>}

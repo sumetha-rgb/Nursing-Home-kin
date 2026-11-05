@@ -1,5 +1,6 @@
 "use client";
 import Occupancy from "../care/Occupancy";
+import CsvIcon from "@/components/CsvIcon";
 import CourseSummary from "../care/CourseSummary";
 import FinanceAnalytics, { FinSummary } from "../care/FinanceAnalytics";
 import { AttentionStrip, buildTodos } from "../dash/Todo";
@@ -22,7 +23,9 @@ import { useSession } from "@/lib/session";
 import { staying } from "@/lib/rooms";
 import { apptIso, apptKey, apptTh, nowTh } from "@/lib/appointments";
 import { evaluateVitals, implausible, Level, LEVEL_TH, levelOf, parseVitals, Vitals } from "@/lib/vitals";
-import { BlankForm, DataTable, Field, FieldDef, FormDialog, Modal, MetricGrid, PageHeader, Section, Select, Tabs, Tile } from "../ui";
+import { BlankForm, DataTable, Field, FieldDef, FormDialog, MenuButton, Modal, MetricGrid, PageHeader, Section, Select, Tabs, Tile } from "../ui";
+import SalesByCategory from "../dash/SalesByCategory";
+import KpiCharts, { CountKpi, PctKpi } from "../dash/KpiCharts";
 
 /* ---------- ภาพรวมและรายงาน (ข้อมูลจริงจาก /api/ops) ---------- */
 type DashBranch = { branch: string; total: number; done: number; checked: number; donePct: number; checkPct: number; mstars: number | null; famStars: number | null; famN: number; satPct: number | null; satN: number; complaints: number; residents: number; perResident: number; score: number };
@@ -42,11 +45,18 @@ function rangeOf(p: Period, pick: string) {
   const now = new Date(Date.now() + 7 * 3600e3), today = now.toISOString().slice(0, 10);
   const Y = now.getUTCFullYear(), M = now.getUTCMonth(), D = now.getUTCDate();
   const mName = (y: number, m: number) => { const d = new Date(Date.UTC(y, m, 1)); return `${TH_MONTH[d.getUTCMonth()]} ${d.getUTCFullYear() + 543}`; };
-  if (p === "today") { const y = new Date(Date.parse(today) - 864e5).toISOString().slice(0, 10); return { from: today, to: today, pfrom: y, pto: y, label: `วันนี้ เทียบเมื่อวาน`, title: `ประจำวันที่ ${D} ${mName(Y, M)}` }; }
-  if (p === "month") return { from: iso(Y, M, 1), to: today, pfrom: iso(Y, M - 1, 1), pto: iso(Y, M - 1, Math.min(D, dim(Y, M - 1))), label: `${mName(Y, M)} (1–${D}) เทียบช่วงเดียวกันของเดือนก่อน`, title: `ประจำเดือน${mName(Y, M)} (ถึงวันที่ ${D})` };
+  // ช่วงวันที่แบบสั้น: "1–5 พ.ย. 69" · "5 พ.ย. 69"
+  const SH = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
+  const sd = (s: string) => ({ d: Number(s.slice(8, 10)), m: `${SH[Number(s.slice(5, 7)) - 1]} ${String(Number(s.slice(0, 4)) + 543).slice(2)}` });
+  const span = (a: string, b: string) => { const x = sd(a), z = sd(b); return a === b ? `${x.d} ${x.m}` : x.m === z.m ? `${x.d}–${z.d} ${z.m}` : `${x.d} ${x.m} – ${z.d} ${z.m}`; };
+  /** ข้อความใต้ตัวเลือกช่วงเวลา: ตัวเลขในหน้านี้มาจากช่วงไหน และ ▲▼ เทียบกับช่วงไหน */
+  const cap = (from: string, to: string, pfrom: string, pto: string, same = false) => `ข้อมูล ${span(from, to)} · เทียบกับ ${span(pfrom, pto)}${same ? " (จำนวนวันเท่ากัน)" : ""}`;
+  if (p === "today") { const y = new Date(Date.parse(today) - 864e5).toISOString().slice(0, 10); return { from: today, to: today, pfrom: y, pto: y, label: `ข้อมูลวันนี้ ${span(today, today)} · เทียบกับเมื่อวาน ${span(y, y)}`, title: `ประจำวันที่ ${D} ${mName(Y, M)}` }; }
+  if (p === "month") { const pfrom = iso(Y, M - 1, 1), pto = iso(Y, M - 1, Math.min(D, dim(Y, M - 1))); return { from: iso(Y, M, 1), to: today, pfrom, pto, label: cap(iso(Y, M, 1), today, pfrom, pto, true), title: `ประจำเดือน${mName(Y, M)} (ถึงวันที่ ${D})` }; }
   const [py, pm] = p === "prev" ? [Y, M - 1] : pick.split("-").map(Number).map((v, i) => (i ? v - 1 : v));
   const end = iso(py, pm + 1, 0);
-  return { from: iso(py, pm, 1), to: end < today ? end : today, pfrom: iso(py, pm - 1, 1), pto: iso(py, pm, 0), label: `${mName(py, pm)} เทียบ${mName(py, pm - 1)}`, title: `ประจำเดือน${mName(py, pm)}` };
+  const to = end < today ? end : today;
+  return { from: iso(py, pm, 1), to, pfrom: iso(py, pm - 1, 1), pto: iso(py, pm, 0), label: cap(iso(py, pm, 1), to, iso(py, pm - 1, 1), iso(py, pm, 0)), title: `ประจำเดือน${mName(py, pm)}` };
 }
 
 export function Dashboard() {
@@ -54,8 +64,10 @@ export function Dashboard() {
   const { user } = useSession();
   const { toast, go } = useApp();
   const fin = can(user, "billing");
+  // ยอดขายตามหมวด: ผู้บริหาร (ทุกสาขา) และผู้จัดการสาขา (สาขาตัวเอง) เสมอ · ตำแหน่งอื่นตามสิทธิ์การเงิน
+  const sales = fin || user?.role === "Global Admin" || user?.role === "Branch Admin";
   // แยกดูทีละหมวด · หมวดการเงินเฉพาะผู้มีสิทธิ์การเงิน
-  const DASH_TABS = ["ตัวชี้วัดหลัก", ...(fin ? ["การเงิน"] : []), "การเข้าพัก", "สุขภาพผู้รับบริการ", "คุณภาพการดูแล", "ทีมงาน", "รับเข้า-จำหน่าย", "กายภาพ"];
+  const DASH_TABS = ["ตัวชี้วัดหลัก", ...(fin ? ["การเงิน"] : []), ...(sales ? ["ยอดขายตามหมวด"] : []), "การเข้าพัก", "สุขภาพผู้รับบริการ", "คุณภาพการดูแล", "ทีมงาน", "รับเข้า-จำหน่าย", "กายภาพ"];
   const [view, setView] = useState("ตัวชี้วัดหลัก");
   const [period, setPeriod] = useState<Period>("month");
   const [pick, setPick] = useState(() => new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 7));
@@ -98,6 +110,8 @@ export function Dashboard() {
 
   // ตัวชี้วัดหน้าภาพรวม (กดแล้วไปแท็บนั้น)
   const kpis: Kpi[] = [];
+  // ชุดเดียวกันในรูปกราฟ (แท็บตัวชี้วัดหลัก) · kpis ยังใช้กับส่งออก CSV และรายงานผู้บริหาร
+  const pct: PctKpi[] = [], counts: CountKpi[] = [];
   if (ins) {
     const o = ins.occupancy, cap = o.capacity, mi = o.monthly.findIndex((m) => m.month === R.to.slice(0, 7));
     const occ = cap && mi >= 0 ? Math.round((o.monthly[mi].people / cap) * 100) : null, occP = cap && mi > 0 ? Math.round((o.monthly[mi - 1].people / cap) * 100) : null;
@@ -115,6 +129,23 @@ export function Dashboard() {
       { key: "staff", label: "กะที่ไม่มีคนหรือคนไม่พอ", value: `${shortOf(tm.cur.shifts)} กะ`, delta: deltaOf(shortOf(tm.cur.shifts), shortOf(tm.prev.shifts), false, " กะ"), target: shortOf(tm.cur.shifts) ? { text: "ต้องจัดคนเพิ่ม", tone: "bad" } : { text: "ครบทุกกะ", tone: "ok" }, onClick: () => setView("ทีมงาน") },
       { key: "flow", label: "รับเข้าใหม่", value: `${ins.flow.cur.admits} คน`, delta: deltaOf(ins.flow.cur.admits, ins.flow.prev.admits, true, " คน"), note: `จำหน่าย ${ins.flow.cur.discharges} คน`, onClick: () => setView("รับเข้า-จำหน่าย") },
       { key: "fam", label: "ดาวจากครอบครัว", value: fam === null ? "-" : fam.toFixed(1), note: famN ? `${famN} รีวิว` : "ยังไม่มีรีวิวในช่วงนี้", onClick: () => go("reviews") },
+    );
+    const meds = pctOf(h.cur.meds.given, h.cur.meds.total), medsP = pctOf(h.prev.meds.given, h.prev.meds.total);
+    const dm = (s: string) => `${Number(s.slice(8, 10))}/${Number(s.slice(5, 7))}`;
+    pct.push(
+      { key: "occ", label: "อัตราเข้าพัก", cur: occ, prev: occP, goal: T.occupancy, trendName: "รายเดือน", note: `${o.monthly[mi]?.people ?? 0} จาก ${cap} เตียง · เป้า ${T.occupancy}%`,
+        trend: o.monthly.slice(Math.max(0, mi - 5), mi + 1).map((m) => ({ label: monTh(m.month), v: cap ? Math.round((m.people / cap) * 100) : null })), onOpen: () => setView("การเข้าพัก") },
+      ...(finSum ? [{ key: "collect", label: "อัตราเก็บเงินได้", cur: finSum.collect, prev: finSum.collectPrev, goal: T.collect, note: `รับชำระ ÷ ยอดออกใบ · เทียบ ${finSum.prevLabel} · เป้า ${T.collect}%`, onOpen: () => setView("การเงิน") }] : []),
+      { key: "tasks", label: "งานสำเร็จ", cur: tasks, prev: tasksP, goal: T.tasks, trendName: "รายสัปดาห์", note: `${c.cur.done} จาก ${c.cur.total} งาน · เป้า ${T.tasks}%`,
+        trend: c.weekly.map((w) => ({ label: dm(w.from), v: pctOf(w.done, w.total) })), onOpen: () => setView("คุณภาพการดูแล") },
+      { key: "ontime", label: "ส่งงานตรงเวลา", cur: ontime, prev: ontimeP, goal: T.ontime, onOpen: () => setView("คุณภาพการดูแล") },
+      { key: "meds", label: "ให้ยาครบตามมื้อ", cur: meds, prev: medsP, goal: T.meds, onOpen: () => setView("สุขภาพผู้รับบริการ") },
+    );
+    counts.push(
+      { key: "vit", label: "ค่าผิดปกติ / เฝ้าระวัง", unit: "ครั้ง", cur: h.cur.abnormal, prev: h.prev.abnormal, higherBetter: false, onOpen: () => setView("สุขภาพผู้รับบริการ") },
+      { key: "staff", label: "กะที่ไม่มีคนหรือคนไม่พอ", unit: "กะ", cur: shortOf(tm.cur.shifts), prev: shortOf(tm.prev.shifts), higherBetter: false, onOpen: () => setView("ทีมงาน") },
+      { key: "flow", label: "รับเข้าใหม่", unit: "คน", cur: ins.flow.cur.admits, prev: ins.flow.prev.admits, higherBetter: true, onOpen: () => setView("รับเข้า-จำหน่าย") },
+      ...(finSum ? [{ key: "paid", label: `รับชำระ ${monTh(finSum.month)}`, unit: "บาท", cur: Math.round(finSum.paid), prev: Math.round(finSum.paidPrev), higherBetter: true, onOpen: () => setView("การเงิน") }] : []),
     );
   }
   const exportOverview = () => {
@@ -159,17 +190,18 @@ export function Dashboard() {
       </div>
       {ins ? <AttentionStrip items={attn} go={go} /> : <p className="mb-4 rounded-xl bg-cream-50 px-4 py-4 text-sm text-gold-600">กำลังโหลดเรื่องที่ต้องจัดการ…</p>}
       <div className="dash-tabs mt-5 flex flex-wrap items-center justify-between gap-3"><Tabs tabs={DASH_TABS} value={view} onChange={setView} />
-        {view === "ตัวชี้วัดหลัก" && <button className="btn-soft" disabled={!kpis.length} onClick={exportOverview}><Icon name="download" className="h-4 w-4" /> ส่งออก CSV</button>}</div>
+        {view === "ตัวชี้วัดหลัก" && <button className="btn-soft" disabled={!kpis.length} onClick={exportOverview}><CsvIcon /> ส่งออก CSV</button>}</div>
       {/* สรุปการเงินของเดือนที่เลือก (ใช้ในการ์ดภาพรวมและรายงานผู้บริหาร) */}
       {fin && view !== "การเงิน" && <div hidden><FinanceAnalytics branch={shiftBranch} compact month={finMonth} prevMonth={finPrev} onSummary={setFinSum} /></div>}
 
       {view === "ตัวชี้วัดหลัก" && <div className="space-y-6">
-        {kpis.length ? <KpiGrid items={kpis} vs={vs} /> : <p className="rounded-xl bg-cream-50 px-4 py-6 text-sm text-gold-600">กำลังโหลดตัวชี้วัด…</p>}
-        <p className="text-xs text-gold-500">กดการ์ดเพื่อดูรายละเอียด · สีเขียว = ดีขึ้น · สีแดง = แย่ลง</p>
+        {pct.length ? <KpiCharts pct={pct} counts={counts} vs={vs} /> : <p className="rounded-xl bg-cream-50 px-4 py-6 text-sm text-gold-600">กำลังโหลดตัวชี้วัด…</p>}
+        <p className="text-xs text-gold-500">กดแถวหรือกล่องเพื่อดูรายละเอียด · สีเขียว = ดีขึ้น · สีแดง = แย่ลง</p>
         <section><h3 className="dash-h">กายภาพ <button className="dash-more" onClick={() => setView("กายภาพ")}>ดูรายละเอียด</button></h3><CourseSummary branch={shiftBranch} compact /></section>
       </div>}
 
       {view === "การเงิน" && <FinanceAnalytics branch={shiftBranch} month={finMonth} prevMonth={finPrev} onSummary={setFinSum} />}
+      {view === "ยอดขายตามหมวด" && <SalesByCategory branch={shiftBranch} month={finMonth} />}
       {view === "การเข้าพัก" && <div className="space-y-6"><Occupancy />{ins && <OccupancyTrend d={ins} t={T} />}</div>}
       {view === "สุขภาพผู้รับบริการ" && (ins ? <HealthTab d={ins} t={T} vs={vs} onResident={openResident} /> : <p className="text-sm text-gold-500">กำลังโหลด…</p>)}
       {view === "ทีมงาน" && (ins ? <TeamTab d={ins} t={T} vs={vs} /> : <p className="text-sm text-gold-500">กำลังโหลด…</p>)}
@@ -185,7 +217,7 @@ export function Dashboard() {
         ]} vs={vs} />}
         {ins && <CareTrend d={ins} t={T} />}
         <Section title="คุณภาพการดูแลของแต่ละสาขา" sub={d ? `ข้อมูลตั้งแต่ ${longDate(d.from, true)} ถึง ${longDate(d.to ?? d.from, true)}` : "กำลังโหลด…"}
-          actions={<button className="btn-soft" onClick={() => downloadCsv(`KPI-สาขา-${R.from}-ถึง-${R.to}`, KPI_COLS, rows)}><Icon name="download" className="h-4 w-4" /> โหลด Excel</button>}>
+          actions={<button className="btn-soft" onClick={() => downloadCsv(`KPI-สาขา-${R.from}-ถึง-${R.to}`, KPI_COLS, rows)}><CsvIcon /> ส่งออก CSV</button>}>
           <details className="group mb-5 rounded-xl border border-cream-300 bg-cream-50">
             <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-medium text-gold-700">
               วิธีอ่านค่าและคำนวณคะแนน (กดเพื่อดู)
@@ -334,7 +366,7 @@ export function Appointments() {
         downloadCsv(`นัดหมาย-${tab ? APPT_FILTERS.find((f) => f.k === tab)?.t : "ทั้งหมด"}-${today}`, ["วันที่", "เวลา", "ผู้รับบริการ", "HN · ห้อง", "รายการ", "ผู้ดูแล", "การเตรียมตัว", "สถานะ"],
           shown.map(({ r, k }) => [r[0], (r[1] ?? "").slice(0, 5), r[2], who(r[2]), r[3], r[4], r[5] && r[5] !== "-" ? r[5] : "", statusOf(k).t]));
         toast(`ส่งออกนัดหมายแล้ว ${shown.length} รายการ`);
-      }}><Icon name="download" className="h-4 w-4" /> ส่งออก CSV</button>}>
+      }}><CsvIcon /> ส่งออก CSV</button>}>
         <div className="stat-filter" role="radiogroup" aria-label="กรองนัดหมาย">
           {APPT_FILTERS.map((f) => (
             <button key={f.t} type="button" role="radio" aria-checked={tab === f.k} className={`${APPT_CLASS[f.k]} ${tab === f.k ? "is-on" : ""}`} onClick={() => setTab(f.k)}>
@@ -396,15 +428,16 @@ export function HealthLogs() {
   const [record, setRecord] = useState(false);
   const [profile, setProfile] = useState<string | null>(null);
   const names = residents.map((r) => r.full_name);
-  // ตัวกรอง: สาขา (ของผู้รับบริการ) · ผู้รับบริการ · ช่วงวันที่ · กด "ดูข้อมูล" แล้วจึงกรอง
+  // ตัวกรอง: สาขา (ของผู้รับบริการ) · ผู้รับบริการ · ช่วงวันที่
   const [branch, setBranch] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
-  const [applied, setApplied] = useState({ person: "", branch: "", from: "", to: "" });
+  // ตัวกรองมีผลทันทีที่เลือก
+  const [person, setPerson] = useState("");
+  const applied = { person, branch, from, to };
   const isoOf = (th: string) => { const m = th.match(/^(\d{2})\/(\d{2})\/(\d{4})/); return m ? `${Number(m[3]) - 543}-${m[2]}-${m[1]}` : ""; };
   const branchOf = (name: string) => residents.find((x) => x.full_name === name)?.branch_name ?? "";
   const levelCol = (r: string[]) => LEVEL_TH[levelOf(evaluateVitals(parseVitals(r[2], r[3], r[4])))];
-  const [person, setPerson] = useState("");
   const [sample, setSample] = useState(false);
   const [view, setView] = useState<number | null>(null);
   const base = rows.filter((r) => {
@@ -418,16 +451,39 @@ export function HealthLogs() {
   const shown = base.filter((r) => !lv || levelKey(r) === lv);
   // คอลัมน์ที่ว่างทุกแถว (DTX น้ำหนัก ข้อมูลอื่น โน้ต) ไม่แสดง
   const keep = HEALTH_COLS.map((_, j) => j).filter((j) => ![4, 5, 6, 7].includes(j) || shown.some((r) => hasVal(r[j])));
-  /** ส่งออกตามตัวกรองที่เลือก พร้อมผลประเมินและค่าที่เกินเกณฑ์ · ข้อมูลสุขภาพ: บันทึกการส่งออกในประวัติการใช้งาน */
+  /** ส่งออกตามตัวกรองที่เลือก พร้อมผลประเมินและค่าที่เกินเกณฑ์ · ข้อมูลสุขภาพ: บันทึกการส่งออกในบันทึกการใช้งานระบบ */
   const exportHealth = () => {
-    downloadCsv(`รายงานสุขภาพ-${applied.person || "ทุกคน"}-${new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10)}`, [...HEALTH_COLS, "สาขา", "ผลประเมิน", "ค่าที่เกินเกณฑ์", "ค่าที่ควรตรวจซ้ำ (น่าจะพิมพ์ผิด)"],
+    downloadCsv(`บันทึกสุขภาพ-${applied.person || "ทุกคน"}-${new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10)}`, [...HEALTH_COLS, "สาขา", "ผลประเมิน", "ค่าที่เกินเกณฑ์", "ค่าที่ควรตรวจซ้ำ (น่าจะพิมพ์ผิด)"],
       shown.map((r) => {
         const v = parseVitals(r[2], r[3], r[4]), flags = evaluateVitals(v);
         return [...HEALTH_COLS.map((_, j) => (hasVal(r[j]) ? r[j] : "")), branchOf(r[1]), LEVEL_TH[levelOf(flags)], flags.map((f) => `${f.label} ${f.value} ${f.unit} (${f.note})`).join(" · "), implausible(v).map((k) => `${k.toUpperCase()} ${v[k]}`).join(" · ")];
       }));
     fetch("/api/audit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ what: "health", count: shown.length }) }).catch(() => {});
-    toast(`ส่งออกรายงานสุขภาพแล้ว ${shown.length} รายการ`);
+    toast(`ส่งออกบันทึกสุขภาพแล้ว ${shown.length} รายการ`);
   };
+  // ---------- ล่าสุดของแต่ละคน (มุมมองแรก) ----------
+  const [mode, setMode] = useState<"ล่าสุดของแต่ละคน" | "ประวัติทั้งหมด">("ล่าสุดของแต่ละคน");
+  const stampOf = (th: string) => { const m = th.match(/^(\d{2})\/(\d{2})\/(\d{4})\s*(\d{2}:\d{2})?/); return m ? `${Number(m[3]) - 543}-${m[2]}-${m[1]} ${m[4] ?? "00:00"}` : ""; };
+  const sysOf = (r: string[]) => Number(String(r[2] ?? "").match(/BP\s*(\d{2,3})\s*\//i)?.[1]) || null;
+  const ago = (st: string) => { const d = Math.floor((Date.now() + 7 * 3600e3 - Date.parse(`${st.slice(0, 10)}T00:00:00Z`)) / 864e5); return d <= 0 ? "วันนี้" : d === 1 ? "เมื่อวาน" : `${d} วันก่อน`; };
+  const RANK: Record<Level, number> = { critical: 0, watch: 1, normal: 2 };
+  const people = residents.filter((x) => staying(x.status ?? "") && (!applied.branch || x.branch_name === applied.branch) && (!applied.person || x.full_name === applied.person));
+  const latest = people.map((x) => {
+    const mine = base.filter((r) => r[1] === x.full_name).sort((a, b) => stampOf(b[0] ?? "").localeCompare(stampOf(a[0] ?? "")));
+    const r = mine[0];
+    return { id: x.id, name: x.full_name, r, level: r ? levelKey(r) : null, trend: mine.slice(0, 5).map(sysOf).reverse() };
+  }).sort((a, b) => (a.level === null ? 9 : RANK[a.level]) - (b.level === null ? 9 : RANK[b.level]) || stampOf(b.r?.[0] ?? "").localeCompare(stampOf(a.r?.[0] ?? "")));
+  const latestShown = latest.filter((x) => !lv || x.level === lv);
+  const lvLatest = (k: Level | "") => latest.filter((x) => !k || x.level === k).length;
+  const spark = (t: (number | null)[]) => {
+    const v = t.filter((x): x is number => x !== null);
+    if (v.length < 2) return null;
+    const lo = Math.min(...v) - 5, hi = Math.max(...v) + 5, W = 80, H = 26;
+    const pts = t.map((x, i) => (x === null ? null : `${((i / (t.length - 1)) * (W - 6) + 3).toFixed(1)},${(H - 3 - ((x - lo) / (hi - lo)) * (H - 6)).toFixed(1)}`)).filter(Boolean) as string[];
+    const [lx, ly] = pts[pts.length - 1].split(",");
+    return <svg viewBox={`0 0 ${W} ${H}`} className="hl-spark" aria-label={`ความดันตัวบน ${v.join(", ")}`}><polyline points={pts.join(" ")} /><circle cx={lx} cy={ly} r="2.8" /></svg>;
+  };
+
   /** ค่าที่เกินเกณฑ์เป็นตัวส้ม/แดงเฉพาะค่านั้น · ค่าที่เป็นไปไม่ได้ขึ้นป้าย "ตรวจค่า" */
   const renderCell = (i: number, col: number, value: string) => {
     const j = keep[col], r = shown[i];
@@ -440,7 +496,7 @@ export function HealthLogs() {
   };
   return (
     <>
-      <PageHeader title="รายงานสุขภาพ" sub="สัญญาณชีพและการประเมินทุกคน"
+      <PageHeader title="บันทึกสุขภาพ" sub="สัญญาณชีพและการประเมินทุกคน"
         actions={<button className="btn-primary" onClick={() => setRecord(true)}><Icon name="plus" className="h-4 w-4" /> บันทึกสัญญาณชีพ</button>} />
       <Section>
         <div className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -452,27 +508,43 @@ export function HealthLogs() {
             <DateBox label="ถึงวันที่" value={to} onChange={setTo} />
           </div>
         </div>
-        <div className="mb-5 flex flex-wrap items-center gap-2">
-          {(applied.person || applied.branch || applied.from || applied.to) && <span className="text-sm text-gold-600">แสดง {base.length} จาก {rows.length} รายการ</span>}
-          <button className="btn-soft sm:ml-auto" onClick={() => { setBranch(""); setPerson(""); setFrom(""); setTo(""); setApplied({ person: "", branch: "", from: "", to: "" }); }}>ล้างตัวกรอง</button>
-          <button className="btn-primary" onClick={() => setApplied({ person, branch, from, to })}>ดูข้อมูล</button>
-          <button className="btn-soft" onClick={() => window.print()}><Icon name="print" className="h-4 w-4" /> พิมพ์</button>
-          <button className="btn-soft" disabled={!shown.length} title="ตามตัวกรองที่เลือกอยู่ · บันทึกในประวัติการใช้งาน" onClick={exportHealth}><Icon name="download" className="h-4 w-4" /> ส่งออก CSV</button>
-          <button className="btn-soft" onClick={() => setSample(true)}>ตัวอย่าง สบส. (แบบฟอร์มเปล่า)</button>
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          <Tabs tabs={["ล่าสุดของแต่ละคน", "ประวัติทั้งหมด"]} value={mode} onChange={(v) => setMode(v as typeof mode)} />
+          {(person || branch || from || to) && <button className="row-action" onClick={() => { setBranch(""); setPerson(""); setFrom(""); setTo(""); }}>ล้างตัวกรอง</button>}
+          <span className="sm:ml-auto" />
+          <MenuButton label="เพิ่มเติม" items={[
+            { label: "พิมพ์", onClick: () => window.print() },
+            { label: "ส่งออก CSV", hint: "ตามตัวกรอง · บันทึกในบันทึกการใช้งานระบบ", onClick: () => (shown.length ? exportHealth() : toast("ไม่มีรายการให้ส่งออก")) },
+            { label: "ตัวอย่าง สบส. (แบบฟอร์มเปล่า)", onClick: () => setSample(true) },
+          ]} />
         </div>
         <div className="stat-filter" role="radiogroup" aria-label="กรองตามผลประเมิน">
           {LEVEL_FILTERS.map((f) => (
             <button key={f.t} type="button" role="radio" aria-checked={lv === f.k} className={`${f.c} ${lv === f.k ? "is-on" : ""}`} onClick={() => setLv(f.k)}>
-              {f.k && <i aria-hidden />}{f.t} <b>{lvCount(f.k)}</b>
+              {f.k && <i aria-hidden />}{f.t} <b>{mode === "ล่าสุดของแต่ละคน" ? lvLatest(f.k) : lvCount(f.k)}</b>
             </button>
           ))}
         </div>
-        <DataTable columns={[...keep.map((j) => HEALTH_COLS[j]), "ผลประเมิน"]} badgeCols={[keep.length]} rows={shown.map((r) => [...keep.map((j) => r[j] ?? "-"), levelCol(r)])} render={renderCell}
+        {mode === "ล่าสุดของแต่ละคน" ? (
+          latestShown.length ? <ul className="hl-list">
+            {latestShown.map((x) => (
+              <li key={x.id} className={x.level ? `is-${x.level}` : "is-none"}>
+                <button type="button" className="hl-row" onClick={() => setProfile(x.id)}>
+                  <span className="hl-who"><b>{x.name}</b><small>{x.r ? `${x.r[0]} · ${ago(stampOf(x.r[0] ?? ""))}` : "ยังไม่มีบันทึก"}</small></span>
+                  <span className="hl-v">{x.r ? <>{[x.r[2], hasVal(x.r[3]) ? `O₂ ${x.r[3]}` : "", hasVal(x.r[4]) ? `DTX ${x.r[4]}` : ""].filter(hasVal).join(" · ")}</> : "-"}</span>
+                  <span className="hl-sp">{spark(x.trend)}</span>
+                  <span className={`status-badge ${x.level === "critical" ? "status-danger" : x.level === "watch" ? "status-warning" : x.level === "normal" ? "status-success" : "status-neutral"}`}>{x.level ? LEVEL_TH[x.level] : "ยังไม่วัด"}</span>
+                </button>
+              </li>
+            ))}
+          </ul> : <p className="empty-state">{lv ? `ไม่มีผู้รับบริการที่${LEVEL_FILTERS.find((f) => f.k === lv)?.t}` : "ยังไม่มีผู้รับบริการที่พักอยู่"}</p>
+        ) : <DataTable columns={[...keep.map((j) => HEALTH_COLS[j]), "ผลประเมิน"]} badgeCols={[keep.length]} rows={shown.map((r) => [...keep.map((j) => r[j] ?? "-"), levelCol(r)])} render={renderCell}
           empty={lv ? `ไม่มีบันทึกที่${LEVEL_FILTERS.find((f) => f.k === lv)?.t}` : "ยังไม่มีบันทึกสัญญาณชีพ"}
+          onRow={(i) => setView(rows.indexOf(shown[i]))} rowLabel="กดเพื่อดูรายละเอียด"
           actions={[
-            { label: "รายละเอียด", onClick: (i) => setView(rows.indexOf(shown[i])) },
-            { label: "ประวัติ", onClick: (i) => { const r = residents.find((x) => x.full_name === shown[i][1]); if (r) setProfile(r.id); else toast("ยังไม่มีผู้รับบริการชื่อนี้ในทะเบียน"); } },
-          ]} />
+            { label: "รายละเอียด", more: true, onClick: (i) => setView(rows.indexOf(shown[i])) },
+            { label: "ประวัติผู้รับบริการ", more: true, onClick: (i) => { const r = residents.find((x) => x.full_name === shown[i][1]); if (r) setProfile(r.id); else toast("ยังไม่มีผู้รับบริการชื่อนี้ในทะเบียน"); } },
+          ]} />}
       </Section>
       <VitalsDialog open={record} residents={names} recorder={user?.name ?? "-"} onClose={() => setRecord(false)} onSave={(row) => add(row)} />
       <ResidentProfile id={profile} onClose={() => setProfile(null)} />

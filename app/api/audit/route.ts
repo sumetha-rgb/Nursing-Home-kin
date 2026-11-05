@@ -30,7 +30,7 @@ export async function POST(req: NextRequest) {
   if (b.what === "contracts" && can(me, "contracts")) {
     await audit(req, me, [{ area: "contracts", action: "export", recordId: null, summary: `ส่งออกทะเบียนสัญญา CSV ${n} สัญญา (มีเลขบัตรประชาชนและที่อยู่)`, branch }]);
   } else if (b.what === "health" && can(me, "health_logs")) {
-    await audit(req, me, [{ area: "health", action: "export", recordId: null, summary: `ส่งออกรายงานสุขภาพ CSV ${n} รายการ (ข้อมูลสุขภาพ)`, branch }]);
+    await audit(req, me, [{ area: "health", action: "export", recordId: null, summary: `ส่งออกบันทึกสุขภาพ CSV ${n} รายการ (ข้อมูลสุขภาพ)`, branch }]);
   } else return forbidden();
   return NextResponse.json({ ok: true });
 }

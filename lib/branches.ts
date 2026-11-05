@@ -4,7 +4,7 @@ import type { FieldDef } from "@/components/ui";
 import { BRANCH_NAMES as FALLBACK } from "./mock";
 
 /**
- * รายชื่อสาขาจากหน้า "สาขาของเรา" (ตาราง branches) ใช้ในทุกช่องเลือกสาขา
+ * รายชื่อสาขาจากหน้า "ข้อมูลสาขา" (ตาราง branches) ใช้ในทุกช่องเลือกสาขา
  * โหลดครั้งเดียวต่อหน้า เก็บสำเนาในเครื่อง · โหลดไม่ได้ใช้รายชื่อตัวอย่าง
  */
 const CACHE = "kin-cache:branch-names";

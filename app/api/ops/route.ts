@@ -21,6 +21,10 @@ export const fetchCache = "force-no-store";
  *  POST { op: "cheer", branch, message }            ส่งกำลังใจถึงสาขา
  *  POST { op: "bonus", title, note?, photo? }       พนักงานส่งผลงานพิเศษ
  *  POST { op: "kudos_peer", staff }                 ชื่นชมเพื่อนร่วมทีม (วันละครั้งต่อคน)
+ *  GET  ?op=nudges&date=                            ตามงานของวันนั้น (สาขาตัวเอง) · สถานะเห็นแล้ว/ตอบกลับ ล่าสุดต่องาน
+ *  POST { op: "nudge", taskId, message? }           ตามงานที่ยังไม่ส่ง (ผู้มีสิทธิ์มอบหมายงาน) · ถึงผู้รับผิดชอบ หรือทุกคนในสาขาถ้ายังไม่มีผู้รับผิดชอบ
+ *  POST { op: "nudge_reply", id, reason }            KinApp: ตอบว่าทำไม่ได้พร้อมเหตุผล
+ *  feed (KinApp) มี nudges = งานที่ถูกตามและยังไม่ส่ง · เปิด feed = บันทึกว่าเห็นแล้ว
  */
 const bad = (msg: string, status = 400) => NextResponse.json({ error: msg }, { status });
 const scoped = (me: SessionUser) => me.role !== "Global Admin";
@@ -37,7 +41,28 @@ export async function GET(req: NextRequest) {
       const kudos = await sql(`SELECT task_title, resident_name, given_by, ${TH_TIME("created_at")} AS at FROM kudos WHERE staff_name = $1 ORDER BY created_at DESC LIMIT 5`, [me.name]);
       const cheers = await sql(`SELECT message, sent_by, ${TH_TIME("created_at")} AS at FROM branch_cheers WHERE branch_name = $1 AND created_at > now() - interval '7 days' ORDER BY created_at DESC LIMIT 3`, [me.branch]);
       const [b] = (await sql(`SELECT count(*)::int AS n FROM staff_bonus WHERE staff_name = $1 AND (created_at AT TIME ZONE 'Asia/Bangkok')::date = (now() AT TIME ZONE 'Asia/Bangkok')::date`, [me.name])) as { n: number }[];
-      return NextResponse.json({ kudos, cheers, bonusToday: b?.n ?? 0 });
+      // งานที่หัวหน้าตามและยังไม่ส่ง (ถึงฉัน หรือถึงทุกคนในสาขา) · ตารางยังไม่สร้าง = ไม่มี
+      let nudges: Record<string, unknown>[] = [];
+      try {
+        nudges = await sql(`SELECT n.id, n.task_id AS "taskId", n.task_name AS task, n.resident_name AS resident, n.message, n.sent_by AS "sentBy", ${TH_TIME("n.sent_at")} AS at,
+            to_char(d.scheduled_time, 'HH24:MI') AS time
+          FROM task_nudges n JOIN daily_tasks d ON d.id = n.task_id
+          WHERE n.branch_name = $1 AND n.reply IS NULL AND (n.target IS NULL OR n.target = $2) AND d.status NOT IN ('เสร็จแล้ว', 'ตรวจแล้ว')
+            AND n.work_date >= (now() AT TIME ZONE 'Asia/Bangkok')::date - 1 ORDER BY n.sent_at DESC LIMIT 5`, [me.branch, me.name]);
+        if (nudges.length) await sql(`UPDATE task_nudges SET seen_by = $2, seen_at = now() WHERE id = ANY($1) AND seen_at IS NULL`, [nudges.map((x) => x.id), me.name]);
+      } catch { nudges = []; }
+      return NextResponse.json({ kudos, cheers, bonusToday: b?.n ?? 0, nudges });
+    }
+    if (q.get("op") === "nudges") {
+      if (!can(me, "tasks")) return forbidden();
+      const date = /^\d{4}-\d{2}-\d{2}$/.test(q.get("date") ?? "") ? q.get("date")! : null;
+      if (!date) return bad("วันที่ไม่ถูกต้อง");
+      try {
+        const rows = await sql(`SELECT DISTINCT ON (task_id) task_id AS "taskId", sent_by AS "sentBy", to_char(sent_at AT TIME ZONE 'Asia/Bangkok', 'HH24:MI') AS at,
+            seen_by AS "seenBy", to_char(seen_at AT TIME ZONE 'Asia/Bangkok', 'HH24:MI') AS "seenAt", reply, reply_by AS "replyBy", to_char(replied_at AT TIME ZONE 'Asia/Bangkok', 'HH24:MI') AS "replyAt"
+          FROM task_nudges WHERE work_date = $1::date ${scoped(me) ? "AND branch_name = $2" : ""} ORDER BY task_id, sent_at DESC`, scoped(me) ? [date, me.branch] : [date]);
+        return NextResponse.json({ items: rows });
+      } catch { return NextResponse.json({ items: [] }); }
     }
     if (q.get("op") === "tasklog") {
       // ทะเบียนงาน: งานประจำวันย้อนหลังตามช่วงวันที่ (สูงสุด 92 วัน · 3,000 แถว)
@@ -130,6 +155,26 @@ export async function POST(req: NextRequest) {
       if (had) return NextResponse.json({ ok: true, already: true });
       await sql`INSERT INTO kudos (id, branch_name, staff_name, task_id, task_title, resident_name, given_by) VALUES (${randomUUID()}, ${t.branch_name}, ${t.done_by}, ${t.id}, ${t.task_name}, ${t.resident_name}, ${me.name})`;
       return NextResponse.json({ ok: true, staff: t.done_by });
+    }
+    if (b.op === "nudge") {
+      if (!can(me, "tasks")) return forbidden("บัญชีนี้ไม่มีสิทธิ์ตามงาน");
+      const [t] = (await sql`SELECT id, work_date::text AS date, branch_name, task_name, resident_name, assignee, status FROM daily_tasks WHERE id = ${String(b.taskId ?? "")}`) as Record<string, string>[];
+      if (!t) return bad("ไม่พบงาน", 404);
+      if (scoped(me) && t.branch_name !== me.branch) return forbidden();
+      if (t.status === "เสร็จแล้ว" || t.status === "ตรวจแล้ว") return bad("งานนี้ส่งแล้ว");
+      // ตามผู้รับผิดชอบ · ยังไม่มีผู้รับผิดชอบ (ใครก็ได้) = ทุกคนในสาขาเห็น
+      const target = t.assignee && t.assignee !== "-" && !/ใครก็ได้|ทุกคน/.test(t.assignee) ? t.assignee : null;
+      await sql`INSERT INTO task_nudges (id, task_id, work_date, branch_name, task_name, resident_name, target, message, sent_by)
+        VALUES (${randomUUID()}, ${t.id}, ${t.date}::date, ${t.branch_name}, ${t.task_name}, ${t.resident_name}, ${target}, ${text(b.message, 200) || null}, ${me.name})`;
+      return NextResponse.json({ ok: true, target });
+    }
+    if (b.op === "nudge_reply") {
+      const reason = text(b.reason, 120);
+      if (!reason) return bad("กรุณาเลือกเหตุผล");
+      const [n] = (await sql`UPDATE task_nudges SET reply = ${reason}, reply_by = ${me.name}, replied_at = now()
+        WHERE id = ${String(b.id ?? "")} AND branch_name = ${me.branch} AND (target IS NULL OR target = ${me.name}) AND reply IS NULL RETURNING task_name`) as { task_name: string }[];
+      if (!n) return bad("ไม่พบการตามงานนี้ หรือมีคนตอบไปแล้ว", 404);
+      return NextResponse.json({ ok: true });
     }
     if (b.op === "cheer") {
       if (!can(me, "dashboard")) return forbidden();

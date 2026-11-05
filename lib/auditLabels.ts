@@ -17,14 +17,14 @@ export const ACTION_GROUPS: Record<string, string[]> = {
 };
 
 export const AREA_LABEL: Record<string, string> = {
-  residents: "ผู้รับบริการ", contracts: "สัญญาบริการ", assessments: "ใบเสนอราคา / แผนดูแล", tasks_table: "ประวัติงานดูแล",
-  facility: "งานส่วนกลางของสาขา", master: "แม่แบบงานมาตรฐาน", appointments: "ตารางนัดหมาย", health: "รายงานสุขภาพ",
-  complaints: "เสียงจากครอบครัว", docs: "เอกสารและระเบียบ", branches: "สาขาของเรา", users: "ทีมและสิทธิ์การใช้งาน",
+  residents: "ผู้รับบริการ", contracts: "สัญญาบริการ", assessments: "ใบเสนอราคา / แผนดูแล", tasks_table: "งานดูแลย้อนหลัง",
+  facility: "งานส่วนกลางของสาขา", master: "แม่แบบงานมาตรฐาน", appointments: "ตารางนัดหมาย", health: "บันทึกสุขภาพ",
+  complaints: "เสียงจากครอบครัว", docs: "เอกสารและระเบียบ", branches: "ข้อมูลสาขา", users: "ทีมและสิทธิ์การใช้งาน",
   auth: "การเข้าสู่ระบบ", "pharmacy-master": "แอปจัดยา · ฐานข้อมูลยา", "pharmacy-drugs": "แอปจัดยา · คลังยา",
   "pharmacy-packs": "แอปจัดยา · ซองยา", "staff-tasks": "KinApp · งานวันนี้", "staff-meds": "KinApp · คิวจ่ายยา",
   "staff-handover": "KinApp · สมุดส่งเวร", alerts: "แจ้งเตือนสัญญาณชีพ", routines: "งานประจำ (ทำซ้ำทุกวัน)", roster: "ตารางเวร", attendance: "เช็คชื่อเข้า-ออกงาน",
   admissions: "ประเมินแรกรับ", clinical: "บันทึกทางคลินิก", physio: "กายภาพ / คอร์สกายภาพ", supplies: "เวชภัณฑ์", stock: "คลังยากลาง", bonus: "ผลงานพิเศษ", cheers: "ส่งกำลังใจ", doc_settings: "ข้อความในเอกสาร", family_updates: "อัปเดตถึงครอบครัว",
-  review_links: "ลิงก์ครอบครัว (สมุดภาพ/รีวิว)", family_photos: "สมุดภาพครอบครัว", kpi: "น้ำหนัก KPI พนักงาน", rooms: "ห้องพักและเตียง", invoices: "การเงิน (ใบแจ้งหนี้/ใบเสร็จ)",
+  review_links: "ลิงก์ครอบครัว (สมุดภาพ/รีวิว)", family_photos: "สมุดภาพครอบครัว", kpi: "น้ำหนัก KPI พนักงาน", rooms: "ห้องพักและเตียง", invoices: "ใบแจ้งหนี้และใบเสร็จ", prices: "ราคาสินค้าและบริการ",
 };
 export function areaLabel(area: string) {
   const d = area.match(/^daily-(\d{4})-(\d{2})-(\d{2})$/);

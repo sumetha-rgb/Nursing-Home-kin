@@ -991,3 +991,54 @@ CREATE TABLE IF NOT EXISTS cash_closes (
   approved_at      timestamptz,
   UNIQUE (branch_name, close_date)
 );
+
+-- ใบราคาและรหัส (ราคากลางทุกสาขา · ผู้จัดการสาขาและผู้บริหารแก้ได้ที่หน้า "ใบราคาและรหัส")
+-- code = รหัสหลัก เช่น NS-21 (รหัสเต็มของแต่ละราคาต่อท้ายหน่วย เช่น NS-21-M) · old_codes = รหัสที่เคยใช้ (ยังค้นหาเจอ ห้ามนำไปใช้ซ้ำ)
+-- rates = [{unit, price, label?, next?: {price, from}}] · next = ราคาใหม่ที่ตั้งล่วงหน้า มีผลวันที่ from
+-- ตารางว่าง = ระบบตั้งต้นจากใบราคาเดิม (lib/priceList.ts) ให้เองตอนเปิดใช้ครั้งแรก
+CREATE TABLE IF NOT EXISTS price_items (
+  id          text PRIMARY KEY,
+  code        text NOT NULL UNIQUE,
+  cat         text NOT NULL,
+  sub         text NOT NULL,
+  name        text NOT NULL,
+  rates       jsonb NOT NULL DEFAULT '[]',
+  old_codes   text[] NOT NULL DEFAULT '{}',
+  active      boolean NOT NULL DEFAULT true,
+  updated_by  text,
+  updated_at  timestamptz NOT NULL DEFAULT now()
+);
+-- ประวัติการแก้ใบราคา: ใคร แก้อะไร เมื่อไร เพราะอะไร
+CREATE TABLE IF NOT EXISTS price_history (
+  id          text PRIMARY KEY,
+  item_id     text NOT NULL,
+  code        text NOT NULL,
+  action      text NOT NULL,
+  detail      text,
+  reason      text,
+  by_name     text,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS price_history_item ON price_history (item_id, created_at DESC);
+
+-- ตามงาน: หัวหน้ากด "ตามงาน" ที่งานเลยเวลา → KinApp ขึ้นแถบแดงให้พยาบาล → พยาบาลส่งงาน หรือตอบว่าทำไม่ได้พร้อมเหตุผล
+-- target = ผู้รับผิดชอบงาน (ว่าง = ทุกคนในสาขา) · seen = คนแรกที่เห็นใน KinApp · reply = เหตุผลที่ทำไม่ได้
+CREATE TABLE IF NOT EXISTS task_nudges (
+  id            text PRIMARY KEY,
+  task_id       text NOT NULL,
+  work_date     date NOT NULL,
+  branch_name   text,
+  task_name     text,
+  resident_name text,
+  target        text,
+  message       text,
+  sent_by       text NOT NULL,
+  sent_at       timestamptz NOT NULL DEFAULT now(),
+  seen_by       text,
+  seen_at       timestamptz,
+  reply         text,
+  reply_by      text,
+  replied_at    timestamptz
+);
+CREATE INDEX IF NOT EXISTS task_nudges_day ON task_nudges (branch_name, work_date);
+CREATE INDEX IF NOT EXISTS task_nudges_task ON task_nudges (task_id, sent_at DESC);

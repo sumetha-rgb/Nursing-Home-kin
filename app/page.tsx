@@ -34,6 +34,7 @@ const Roster = view(() => import("@/components/views/Roster").then((m) => m.Rost
 const Tutorials = view(() => import("@/components/views/Tutorials").then((m) => m.Tutorials));
 const Rooms = view(() => import("@/components/views/Rooms").then((m) => m.Rooms));
 const Billing = view(() => import("@/components/views/Billing").then((m) => m.Billing));
+const PriceList = view(() => import("@/components/views/PriceList").then((m) => m.PriceList));
 
 const VIEWS: Record<ViewId, ComponentType> = {
   careplan: Workflow,
@@ -58,6 +59,7 @@ const VIEWS: Record<ViewId, ComponentType> = {
   tutorials: Tutorials,
   rooms: Rooms,
   billing: Billing,
+  prices: PriceList,
 };
 
 function Splash() {

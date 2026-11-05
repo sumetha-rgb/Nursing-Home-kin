@@ -1,5 +1,6 @@
 "use client";
 import { useEffect } from "react";
+import CsvIcon from "@/components/CsvIcon";
 import Icon from "../Icon";
 import { MetricGrid, Section, Tile } from "../ui";
 import { downloadCsv } from "@/lib/store";
@@ -33,7 +34,7 @@ export default function Occupancy({ compact, onTiles }: { compact?: boolean; onT
     <div className="mb-6">
       <MetricGrid items={tiles} />
       <Section title="อัตราการเข้าพักรายสาขา" sub="นับจากห้องที่กำหนดไว้ในเมนูห้องพักและเตียง" actions={<>
-        <button className="btn-soft" onClick={() => downloadCsv("การเข้าพักรายสาขา", ["สาขา", "เตียงทั้งหมด", "ผู้พักอยู่", "เตียงว่าง", "อัตราการเข้าพัก (%)", "ห้องเต็ม"], rows.map((r) => [r.branch, String(r.capacity), String(r.people), String(r.free), String(r.pct), String(r.full)]))}><Icon name="download" className="h-4 w-4" /> ส่งออก CSV</button>
+        <button className="btn-soft" onClick={() => downloadCsv("การเข้าพักรายสาขา", ["สาขา", "เตียงทั้งหมด", "ผู้พักอยู่", "เตียงว่าง", "อัตราการเข้าพัก (%)", "ห้องเต็ม"], rows.map((r) => [r.branch, String(r.capacity), String(r.people), String(r.free), String(r.pct), String(r.full)]))}><CsvIcon /> ส่งออก CSV</button>
         <button className="btn-soft" onClick={() => go("rooms")}>ดูห้องพักและเตียง</button></>}>
         <div className="space-y-3">
           {rows.map((r) => (

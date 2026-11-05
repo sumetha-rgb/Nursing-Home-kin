@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import CsvIcon from "@/components/CsvIcon";
 import Icon from "../Icon";
 import { DataTable, Section } from "../ui";
 import { balanceOf, bahtText, docDate, Invoice, isOpen, money, todayIso } from "@/lib/billing";
@@ -22,7 +23,7 @@ const bucketOf = (age: number) => BUCKETS.find((b) => age >= b.min && age <= b.m
 type Debtor = { key: string; who: string; payer: string; hn: string; branch: string; address: string; contract: string; docs: { x: Invoice; age: number }[]; by: Record<BucketKey, number>; total: number; oldest: number };
 
 /**
- * ลูกหนี้ค้างชำระตามอายุหนี้ (หน้าการเงิน)
+ * ลูกหนี้ค้างชำระตามอายุหนี้ (หน้าใบแจ้งหนี้และใบเสร็จ)
  *  สรุปยอดค้าง 0–30 / 31–60 / 61–90 / เกิน 90 วัน · รายคน · พิมพ์ใบแจ้งยอดค้างชำระรวมทุกใบที่ค้างของคนนั้นให้ญาติ
  */
 export default function Receivables({ list, branchOf, branchInfo, by }: { list: Invoice[]; branchOf: (x: Invoice) => string; branchInfo: (name: string) => DocBranch; by?: string }) {
@@ -55,7 +56,7 @@ export default function Receivables({ list, branchOf, branchInfo, by }: { list: 
   if (!open.length) return null;
   return (
     <Section title="ลูกหนี้ค้างชำระตามอายุหนี้" sub="นับจากวันที่ออกใบ · ยิ่งค้างนานสียิ่งเข้ม · กดช่วงอายุเพื่อดูเฉพาะคนในช่วงนั้น · พิมพ์ใบแจ้งยอดค้างชำระรวมทุกใบให้ญาติได้"
-      actions={<button className="btn-soft" onClick={exportCsv}><Icon name="download" className="h-4 w-4" /> ส่งออก CSV</button>}>
+      actions={<button className="btn-soft" onClick={exportCsv}><CsvIcon /> ส่งออก CSV</button>}>
       <div className="aging">
         <div className="aging-bar" role="img" aria-label={`ยอดค้างรวม ${money(grand)} บาท`}>
           {BUCKETS.map((b) => { const v = sumOf(b.k); return v ? <i key={b.k} className={b.c} style={{ width: `${(v / grand) * 100}%` }} title={`${b.t} ${money(v)} บาท`} /> : null; })}

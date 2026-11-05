@@ -2,7 +2,7 @@
 export const ROLES = ["Nurse", "Cashier", "Head Nurse", "Branch Admin", "Global Admin"] as const;
 export type Role = (typeof ROLES)[number];
 
-/** branchCheck: ผลตรวจสาขาของบัญชีกับหน้า "สาขาของเรา" ตอนเข้าสู่ระบบ (Global Admin = all) */
+/** branchCheck: ผลตรวจสาขาของบัญชีกับหน้า "ข้อมูลสาขา" ตอนเข้าสู่ระบบ (Global Admin = all) */
 export type BranchCheck = "all" | "ok" | "upcoming" | "closed" | "missing";
 /** perms: สิทธิ์จริงของบัญชี (ค่าเริ่มต้นของตำแหน่ง หรือที่ติ๊กกำหนดรายคน) */
 export type SessionUser = { id: string; name: string; email: string; role: Role; branch: string; branchCheck?: BranchCheck; perms?: string[] };

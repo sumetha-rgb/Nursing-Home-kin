@@ -44,7 +44,7 @@ export default function AlertsBell({ compact = false }: { compact?: boolean }) {
           <ul className="space-y-1.5 text-sm">{stock.map((x) => <li key={`${x.id}${x.branch_name}`} className={x.qty <= 0 || (x.days ?? 99) < 0 ? "text-red-700" : "text-amber-900"}>• <b>{x.name}</b> · {stockAlertText(x)}{user?.role === "Global Admin" ? ` · สาขา${x.branch_name}` : ""}</li>)}</ul>
         </section>}
         <h4 className="mb-2 font-semibold text-gold-900">สัญญาณชีพผิดปกติ</h4>
-        <p className="mb-3 text-sm text-gold-600">รายการที่ค่าเกินเกณฑ์และยังไม่มีพยาบาลรับทราบ · กดรับทราบหลังประเมินอาการแล้ว (ระบบบันทึกชื่อและเวลาไว้ในประวัติการใช้งาน)</p>
+        <p className="mb-3 text-sm text-gold-600">รายการที่ค่าเกินเกณฑ์และยังไม่มีพยาบาลรับทราบ · กดรับทราบหลังประเมินอาการแล้ว (ระบบบันทึกชื่อและเวลาไว้ในบันทึกการใช้งานระบบ)</p>
         {alerts.length === 0 ? <p className="rounded-xl bg-emerald-50 px-4 py-6 text-center text-sm text-emerald-800">ไม่มีแจ้งเตือนค้าง</p> : (
           <ul className="space-y-3">{alerts.map((a) => (
             <li key={a.id} className={`alert-item is-${a.level}`}>

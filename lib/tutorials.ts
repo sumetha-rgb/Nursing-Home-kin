@@ -5,7 +5,7 @@ export type Tutorial = { no: number; title: string; who: string; topics: string[
 
 export const TUTORIALS: Tutorial[] = [
   { no: 1, title: "ตั้งค่าสาขาและทีม", who: "ผู้บริหารองค์กร", youtube: "https://youtu.be/rAekCtReXfQ", roles: ["Global Admin"],
-    topics: ["ข้อมูลสาขา", "สร้างบัญชีและสิทธิ์", "อนุมัติพนักงานใหม่", "ประวัติการใช้งาน", "น้ำหนัก KPI"] },
+    topics: ["ข้อมูลสาขา", "สร้างบัญชีและสิทธิ์", "อนุมัติพนักงานใหม่", "บันทึกการใช้งานระบบ", "น้ำหนัก KPI"] },
   { no: 2, title: "วางงานและตรวจงานประจำวัน", who: "ผู้จัดการสาขา", youtube: "https://youtu.be/W_nHH2YATTw", roles: ["Global Admin", "Branch Admin", "Head Nurse"],
     topics: ["งานประจำ", "มอบหมายคน", "ตรวจงานพร้อมรูป", "ตารางเวร"] },
   { no: 3, title: "รับแจ้งเตือนและสั่งงานติดตาม", who: "หัวหน้าพยาบาล", youtube: "https://youtu.be/PFkU-f3nu74", roles: ["Global Admin", "Branch Admin", "Head Nurse"],

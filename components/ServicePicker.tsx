@@ -2,13 +2,12 @@
 import { useState } from "react";
 import Icon from "./Icon";
 import { money, svcDiscount, svcNet } from "@/lib/billing";
-import { PRICE_LIST, PriceItem, Rate, rateText, searchPrices } from "@/lib/priceList";
+import { pickName, priceList, PriceItem, Rate, rateCode, rateText, searchPrices } from "@/lib/priceList";
+import { usePriceList } from "@/lib/usePrices";
 
 /** รายการค่าบริการในเอกสาร (ใบเสนอราคา / สัญญา) · pct = ส่วนลด (% ของยอดบรรทัด) · discount = ส่วนลดเป็นบาท (ข้อมูลเดิม) */
-export type ServiceLine = { desc: string; qty: number; unit: string; price: number; discount?: number; pct?: number };
+export type ServiceLine = { desc: string; qty: number; unit: string; price: number; discount?: number; pct?: number; code?: string };
 const UNITS = ["เดือน", "สัปดาห์", "วัน", "ครั้ง", "แพ็กเกจ", "ชุด", "รายการ"];
-/** หมวดในใบราคา (ตามลำดับในใบราคา) */
-const GROUPS = [...new Set(PRICE_LIST.map((x) => x.group))];
 
 /**
  * ช่องค้นหาค่าบริการจากใบราคา: พิมพ์อย่างน้อย 2 ตัวอักษร หรือกดปุ่มหมวดเพื่อดูทุกรายการในหมวดนั้น
@@ -19,12 +18,15 @@ export function ServicePicker({ onPick, exclude = [] }: { onPick: (line: Service
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
   const [cat, setCat] = useState("");
-  const groups = GROUPS.filter((g) => !exclude.includes(g));
+  usePriceList();
+  const all = priceList();
+  /** หมวดในใบราคา (ตามลำดับในใบราคา) */
+  const groups = [...new Set(all.map((x) => x.group))].filter((g) => !exclude.includes(g));
   const k = q.replace(/\s+/g, "").toLowerCase();
-  const list = (cat ? PRICE_LIST.filter((x) => x.group === cat && (!k || x.name.replace(/\s+/g, "").toLowerCase().includes(k))) : searchPrices(q)).filter((x) => !exclude.includes(x.group));
+  const list = (cat ? all.filter((x) => x.group === cat && (!k || (x.name + x.code).replace(/\s+/g, "").toLowerCase().includes(k))) : searchPrices(q)).filter((x) => !exclude.includes(x.group));
   const show = !!cat || open;
   const pick = (x: PriceItem, r: Rate) => {
-    onPick({ desc: x.name, qty: 1, unit: r.unit, price: r.price });
+    onPick({ desc: pickName(x), qty: 1, unit: r.unit, price: r.price, code: rateCode(x, x.rates.indexOf(r)) });
     setQ(""); setOpen(false); setCat("");
   };
   return (
@@ -39,7 +41,7 @@ export function ServicePicker({ onPick, exclude = [] }: { onPick: (line: Service
         {groups.map((g) => (
           <button key={g} type="button" aria-pressed={cat === g} onClick={() => setCat(cat === g ? "" : g)}
             className={`rounded-full px-3 py-1 text-xs font-medium ${cat === g ? "bg-gold-700 text-white" : "border border-cream-300 bg-white text-gold-700 hover:border-gold-300"}`}>
-            {g} <span className={cat === g ? "text-white/80" : "text-gold-400"}>{PRICE_LIST.filter((x) => x.group === g).length}</span>
+            {g} <span className={cat === g ? "text-white/80" : "text-gold-400"}>{all.filter((x) => x.group === g).length}</span>
           </button>
         ))}
       </div>
@@ -53,7 +55,7 @@ export function ServicePicker({ onPick, exclude = [] }: { onPick: (line: Service
             : !list.length ? <p className="px-4 py-3 text-sm text-gold-500">ไม่พบ &quot;{q}&quot;{cat ? ` ในหมวด ${cat}` : " ในใบราคา"} · เพิ่มเป็นรายการเองด้วยปุ่ม &quot;เพิ่มรายการเอง&quot;</p>
             : list.map((x) => (
               <div key={x.code} className="border-b border-cream-200 px-4 py-2.5 last:border-0">
-                <p className="text-sm font-medium text-gold-800">{x.name}</p>
+                <p className="text-sm font-medium text-gold-800"><span className="pl-code mr-1.5">{x.code}</span>{x.name}</p>
                 {!cat && <p className="mb-1.5 text-xs text-gold-500">{x.group}</p>}
                 <div className={`flex flex-wrap gap-1.5 ${cat ? "mt-1.5" : ""}`}>{x.rates.map((r, j) => (
                   <button key={j} type="button" className="rounded-lg border border-gold-300 bg-cream-50 px-2.5 py-1 text-xs font-medium text-gold-800 hover:border-gold-600 hover:bg-gold-100"
@@ -78,7 +80,7 @@ export function ServiceLines({ items, onChange, total = true, exclude }: { items
         const set = (p: Partial<ServiceLine>) => onChange(items.map((y, j) => (j === k ? { ...y, ...p } : y)));
         return (
           <div key={k} className="quote-line">
-            <input value={x.desc} onChange={(e) => set({ desc: e.target.value })} placeholder="รายการ" aria-label="รายการ" />
+            <input value={x.desc} onChange={(e) => set({ desc: e.target.value, code: undefined })} placeholder="รายการ" aria-label="รายการ" />
             <input type="number" min={0} value={x.qty} onChange={(e) => set({ qty: Number(e.target.value) || 0 })} aria-label="จำนวน" />
             <select value={x.unit} onChange={(e) => set({ unit: e.target.value })} aria-label="หน่วย">{(UNITS.includes(x.unit) ? UNITS : [x.unit, ...UNITS]).map((u) => <option key={u}>{u}</option>)}</select>
             <input type="number" min={0} value={x.price} onChange={(e) => set({ price: Number(e.target.value) || 0 })} aria-label="ราคาต่อหน่วย" />

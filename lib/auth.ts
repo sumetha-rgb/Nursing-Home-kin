@@ -56,7 +56,7 @@ export async function currentUser(req: NextRequest): Promise<SessionUser | null>
   return { id: u.id, name: u.full_name, email: u.email, role: u.access_level as Role, branch: u.branch_name ?? "", perms: permsFor(u.access_level as Role, u.permissions) };
 }
 
-/** ตรวจว่าสาขาของบัญชีมีอยู่ในหน้า "สาขาของเรา" และเปิดให้บริการหรือไม่ */
+/** ตรวจว่าสาขาของบัญชีมีอยู่ในหน้า "ข้อมูลสาขา" และเปิดให้บริการหรือไม่ */
 export async function checkBranch(u: SessionUser): Promise<SessionUser> {
   if (u.role === "Global Admin") return { ...u, branchCheck: "all" };
   const [b] = await sql`SELECT status FROM branches WHERE name = ${u.branch} LIMIT 1`;

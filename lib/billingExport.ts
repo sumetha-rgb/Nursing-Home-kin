@@ -1,5 +1,5 @@
 "use client";
-// ส่งออกข้อมูลการเงินเป็น CSV สำหรับฝ่ายบัญชี (หน้าการเงิน และแท็บการเงินในภาพรวมและรายงาน)
+// ส่งออกข้อมูลการเงินเป็น CSV สำหรับฝ่ายบัญชี (หน้าใบแจ้งหนี้และใบเสร็จ และแท็บการเงินในภาพรวมและรายงาน)
 import { docDate, Invoice, lineAmount, lineDiscount, lineNet, money, parseItems, BillItem } from "./billing";
 import { downloadCsv } from "./store";
 

@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
+import CsvIcon from "@/components/CsvIcon";
 import Icon from "../Icon";
 import { useApp } from "@/lib/app";
 import { useBranchNames } from "@/lib/branches";
@@ -60,7 +61,7 @@ export function StaffKpi() {
       <PageHeader title="KPI พนักงาน" sub="คะแนนรายเดือนจาก 4 ส่วน · แต่ละส่วน 0–100 รวมตามน้ำหนัก"
         actions={<>
           {data?.canEdit && w && <button className="btn-soft" onClick={() => { setWerr(""); setEdit({ ...w }); }}><Icon name="cpu" className="h-4 w-4" /> ตั้งน้ำหนัก</button>}
-          <button className="btn-soft" onClick={csv}><Icon name="download" className="h-4 w-4" /> โหลด CSV</button>
+          <button className="btn-soft" onClick={csv}><CsvIcon /> ส่งออก CSV</button>
         </>} />
 
       <div className="mb-4 flex flex-wrap items-center gap-3">

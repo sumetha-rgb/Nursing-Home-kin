@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
+import CsvIcon from "@/components/CsvIcon";
 import { useBranchNames, withBranches } from "@/lib/branches";
 import Link from "next/link";
 import Icon from "../Icon";
@@ -13,11 +14,12 @@ import { ServiceLine, ServiceLines } from "../ServicePicker";
 import { AddressFinder, ChipChoice, SuggestText, TagInput } from "../ContractInputs";
 import { addMonthsIso, ALLERGY_DRUGS, COMMON_MEDS, FOOD_ALLERGENS, HEALTH_RIGHTS, HOSP_LATER, isNoAllergy, NO_ALLERGY, RELATIONS } from "@/lib/medicalLists";
 import { PROGRAMS } from "@/lib/contractText";
-import { ROOMS } from "@/lib/priceList";
+import { rooms as priceRooms } from "@/lib/priceList";
+import { usePriceList } from "@/lib/usePrices";
 import { clinic, fetchDocSettings } from "@/lib/clinic";
 import { fetchProfile } from "@/lib/care";
 import { billHandoff, handoff, QuoteHandoff } from "@/lib/handoff";
-import { buildTodos, HomeData, runTodo } from "../dash/Todo";
+import { buildTodos, HomeData, runTodo, TodoItem } from "../dash/Todo";
 import { apptIso, TH_MONTHS, upcomingAppts } from "@/lib/appointments";
 import { useApp } from "@/lib/app";
 import { ViewId } from "@/lib/nav";
@@ -30,7 +32,7 @@ import PhotoPicker from "../PhotoPicker";
 import { useSession } from "@/lib/session";
 import { can } from "@/lib/perms";
 import { findRoom, freeBed, RoomInfo, roomInfos, roomKey, roomProblem, staying, withRoom } from "@/lib/rooms";
-import { BlankForm, DataTable, Field, FieldDef, FormDialog, Modal, MetricGrid, PageHeader, PrintSignatures, Section, Select, Tabs } from "../ui";
+import { BlankForm, DataTable, Field, FieldDef, FormDialog, MenuButton, Modal, MetricGrid, PageHeader, PrintSignatures, Section, Select, Tabs } from "../ui";
 
 /* ---------- ขั้นตอนการทำงาน ---------- */
 /** link ว่าง = ขั้นที่ไม่มีเมนูให้ไป (เช่น กระดิ่งแจ้งเตือนมุมขวาบน) */
@@ -100,29 +102,66 @@ function TodayCards({ onCount }: { onCount: (n: number) => void }) {
   const cards = d ? buildTodos(d, user) : [];
   const open = cards.filter((c) => c.n > 0).length;
   useEffect(() => { onCount(open); }, [open, onCount]);
+  const [more, setMore] = useState<string | null>(null);
   if (!d) return <p className="rounded-2xl bg-cream-50 px-5 py-6 text-sm text-gold-600">กำลังโหลดสิ่งที่ต้องทำวันนี้…</p>;
   if (!cards.length) return null;
-  // ใบที่มีเรื่องค้างขึ้นก่อน (ด่วนก่อน) · ใบที่เรียบร้อยแล้วอยู่ท้าย
-  const sorted = cards;
+  // กล่อง "ทำก่อน" = เรื่องด่วนที่ค้าง · ที่เหลือแยกตามด้าน · เรื่องที่เรียบร้อยรวมเป็นบรรทัดเดียวท้ายสุด
+  const urgent = cards.filter((c) => c.n > 0 && c.urgent);
+  const areas = TODO_AREAS.map((a) => ({ ...a, all: cards.filter((c) => a.keys.includes(c.key)) }))
+    .filter((a) => a.all.length)
+    .map((a) => ({ ...a, open: a.all.filter((c) => c.n > 0 && !c.urgent), urgentHere: a.all.filter((c) => c.n > 0 && c.urgent).length }));
+  const done = cards.filter((c) => !c.n);
+  const cleared = done.length, total = cards.length, C = 113.1;
+  const row = (c: TodoItem) => {
+    const on = more === c.key, go2 = !!(c.view || c.href);
+    return (
+      <li key={c.key} className={on ? "is-open" : ""}>
+        <div className="td-row">
+          <button type="button" className="td-main" aria-expanded={on} onClick={() => setMore(on ? null : c.key)}>
+            <span className={`td-n ${c.urgent ? "is-bad" : ""}`}>{c.n}</span>
+            <span className="td-t">{c.title}{c.brief && <small>{c.brief}</small>}</span>
+          </button>
+          {go2 && <button type="button" className="td-go" onClick={() => runTodo(c, go)}><span>{c.key === "deposit" && c.cta === "ออกใบแจ้งหนี้" ? "ออกใบ" : TODO_ACT[c.key] ?? c.cta}</span><Icon name="chevron" className="h-4 w-4 -rotate-90" /></button>}
+        </div>
+        {on && <p className="td-more">{c.detail}</p>}
+      </li>
+    );
+  };
   return (
-    <section aria-labelledby="todo-h">
-      <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2"><h2 id="todo-h" className="text-[17px] font-medium text-gold-800">สิ่งที่ต้องทำวันนี้</h2><span className="text-xs text-gold-500">กดการ์ดเพื่อไปทำต่อ</span></div>
-      <div className="grid gap-3.5 sm:grid-cols-2 xl:grid-cols-3">{sorted.map((c) => {
-        const done = c.n === 0;
-        const body = <>
-          <span className="flex items-center justify-between gap-2"><span className="text-sm font-semibold text-gold-800">{c.title}</span>
-            <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${done ? "bg-emerald-50 text-emerald-800" : c.urgent ? "bg-red-50 text-red-800" : "bg-amber-50 text-amber-900"}`}>{done ? "เรียบร้อย" : c.urgent ? "ด่วน" : "ต้องทำ"}</span></span>
-          <span className="flex items-baseline gap-2"><span className={`text-4xl font-bold leading-tight ${done ? "text-gold-500" : c.urgent ? "text-red-800" : "text-gold-800"}`}>{c.n}</span><span className="text-sm text-gold-600">{c.unit}</span></span>
-          <span className="text-[13px] leading-relaxed text-gold-600">{c.detail}</span>
-          {(c.view || c.href) && <span className="mt-auto text-[13px] font-semibold text-gold-700">{c.cta} →</span>}
-        </>;
-        const cls = `flex min-h-[168px] flex-col gap-2 rounded-[20px] p-5 text-left transition ${done ? "border border-dashed border-cream-300 bg-cream-50" : c.top ? "border border-red-200 bg-red-50/60 shadow-soft hover:border-red-300" : "border border-gold-200 bg-white shadow-soft hover:border-gold-300"}`;
-        return c.href || c.view ? <button key={c.key} type="button" className={cls} onClick={() => runTodo(c, go)}>{body}</button>
-          : <div key={c.key} className={cls}>{body}</div>;
-      })}</div>
+    <section aria-labelledby="todo-h" className="td">
+      <div className="td-head">
+        <h2 id="todo-h">สิ่งที่ต้องทำวันนี้</h2>
+        <div className="td-prog" role="img" aria-label={`เคลียร์แล้ว ${cleared} จาก ${total} เรื่อง`}>
+          <svg viewBox="0 0 44 44" width="46" height="46" aria-hidden="true"><circle cx="22" cy="22" r="18" className="t" /><circle cx="22" cy="22" r="18" className="v" style={{ strokeDashoffset: C * (1 - cleared / total) }} /></svg>
+          <span><b>{cleared}</b> จาก {total} เรื่อง<small>เคลียร์แล้ว</small></span>
+        </div>
+      </div>
+      {urgent.length > 0 && <section className="td-box is-urgent" aria-label="ทำก่อน">
+        <h3><i className="td-dot is-bad" />ทำก่อน <span>{urgent.length}</span></h3>
+        <ul className="td-list">{urgent.map(row)}</ul>
+      </section>}
+      {areas.length > 0 && <div className="td-cols">{areas.map((a) => (
+        <section key={a.name} className="td-box" aria-label={a.name}>
+          <h3><i className={`td-dot ${a.open.length ? "is-warn" : a.urgentHere ? "is-bad" : "is-good"}`} />{a.name} <span>{a.open.length}</span></h3>
+          {a.open.length ? <ul className="td-list">{a.open.map(row)}</ul>
+            : a.urgentHere ? <p className="td-clear is-muted">↑ เรื่องด้านนี้อยู่ในกล่องทำก่อน {a.urgentHere} เรื่อง</p> : <p className="td-clear">✓ ไม่มีงานค้าง</p>}
+        </section>
+      ))}</div>}
+      {done.length > 0 && <p className="td-done"><b>✓ เรียบร้อยแล้ว</b>{done.map((c) => <span key={c.key}>{c.short}</span>)}</p>}
     </section>
   );
 }
+/** ด้านของงาน (กล่องเล็กใต้ "ทำก่อน") · ตำแหน่งที่ไม่มีสิทธิ์ด้านนั้นจะไม่เห็นกล่อง */
+const TODO_AREAS = [
+  { name: "การดูแลและทีม", keys: ["alerts", "late", "review", "gap", "checkin"] },
+  { name: "การเงิน", keys: ["bills", "debt60", "unclosed", "monthDue", "drafts", "courses", "deposit", "physio"] },
+  { name: "ห้อง ยา และคลัง", keys: ["room", "stock"] },
+];
+/** ปุ่มสั้นด้านขวาของแต่ละเรื่อง */
+const TODO_ACT: Record<string, string> = {
+  alerts: "ดูรายการ", late: "ตามงาน", review: "ตรวจงาน", gap: "จัดเวร", checkin: "ดูเวร", bills: "รับชำระ", debt60: "ดูลูกหนี้", unclosed: "ปิดยอด",
+  monthDue: "ออกใบ", drafts: "ตรวจยอด", courses: "ออกใบ", deposit: "ดูสัญญา", physio: "ใส่ราคา", room: "จัดห้อง", stock: "ห้องยา",
+};
 
 /* ---------- ระบบสัญญา ---------- */
 const CONTRACT_STATUSES = ["ใช้งานอยู่", "รอชำระเงินมัดจำ", "สิ้นสุดสัญญา", "ยกเลิกสัญญา"];
@@ -227,6 +266,9 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, on
   // รายการค่าบริการจากใบราคา (ต่อสัญญา / เปิดจากใบเสนอราคา = ดึงรายการเดิมมาให้)
   const [items, setItems] = useState<ServiceLine[]>(() => (initial ? contractLines(initial) : []));
   const [fee, setFee] = useState(() => initial?.[4] && initial[4] !== "-" ? initial[4].replace(/,/g, "") : "");
+  // ห้องพักในใบราคา (ราคาปัจจุบัน)
+  usePriceList();
+  const ROOMS = priceRooms();
   // ช่องค่าห้อง: ตรงกับราคาในใบราคา = เลือกห้องนั้นไว้ · ราคาอื่น = กำหนดเอง
   const pickOf = (f: number) => { if (!f) return ""; const i = ROOMS.findIndex((x) => x.month === f || x.promo === f); return i < 0 ? "custom" : `${i}:${ROOMS[i].month === f ? "m" : "p"}`; };
   const [feePick, setFeePick] = useState(() => pickOf(Number(fee) || 0));
@@ -617,7 +659,7 @@ export function Contracts() {
 
   /**
    * สัญญาใหม่ / ต่อสัญญา: เพิ่มหรืออัปเดตผู้รับบริการพร้อมห้องก่อน (server ออก HN ให้) แล้วจึงบันทึกสัญญา
-   * มีค่าบริการล่วงหน้า/เงินประกัน = ออกใบแจ้งหนี้ให้ที่เมนูการเงิน · รอชำระมัดจำ = จองห้องไว้ก่อน
+   * มีค่าบริการล่วงหน้า/เงินประกัน = ออกใบแจ้งหนี้ให้ที่เมนูใบแจ้งหนี้และใบเสร็จ · รอชำระมัดจำ = จองห้องไว้ก่อน
    */
   const create = (r: string[], photos: IdPhotos) => {
     const oldId = renew !== null ? ids[renew] : undefined;
@@ -636,16 +678,25 @@ export function Contracts() {
     if (inv) setInvoices([inv, ...invoices]);
     if (fromQuote) { const k = quotes.ids.indexOf(fromQuote.quoteId); if (k >= 0) quotes.update(k, quotes.rows[k].map((x, n) => (n === 12 ? `เปิดสัญญาแล้ว ${docDate(todayIso())}` : x))); setFromQuote(null); }
     setCreating(false); setRenew(null);
-    toast(`${renew !== null ? "ต่อสัญญาแล้ว" : "บันทึกสัญญาแล้ว"} · ${r[2]}${r[6] === NO_ROOM ? " (ยังไม่มีห้อง)" : ` ห้อง ${r[6]}`}${inv ? ` · ออกใบแจ้งหนี้ ${money(inv.net)} บาทที่เมนูการเงินแล้ว${inv.status === DRAFT ? ` (${DRAFT})` : ""}` : ""}`);
+    toast(`${renew !== null ? "ต่อสัญญาแล้ว" : "บันทึกสัญญาแล้ว"} · ${r[2]}${r[6] === NO_ROOM ? " (ยังไม่มีห้อง)" : ` ห้อง ${r[6]}`}${inv ? ` · ออกใบแจ้งหนี้ ${money(inv.net)} บาทที่เมนูใบแจ้งหนี้และใบเสร็จแล้ว${inv.status === DRAFT ? ` (${DRAFT})` : ""}` : ""}`);
   };
 
   const ended = (c: string[]) => c[5] === CANCELLED || c[5] === "สิ้นสุดสัญญา";
-  /** ออกใบแจ้งหนี้ตามสัญญา: ไปหน้าการเงินพร้อมรายการในสัญญา (แก้/เพิ่มได้ก่อนบันทึก) · มีใบค้างชำระอยู่แล้ว ถามก่อน */
+  /** ปุ่มหลักของแถวสัญญา: deposit = ออกใบแจ้งหนี้ (รอชำระมัดจำ ยังไม่มีใบ) · month = ออกใบเดือนนี้ · print = พิมพ์สัญญา · none = ไม่มี */
+  const thisMonth = todayIso().slice(0, 7);
+  const primaryOf = (c: string[]): "deposit" | "month" | "print" | "none" => {
+    if (ended(c)) return "none";
+    const bills = invoices.filter((x) => x.contract === c[0] && x.status !== VOID);
+    if (can(user, "billing") && c[5] === "รอชำระเงินมัดจำ" && !bills.length) return "deposit";
+    if (can(user, "billing") && c[5] === "ใช้งานอยู่" && !bills.some((x) => x.date.startsWith(thisMonth))) return "month";
+    return "print";
+  };
+  /** ออกใบแจ้งหนี้ตามสัญญา: ไปหน้าใบแจ้งหนี้และใบเสร็จพร้อมรายการในสัญญา (แก้/เพิ่มได้ก่อนบันทึก) · มีใบค้างชำระอยู่แล้ว ถามก่อน */
   const billContract = (i: number) => {
     const c = rows[i], open = invoices.filter((x) => x.contract === c[0] && (isOpen(x) || x.status === DRAFT));
     const goBill = () => { billHandoff.set(ids[i]); go("billing"); };
     if (!open.length) return goBill();
-    confirm({ title: "ออกใบแจ้งหนี้", okLabel: "ออกใบใหม่", message: `สัญญา ${c[0]} มีใบแจ้งหนี้ที่ยังชำระไม่ครบ ${open.length} ใบ (${open.map((x) => x.no ?? "").filter(Boolean).join(", ") || "กำลังออกเลข"}) ต้องการออกใบใหม่อีกใบหรือไม่ · ถ้าจะรับเงินใบเดิม ให้กด รับชำระ ที่หน้าการเงิน`, onOk: goBill });
+    confirm({ title: "ออกใบแจ้งหนี้", okLabel: "ออกใบใหม่", message: `สัญญา ${c[0]} มีใบแจ้งหนี้ที่ยังชำระไม่ครบ ${open.length} ใบ (${open.map((x) => x.no ?? "").filter(Boolean).join(", ") || "กำลังออกเลข"}) ต้องการออกใบใหม่อีกใบหรือไม่ · ถ้าจะรับเงินใบเดิม ให้กด รับชำระ ที่หน้าใบแจ้งหนี้และใบเสร็จ`, onOk: goBill });
   };
 
   /** ยกเลิกสัญญา (เช่น ลูกค้าเปลี่ยนใจ ทำสัญญาผิด): สัญญายังอยู่ในทะเบียน · คืนห้อง · ใบแจ้งหนี้ที่ยังไม่ชำระของสัญญานี้ถูกยกเลิกตาม */
@@ -702,7 +753,7 @@ export function Contracts() {
     openDc(c, dc.date, dc.reason);
   };
 
-  /** ใบจำหน่าย: สัญญาณชีพล่าสุด ยาที่ใช้อยู่ นัดถัดไป จากประวัติผู้รับบริการ · ยอดค้างจากหน้าการเงิน */
+  /** ใบจำหน่าย: สัญญาณชีพล่าสุด ยาที่ใช้อยู่ นัดถัดไป จากประวัติผู้รับบริการ · ยอดค้างจากหน้าใบแจ้งหนี้และใบเสร็จ */
   const openDc = async (c: string[], date: string, reason: string) => {
     const r = resOf(c);
     const start = c[7] ? c[7].split("/") : [];
@@ -759,10 +810,10 @@ export function Contracts() {
     return invoices.filter((x) => x.contract === no && x.status === PAID).reduce((n, x) => n + parseItems(x.items).filter((i) => i.desc.trim().startsWith("เงินประกัน")).reduce((m, i) => m + lineNet(i), 0), 0);
   }
   const dcMoney = dcRow ? { owing: owing.reduce((n, x) => n + balanceOf(x), 0), depositPaid: depositPaidOf(dcRow[0]), unbilled: unbilled?.sum ?? 0 } : null;
-  /** ออกใบสรุปค่าใช้จ่ายก่อนกลับบ้าน: ไปหน้าการเงิน ดึงรายการที่ยังไม่เรียกเก็บเข้าใบให้ (กลับมากด D/C ต่อได้) */
+  /** ออกใบสรุปค่าใช้จ่ายก่อนกลับบ้าน: ไปหน้าใบแจ้งหนี้และใบเสร็จ ดึงรายการที่ยังไม่เรียกเก็บเข้าใบให้ (กลับมากด D/C ต่อได้) */
   const billDc = () => { if (!dc) return; billHandoff.set(ids[dc.i], true); setDc(null); go("billing"); };
   const shown = rows.map((r, i) => ({ r, i })).filter(({ r }) => filter.startsWith("ทั้งหมด") || r[5] === filter);
-  /** ส่งออกทะเบียนสัญญาตามแท็บที่เลือก (ผู้จัดการขึ้นไป) · มีเลขบัตรประชาชนและที่อยู่ จึงบันทึกในประวัติการใช้งานทุกครั้ง */
+  /** ส่งออกทะเบียนสัญญาตามแท็บที่เลือก (ผู้จัดการขึ้นไป) · มีเลขบัตรประชาชนและที่อยู่ จึงบันทึกในบันทึกการใช้งานระบบทุกครั้ง */
   const boss = user?.role === "Branch Admin" || user?.role === "Global Admin";
   const exportContracts = () => {
     const t = (v?: string) => (v && v !== "-" ? v : "");
@@ -787,7 +838,7 @@ export function Contracts() {
         actions={<>
           <button className="btn-primary" onClick={() => setCreating(true)}><Icon name="plus" className="h-4 w-4" /> เปิดสัญญาใหม่</button>
           {admin && <button className="btn-soft" onClick={() => setTermsDlg(terms)}><Icon name="doc" className="h-4 w-4" /> เงื่อนไขเพิ่มเติมในสัญญา</button>}
-          {boss && <button className="btn-soft" disabled={!shown.length} onClick={exportContracts}><Icon name="download" className="h-4 w-4" /> ส่งออก CSV</button>}
+          {boss && <button className="btn-soft" disabled={!shown.length} onClick={exportContracts}><CsvIcon /> ส่งออก CSV</button>}
           <button className="btn-soft" onClick={() => setSample(true)}><Icon name="print" className="h-4 w-4" /> ตัวอย่าง สบส. (แบบฟอร์มเปล่า)</button>
         </>}
       />
@@ -795,16 +846,21 @@ export function Contracts() {
         <DataTable
           columns={CONTRACT_COLS}
           rows={shown.map(({ r }) => [r[0] || "กำลังออกเลข…", r[1], r[2], r[6] || NO_ROOM, r[3], contractMonthTotal(r) ? money(contractMonthTotal(r)) : "-", r[5]])}
+          onRow={(k) => setDlg({ mode: "view", i: shown[k].i })} rowLabel="กดเพื่อดูรายละเอียดสัญญา"
           actions={[
-            { label: "รายละเอียด", onClick: (k) => setDlg({ mode: "view", i: shown[k].i }) },
-            { label: "พิมพ์สัญญา", onClick: (k) => setDoc({ kind: "contract", i: shown[k].i }) },
-            { label: "ออกใบแจ้งหนี้", hidden: (k) => !can(user, "billing") || ended(shown[k].r), onClick: (k) => billContract(shown[k].i) },
+            // ปุ่มหลักปุ่มเดียวตามสถานะ: รอชำระมัดจำ (ยังไม่มีใบ) = ออกใบแจ้งหนี้ · ใช้งานอยู่แต่เดือนนี้ยังไม่ออกใบ = ออกใบเดือนนี้ · ใช้งานปกติ = พิมพ์สัญญา (ปุ่มรอง)
+            { label: "ออกใบแจ้งหนี้", tone: "primary", hidden: (k) => primaryOf(shown[k].r) !== "deposit", onClick: (k) => billContract(shown[k].i) },
+            { label: "ออกใบเดือนนี้", tone: "primary", hidden: (k) => primaryOf(shown[k].r) !== "month", onClick: (k) => billContract(shown[k].i) },
+            { label: "พิมพ์สัญญา", tone: "ghost", hidden: (k) => primaryOf(shown[k].r) !== "print", onClick: (k) => setDoc({ kind: "contract", i: shown[k].i }) },
+            { label: "รายละเอียด", more: true, onClick: (k) => setDlg({ mode: "view", i: shown[k].i }) },
+            { label: "พิมพ์สัญญา", more: true, hidden: (k) => primaryOf(shown[k].r) === "print", onClick: (k) => setDoc({ kind: "contract", i: shown[k].i }) },
+            { label: "ออกใบแจ้งหนี้", more: true, hidden: (k) => !can(user, "billing") || ended(shown[k].r) || ["deposit", "month"].includes(primaryOf(shown[k].r)), onClick: (k) => billContract(shown[k].i) },
             { label: "แก้ไข", more: true, onClick: (k) => setDlg({ mode: "edit", i: shown[k].i }) },
             { label: "รูปบัตร", more: true, onClick: (k) => openCards(shown[k].i) },
             { label: "ต่อสัญญา", more: true, hidden: (k) => ended(shown[k].r), onClick: (k) => setRenew(shown[k].i) },
             { label: "D/C กลับบ้าน", more: true, hidden: (k) => ended(shown[k].r), onClick: (k) => [CANCELLED, "สิ้นสุดสัญญา"].includes(shown[k].r[5]) ? toast("ไม่สามารถ D/C ได้ สัญญานี้สิ้นสุดหรือถูกยกเลิกแล้ว") : setDc({ i: shown[k].i, date: todayIso(), reason: DC_REASONS[0] }) },
             { label: "ยกเลิกสัญญา", danger: true, more: true, hidden: (k) => shown[k].r[5] === CANCELLED, onClick: (k) => cancel(shown[k].i) },
-            ...(can(user, "contracts.delete") ? [{ label: "ลบ", danger: true, more: true, onClick: (k: number) => confirm({ title: "ลบสัญญา", message: `ต้องการลบสัญญา ${shown[k].r[0]} (${shown[k].r[2]}) ออกจากระบบใช่หรือไม่ ลบแล้วกู้คืนไม่ได้ (ดูย้อนหลังได้ที่ประวัติการใช้งาน) ถ้าแค่ไม่ใช้สัญญานี้แล้ว แนะนำให้กด "ยกเลิกสัญญา" แทน`, danger: true, okLabel: "ลบ", onOk: () => { const c = shown[k].r; remove(shown[k].i); toast(`ลบสัญญาแล้ว · ${c[0] || ""} ${c[2]}`.trim()); } }) }] : []),
+            ...(can(user, "contracts.delete") ? [{ label: "ลบ", danger: true, more: true, onClick: (k: number) => confirm({ title: "ลบสัญญา", message: `ต้องการลบสัญญา ${shown[k].r[0]} (${shown[k].r[2]}) ออกจากระบบใช่หรือไม่ ลบแล้วกู้คืนไม่ได้ (ดูย้อนหลังได้ที่บันทึกการใช้งานระบบ) ถ้าแค่ไม่ใช้สัญญานี้แล้ว แนะนำให้กด "ยกเลิกสัญญา" แทน`, danger: true, okLabel: "ลบ", onOk: () => { const c = shown[k].r; remove(shown[k].i); toast(`ลบสัญญาแล้ว · ${c[0] || ""} ${c[2]}`.trim()); } }) }] : []),
           ]}
         />
       </Section>
@@ -828,7 +884,7 @@ export function Contracts() {
               <PhotoPicker value={cards.edit[k]} onChange={(v) => setCards({ ...cards, edit: { ...cards.edit, [k]: v } })} label={cards[k] ? "แนบรูปใหม่แทนรูปเดิม" : "แนบรูปบัตร"} />
             </section>
           ))}
-          <p className="text-xs leading-6 text-gold-500 md:col-span-2">ข้อมูลส่วนบุคคล: การเปิดดูและเปลี่ยนรูปบันทึกไว้ในประวัติการใช้งานทุกครั้ง</p>
+          <p className="text-xs leading-6 text-gold-500 md:col-span-2">ข้อมูลส่วนบุคคล: การเปิดดูและเปลี่ยนรูปบันทึกไว้ในบันทึกการใช้งานระบบทุกครั้ง</p>
         </div>)}
       </Modal>
       <Modal open={!!dc} title="D/C กลับบ้าน" onClose={() => setDc(null)}
@@ -850,7 +906,7 @@ export function Contracts() {
               {" = "}<b className="text-gold-900">{dcRefund(dcMoney) >= 0 ? `คืนสุทธิ ${money(dcRefund(dcMoney))}` : `ต้องชำระเพิ่ม ${money(-dcRefund(dcMoney))}`} บาท</b></p>
             <p className="mt-1 text-xs text-gold-500">ใบจำหน่ายจะพิมพ์ยอดนี้ให้ญาติเซ็นรับทราบ · ออกใบสรุปค่าใช้จ่ายก่อน ยอดคืนจะถูกต้องที่สุด</p>
           </div>}
-          {owing.length > 0 && <p role="alert" className="room-warn">ยังมียอดค้างชำระ {money(owing.reduce((n, x) => n + balanceOf(x), 0))} บาท ({owing.length} ใบ) เรียกเก็บที่เมนูการเงินก่อนหรือหลัง D/C ได้</p>}
+          {owing.length > 0 && <p role="alert" className="room-warn">ยังมียอดค้างชำระ {money(owing.reduce((n, x) => n + balanceOf(x), 0))} บาท ({owing.length} ใบ) เรียกเก็บที่เมนูใบแจ้งหนี้และใบเสร็จก่อนหรือหลัง D/C ได้</p>}
           <p className="text-xs text-gold-500">ระบบจะเปลี่ยนสัญญาเป็นสิ้นสุด เปลี่ยนผู้รับบริการเป็นย้ายออก คืนห้องให้ว่าง แล้วเปิดใบจำหน่ายให้พิมพ์</p>
         </div>}
       </Modal>
@@ -885,7 +941,8 @@ export function Residents() {
   const branchNames = useBranchNames();
   const { rows, ids, update, remove } = useCrud("residents", RESIDENTS);
   const { rows: roomRows } = useCrud("rooms", []);
-  const { confirm, toast } = useApp();
+  const { confirm, toast, go } = useApp();
+  const { user } = useSession();
   const [sample, setSample] = useState(false);
   const [dlg, setDlg] = useState<Dlg>(null);
   const [profile, setProfile] = useState<string | null>(null);
@@ -926,9 +983,9 @@ export function Residents() {
     <>
       <PageHeader
         title="ข้อมูลผู้รับบริการ (Residents)"
-        actions={<><button className="btn-soft" onClick={() => setHub(true)}><Icon name="chat" className="h-4 w-4" /> ข่าวและลิงก์ญาติ</button><button className="btn-soft" onClick={() => setSample(true)}><Icon name="print" className="h-4 w-4" /> ตัวอย่าง สบส. (แบบฟอร์มเปล่า)</button></>}
+        actions={<><button className="btn-soft" onClick={() => setHub(true)}><Icon name="chat" className="h-4 w-4" /> ข่าวและลิงก์ญาติ</button><MenuButton label="เอกสาร" icon={<Icon name="print" className="h-4 w-4" />} items={[{ label: "ตัวอย่าง สบส. (แบบฟอร์มเปล่า)", onClick: () => setSample(true) }]} /></>}
       />
-      <MetricGrid items={[{label:"ผู้รับบริการทั้งหมด",value:rows.length,unit:"คน",icon:"user",accent:true},{label:"เข้าอยู่ในศูนย์",value:rows.filter(r=>r[5].startsWith("เข้าอยู่")).length,unit:"คน",icon:"heart"},{label:"รับการรักษาที่โรงพยาบาล",value:rows.filter(r=>r[5].startsWith("แอดมิท")).length,unit:"คน",icon:"building"},{label:"ย้ายออกแล้ว",value:rows.filter(r=>r[5].startsWith("ย้ายออก")).length,unit:"คน",icon:"doc"}]} /><Section title="ทะเบียนผู้รับบริการ" actions={<div className="flex flex-wrap gap-2">
+      <Section title="ทะเบียนผู้รับบริการ" actions={<div className="flex flex-wrap gap-2">
           <div className="min-w-40"><Select aria-label="กรองตามห้อง" options={[...roomOpts, NO_ROOM_F]} placeholder="ทุกห้อง" value={roomF} onChange={setRoomF} /></div>
           {(roomF || statusF) && <button type="button" className="row-action" onClick={() => { setRoomF(""); setStatusF(""); }}>ล้างตัวกรอง</button>}
         </div>}>
@@ -947,15 +1004,18 @@ export function Residents() {
             const r = shown[k]?.r;
             if (!r) return undefined;
             if (col === 1) { const a = allergy[`${r[0]}|${r[3]}`]; return a ? <>{value} <span className="v-check" title={a}>{/แพ้ยา/.test(a) ? "แพ้ยา" : "แพ้อาหาร"}</span></> : undefined; }
-            if (col === 3 && noRoomOf(r)) return <span className="status-badge status-warning">รอจัดห้อง</span>;
+            if (col === 3 && noRoomOf(r)) return <span className="text-gold-500">ยังไม่มีห้อง</span>;
             return undefined;
           }}
           empty={roomF || statusF ? "ไม่พบผู้รับบริการตามตัวกรอง" : undefined}
+          onRow={(k) => setProfile(ids[shown[k].i])} rowLabel="กดเพื่อเปิดประวัติ"
           actions={[
-            { label: "ประวัติ", onClick: (k) => setProfile(ids[shown[k].i]) },
-            { label: "ลิงก์ครอบครัว", onClick: (k) => setFamily(ids[shown[k].i]) },
-            { label: "แก้ไข", onClick: (k) => setDlg({ mode: "edit", i: shown[k].i }) },
-            { label: "ลบ", danger: true, onClick: (k) => confirm({ title: "ลบข้อมูลผู้รับบริการ", message: `ต้องการลบ ${shown[k].r[0]} ใช่หรือไม่`, danger: true, okLabel: "ลบ", onOk: () => { const n = shown[k].r[0]; remove(shown[k].i); toast(`ลบผู้รับบริการแล้ว · ${n}`); } }) },
+            // กดแถว = ประวัติ · จัดห้องขึ้นเฉพาะคนที่ยังพักอยู่แต่ยังไม่มีห้อง · ที่เหลืออยู่ใน ⋯ (ลบท้ายสุด)
+            { label: "จัดห้อง", tone: "primary", hidden: (k) => !noRoomOf(shown[k].r) || !can(user, "rooms"), onClick: () => go("rooms") },
+            { label: "ประวัติ", more: true, onClick: (k) => setProfile(ids[shown[k].i]) },
+            { label: "ลิงก์ครอบครัว", more: true, onClick: (k) => setFamily(ids[shown[k].i]) },
+            { label: "แก้ไขข้อมูล", more: true, onClick: (k) => setDlg({ mode: "edit", i: shown[k].i }) },
+            { label: "ลบ…", danger: true, more: true, onClick: (k) => confirm({ title: "ลบข้อมูลผู้รับบริการ", message: `ต้องการลบ ${shown[k].r[0]} ใช่หรือไม่`, danger: true, okLabel: "ลบ", onOk: () => { const n = shown[k].r[0]; remove(shown[k].i); toast(`ลบผู้รับบริการแล้ว · ${n}`); } }) },
           ]}
         />
       </Section>
@@ -1005,10 +1065,10 @@ export function TasksTable() {
   const cols = ["วันที่", "สาขา", "ผู้รับบริการ", "กะ", "งาน", "ผู้ทำ / ผู้รับผิดชอบ", "เวลางาน", "ส่งเมื่อ", "สถานะ", "ดาวผู้ตรวจ"];
   return (
     <>
-      <PageHeader title="ประวัติงานดูแล" sub="งานทุกงานย้อนหลังตามช่วงวันที่"
+      <PageHeader title="งานดูแลย้อนหลัง" sub="งานทุกงานย้อนหลังตามช่วงวันที่"
         actions={<>
           {branchNames.length > 1 && <div className="min-w-44"><Select options={branchNames} placeholder="รวมทุกสาขา" value={branch} onChange={setBranch} /></div>}
-          <button className="btn-primary" disabled={!rows?.length} onClick={() => downloadCsv(`ประวัติงานดูแล-${from}-${to}`, cols, rows ?? [])}><Icon name="download" className="h-4 w-4" /> โหลด CSV</button>
+          <button className="btn-primary" disabled={!rows?.length} onClick={() => downloadCsv(`งานดูแลย้อนหลัง-${from}-${to}`, cols, rows ?? [])}><CsvIcon /> ส่งออก CSV</button>
         </>} />
       <Section>
         <div className="mb-4 flex flex-wrap items-center gap-2">

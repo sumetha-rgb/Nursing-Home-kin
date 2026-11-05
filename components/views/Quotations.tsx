@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import CsvIcon from "@/components/CsvIcon";
 import Icon from "../Icon";
 import { ASSESSMENTS } from "@/lib/mock";
 import { downloadCsv, useCrud } from "@/lib/store";
@@ -79,7 +80,7 @@ export function Quotations() {
         title="ใบเสนอราคา / แผนดูแล"
         sub="ประเมิน เสนอราคา แล้วเปิดสัญญาต่อได้ทันที"
         actions={<>
-          <button className="btn-soft" onClick={() => downloadCsv("ใบเสนอราคา", ["เลขที่", "วันที่", "ผู้รับบริการ", "ผู้ชำระ", "แผน", "รวม (บาท)", "สัญญา"], rows.map((x) => [x[6], x[7], x[1], x[9], x[0], x[4], x[12]]))}><Icon name="download" className="h-4 w-4" /> ส่งออก CSV</button>
+          <button className="btn-soft" onClick={() => downloadCsv("ใบเสนอราคา", ["เลขที่", "วันที่", "ผู้รับบริการ", "ผู้ชำระ", "แผน", "รวม (บาท)", "สัญญา"], rows.map((x) => [x[6], x[7], x[1], x[9], x[0], x[4], x[12]]))}><CsvIcon /> ส่งออก CSV</button>
           <button className="btn-primary" onClick={() => open(null)}><Icon name="plus" className="h-4 w-4" /> สร้างใบเสนอราคา</button>
         </>}
       />

@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState, createContext, useContext } from "react";
+import CsvIcon from "@/components/CsvIcon";
 import Image from "next/image";
 import Link from "next/link";
 import Icon from "@/components/Icon";
@@ -804,7 +805,7 @@ function Report({ packs }: { packs: Pack[] }) {
   return (
     <>
       <PageHeader title="รายงานการจัดยา" sub="ประวัติการจัดยา แยกตามวัน สาขา และผู้จัด"
-        actions={<><button className="btn-soft" onClick={() => downloadCsv("รายงานการจัดยา", cols, rows)}><Icon name="download" className="h-4 w-4" /> ดาวน์โหลด CSV</button><button className="btn-primary" onClick={() => window.print()}><Icon name="print" className="h-4 w-4" /> พิมพ์รายงานจัดยา (A4)</button></>} />
+        actions={<><button className="btn-soft" onClick={() => downloadCsv("รายงานการจัดยา", cols, rows)}><CsvIcon /> ส่งออก CSV</button><button className="btn-primary" onClick={() => window.print()}><Icon name="print" className="h-4 w-4" /> พิมพ์รายงานจัดยา (A4)</button></>} />
       <form className="card mb-6 grid gap-4 p-5 sm:grid-cols-2 lg:grid-cols-[1.3fr_1fr_1fr_1fr_auto] lg:items-end" onSubmit={(e) => { e.preventDefault(); setQ({ who, from, to, status }); }}>
         <Field label="ค้นหาผู้สูงอายุ"><Select options={RESIDENTS} placeholder="-- ทั้งหมด --" value={who} onChange={setWho} /></Field>
         <Field label="วันกินยา (เริ่มต้น)"><input type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></Field>

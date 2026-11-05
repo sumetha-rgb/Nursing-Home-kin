@@ -1,5 +1,5 @@
 "use client";
-import { ReactNode, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import TutorialVideos from "@/components/TutorialVideos";
 import Image from "next/image";
 import Link from "next/link";
@@ -27,9 +27,10 @@ import FamilyLinkDialog from "@/components/care/FamilyLinkDialog";
 import PhotoPicker from "@/components/PhotoPicker";
 import { OfflineBar, usePwa } from "@/components/Pwa";
 import { CheckInCard, StaffRoster } from "@/components/roster/StaffRoster";
-import { fetchToday, SHIFTS, stampPhoto } from "@/lib/roster";
+import { fetchToday, shortName, SHIFTS, stampPhoto } from "@/lib/roster";
 import type { StaffReview } from "@/lib/reviews";
 import { KPI_PARTS, KpiResp, pointsOf } from "@/lib/kpi";
+import { NO_ALLERGY } from "@/lib/medicalLists";
 
 /* ---------- ข้อมูลจำลอง ---------- */
 /** งานวันนี้ใน KinApp (มาจากหน้างานประจำวันของผู้จัดการ) */
@@ -41,33 +42,26 @@ const HANDOVER0 = [
 ];
 const TYPES = ["เฝ้าระวังอาการ", "คำสั่งแพทย์", "ญาติฝากแจ้ง", "งานค้าง/ทั่วไป"];
 
-type Tab = "tasks" | "roster" | "meds" | "residents" | "team" | "fame";
+type Tab = "tasks" | "meds" | "residents" | "roster" | "perf";
 const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: "tasks", label: "งานวันนี้", icon: "check" },
-  { id: "roster", label: "ตารางเวร", icon: "calendar" },
   { id: "meds", label: "จ่ายยา", icon: "pill" },
   { id: "residents", label: "ผู้รับบริการ", icon: "user" },
-  { id: "team", label: "ผลงานทีม", icon: "grid" },
-  { id: "fame", label: "เกียรติยศ", icon: "trophy" },
+  { id: "roster", label: "ตารางเวร", icon: "calendar" },
+  { id: "perf", label: "ผลงาน", icon: "trophy" },
 ];
+/** เหตุผลที่ทำแทน (ต่อท้ายในบันทึกงาน "ทำแทน <ชื่อ> · <เหตุผล>") */
+const PROXY_REASONS = ["ไม่อยู่ในเวร", "ติดงานอื่น", "งานด่วน", "อื่น ๆ"];
+const LATE_MIN = 30;
+/** ตัวย่อในวงกลม: ตัดคำนำหน้า และข้ามสระนำ (เ แ โ ใ ไ) เช่น นางเชียงราย ไทรงาม → ชท */
+const initials = (name: string) => {
+  const w = name.replace(/^(คุณ|นางสาว|นาย|นาง|น\.ส\.|พว\.)\s*/, "").trim().split(/\s+/);
+  const c = (x = "") => (/^[เแโใไ]/.test(x) ? x.charAt(1) : x.charAt(0));
+  return (c(w[0]) + (w[1] ? c(w[1]) : (w[0] ?? "").replace(/^[เแโใไ]/, "").charAt(1))) || name.charAt(0);
+};
 
-const today = () => new Date().toLocaleDateString("th-TH", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
 
 /* ---------- ตัวช่วย UI ---------- */
-function Card({ title, icon, right, children }: { title?: string; icon?: string; right?: ReactNode; children: ReactNode }) {
-  return (
-    <section className="rounded-3xl border border-cream-300/70 bg-white p-4 shadow-soft">
-      {title && (
-        <div className="mb-3 flex items-center justify-between gap-2">
-          <h2 className="flex items-center gap-2 text-[15px] font-semibold text-gold-800">{icon && <Icon name={icon} className="h-[18px] w-[18px] text-gold-500" />}{title}</h2>
-          {right}
-        </div>
-      )}
-      {children}
-    </section>
-  );
-}
-const Count = ({ n }: { n: number }) => <span className="grid h-6 min-w-6 place-items-center rounded-full bg-gold-700 px-1.5 text-xs font-semibold text-white">{n}</span>;
 const Empty = ({ t }: { t: string }) => <p className="rounded-2xl bg-cream-50 py-6 text-center text-sm text-gold-500">{t}</p>;
 
 function PhotoInput({ label, file, onFile }: { label: string; file: string; onFile: (u: string) => void }) {
@@ -76,7 +70,7 @@ function PhotoInput({ label, file, onFile }: { label: string; file: string; onFi
 
 /* ---------- แอป ---------- */
 function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
-  const { toast, confirm } = useApp();
+  const { toast } = useApp();
   const pwa = usePwa();
   const [tab, setTab] = useState<Tab>("tasks");
   // งานวันนี้ = งานที่ผู้จัดการมอบหมายในหน้า "ตรวจงานประจำวัน" ของวันนี้ · ส่งงานแล้วสถานะกลับไปให้ผู้จัดการตรวจ
@@ -87,7 +81,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   // คิวจ่ายยา = ซองยาที่ห้องยาจัด (แอปจัดยา) ของวันนี้ · ตรวจ QA ผ่านแล้วจึงจ่ายได้
   const [packs, setPacks] = useRecords<Pack>("pharmacy-packs", []);
   const [drugs] = useRecords<Drug>("pharmacy-drugs", DRUGS0);
-  const { add: addHealth } = useCrud("health", HEALTH);
+  const { rows: healthRows, add: addHealth } = useCrud("health", HEALTH);
   const { residents: live } = useResidents();
   // รายชื่อจริงจากทะเบียนผู้รับบริการ (สำเนาในเครื่องใช้ตอนออฟไลน์) · ไม่ใช้ชื่อตัวอย่าง
   const RESIDENTS = live.map((r) => ({ id: r.id, name: r.full_name, room: r.room ?? "-", age: r.age ?? "-" }));
@@ -110,7 +104,9 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   const lowFor = (who: string) => drugs.filter((x) => x.who === who && !x.hold && (daysLeft(x) ?? 99) <= 2);
   const [handover, setHandover] = useRecords("staff-handover", HANDOVER0);
   // ผลงานพิเศษ คำชม และกำลังใจของสาขา (บันทึกจริง เห็นทุกเครื่อง)
-  type Feed = { kudos: { task_title: string; resident_name: string | null; given_by: string; at: string }[]; cheers: { message: string; sent_by: string; at: string }[]; bonusToday: number };
+  /** nudges = งานที่หัวหน้ากด "ตามงาน" และยังไม่ส่ง (ถึงฉัน หรือถึงทุกคนในสาขา) */
+  type Nudge = { id: string; taskId: string; task: string; resident: string | null; message: string | null; sentBy: string; at: string; time: string | null };
+  type Feed = { kudos: { task_title: string; resident_name: string | null; given_by: string; at: string }[]; cheers: { message: string; sent_by: string; at: string }[]; bonusToday: number; nudges?: Nudge[] };
   const [feed, setFeed] = useState<Feed>({ kudos: [], cheers: [], bonusToday: 0 });
   const loadFeed = () => { fetch("/api/ops?op=feed", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).then((d) => d && setFeed(d)).catch(() => {}); };
   useEffect(loadFeed, []);
@@ -118,7 +114,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   const bonus = feed.bonusToday;
   const [menu, setMenu] = useState(false);
   const [fab, setFab] = useState(false);
-  const [modal, setModal] = useState<null | "facility" | "task" | "sop" | "bonus" | "dispense" | "metrics" | "handover" | "write" | "pwd" | "manual" | "viewtask">(null);
+  const [modal, setModal] = useState<null | "facility" | "task" | "sop" | "proxy" | "bonus" | "dispense" | "metrics" | "handover" | "write" | "pwd" | "manual" | "viewtask">(null);
   const [cur, setCur] = useState<number | null>(null);
   const [photo, setPhoto] = useState("");
   const [note, setNote] = useState("");
@@ -128,7 +124,6 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   const [hoText, setHoText] = useState("");
   const [hoWho, setHoWho] = useState("");
   const [hoType, setHoType] = useState(TYPES[0]);
-  const [rep, setRep] = useState({ who: "", day: "วันนี้" });
   const [praised, setPraised] = useState<string[]>([]);
   // อัปเดตถึงครอบครัว (ข้อความ/รูป) และลิงก์ให้ญาติ
   const [fu, setFu] = useState<{ id: string; name: string; text: string; photo: string; busy: boolean } | null>(null);
@@ -146,7 +141,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
     } catch (e) { toast((e as Error).message); setFu((x) => (x ? { ...x, busy: false } : x)); }
   };
 
-  const close = () => { setModal(null); setPhoto(""); setNote(""); setShareFam(true); setCur(null); setMenu(false); setProxyFor(null); };
+  const close = () => { setModal(null); setPhoto(""); setNote(""); setShareFam(true); setCur(null); setMenu(false); setProxyFor(null); setProxyReason(PROXY_REASONS[0]); };
   const open = (m: NonNullable<typeof modal>, i: number | null = null) => { setCur(i); setPhoto(""); setNote(""); setModal(m); };
   // งานของฉัน = งานที่ระบุชื่อฉัน หรืองานที่ไม่ระบุคนในกะที่ฉันเข้าเวร (จากตารางเวร)
   const [myShift, setMyShift] = useState<string | null | undefined>(undefined);
@@ -158,8 +153,10 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   const canSubmit = (k: Task) => k.owner === user.name || (!k.owner && (isMine(k) || can(user, "tasks.review")));
   const ownerOf = (k: Task) => k.owner || `ทีม${k.shift ?? "เวร"}`;
   const [proxyFor, setProxyFor] = useState<string | null>(null);
-  const doFor = (k: Task) => confirm({ title: "ทำงานแทน", message: `งาน "${k.title}" ของ${k.who} มอบหมายให้ ${ownerOf(k)} ต้องการส่งงานนี้แทนใช่หรือไม่ ระบบจะบันทึกว่าคุณ (${user.name}) ทำแทน ${ownerOf(k)} และผู้จัดการจะเห็นตอนตรวจงาน`, okLabel: "ทำแทน",
-    onOk: () => { open("task", k.id); setProxyFor(ownerOf(k)); } });
+  const [proxyReason, setProxyReason] = useState(PROXY_REASONS[0]);
+  const doFor = (k: Task) => { setCur(k.id); setProxyReason(PROXY_REASONS[0]); setModal("proxy"); };
+  /** ป้ายทำแทนจากบันทึกงาน "ทำแทน <ชื่อ> · <เหตุผล> · <โน้ต>" */
+  const proxyText = (n?: string) => { if (!n?.startsWith("ทำแทน")) return ""; const p = n.split(" · "); return PROXY_REASONS.includes(p[1]) ? `${p[0]} · ${p[1]}` : p[0]; };
   // รีวิวจากครอบครัวของฉัน (คะแนนเฉลี่ยย้อนหลัง 90 วัน)
   const [myRev, setMyRev] = useState<{ reviews: number; avg: number | null; recent: StaffReview[] } | null>(null);
   useEffect(() => { fetch("/api/reviews?op=mine", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).then(setMyRev).catch(() => {}); }, []);
@@ -177,8 +174,9 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   const starText = (n: number) => `${"★".repeat(n)}${"☆".repeat(Math.max(0, 5 - n))}`;
   // KPI เดือนนี้: อันดับในสาขา (รายละเอียดแยกส่วนเห็นเฉพาะของตัวเอง)
   const [kpi, setKpi] = useState<KpiResp | null>(null);
+  const [perfView, setPerfView] = useState<"me" | "team" | "rank">("me");
   useEffect(() => {
-    if (tab !== "fame") return;
+    if (tab !== "perf") return;
     const d = new Date();
     fetch(`/api/kpi?month=${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`, { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).then(setKpi).catch(() => {});
   }, [tab]);
@@ -187,15 +185,81 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   const [photos, setPhotos] = useState<Record<string, string>>({});
   const doneIds = doneTasks.map((t) => t.rid).filter(Boolean).join(",");
   useEffect(() => {
-    if (tab !== "team" || !doneIds) return;
+    if (tab !== "perf" || perfView !== "team" || !doneIds) return;
     fetch(`/api/care?op=task_photos&ids=${encodeURIComponent(doneIds)}`, { cache: "no-store" }).then((r) => (r.ok ? r.json() : { photos: {} })).then((d) => setPhotos(d.photos ?? {})).catch(() => {});
-  }, [tab, doneIds]);
+  }, [tab, perfView, doneIds]);
   // งานที่ฉันส่งแล้ววันนี้ (ล่าสุดก่อน)
   const mySent = doneTasks.filter((k) => k.by === user.name).sort((a, b) => String(b.done).localeCompare(String(a.done)));
   const pendingAll = tasks.filter((t) => !t.done);
   const myPending = pendingAll.filter(isMine);
   const waiting = taskView === "mine" ? myPending : pendingAll;
   const t = cur !== null ? tasks.find((x) => x.id === cur) : undefined;
+  // เวลาปัจจุบัน (อัปเดตทุกนาที) ใช้ตัดสินงานเลยเวลา · งานกะดึกก่อน 07:00 เป็นของวันถัดไป (เหมือนหน้ามอบหมายงาน)
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => { const h = setInterval(() => setNow(Date.now()), 60_000); return () => clearInterval(h); }, []);
+  const dueAt = (k: Task) => {
+    const m = k.time.match(/^(\d{1,2}):(\d{2})/);
+    if (!m) return null;
+    const d = new Date(`${todayIso}T00:00:00`);
+    if (k.shift === "กะดึก" && Number(m[1]) < 7) d.setDate(d.getDate() + 1);
+    d.setHours(Number(m[1]), Number(m[2]), 0, 0);
+    return d.getTime();
+  };
+  const isLate = (k: Task) => !k.done && (dueAt(k) ?? Infinity) + LATE_MIN * 60e3 < now;
+  const dueIn = (k: Task) => { const d = dueAt(k); if (d === null) return null; const min = Math.round((d - now) / 60e3); return <small className={min < 0 ? "is-late" : ""}>{min < 0 ? `เลย ${-min} นาที` : min < 60 ? `อีก ${min} นาที` : `อีก ${Math.floor(min / 60)} ชม.`}</small>; };
+  const [taskTab, setTaskTab] = useState<"todo" | "sent" | "fac">("todo");
+  const myLate = myPending.filter(isLate);
+  const myGroups = Object.entries(myPending.filter((k) => !isLate(k)).reduce<Record<string, Task[]>>((g, k) => ({ ...g, [k.time]: [...(g[k.time] ?? []), k] }), {})).sort(([a], [b]) => a.localeCompare(b));
+  const others = pendingAll.filter((k) => !isMine(k));
+  const nextTask = myPending.filter((k) => !isLate(k))[0] ?? myLate[0];
+  const doneForMe = doneTasks.filter((k) => k.owner === user.name && k.by && k.by !== user.name);
+  const fixCount = myReviews.filter((r) => r.stars <= 2).length;
+  const myShiftText = myShift === undefined ? "กำลังตรวจตารางเวร…" : myShift ? `เวร${myShift} ${SHIFTS.find((x) => x.key === myShift)?.time ?? ""}` : "วันนี้ไม่มีเวรในตาราง";
+  const roomOf = (name: string) => { const r = RESIDENTS.find((x) => x.name === name)?.room; return r && r !== "-" ? r : ""; };
+  const ownerTag = (k: Task) => (k.owner === user.name ? <em className="ka-me">งานของคุณ</em> : !isMine(k) ? <em className="ka-own">{k.owner ? `ของ${k.owner}` : `ทีม${k.shift ?? "เวร"}`}</em> : null);
+  // ตามงาน: แถบแดงบนสุด + ป้าย "ถูกตาม" ที่งาน · ตอบว่าทำไม่ได้ = ส่งเหตุผลถึงหัวหน้า
+  const nudges = feed.nudges ?? [];
+  const nudged = new Set(nudges.map((n) => n.taskId));
+  const [why, setWhy] = useState<string | null>(null);
+  const NUDGE_WHY = ["ผู้ป่วยหลับอยู่", "ผู้ป่วยไม่พร้อม", "ติดงานด่วน", "ผู้ป่วยไม่อยู่ในห้อง"];
+  const replyNudge = async (n: Nudge, reason: string) => {
+    const r = await fetch("/api/ops", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "nudge_reply", id: n.id, reason }) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { toast(d.error || "ส่งไม่สำเร็จ"); return; }
+    toast(`แจ้งหัวหน้าแล้ว · ${n.task} · ${reason}`); setWhy(null); loadFeed();
+  };
+  const taskRow = (k: Task) => (
+    <li key={k.id} className={`ka-task ${isLate(k) ? "is-late" : ""} ${canSubmit(k) ? "" : "is-other"}`}>
+      <button type="button" className="ka-task-main" onClick={() => open("sop", k.id)}>
+        <span className="ka-time"><b>{k.time || "-"}</b></span>
+        <span className="ka-t"><b>{k.title}{k.rid && nudged.has(k.rid) && <em className="ka-nudged">ถูกตาม</em>}</b><small>{k.who}{ownerTag(k) && <> · {ownerTag(k)}</>}</small></span>
+      </button>
+      {canSubmit(k)
+        ? <button type="button" className="ka-send" onClick={() => { open("task", k.id); setProxyFor(null); }}><Icon name="camera" className="h-5 w-5" /><span>ส่งงาน</span></button>
+        : <button type="button" className="ka-send is-ghost" onClick={() => doFor(k)}>ทำแทน</button>}
+    </li>
+  );
+  // ผู้รับบริการ: วัดสัญญาณชีพวันนี้แล้วหรือยัง (จากบันทึกสุขภาพ) · ประวัติแพ้ยา (จากสัญญา)
+  const thToday = (() => { const d = new Date(now); return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear() + 543}`; })();
+  const measured: Record<string, string> = {};
+  for (const r of healthRows) if (String(r[0]).startsWith(thToday)) { const tm = String(r[0]).slice(11, 16); if (!measured[r[1]] || tm > measured[r[1]]) measured[r[1]] = tm; }
+  const [allergy, setAllergy] = useState<Record<string, string>>({});
+  useEffect(() => {
+    fetch("/api/care?op=allergies", { cache: "no-store" }).then((r) => (r.ok ? r.json() : { items: [] })).then((d: { items: { name: string; drug: string | null }[] }) => {
+      const m: Record<string, string> = {};
+      for (const x of d.items ?? []) { const v = String(x.drug ?? "").trim(); if (v && v !== "-" && v !== NO_ALLERGY && v !== "ปฏิเสธ") m[x.name] = v.length > 26 ? `${v.slice(0, 26)}…` : v; }
+      setAllergy(m);
+    }).catch(() => {});
+  }, []);
+  const [resQ, setResQ] = useState("");
+  const [resTodo, setResTodo] = useState(false);
+  const [resPick, setResPick] = useState<(typeof RESIDENTS)[number] | null>(null);
+  const resList = RESIDENTS.filter((r) => (!resQ.trim() || `${r.name} ${r.room}`.toLowerCase().includes(resQ.trim().toLowerCase())) && (!resTodo || !measured[r.name]));
+  // จ่ายยา: เปิดที่มื้อตามเวลาตอนนี้ · กรองตามสถานะซอง
+  const [meal, setMeal] = useState(() => { const h = new Date().getHours() + new Date().getMinutes() / 60; return h < 10.5 ? MEALS[0] : h < 15 ? MEALS[1] : h < 19.5 ? MEALS[2] : MEALS[3]; });
+  const [medF, setMedF] = useState<"" | "ready" | "wait" | "done">("");
+  const packState = (p: Pack) => (p.given ? "done" : p.qa === "ตรวจผ่าน" ? "ready" : "wait");
+  const mealQ = queue.filter((p) => p.meal === meal);
   const [review, setReview] = useState<{ stars: number | null; note: string | null; by: string | null } | null>(null);
   useEffect(() => {
     setReview(null);
@@ -259,113 +323,161 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
         <BranchNotice user={user} />
         {tab === "tasks" && (
           <>
-            <section className="staff-welcome relative overflow-hidden">
-              <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-white/10" />
-              <p className="text-sm text-white/80">{today()}</p>
-              <h1 className="mt-1 text-xl font-semibold">พร้อมสำหรับการดูแลวันนี้</h1>
-              <p className="mt-1 text-sm text-white/80">ภารกิจวันนี้: {tasks.length} งาน (ตัดกะ 07:00 น.)</p>
-              <div className="mt-4 grid grid-cols-2 gap-3">
-                <div className="rounded-2xl bg-white/15 p-3"><p className="text-xs text-white/75">ผลงานคุณวันนี้</p><p className="mt-1 text-2xl font-semibold">{mine} <span className="text-sm font-normal">งาน</span></p></div>
-                <div className="rounded-2xl bg-white/15 p-3"><p className="text-xs text-white/75">ดาวจากครอบครัว</p><p className="mt-1 text-2xl font-semibold">{myStars} <span className="text-sm font-normal">({myRev?.reviews ?? 0} รีวิว)</span></p></div>
-              </div>
-            </section>
-
-            <CheckInCard user={user} />
-
-            <button onClick={() => open("handover")} className="flex w-full items-center gap-3 rounded-3xl border border-cream-300/70 bg-cream-50 p-4 text-left">
-              <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-gold-100 text-gold-700"><Icon name="book" /></span>
-              <span className="flex-1"><span className="block font-semibold text-gold-800">สมุดส่งเวร (Handover)</span><span className="text-xs text-gold-600">{unread} เรื่องที่ต้องตามต่อ</span></span>
-              <Count n={unread} />
-            </button>
-
-            <Card title="แจ้งเตือนนัดแพทย์ (วันนี้-พรุ่งนี้)" icon="bell">
-              {appts.length === 0 ? <Empty t="ไม่มีนัดหมายวันนี้และพรุ่งนี้" /> : <ul className="space-y-2">{appts.map((a, k) => (
-                <li key={k} className="flex items-center justify-between gap-3 rounded-2xl bg-cream-50 px-4 py-3 text-sm"><span><b className="font-medium">{a.who}</b><span className="block text-xs text-gold-600">{a.what}</span></span><span className="shrink-0 text-xs font-medium text-gold-700">{a.when}</span></li>
-              ))}</ul>}
-            </Card>
-
-            <Card title="งานที่รอทำ" icon="check" right={<div className="seg"><button type="button" aria-pressed={taskView === "mine"} onClick={() => setTaskView("mine")}>ของฉัน ({myPending.length})</button><button type="button" aria-pressed={taskView === "all"} onClick={() => setTaskView("all")}>ทั้งหมด ({pendingAll.length})</button></div>}>
-              <p className="mb-3 rounded-2xl bg-cream-50 px-3 py-2 text-xs text-gold-700">
-                {myShift === undefined ? "กำลังตรวจตารางเวร…" : myShift ? <>เวรของคุณวันนี้: <b>เวร{myShift} {SHIFTS.find((x) => x.key === myShift)?.time}</b> · งานของฉัน = งานที่ระบุชื่อคุณ และงานของทีม{`กะ${myShift}`}</> : <>วันนี้ไม่มีเวรของคุณในตาราง · แสดงเฉพาะงานที่ระบุชื่อคุณ กด &quot;ทั้งหมด&quot; เพื่อดูงานทั้งสาขา</>}
-              </p>
-              {waiting.length === 0 ? <Empty t={taskView === "mine" && pendingAll.length ? "ไม่มีงานของคุณค้างแล้ว · กด \"ทั้งหมด\" เพื่อดูงานของทีม" : tasks.length ? "ไม่มีงานค้างแล้ว เยี่ยมมาก" : "ยังไม่มีงานที่ผู้จัดการมอบหมายสำหรับวันนี้"} /> : (
-                <ul className="space-y-3">{waiting.map((k) => (
-                  <li key={k.id} className={`rounded-2xl border border-cream-300/70 p-4 ${canSubmit(k) ? "" : "task-other"}`}>
-                    <div className="flex items-start justify-between gap-3">
-                      <div><p className="font-medium text-gold-900">{k.title}</p><p className="mt-0.5 text-sm text-gold-600">{k.who}</p>
-                        <p className={`task-owner ${k.owner === user.name ? "is-me" : !k.owner ? "is-team" : ""}`}>{k.owner === user.name ? "งานของคุณ" : k.owner ? `มอบหมายให้ ${k.owner}` : canSubmit(k) ? `ทีม${k.shift ?? "เวร"} · ใครในเวรก็ทำได้` : `งานของทีม${k.shift ?? "เวร"} · เฉพาะคนที่เข้าเวรนี้`}</p></div>
-                      <span className="shrink-0 rounded-full bg-gold-100 px-2.5 py-1 text-xs font-medium text-gold-700">{k.time}{k.shift ? ` · ${k.shift}` : ""}</span>
-                    </div>
-                    <div className="mt-3 flex gap-2">
-                      <button className="btn-soft flex-1 !py-2.5" onClick={() => open("sop", k.id)}>คู่มือปฏิบัติงาน</button>
-                      {canSubmit(k)
-                        ? <button className="btn-primary flex-1 !py-2.5" onClick={() => { open("task", k.id); setProxyFor(null); }}>ส่งงาน</button>
-                        : <button className="btn-soft flex-1 !py-2.5" onClick={() => doFor(k)}>ทำแทน</button>}
-                    </div>
-                  </li>
-                ))}</ul>
-              )}
-            </Card>
-
-            <Card title="งานที่ฉันส่งแล้ววันนี้" icon="doc" right={<Count n={mySent.length} />}>
-              {mySent.length === 0 ? <Empty t="ยังไม่มีงานที่คุณส่งวันนี้" /> : <ul className="space-y-2">{mySent.map((k) => (
-                <li key={k.id} className="flex items-center gap-3 rounded-2xl border border-cream-300/70 p-3">
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate font-medium text-gold-900">{k.title}</p>
-                    <p className="text-xs text-gold-600">{k.who} · ส่ง {k.done} น.{(k.note ?? "").startsWith("ทำแทน") ? " · ทำแทน" : ""}</p>
-                    {(() => {
-                      const rv = reviewOf(k.rid);
-                      if (!rv) return <span className={`mt-1 inline-block rounded-full px-2 py-0.5 text-[11px] font-medium ${k.status === "ตรวจแล้ว" ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-900"}`}>{k.status === "ตรวจแล้ว" ? "ตรวจแล้ว" : "รอหัวหน้าตรวจ"}</span>;
-                      return <>
-                        <span className={`mt-1 inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium ${rv.stars <= 2 ? "bg-amber-50 text-amber-900" : "bg-emerald-50 text-emerald-800"}`}>{rv.stars <= 2 ? "ต้องแก้ไข" : "ตรวจแล้ว"} <span className="review-stars">{starText(rv.stars)}</span></span>
-                        {rv.note && <p className="mt-1 line-clamp-2 text-xs text-gold-700">&ldquo;{rv.note}&rdquo;</p>}
-                      </>;
-                    })()}
+            <div className="ka-head">
+              <div><h1>สวัสดี {shortName(user.name)}</h1><p>{new Date().toLocaleDateString("th-TH", { weekday: "short", day: "numeric", month: "short" })} · {myShiftText}</p></div>
+              <div className="relative" onClick={(e) => e.stopPropagation()}>
+                <button type="button" className="ka-pill" aria-expanded={fab} onClick={() => setFab(!fab)}><Icon name="plus" className="h-4 w-4" />ผลงานพิเศษ</button>
+                {fab && (
+                  <div className="absolute right-0 top-[calc(100%+6px)] z-20 w-64 overflow-hidden rounded-2xl border border-cream-300 bg-white shadow-soft">
+                    <button className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm hover:bg-cream-100" onClick={() => { setFab(false); setBonusWho(""); setBonusText("ภาพประทับใจส่งญาติ"); open("bonus"); }}><Icon name="camera" className="h-5 w-5 text-gold-600" /><span>ภาพประทับใจส่งญาติ<span className="block text-xs text-gold-500">(ได้ดาว)</span></span></button>
+                    <button className="flex w-full items-center gap-3 border-t border-cream-300/60 px-4 py-3 text-left text-sm hover:bg-cream-100" onClick={() => { setFab(false); setBonusWho(""); setBonusText(""); open("bonus"); }}><Icon name="alert" className="h-5 w-5 text-gold-600" /><span>แจ้งงาน/เก็บตกด่วน<span className="block text-xs text-gold-500">(ฮีโร่ +1)</span></span></button>
                   </div>
-                  <button className="btn-soft shrink-0 !min-h-0 !px-3 !py-2 text-xs" onClick={() => open("viewtask", k.id)}>ดูรายละเอียด</button>
-                </li>
-              ))}</ul>}
-            </Card>
+                )}
+              </div>
+            </div>
 
-            <Card title="งานส่วนกลางตามรอบ" icon="building" right={<Count n={facLeft.length} />}>
-              {fac.length === 0 ? <Empty t="ยังไม่มีงานส่วนกลางของสาขา (ผู้จัดการเพิ่มได้ที่เมนูงานส่วนกลางของสาขา)" /> : <ul className="space-y-2">{[...fac].sort((a, b) => Number(a.done) - Number(b.done) || Number(b.late) - Number(a.late)).map((f) => (
-                <li key={f.id} className={`flex items-center justify-between gap-3 rounded-2xl px-4 py-3 text-sm ${f.done ? "bg-emerald-50/70" : f.late ? "border border-red-200 bg-red-50" : "bg-cream-50"}`}>
-                  <span className="min-w-0">{f.name}{f.manual && <span className="ml-1.5 rounded-full bg-gold-700 px-2 py-0.5 align-[2px] text-[11px] font-semibold text-white">มอบหมายให้คุณ</span>}<span className="block text-xs text-gold-500">{[f.category, f.schedule].filter((x) => x && x !== "-").join(" · ")}</span>
-                    {f.done && f.last && <span className="block text-xs font-medium text-emerald-800">ทำแล้ว {f.last.at.slice(11)} น. โดย {f.last.by}</span>}
-                    {!f.done && f.late && <span className="block text-xs font-semibold text-red-700">เลยเวลาแล้ว ยังไม่มีคนทำ</span>}</span>
-                  {!f.done && <button type="button" className="btn-primary !min-h-[44px] shrink-0 !px-3 !py-2 !text-xs" onClick={() => { setFacPick(f); setPhoto(""); setNote(""); setModal("facility"); }}><Icon name="camera" className="h-4 w-4" /> ทำแล้ว</button>}
+            {nudges.map((n) => {
+              const t = tasks.find((k) => k.rid === n.taskId);
+              if (t?.done) return null; // ส่งงานแล้ว: ซ่อนทันที ไม่ต้องรอดึงข้อมูลรอบถัดไป
+              return (
+                <section key={n.id} className="ka-nudge" role="alert">
+                  <p className="ka-nudge-h"><Icon name="bell" className="h-4 w-4" />หัวหน้าตามงาน<span>{n.at}</span></p>
+                  <p className="ka-nudge-b"><b>{n.task}{n.resident ? ` · ${n.resident}` : ""}</b><small>{n.time ? `กำหนด ${n.time} น. · ` : ""}{n.sentBy}{n.message ? `: "${n.message}"` : ""}</small></p>
+                  {why === n.id
+                    ? <div className="ka-nudge-why"><small>ทำไม่ได้เพราะ</small>{NUDGE_WHY.map((w) => <button key={w} type="button" onClick={() => replyNudge(n, w)}>{w}</button>)}<button type="button" className="is-x" onClick={() => setWhy(null)}>ยกเลิก</button></div>
+                    : <div className="ka-nudge-a">
+                      {t && canSubmit(t) && <button type="button" className="ka-nudge-go" onClick={() => { open("task", t.id); setProxyFor(null); }}><Icon name="camera" className="h-4 w-4" />ทำเลย · ถ่ายรูปส่ง</button>}
+                      {t && !canSubmit(t) && <button type="button" className="ka-nudge-go" onClick={() => open("sop", t.id)}>ดูงาน</button>}
+                      <button type="button" className="ka-nudge-no" onClick={() => setWhy(n.id)}>ทำไม่ได้</button>
+                    </div>}
+                </section>
+              );
+            })}
+
+            <CheckInCard user={user} compact />
+
+            <div className="ka-stats" role="group" aria-label="สรุปงานของฉัน">
+              <button type="button" className={taskTab === "todo" ? "is-on" : ""} onClick={() => setTaskTab("todo")}><b>{myPending.length}</b>รอทำ</button>
+              <button type="button" className={taskTab === "sent" ? "is-on" : ""} onClick={() => setTaskTab("sent")}><b>{mySent.length}</b>ส่งแล้ว</button>
+              <button type="button" className={fixCount ? "is-warn" : ""} onClick={() => { setTab("perf"); setPerfView("me"); window.scrollTo(0, 0); }}><b>{fixCount}</b>ต้องแก้</button>
+            </div>
+
+            {(handover.length > 0 || appts.length > 0) && <>
+              <p className="ka-h">ต้องรู้ก่อนเริ่มงาน</p>
+              <ul className="ka-list">
+                {handover.length > 0 && (
+                  <li><button type="button" className="ka-row" onClick={() => open("handover")}>
+                    <span className="ka-dot is-warn" /><span className="ka-t"><b>สมุดส่งเวร {handover.length} เรื่อง</b><small>{handover[0].who ? `${handover[0].who} · ` : ""}{handover[0].text}</small></span><Icon name="chevron" className="ka-chev" />
+                  </button></li>
+                )}
+                {appts.map((a, k) => (
+                  <li key={k} className="ka-row"><span className="ka-dot" /><span className="ka-t"><b>นัด{a.when} น.</b><small>{a.who} · {a.what}</small></span></li>
+                ))}
+              </ul>
+            </>}
+            {handover.length === 0 && <button type="button" className="ka-link" onClick={() => open("handover")}><Icon name="book" className="h-4 w-4" />สมุดส่งเวร · เขียนส่งเวร</button>}
+
+            {nextTask && taskTab === "todo" && <>
+              <p className="ka-h">งานถัดไป</p>
+              <div className="ka-next">
+                <button type="button" className="ka-next-main" onClick={() => open("sop", nextTask.id)}>
+                  <span className="ka-time"><b>{nextTask.time || "-"}</b>{dueIn(nextTask)}</span>
+                  <span className="ka-t"><b>{nextTask.title}</b><small>{nextTask.who}{roomOf(nextTask.who) ? ` · ห้อง ${roomOf(nextTask.who)}` : ""}</small></span>
+                </button>
+                <button type="button" className="btn-primary ka-btn-sm" onClick={() => { open("task", nextTask.id); setProxyFor(null); }}><Icon name="camera" className="h-4 w-4" />ส่งงาน</button>
+              </div>
+            </>}
+
+            <div className="ka-seg" role="tablist" aria-label="รายการงาน">
+              <button type="button" role="tab" aria-selected={taskTab === "todo"} onClick={() => setTaskTab("todo")}>รอทำ {taskView === "mine" ? myPending.length : pendingAll.length}</button>
+              <button type="button" role="tab" aria-selected={taskTab === "sent"} onClick={() => setTaskTab("sent")}>ส่งแล้ว {mySent.length}</button>
+              <button type="button" role="tab" aria-selected={taskTab === "fac"} onClick={() => setTaskTab("fac")}>ส่วนกลาง {facLeft.length}</button>
+            </div>
+
+            {taskTab === "todo" && <>
+              <div className="ka-chips" role="radiogroup" aria-label="แสดงงาน">
+                <button type="button" role="radio" aria-checked={taskView === "mine"} onClick={() => setTaskView("mine")}>ของฉันและทีม {myPending.length}</button>
+                <button type="button" role="radio" aria-checked={taskView === "all"} onClick={() => setTaskView("all")}>ทั้งสาขา {pendingAll.length}</button>
+              </div>
+              {myShift === null && taskView === "mine" && <p className="ka-note">วันนี้ไม่มีเวรของคุณในตาราง · แสดงเฉพาะงานที่ระบุชื่อคุณ</p>}
+              {myPending.length === 0 && (taskView === "mine" || pendingAll.length === 0) && <Empty t={pendingAll.length ? "ไม่มีงานของคุณค้างแล้ว · กด \"ทั้งสาขา\" เพื่อดูงานของทีม" : tasks.length ? "ไม่มีงานค้างแล้ว เยี่ยมมาก" : "ยังไม่มีงานที่ผู้จัดการมอบหมายสำหรับวันนี้"} />}
+              {myLate.length > 0 && <><p className="ka-h is-bad">เลยเวลา · {myLate.length}</p><ul className="ka-list">{myLate.map(taskRow)}</ul></>}
+              {myGroups.map(([time, list]) => <div key={time}><p className="ka-h">{time || "ไม่ระบุเวลา"} · {list.length} งาน</p><ul className="ka-list">{list.map(taskRow)}</ul></div>)}
+              {taskView === "all" && others.length > 0 && <><p className="ka-h">{others.some((k) => !canSubmit(k)) ? "ของคนอื่นหรือเวรอื่น · ทำแทนได้" : "งานของเวรอื่น"}</p><ul className="ka-list">{others.map(taskRow)}</ul></>}
+            </>}
+
+            {taskTab === "sent" && <>
+              {mySent.length === 0 && doneForMe.length === 0 && <Empty t="ยังไม่มีงานที่คุณส่งวันนี้" />}
+              {mySent.length > 0 && <ul className="ka-list">{mySent.map((k) => {
+                const rv = reviewOf(k.rid);
+                const proxy = proxyText(k.note);
+                return (
+                  <li key={k.id}><button type="button" className="ka-row" onClick={() => open("viewtask", k.id)}>
+                    <span className="ka-time"><b>{k.done}</b></span>
+                    <span className="ka-t"><b>{k.title}</b><small>{k.who}</small>
+                      <span className="ka-tags">
+                        {proxy && <em className="ka-flag info">{proxy}</em>}
+                        {!rv ? <em className={`ka-flag ${k.status === "ตรวจแล้ว" ? "ok" : "warn"}`}>{k.status === "ตรวจแล้ว" ? "ตรวจแล้ว" : "รอหัวหน้าตรวจ"}</em>
+                          : <em className={`ka-flag ${rv.stars <= 2 ? "warn" : "ok"}`}>{rv.stars <= 2 ? "ต้องแก้ไข" : "ตรวจแล้ว"} <span className="review-stars">{starText(rv.stars)}</span></em>}
+                      </span>
+                      {rv?.note && <small className="ka-quote">&ldquo;{rv.note}&rdquo;</small>}
+                    </span>
+                    <Icon name="chevron" className="ka-chev" />
+                  </button></li>
+                );
+              })}</ul>}
+              {doneForMe.length > 0 && <><p className="ka-h">มีคนทำแทนให้คุณ</p><ul className="ka-list">{doneForMe.map((k) => (
+                <li key={k.id} className="ka-row"><span className="ka-dot is-ok" /><span className="ka-t"><b>{k.title}</b><small>{k.who} · {k.by} ทำแทนให้แล้ว {k.done} น.</small></span></li>
+              ))}</ul></>}
+            </>}
+
+            {taskTab === "fac" && <>
+              {fac.length === 0 ? <Empty t="ยังไม่มีงานส่วนกลางของสาขา" /> : <ul className="ka-list">{[...fac].sort((a, b) => Number(a.done) - Number(b.done) || Number(b.late) - Number(a.late)).map((f) => (
+                <li key={f.id} className={`ka-row ${f.late && !f.done ? "is-late" : ""}`}>
+                  <span className="ka-t"><b>{f.name}{f.manual && <em className="ka-flag me">มอบหมายให้คุณ</em>}</b>
+                    <small>{[f.category, f.schedule].filter((x) => x && x !== "-").join(" · ")}</small>
+                    {f.done && f.last && <small className="text-emerald-800">ทำแล้ว {f.last.at.slice(11)} น. โดย {f.last.by}</small>}
+                    {!f.done && f.late && <small className="font-semibold text-red-700">เลยเวลาแล้ว ยังไม่มีคนทำ</small>}</span>
+                  {!f.done && <button type="button" className="ka-send" onClick={() => { setFacPick(f); setPhoto(""); setNote(""); setModal("facility"); }}><Icon name="camera" className="h-5 w-5" /><span>ทำแล้ว</span></button>}
                 </li>
               ))}</ul>}
-              {fac.length > 0 && <p className="mt-2 text-xs text-gold-500">แต่ละงานส่งได้ 1 ครั้งต่อรอบ (วัน / สัปดาห์ / เดือน) · งานทั่วไป ใครทำก่อนกดส่ง · งานที่มีป้าย &quot;มอบหมายให้คุณ&quot; คุณเป็นคนรับผิดชอบส่ง · ส่งแล้วขึ้นชื่อคนทำให้ทุกคนเห็น และนับเป็นผลงานของคนนั้น</p>}
-            </Card>
+              {fac.length > 0 && <p className="ka-note">ส่งได้รอบละ 1 ครั้ง · ใครทำก่อนกดส่ง · งานที่มอบหมายให้คุณ คุณเป็นคนส่ง</p>}
+            </>}
           </>
         )}
 
         {tab === "roster" && <StaffRoster user={user} />}
+
         {tab === "meds" && (
           <>
-            <Card title="คิวจ่ายยาวันนี้" icon="pill" right={<Link href="/pharmacy?page=dispense" className="btn-soft !min-h-0 !px-3 !py-1.5 text-xs">เปิดแอปจัดยา (Pharmacy Hub)</Link>}>
-              <div className="grid grid-cols-3 gap-2 text-center">
-                <div className="rounded-2xl bg-amber-50 p-3"><p className="text-2xl font-semibold text-amber-700">{ready.length}</p><p className="text-xs text-amber-700">พร้อมจ่าย</p></div>
-                <div className="rounded-2xl bg-cream-100 p-3"><p className="text-2xl font-semibold text-gold-700">{queue.filter((m) => m.qa !== "ตรวจผ่าน").length}</p><p className="text-xs text-gold-600">รอห้องยาตรวจ</p></div>
-                <div className="rounded-2xl bg-emerald-50 p-3"><p className="text-2xl font-semibold text-emerald-700">{queue.filter((m) => m.given).length}</p><p className="text-xs text-emerald-700">จ่ายแล้ว</p></div>
-              </div>
-              <p className="mt-3 text-xs leading-6 text-gold-600">ซองยามาจากห้องยา (แอปจัดยา) · จ่ายได้เมื่อห้องยาตรวจ QA ผ่านแล้ว · กดจ่ายแล้วระบบบันทึกชื่อผู้ให้ยาและเวลา</p>
-            </Card>
-            {queue.length === 0 ? <Empty t="ยังไม่มีซองยาของวันนี้ ห้องยาจัดยาได้ที่แอปจัดยา" /> : (
-              <ul className="space-y-3">{queue.map((m) => {
+            <div className="ka-head">
+              <div><h1>จ่ายยา</h1><p>มื้อ{meal} · จ่ายแล้ว {mealQ.filter((p) => p.given).length} จาก {mealQ.length} ซอง</p></div>
+              <Link href="/pharmacy?page=dispense" className="ka-pill"><Icon name="pill" className="h-4 w-4" />แอปจัดยา</Link>
+            </div>
+            <div className="ka-meals" role="radiogroup" aria-label="มื้อยา">
+              {MEALS.map((m) => <button key={m} type="button" role="radio" aria-checked={meal === m} onClick={() => setMeal(m)}>{m}<b>{queue.filter((p) => p.meal === m).length}</b></button>)}
+            </div>
+            <div className="ka-prog" aria-hidden><i style={{ width: `${mealQ.length ? Math.round((mealQ.filter((p) => p.given).length / mealQ.length) * 100) : 0}%` }} /></div>
+            <div className="ka-chips" role="radiogroup" aria-label="สถานะซอง">
+              {([["", "ทั้งหมด"], ["ready", "พร้อมจ่าย"], ["wait", "รอห้องยา"], ["done", "จ่ายแล้ว"]] as const).map(([k, l]) => (
+                <button key={k} type="button" role="radio" aria-checked={medF === k} onClick={() => setMedF(k)}>{l} {mealQ.filter((p) => !k || packState(p) === k).length}</button>
+              ))}
+            </div>
+            {mealQ.length === 0 ? <Empty t={queue.length ? `ไม่มีซองยามื้อ${meal}ของวันนี้` : "ยังไม่มีซองยาของวันนี้ ห้องยาจัดยาได้ที่แอปจัดยา"} /> : (
+              <ul className="space-y-3">{mealQ.filter((p) => !medF || packState(p) === medF).map((m) => {
                 const low = lowFor(m.who);
+                const room = roomOf(m.who);
                 return (
-                  <li key={m.id} className={`rounded-3xl border p-4 ${m.given ? "border-emerald-200 bg-emerald-50/50" : "border-cream-300/70 bg-white shadow-soft"}`}>
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0"><p className="font-semibold text-gold-900">{m.who}</p><p className="text-sm text-gold-600">มื้อ{m.meal} · {m.items.length} รายการ</p></div>
-                      {m.given ? <span className="shrink-0 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-700">จ่ายแล้ว</span>
-                        : m.qa === "ตรวจผ่าน" ? <button className="btn-primary shrink-0 !px-4 !py-2" onClick={() => open("dispense", m.id)}>จ่ายยา</button>
-                          : <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-medium ${m.qa === "แจ้งจัดยาผิด" ? "bg-red-100 text-red-700" : "bg-cream-200 text-gold-700"}`}>{m.qa === "แจ้งจัดยาผิด" ? "ห้องยากำลังแก้ไข" : "รอห้องยาตรวจ"}</span>}
-                    </div>
-                    <ul className="mt-2 space-y-0.5 text-sm text-gold-700">{m.items.map((x) => <li key={x}>• {x}</li>)}</ul>
-                    {m.given && <p className="mt-2 text-xs text-emerald-800">ให้ยาโดย {m.gby ?? "-"}{m.gat ? ` · ${m.gat}` : ""}</p>}
-                    {!m.given && low.length > 0 && <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-xs text-red-700">ระวังยาใกล้หมด: {low.map((x) => `${x.name} เหลือ ${x.stock} ${x.unit}`).join(", ")}</p>}
+                  <li key={m.id} className={`ka-pack ${m.given ? "is-done" : ""}`}>
+                    <div className="ka-pack-h"><span className="ka-pic">{initials(m.who)}</span>
+                      <span className="ka-t"><b>{m.who}</b><small>{room ? `ห้อง ${room}` : "ยังไม่มีห้อง"} · {m.items.length} รายการ{allergy[m.who] && <em className="ka-flag bad">แพ้ {allergy[m.who]}</em>}</small></span></div>
+                    <div className="ka-pills">{m.items.map((x) => {
+                      const l = low.find((d) => x.includes(d.name));
+                      return <span key={x} className={l && !m.given ? "is-low" : ""}>{x}{l && !m.given ? ` · เหลือ ${l.stock} ${l.unit}` : ""}</span>;
+                    })}</div>
+                    {m.given ? <p className="ka-given"><Icon name="check" className="h-4 w-4" />ให้ยาแล้ว · {m.gby ?? "-"}{m.gat ? ` · ${m.gat}` : ""}</p>
+                      : m.qa === "ตรวจผ่าน" ? <button type="button" className="btn-primary w-full" onClick={() => open("dispense", m.id)}><Icon name="check" className="h-4 w-4" /> บันทึกการให้ยา</button>
+                        : <p className={`ka-wait ${m.qa === "แจ้งจัดยาผิด" ? "is-bad" : ""}`}>{m.qa === "แจ้งจัดยาผิด" ? "ห้องยากำลังแก้ไขซองนี้" : "รอห้องยาตรวจ QA ก่อนจ่าย"}</p>}
                   </li>
                 );
               })}</ul>
@@ -374,92 +486,93 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
         )}
 
         {tab === "residents" && (
-          <Card title="ผู้รับบริการ (สาขาของคุณ)" icon="user">
-            <ul className="space-y-3">{RESIDENTS.map((r) => (
-              <li key={r.name} className="flex items-center gap-3 rounded-2xl border border-cream-300/70 p-3">
-                <span className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-gold-100 text-lg font-semibold text-gold-700">{r.name.replace("คุณ", "").charAt(0)}</span>
-                <div className="min-w-0 flex-1"><p className="truncate font-medium">{r.name}</p><p className="text-xs text-gold-600">ห้อง {r.room} · อายุ {r.age} ปี</p></div>
-                <div className="flex shrink-0 flex-col gap-1.5">
-                  <button className="btn-primary !min-h-0 !px-3 !py-1.5 text-xs" onClick={() => setVitalsFor(r.name)}>สัญญาณชีพ</button>
-                  {r.id && <button className="btn-soft !min-h-0 !px-3 !py-1.5 text-xs" onClick={() => setProfile(r.id!)}>ประวัติ</button>}
-                  {r.id && <button className="btn-soft !min-h-0 !px-3 !py-1.5 text-xs" onClick={() => setFu({ id: r.id!, name: r.name, text: "", photo: "", busy: false })}>ส่งข่าวญาติ</button>}
-                  {r.id && <button className="btn-soft !min-h-0 !px-3 !py-1.5 text-xs" onClick={() => setLinkFor(r.id!)}>ลิงก์ญาติ</button>}
-                </div>
-              </li>
-            ))}</ul>
-          </Card>
-        )}
-
-        {tab === "team" && (
           <>
-            {(feed.cheers.length > 0 || feed.kudos.length > 0) && <Card title="คำชมและกำลังใจ" icon="heart">
-              <ul className="space-y-2">
-                {feed.cheers.map((c, k) => <li key={`c${k}`} className="rounded-2xl bg-gold-50 p-3 text-sm"><p className="text-gold-900">{c.message}</p><p className="mt-1 text-xs text-gold-500">กำลังใจถึงสาขา · {c.sent_by} · {c.at}</p></li>)}
-                {feed.kudos.map((c, k) => <li key={`k${k}`} className="rounded-2xl bg-cream-50 p-3 text-sm"><p className="text-gold-900"><b>{c.given_by}</b> ชื่นชมคุณ · {c.task_title}{c.resident_name ? ` · ${c.resident_name}` : ""}</p><p className="mt-1 text-xs text-gold-500">{c.at}</p></li>)}
-              </ul>
-            </Card>}
-            <Card title="ผลงานของทีมวันนี้" icon="grid">
-              <div className="grid grid-cols-2 gap-3 text-center">
-                <div className="rounded-2xl bg-cream-50 p-3"><p className="text-2xl font-semibold text-gold-700">{mine}</p><p className="text-xs text-gold-600">งานที่ทำเสร็จ</p></div>
-                <div className="rounded-2xl bg-cream-50 p-3"><p className="text-2xl font-semibold text-gold-700">{myStars}</p><p className="text-xs text-gold-600">ดาวจากครอบครัว (ของฉัน)</p></div>
-              </div>
-              <ul className="mt-3 space-y-2">{doneTasks.length === 0 ? <Empty t="ยังไม่มีงานที่ทำเสร็จวันนี้" /> : doneTasks.map((k) => (
-                <li key={k.id}><button onClick={() => open("viewtask", k.id)} className="team-done">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  {k.rid && photos[k.rid] ? <img src={photos[k.rid]} alt={`รูปงาน ${k.title}`} /> : <span className="team-done-nophoto"><Icon name="camera" className="h-5 w-5" /></span>}
-                  <span className="min-w-0 flex-1"><b>{k.title}</b><small>{k.who}</small><small>โดย {k.by ?? "-"}</small></span>
-                  <span className="shrink-0 text-xs text-gold-600">{k.done}</span>
-                </button></li>
+            <div className="ka-head"><div><h1>ผู้รับบริการ</h1><p>{RESIDENTS.length} คน · สาขา{user.branch || "-"}</p></div></div>
+            <label className="ka-search"><Icon name="search" className="h-4 w-4" /><input value={resQ} onChange={(e) => setResQ(e.target.value)} placeholder="ค้นหาชื่อหรือเลขห้อง" aria-label="ค้นหาผู้รับบริการ" /></label>
+            <div className="ka-chips" role="radiogroup" aria-label="กรองผู้รับบริการ">
+              <button type="button" role="radio" aria-checked={!resTodo} onClick={() => setResTodo(false)}>ทั้งหมด {RESIDENTS.length}</button>
+              <button type="button" role="radio" aria-checked={resTodo} onClick={() => setResTodo(true)}>ยังไม่วัดวันนี้ {RESIDENTS.filter((r) => !measured[r.name]).length}</button>
+            </div>
+            {resList.length === 0 ? <Empty t={resQ ? `ไม่พบ "${resQ}"` : "วัดสัญญาณชีพครบทุกคนแล้ว"} /> : (
+              <ul className="ka-list">{resList.map((r) => (
+                <li key={r.id ?? r.name} className="ka-row">
+                  <button type="button" className="ka-row-main" onClick={() => setResPick(r)}>
+                    <span className="ka-pic">{initials(r.name)}</span>
+                    <span className="ka-t"><b>{r.name}</b><small>{r.room && r.room !== "-" ? `ห้อง ${r.room}` : "ยังไม่มีห้อง"} · {r.age} ปี{allergy[r.name] && <em className="ka-flag bad">แพ้ {allergy[r.name]}</em>}</small></span>
+                  </button>
+                  <button type="button" className={`ka-vital ${measured[r.name] ? "is-done" : ""}`} onClick={() => setVitalsFor(r.name)}>
+                    <Icon name={measured[r.name] ? "check" : "pulse"} className="h-4 w-4" />{measured[r.name] ? `วัดแล้ว ${measured[r.name]}` : "สัญญาณชีพ"}
+                  </button>
+                </li>
               ))}</ul>
-            </Card>
-            <Card title="ผลตรวจงานของฉัน (7 วัน)" icon="check" right={myReviews.length ? <Count n={myReviews.length} /> : undefined}>
-              {!myReviews.length ? <Empty t="ยังไม่มีงานที่หัวหน้าตรวจในสัปดาห์นี้" /> : (
-                <ul className="space-y-2">{myReviews.slice(0, 8).map((r) => (
-                  <li key={r.id} className={`rounded-2xl px-4 py-3 text-sm ${r.stars <= 2 ? "border border-amber-200 bg-amber-50" : "bg-cream-50"}`}>
-                    <div className="flex items-center justify-between gap-2"><b className="truncate font-medium text-gold-900">{r.task}</b><span className="review-stars shrink-0">{starText(r.stars)}</span></div>
-                    <p className="text-xs text-gold-600">{r.name} · {r.date.split("-").reverse().slice(0, 2).join("/")}{r.by ? ` · ตรวจโดย ${r.by}` : ""}</p>
-                    {r.stars <= 2 && <p className="mt-1 text-xs font-semibold text-amber-900">ต้องแก้ไข · ทำตามความเห็นของหัวหน้าในงานครั้งถัดไป</p>}
-                    {r.note && <p className="mt-1 text-gold-900">&ldquo;{r.note}&rdquo;</p>}
-                  </li>
-                ))}</ul>
-              )}
-            </Card>
-            <Card title="รีวิวจากครอบครัว (ของฉัน)" icon="trophy" right={myRev?.reviews ? <span className="review-stars text-sm">{"★".repeat(Math.floor(myRev.avg ?? 0))}</span> : undefined}>
-              {!myRev?.recent.length ? <Empty t="ยังไม่มีรีวิว · ผู้จัดการสาขาส่งลิงก์รีวิวให้ญาติได้ที่เมนู &quot;รีวิวพนักงาน&quot;" /> : (
-                <ul className="space-y-2">{myRev.recent.slice(0, 5).map((r) => (
-                  <li key={r.id} className="rounded-2xl bg-cream-50 px-4 py-3 text-sm">
-                    <div className="flex items-center justify-between gap-2"><span className="review-stars">{"★".repeat(r.rating)}{"☆".repeat(5 - r.rating)}</span><span className="text-xs text-gold-500">{r.at}</span></div>
-                    {r.comment && <p className="mt-1 text-gold-900">&ldquo;{r.comment}&rdquo;</p>}
-                    {r.tags.length > 0 && <p className="mt-1 text-xs text-gold-600">{r.tags.join(" · ")}</p>}
-                    <p className="mt-1 text-xs text-gold-500">{[r.rater_name || "ญาติ", r.relation].filter(Boolean).join(" · ")} ของ{r.resident_name}</p>
-                  </li>
-                ))}</ul>
-              )}
-            </Card>
-            <Card title="สรุปรายงานประจำวัน (ตอบญาติ)" icon="doc">
-              <p className="mb-3 text-xs text-gold-600">รวมข้อมูลรายงานสุขภาพ (สัญญาณชีพ/อาหาร/ขับถ่าย) การให้ยา เรื่องเฝ้าระวัง และโน้ตการทำงาน รายบุคคล เพื่อให้พนักงานทุกคนตอบคำถามญาติได้ตรงกัน</p>
-              <ResidentPicker names={RESIDENTS.map((r) => r.name)} placeholder="พิมพ์ชื่อหรือเลขห้องเพื่อดูข้อมูลตอบญาติ" value={rep.who} onChange={(v) => setRep({ ...rep, who: v })} />
-              <div className="my-3 flex gap-2">{["วันนี้", "เมื่อวาน"].map((d) => <button key={d} onClick={() => setRep({ ...rep, day: d })} className={`flex-1 rounded-full py-2 text-sm ${rep.day === d ? "bg-gold-700 text-white" : "bg-cream-200 text-gold-700"}`}>{d}</button>)}</div>
-              {rep.who ? (() => {
-                const r = RESIDENTS.find((x) => x.name === rep.who);
-                return r?.id ? <button className="btn-primary w-full" onClick={() => setProfile(r.id!)}><Icon name="doc" className="h-4 w-4" /> เปิดประวัติของ {rep.who}</button>
-                  : <Empty t="ไม่พบผู้รับบริการคนนี้ในทะเบียน" />;
-              })() : <Empty t="กรุณาเลือกผู้รับบริการด้านบนเพื่อดูสรุปสุขภาพและไทม์ไลน์ตอบญาติ" />}
-            </Card>
+            )}
           </>
         )}
 
-        {tab === "fame" && (
-          <>
-            <div>
-              <h1 className="text-xl font-semibold text-gold-800">กระดานเกียรติยศ</h1>
-              <p className="text-sm text-gold-600">อันดับจาก KPI เดือนนี้: ดาวจากครอบครัว ดาวจากผู้จัดการ งานที่ส่ง และการมาตรงเวลา</p>
-            </div>
-            {(() => {
-              const ranked = (kpi?.rows ?? []).filter((r) => r.total != null);
-              const me = kpi?.rows.find((r) => r.id === user.id);
-              const sc = me ? { family: me.family?.score ?? null, manager: me.manager?.score ?? null, tasks: me.tasks?.score ?? null, punctual: me.punctual?.score ?? null } : null;
-              return (<>
+        {tab === "perf" && (() => {
+          const ranked = (kpi?.rows ?? []).filter((r) => r.total != null);
+          const me = kpi?.rows.find((r) => r.id === user.id);
+          const sc = me ? { family: me.family?.score ?? null, manager: me.manager?.score ?? null, tasks: me.tasks?.score ?? null, punctual: me.punctual?.score ?? null } : null;
+          return (
+            <>
+              <div className="ka-head"><div><h1>ผลงาน</h1><p>{new Date().toLocaleDateString("th-TH", { month: "long", year: "numeric" })}</p></div></div>
+              <section className="ka-kpi">
+                <div className="ka-ring" style={{ ["--p" as string]: me?.total ?? 0 }}><b>{me?.total ?? "-"}</b><small>คะแนน</small></div>
+                <div className="ka-t">
+                  <b>{me?.rank ? `อันดับ ${me.rank} จาก ${ranked.length} คน` : kpi ? "ยังไม่มีคะแนนเดือนนี้" : "กำลังโหลด…"}</b>
+                  <small>KPI เดือนนี้ · งานวันนี้ {mine} งาน · ดาวครอบครัว {myStars}</small>
+                  {sc && kpi && <ul className="ka-bars">{KPI_PARTS.map((p) => (
+                    <li key={p.key}><span>{p.label}</span><i style={{ ["--w" as string]: `${sc[p.key] ?? 0}%` }} /><b>{pointsOf(p.key, sc, kpi.weights) ?? "-"}</b></li>
+                  ))}</ul>}
+                </div>
+              </section>
+              <div className="ka-seg" role="tablist" aria-label="ผลงาน">
+                {([["me", "ของฉัน"], ["team", "ทีม"], ["rank", "อันดับ"]] as const).map(([k, l]) => <button key={k} type="button" role="tab" aria-selected={perfView === k} onClick={() => setPerfView(k)}>{l}</button>)}
+              </div>
+
+              {perfView === "me" && <>
+                <p className="ka-h">ผลตรวจงานล่าสุด · 7 วัน</p>
+                {!myReviews.length ? <p className="ka-empty">ยังไม่มีงานที่หัวหน้าตรวจในสัปดาห์นี้</p> : (
+                  <ul className="ka-list">{myReviews.slice(0, 8).map((r) => (
+                    <li key={r.id} className="ka-row"><span className={`ka-dot ${r.stars <= 2 ? "is-warn" : "is-ok"}`} />
+                      <span className="ka-t"><b>{r.task} · <span className="review-stars">{starText(r.stars)}</span></b>
+                        <small>{r.name} · {r.date.split("-").reverse().slice(0, 2).join("/")}{r.by ? ` · ตรวจโดย ${r.by}` : ""}</small>
+                        {r.stars <= 2 && <small className="font-semibold text-amber-900">ต้องแก้ไข · ทำตามความเห็นของหัวหน้าในงานครั้งถัดไป</small>}
+                        {r.note && <small className="ka-quote">&ldquo;{r.note}&rdquo;</small>}</span></li>
+                  ))}</ul>
+                )}
+                <p className="ka-h">รีวิวจากครอบครัว</p>
+                {!myRev?.recent.length ? <p className="ka-empty">ยังไม่มีรีวิวจากครอบครัว</p> : (
+                  <ul className="ka-list">{myRev.recent.slice(0, 5).map((r) => (
+                    <li key={r.id} className="ka-row"><span className="ka-t"><b><span className="review-stars">{"★".repeat(r.rating)}{"☆".repeat(5 - r.rating)}</span></b>
+                      {r.comment && <small className="ka-quote">&ldquo;{r.comment}&rdquo;</small>}
+                      <small>{[r.rater_name || "ญาติ", r.relation].filter(Boolean).join(" · ")} ของ{r.resident_name} · {r.at}</small></span></li>
+                  ))}</ul>
+                )}
+                {(feed.cheers.length > 0 || feed.kudos.length > 0) && <>
+                  <p className="ka-h">คำชมและกำลังใจ</p>
+                  <ul className="ka-list">
+                    {feed.cheers.map((c, k) => <li key={`c${k}`} className="ka-row"><span className="ka-t"><b>{c.message}</b><small>กำลังใจถึงสาขา · {c.sent_by} · {c.at}</small></span></li>)}
+                    {feed.kudos.map((c, k) => <li key={`k${k}`} className="ka-row"><span className="ka-t"><b>{c.given_by} ชื่นชมคุณ</b><small>{c.task_title}{c.resident_name ? ` · ${c.resident_name}` : ""} · {c.at}</small></span></li>)}
+                  </ul>
+                </>}
+              </>}
+
+              {perfView === "team" && <>
+                <p className="ka-h">งานที่ทีมทำเสร็จวันนี้ · {doneTasks.length}</p>
+                {doneTasks.length === 0 ? <p className="ka-empty">ยังไม่มีงานที่ทำเสร็จวันนี้</p> : (
+                  <ul className="space-y-2">{doneTasks.map((k) => (
+                    <li key={k.id}><button onClick={() => open("viewtask", k.id)} className="team-done">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      {k.rid && photos[k.rid] ? <img src={photos[k.rid]} alt={`รูปงาน ${k.title}`} /> : <span className="team-done-nophoto"><Icon name="camera" className="h-5 w-5" /></span>}
+                      <span className="min-w-0 flex-1"><b>{k.title}</b><small>{k.who}</small><small>โดย {k.by ?? "-"}</small></span>
+                      <span className="shrink-0 text-xs text-gold-600">{k.done}</span>
+                    </button></li>
+                  ))}</ul>
+                )}
+              </>}
+
+              {perfView === "rank" && <>
                 {ranked[0] && (
                   <section className="rounded-3xl bg-gradient-to-br from-gold-700 to-gold-400 p-5 text-white shadow-soft">
                     <p className="text-xs tracking-wider text-white/80">พนักงานดีเด่นประจำเดือน · สาขา{user.branch}</p>
@@ -467,67 +580,36 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
                     <p className="text-sm text-white/80">KPI {ranked[0].total} คะแนน</p>
                   </section>
                 )}
-                {me && sc && kpi && (
-                  <Card title={`KPI ของฉัน · ${me.total ?? "-"} คะแนน`} icon="chart" right={me.rank ? <span className="text-xs font-medium text-gold-700">อันดับ {me.rank}/{ranked.length}</span> : undefined}>
-                    <ul className="kpi-parts">{KPI_PARTS.map((p) => {
-                      const v = sc[p.key]; const pts = pointsOf(p.key, sc, kpi.weights);
-                      return (
-                        <li key={p.key} className={v == null ? "is-empty" : ""}>
-                          <div className="kpi-part-head"><b>{p.label}</b><span>{kpi.weights[p.key]}%</span></div>
-                          <div className="kpi-bar"><i style={{ width: `${v ?? 0}%` }} /></div>
-                          <div className="kpi-part-foot"><span>{v == null ? "ยังไม่มีข้อมูล" : `${v}/100`}</span><span>ได้ <b>{pts ?? "-"}</b> คะแนน</span></div>
-                        </li>
-                      );
-                    })}</ul>
-                  </Card>
+                {!ranked.length ? <p className="ka-empty">ยังไม่มีคะแนน KPI ของเดือนนี้</p> : (
+                  <ol className="ka-list">{ranked.map((r) => (
+                    <li key={r.id} className={`ka-row ${r.id === user.id ? "is-me" : ""}`}>
+                      <span className="ka-rank">{r.rank}</span>
+                      <span className="ka-t"><b>{r.name}{r.id === user.id ? " (ฉัน)" : ""}</b><span className="ka-rank-bar"><i style={{ width: `${r.total ?? 0}%` }} /></span></span>
+                      <b className="ka-score">{r.total}</b>
+                      {r.id !== user.id && <button disabled={praised.includes(r.name)} className={`ka-praise ${praised.includes(r.name) ? "is-done" : ""}`} onClick={() => {
+                        fetch("/api/ops", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "kudos_peer", staff: r.name }) })
+                          .then(async (x) => { const j = await x.json().catch(() => ({})); if (!x.ok) throw new Error(j.error); setPraised([...praised, r.name]); toast(`ชื่นชมแล้ว · ${r.name} · เพื่อนเห็นใน KinApp`); })
+                          .catch((e) => toast((e as Error).message || "ชื่นชมไม่สำเร็จ"));
+                      }}>{praised.includes(r.name) ? "ชื่นชมแล้ว" : "ชื่นชม"}</button>}
+                    </li>
+                  ))}</ol>
                 )}
-                <Card title="อันดับในสาขา" icon="trophy">
-                  {!ranked.length ? <Empty t="ยังไม่มีคะแนน KPI ของเดือนนี้" /> : (
-                    <ol className="space-y-2">{ranked.map((r) => (
-                      <li key={r.id} className={`rounded-2xl p-3 ${r.id === user.id ? "bg-gold-100" : "bg-cream-50"}`}>
-                        <div className="flex items-center gap-3 text-sm">
-                          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-gold-700 text-xs font-semibold text-white">{r.rank}</span>
-                          <span className="min-w-0 flex-1"><b className="font-medium">{r.name}{r.id === user.id ? " (ฉัน)" : ""}</b></span>
-                          <span className="font-semibold text-gold-700">{r.total}</span>
-                          {r.id !== user.id && <button disabled={praised.includes(r.name)} className={`rounded-lg px-2.5 py-1 text-xs ${praised.includes(r.name) ? "bg-gold-700 text-white" : "bg-white text-gold-700"}`} onClick={() => {
-                            fetch("/api/ops", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "kudos_peer", staff: r.name }) })
-                              .then(async (x) => { const j = await x.json().catch(() => ({})); if (!x.ok) throw new Error(j.error); setPraised([...praised, r.name]); toast(`ชื่นชมแล้ว · ${r.name} · เพื่อนเห็นใน KinApp`); })
-                              .catch((e) => toast((e as Error).message || "ชื่นชมไม่สำเร็จ"));
-                          }}>{praised.includes(r.name) ? "ชื่นชมแล้ว" : "ชื่นชม"}</button>}
-                        </div>
-                        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-cream-300"><div className="h-full rounded-full bg-gold-500" style={{ width: `${r.total ?? 0}%` }} /></div>
-                      </li>
-                    ))}</ol>
-                  )}
-                </Card>
-              </>);
-            })()}
-          </>
-        )}
+              </>}
+            </>
+          );
+        })()}
       </main>
 
-      {/* FAB */}
-      {tab === "tasks" && (
-        <div className="fixed bottom-24 left-1/2 z-30 w-full max-w-lg -translate-x-1/2 px-4">
-          <div className="flex flex-col items-end gap-2">
-            {fab && (
-              <div className="w-64 overflow-hidden rounded-2xl border border-cream-300 bg-white shadow-soft">
-                <button className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm hover:bg-cream-100" onClick={() => { setFab(false); setBonusWho(""); setBonusText("ภาพประทับใจส่งญาติ"); open("bonus"); }}><Icon name="camera" className="h-5 w-5 text-gold-600" /><span>ภาพประทับใจส่งญาติ<span className="block text-xs text-gold-500">(ได้ดาว)</span></span></button>
-                <button className="flex w-full items-center gap-3 border-t border-cream-300/60 px-4 py-3 text-left text-sm hover:bg-cream-100" onClick={() => { setFab(false); setBonusWho(""); setBonusText(""); open("bonus"); }}><Icon name="alert" className="h-5 w-5 text-gold-600" /><span>แจ้งงาน/เก็บตกด่วน<span className="block text-xs text-gold-500">(ฮีโร่ +1)</span></span></button>
-              </div>
-            )}
-            <button onClick={() => setFab(!fab)} aria-label="เพิ่มผลงานพิเศษ" className="grid h-14 w-14 place-items-center rounded-full bg-gold-700 text-white shadow-2xl transition active:scale-95"><Icon name={fab ? "close" : "plus"} className="h-6 w-6" /></button>
-          </div>
-        </div>
-      )}
-
-      {/* bottom nav */}
-      <nav aria-label="เมนูล่าง" className="fixed bottom-0 left-1/2 z-30 grid w-full max-w-lg -translate-x-1/2 grid-cols-6 border-t border-cream-300/70 bg-white/95 px-2 pb-[env(safe-area-inset-bottom)] pt-1.5 backdrop-blur">
-        {TABS.map((x) => (
-          <button key={x.id} aria-current={tab === x.id ? "page" : undefined} onClick={() => { setTab(x.id); setFab(false); window.scrollTo(0, 0); }} className={`flex flex-col items-center gap-0.5 rounded-xl py-2 text-[10.5px] ${tab === x.id ? "text-gold-700" : "text-gold-400"}`}>
-            <span className={`grid h-8 w-11 place-items-center rounded-full transition ${tab === x.id ? "bg-gold-100" : ""}`}><Icon name={x.icon} className="h-5 w-5" /></span>{x.label}
-          </button>
-        ))}
+      {/* เมนูล่าง: แถบลอยสีสว่าง · ปุ่มที่เลือกเป็นแคปซูลสีแชมเปญ · ตัวเลข = งานรอทำ (แดงเมื่อมีงานเลยเวลา) / ซองยาพร้อมจ่าย */}
+      <nav aria-label="เมนูล่าง" className="ka-nav">
+        {TABS.map((x) => {
+          const n = x.id === "tasks" ? myPending.length : x.id === "meds" ? ready.length : 0;
+          return (
+            <button key={x.id} type="button" aria-current={tab === x.id ? "page" : undefined} className={tab === x.id ? "is-on" : ""} onClick={() => { setTab(x.id); setFab(false); window.scrollTo(0, 0); }}>
+              <span className="ka-nav-ic"><Icon name={x.icon} className="h-[22px] w-[22px]" />{n > 0 && <i className={`ka-bdg ${x.id === "tasks" && myLate.length ? "is-bad" : ""}`}>{n > 99 ? "99+" : n}</i>}</span>{x.label}
+            </button>
+          );
+        })}
       </nav>
 
       {/* ส่งอัปเดตให้ครอบครัว */}
@@ -548,7 +630,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
           const k = (cur as number) - 1;
           const row = [...drows[k]]; while (row.length < 11) row.push("-");
           const now = new Date();
-          row[5] = "เสร็จแล้ว"; row[8] = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`; row[9] = [proxyFor ? `ทำแทน ${proxyFor}` : "", note.trim()].filter(Boolean).join(" · ") || "-"; row[10] = user.name;
+          row[5] = "เสร็จแล้ว"; row[8] = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`; row[9] = [proxyFor ? `ทำแทน ${proxyFor}` : "", proxyFor ? proxyReason : "", note.trim()].filter(Boolean).join(" · ") || "-"; row[10] = user.name;
           updDaily(k, row);
           // รูปหลักฐาน: ประทับวันเวลา ผู้รับบริการ และชื่องาน แล้วเก็บแยกให้ผู้จัดการเปิดดูตอนตรวจงาน
           const id = dids[k];
@@ -560,7 +642,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
         }}>ยืนยันการส่งงาน</button>}>
         {t && <div className="space-y-4">
           <div className="rounded-2xl bg-cream-50 p-4 text-sm"><p className="font-semibold text-gold-900">{t.title}</p><p className="text-gold-600">{t.who} · เวลา: {t.time}</p></div>
-          {proxyFor && <p className="rounded-2xl bg-amber-50 px-4 py-2 text-sm font-medium text-amber-900">คุณกำลังส่งงานนี้แทน {proxyFor}</p>}
+          {proxyFor && <p className="ka-proxy-banner"><Icon name="info" className="h-4 w-4" />กำลังส่งแทน {proxyFor} · {proxyReason}</p>}
           <PhotoInput label="แตะเพื่อเปิดกล้องถ่ายรูป" file={photo} onFile={setPhoto} />
           <label className="share-toggle"><input type="checkbox" checked={shareFam} onChange={(e) => setShareFam(e.target.checked)} />
             <span><b>แชร์รูปนี้ให้ครอบครัวเห็น</b><small>ขึ้นในสมุดภาพประจำวันของ{t.who} · เอาติ๊กออกถ้ารูปติดผู้รับบริการคนอื่น หรือเห็นร่างกายส่วนที่ไม่ควรเปิดเผย</small></span></label>
@@ -568,8 +650,39 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
         </div>}
       </Modal>
 
-      <Modal open={modal === "sop"} title="คู่มือปฏิบัติงาน" onClose={close} footer={<button className="btn-soft w-full" onClick={close}>ปิดหน้าต่าง</button>}>
-        {t && <div className="space-y-3 text-sm"><p className="text-base font-semibold text-gold-900">{t.title}</p><p className="rounded-2xl bg-cream-50 p-4 leading-7">{t.ins}</p></div>}
+      <Modal open={modal === "sop"} title="รายละเอียดงาน" onClose={close}
+        footer={t && (canSubmit(t)
+          ? <button className="btn-primary w-full" onClick={() => { open("task", t.id); setProxyFor(null); }}><Icon name="camera" className="h-4 w-4" /> ถ่ายรูปและส่งงาน</button>
+          : <button className="btn-soft w-full" onClick={() => doFor(t)}>ทำแทน</button>)}>
+        {t && <div className="space-y-3 text-sm">
+          <div><p className="text-base font-semibold text-gold-900">{t.title} · {t.time || "-"}</p><p className="text-gold-600">{t.who}{roomOf(t.who) ? ` · ห้อง ${roomOf(t.who)}` : ""} · {t.owner === user.name ? "งานของคุณ" : t.owner ? `มอบหมายให้ ${t.owner}` : `ทีม${t.shift ?? "เวร"}`}</p></div>
+          {isLate(t) && <p className="ka-wait is-bad">เลยเวลาแล้ว · ส่งได้ทันที</p>}
+          {allergy[t.who] && <p className="ka-wait is-bad">แพ้ {allergy[t.who]}</p>}
+          <div className="rounded-2xl bg-cream-50 p-4"><p className="mb-1 flex items-center gap-2 font-semibold text-gold-800"><Icon name="book" className="h-4 w-4" />คู่มือปฏิบัติงาน</p><p className="leading-7">{t.ins}</p></div>
+        </div>}
+      </Modal>
+
+      <Modal open={modal === "proxy"} title={t ? `ทำแทน ${ownerOf(t)}` : "ทำแทน"} onClose={close}
+        footer={<button className="btn-primary w-full" onClick={() => { if (!t) return; const who = ownerOf(t); open("task", t.id); setProxyFor(who); }}><Icon name="camera" className="h-4 w-4" /> ถ่ายรูปและส่งแทน</button>}>
+        {t && <div className="space-y-4 text-sm">
+          <p className="rounded-2xl bg-cream-50 p-3"><b className="text-gold-900">{t.title}</b><br /><span className="text-gold-600">{t.who} · {t.time || "-"} · {t.owner ? `มอบหมายให้ ${t.owner}` : `งานของทีม${t.shift ?? "เวร"}`}</span></p>
+          <div><p className="label">เหตุผล (เลือก 1 ข้อ)</p>
+            <div className="ka-chips" role="radiogroup" aria-label="เหตุผลที่ทำแทน">{PROXY_REASONS.map((x) => <button key={x} type="button" role="radio" aria-checked={proxyReason === x} onClick={() => setProxyReason(x)}>{x}</button>)}</div></div>
+          <p className="ka-note">ผลงานนับให้คุณ · {ownerOf(t)} และหัวหน้าจะเห็นว่าคุณทำแทน</p>
+        </div>}
+      </Modal>
+
+      <Modal open={!!resPick} title={resPick?.name ?? ""} onClose={() => setResPick(null)}>
+        {resPick && <div className="space-y-3">
+          <p className="text-sm text-gold-600">{resPick.room && resPick.room !== "-" ? `ห้อง ${resPick.room}` : "ยังไม่มีห้อง"} · {resPick.age} ปี{measured[resPick.name] ? ` · วัดสัญญาณชีพแล้ว ${measured[resPick.name]} น.` : ""}</p>
+          {allergy[resPick.name] && <p className="ka-wait is-bad">แพ้ {allergy[resPick.name]}</p>}
+          <div className="ka-acts">
+            <button type="button" className="is-primary" onClick={() => { const n = resPick.name; setResPick(null); setVitalsFor(n); }}><Icon name="pulse" className="h-5 w-5" />บันทึกสัญญาณชีพ</button>
+            <button type="button" disabled={!resPick.id} onClick={() => { const id = resPick.id!; setResPick(null); setProfile(id); }}><Icon name="doc" className="h-5 w-5" />ประวัติและสรุปตอบญาติ</button>
+            <button type="button" disabled={!resPick.id} onClick={() => { const r = resPick; setResPick(null); setFu({ id: r.id!, name: r.name, text: "", photo: "", busy: false }); }}><Icon name="camera" className="h-5 w-5" />ส่งข่าวญาติ</button>
+            <button type="button" disabled={!resPick.id} onClick={() => { const id = resPick.id!; setResPick(null); setLinkFor(id); }}><Icon name="chat" className="h-5 w-5" />ลิงก์ญาติ</button>
+          </div>
+        </div>}
       </Modal>
 
       <Modal open={modal === "viewtask"} title="ผลการปฏิบัติงาน" onClose={close} footer={<button className="btn-soft w-full" onClick={close}>ปิดหน้าต่าง</button>}>

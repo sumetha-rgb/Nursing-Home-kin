@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import CsvIcon from "@/components/CsvIcon";
 import Icon from "../Icon";
 import { MetricGrid, Section, Tile } from "../ui";
 import { balanceOf, BILL_KINDS, docDate, DRAFT, Invoice, isOpen, money, PAID, PARTIAL, VOID } from "@/lib/billing";
@@ -69,7 +70,8 @@ function ShareBars({ rows }: { rows: { label: string; value: number; note?: stri
  *  branch ว่าง = ทุกสาขาที่บัญชีนี้เห็น · compact = แสดงเฉพาะตัวเลขสรุป (หน้าภาพรวม)
  */
 /** สรุปการเงินของเดือนที่เลือกเทียบเดือนก่อน (การ์ดหน้าภาพรวม · รายงานผู้บริหาร) · collect = รับชำระ ÷ ยอดออกใบของเดือน (%) */
-export type FinSummary = { month: string; prevMonth: string; paid: number; paidPrev: number; billed: number; billedPrev: number; collect: number | null; collectPrev: number | null; owe: number; openN: number; discPct: number | null };
+/** prevLabel = ช่วงที่เอามาเทียบ เช่น "1–5 ต.ค. 69" (เดือนปัจจุบัน) หรือ "ต.ค. 69" */
+export type FinSummary = { month: string; prevMonth: string; prevLabel: string; paid: number; paidPrev: number; billed: number; billedPrev: number; collect: number | null; collectPrev: number | null; owe: number; openN: number; discPct: number | null };
 
 export default function FinanceAnalytics({ branch, compact, onTiles, month, prevMonth, onSummary }: { branch: string; compact?: boolean; onTiles?: (t: Tile[]) => void; month?: string; prevMonth?: string; onSummary?: (s: FinSummary) => void }) {
   const [all, , meta] = useRecords<Invoice>("invoices", []);
@@ -84,23 +86,29 @@ export default function FinanceAnalytics({ branch, compact, onTiles, month, prev
   // เดือนที่เลือกจากตัวเลือกช่วงเวลา (ค่าเริ่มต้น = เดือนนี้) · กราฟ 12 เดือนจบที่เดือนนั้น
   const now = month ?? monthKey();
   const months = lastMonthsTo(now, 12), prev = prevMonth ?? months[months.length - 2];
-  const paidIn = (m: string) => list.filter((x) => (x.status === PAID || x.status === PARTIAL) && (x.paidDate ?? "").startsWith(m)).reduce((n, x) => n + (x.paid ?? 0), 0);
-  const billedIn = (m: string) => list.filter((x) => x.status !== DRAFT && x.date.startsWith(m));
+  // เดือนปัจจุบันยังไม่จบ: เทียบกับเดือนก่อนช่วงวันเดียวกัน (เช่น 1–5 พ.ย. เทียบ 1–5 ต.ค.) · เดือนที่จบแล้วเทียบทั้งเดือน
+  const today = new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10);
+  const cut = now === today.slice(0, 7) ? Number(today.slice(8, 10)) : 0;
+  const upTo = (d: string | undefined, day: number) => !day || Number((d ?? "").slice(8, 10)) <= day;
+  const paidIn = (m: string, day = 0) => list.filter((x) => (x.status === PAID || x.status === PARTIAL) && (x.paidDate ?? "").startsWith(m) && upTo(x.paidDate, day)).reduce((n, x) => n + (x.paid ?? 0), 0);
+  const billedIn = (m: string, day = 0) => list.filter((x) => x.status !== DRAFT && x.date.startsWith(m) && upTo(x.date, day));
   const open = list.filter(isOpen), drafts = list.filter((x) => x.status === DRAFT);
   const owe = open.reduce((n, x) => n + balanceOf(x), 0);
-  const paidNow = paidIn(now), paidPrev = paidIn(prev);
+  const paidNow = paidIn(now), paidPrev = paidIn(prev, cut);
+  const prevDays = cut ? Math.min(cut, new Date(Date.UTC(Number(prev.slice(0, 4)), Number(prev.slice(5, 7)), 0)).getUTCDate()) : 0;
+  const prevLabel = cut ? `${prevDays > 1 ? "1–" : ""}${prevDays} ${monLabel(prev)}` : monLabel(prev);
   const billedNow = billedIn(now), discNow = billedNow.reduce((n, x) => n + (x.discount || 0), 0);
   const delta = paidPrev ? Math.round(((paidNow - paidPrev) / paidPrev) * 100) : null;
-  const billedSum = (m: string) => billedIn(m).reduce((n, x) => n + x.net, 0);
-  const collectOf = (m: string) => (billedSum(m) ? Math.round((paidIn(m) / billedSum(m)) * 100) : null);
+  const billedSum = (m: string, day = 0) => billedIn(m, day).reduce((n, x) => n + x.net, 0);
+  const collectOf = (m: string, day = 0) => (billedSum(m, day) ? Math.round((paidIn(m, day) / billedSum(m, day)) * 100) : null);
   const grossNow = billedNow.reduce((n, x) => n + (x.total || 0), 0);
-  const summary: FinSummary = { month: now, prevMonth: prev, paid: paidNow, paidPrev, billed: billedSum(now), billedPrev: billedSum(prev), collect: collectOf(now), collectPrev: collectOf(prev), owe, openN: open.length, discPct: grossNow ? Math.round((discNow / grossNow) * 1000) / 10 : null };
+  const summary: FinSummary = { month: now, prevMonth: prev, paid: paidNow, paidPrev, billed: billedSum(now), billedPrev: billedSum(prev, cut), collect: collectOf(now), collectPrev: collectOf(prev, cut), prevLabel, owe, openN: open.length, discPct: grossNow ? Math.round((discNow / grossNow) * 1000) / 10 : null };
   const sumKey = JSON.stringify(summary);
   useEffect(() => { onSummary?.(summary); }, [sumKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const kpis = [
-    { label: `รับชำระ ${monLabel(now)}`, value: money(paidNow), unit: "บาท", icon: "check", accent: true, note: delta === null ? `${monLabel(prev)} ยังไม่มีรายรับ` : `${delta >= 0 ? "▲" : "▼"} ${Math.abs(delta)}% จาก ${monLabel(prev)}` },
+    { label: `รับชำระ ${monLabel(now)}`, value: money(paidNow), unit: "บาท", icon: "check", accent: true, note: delta === null ? `ไม่มีรายรับ ${prevLabel} ให้เทียบ` : delta === 0 ? `เท่ากับ ${prevLabel}` : `${delta > 0 ? "▲ เพิ่มขึ้น" : "▼ ลดลง"} ${Math.abs(delta)}% จาก ${prevLabel}` },
     { label: `ออกใบแจ้งหนี้ ${monLabel(now)}`, value: money(billedSum(now)), unit: "บาท", icon: "receipt", note: `${billedNow.length} ใบ · ส่วนลด ${money(discNow)} บาท${summary.discPct !== null ? ` (${summary.discPct}%)` : ""}` },
-    { label: "อัตราเก็บเงินได้", value: summary.collect === null ? "-" : `${summary.collect}%`, icon: "chart", note: `รับชำระ ÷ ยอดออกใบของเดือน${summary.collectPrev !== null ? ` · ${monLabel(prev)} ${summary.collectPrev}%` : ""}` },
+    { label: "อัตราเก็บเงินได้", value: summary.collect === null ? "-" : `${summary.collect}%`, icon: "chart", note: `รับชำระ ÷ ยอดออกใบของเดือน${summary.collectPrev !== null ? ` · ${prevLabel} ${summary.collectPrev}%` : ""}` },
     { label: "ค้างชำระ", value: money(owe), unit: "บาท", icon: "alert", note: `${open.length} ใบ` },
     { label: "รอตรวจสอบยอด", value: drafts.length, unit: "ใบ", icon: "history", note: drafts.length ? `รวม ${money(drafts.reduce((n, x) => n + x.net, 0))} บาท` : "ไม่มีใบรอตรวจ" },
   ];
@@ -119,10 +127,10 @@ export default function FinanceAnalytics({ branch, compact, onTiles, month, prev
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap justify-end gap-2">
-        <button className="btn-soft" onClick={exportMonths}><Icon name="download" className="h-4 w-4" /> ส่งออกสรุปรายเดือน (12 เดือน)</button>
-        <button className="btn-soft" onClick={exportDocs}><Icon name="download" className="h-4 w-4" /> ส่งออกเอกสารทั้งหมด</button>
-        <button className="btn-soft" onClick={() => { const n = exportInvoiceLines(all.filter((x) => !branch || branchOf(x) === branch), branchOf, `การเงิน-รายการในใบ${branch ? `-${branch}` : ""}`); toast(`ส่งออกรายการในใบแล้ว ${n} บรรทัด`); }}><Icon name="download" className="h-4 w-4" /> ส่งออกรายการในใบ (แยกหมวด)</button>
-        <button className="btn-soft" onClick={() => exportPayments(branch, `การเงิน-การรับเงินรายงวด${branch ? `-${branch}` : ""}`).then((n) => toast(`ส่งออกการรับเงินแล้ว ${n} งวด`)).catch((e) => toast((e as Error).message))}><Icon name="download" className="h-4 w-4" /> ส่งออกการรับเงินรายงวด</button>
+        <button className="btn-soft" onClick={exportMonths}><CsvIcon /> ส่งออกสรุปรายเดือน (12 เดือน)</button>
+        <button className="btn-soft" onClick={exportDocs}><CsvIcon /> ส่งออกเอกสารทั้งหมด</button>
+        <button className="btn-soft" onClick={() => { const n = exportInvoiceLines(all.filter((x) => !branch || branchOf(x) === branch), branchOf, `การเงิน-รายการในใบ${branch ? `-${branch}` : ""}`); toast(`ส่งออกรายการในใบแล้ว ${n} บรรทัด`); }}><CsvIcon /> ส่งออกรายการในใบ (แยกหมวด)</button>
+        <button className="btn-soft" onClick={() => exportPayments(branch, `การเงิน-การรับเงินรายงวด${branch ? `-${branch}` : ""}`).then((n) => toast(`ส่งออกการรับเงินแล้ว ${n} งวด`)).catch((e) => toast((e as Error).message))}><CsvIcon /> ส่งออกการรับเงินรายงวด</button>
       </div>
       <MetricGrid items={kpis} />
       <div className="grid gap-6 xl:grid-cols-[3fr_2fr]">
@@ -133,7 +141,7 @@ export default function FinanceAnalytics({ branch, compact, onTiles, month, prev
           <ShareBars rows={byKind} />
         </Section>
       </div>
-      {/* อายุลูกหนี้ (ชุดเดียวกับหน้าการเงิน) และสถานะการปิดยอดรายสาขา */}
+      {/* อายุลูกหนี้ (ชุดเดียวกับหน้าใบแจ้งหนี้และใบเสร็จ) และสถานะการปิดยอดรายสาขา */}
       {open.length ? <Receivables list={list} branchOf={branchOf} branchInfo={branchInfo} by={user?.name} />
         : <Section title="ลูกหนี้ค้างชำระตามอายุหนี้"><p className="rounded-xl bg-cream-50 px-4 py-6 text-center text-sm text-gold-600">{meta.loaded ? "ไม่มีใบค้างชำระ" : "กำลังโหลด…"}</p></Section>}
       <CashCloseStatus branch={branch} onOpen={() => { cashHandoff.set(); go("billing"); }} />

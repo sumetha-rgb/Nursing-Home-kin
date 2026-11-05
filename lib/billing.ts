@@ -4,7 +4,8 @@
  * discount = ส่วนลดเป็นบาท · pct = ส่วนลดเป็น % ของยอดบรรทัด (ใช้ได้ทั้งสองอย่างพร้อมกัน)
  * vat = อัตราภาษีมูลค่าเพิ่ม (%) ที่บวกเพิ่มจากยอดหลังส่วนลด · 0 / ไม่มี = ไม่มี VAT · เก็บอัตราไว้ในบรรทัด ใบเก่าไม่เปลี่ยนเมื่อปรับอัตรา
  */
-export type BillItem = { desc: string; qty: number; price: number; discount: number; pct?: number; vat?: number; credit?: boolean };
+/** code = รหัสจากหน้าราคา (เช่น NS-21-M) เมื่อเลือกจากหน้าราคา · ใช้ดูยอดขายตามหมวด */
+export type BillItem = { desc: string; qty: number; price: number; discount: number; pct?: number; vat?: number; credit?: boolean; code?: string };
 /** อัตรา VAT เริ่มต้นของใบใหม่ (%) · แก้ได้ในฟอร์มใบแจ้งหนี้และสัญญา */
 export const DEFAULT_VAT = 7;
 /** อัตรา VAT ค่าห้องของสัญญา (คอลัมน์ room_vat) บวกเพิ่มจากค่าห้อง · ว่าง (สัญญาเก่า) = อัตราเริ่มต้น · 0 = ไม่คิด VAT */
@@ -27,7 +28,7 @@ export const balanceOf = (x: { net: number; paid?: number }) => Math.max(0, Math
 export type Payment = { id: string; n: number; date: string; cash: number; credit: number; transfer: number; amount: number; cashier: string; note: string; slip: string | null; slipAt: string | null; paidBefore: number };
 
 export const parseItems = (json: string): BillItem[] => {
-  try { const x = JSON.parse(json || "[]"); return Array.isArray(x) ? x.map((i) => ({ desc: String(i.desc ?? ""), qty: Number(i.qty) || 0, price: Number(i.price) || 0, discount: Number(i.discount) || 0, pct: Number(i.pct) || 0, vat: i.vat === true ? DEFAULT_VAT : Number(i.vat) || 0, ...(i.credit ? { credit: true } : {}) })) : []; }
+  try { const x = JSON.parse(json || "[]"); return Array.isArray(x) ? x.map((i) => ({ desc: String(i.desc ?? ""), qty: Number(i.qty) || 0, price: Number(i.price) || 0, discount: Number(i.discount) || 0, pct: Number(i.pct) || 0, vat: i.vat === true ? DEFAULT_VAT : Number(i.vat) || 0, ...(i.credit ? { credit: true } : {}), ...(typeof i.code === "string" && i.code ? { code: i.code } : {}) })) : []; }
   catch { return []; }
 };
 export const lineAmount = (i: BillItem) => i.qty * i.price;

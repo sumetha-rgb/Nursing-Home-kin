@@ -137,7 +137,8 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ items: rows });
       }
       case "allergies": {
-        if (!can(me, "residents")) return forbidden();
+        // KinApp ต้องเห็นประวัติแพ้ยาตอนจ่ายยาและวัดสัญญาณชีพ (อ่านอย่างเดียว เฉพาะสาขาตัวเอง)
+        if (!can(me, "residents") && !can(me, "app.staff")) return forbidden();
         const rows = await sql(`SELECT DISTINCT ON (resident_name, branch_name) resident_name AS name, branch_name AS branch, drug_allergy AS drug, food_allergy AS food
             FROM contracts WHERE coalesce(status, '') <> 'ยกเลิกสัญญา' ${scoped(me) ? "AND branch_name = $1" : ""}
             ORDER BY resident_name, branch_name, created_at DESC`, scoped(me) ? [me.branch] : []);
