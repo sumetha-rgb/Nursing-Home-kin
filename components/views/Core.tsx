@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import CsvIcon from "@/components/CsvIcon";
 import { useBranchNames, withBranches } from "@/lib/branches";
 import Link from "next/link";
@@ -213,7 +213,35 @@ const NO_ROOM = "-";
 /** รูปบัตรประชาชนที่แนบในฟอร์ม ("" = ไม่ได้แนบ) */
 type IdPhotos = { employer: string; resident: string };
 
-function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, onClose, onSave }: { rooms: string[][]; residents: string[][]; contracts?: string[][]; initial?: string[]; fromQuote?: string; onClose: () => void; onSave: (r: string[], photos: IdPhotos) => void }) {
+/** ปุ่มเล็กในกล่องแจ้งปัญหา */
+const CALLOUT_PRIMARY = "btn-primary !min-h-0 !py-2 !text-sm";
+const CALLOUT_SOFT = "btn-soft !min-h-0 !py-2 !text-sm";
+/** ปัญหาที่ทำให้ไปขั้นถัดไปไม่ได้ · field = aria-label ของช่องที่ต้องแก้ · el = ช่องที่เบราว์เซอร์ตรวจไม่ผ่าน · live = สัญญาเดิมที่ยังใช้งานอยู่ */
+type FormProblem = { msg: string; field?: string; el?: HTMLElement; live?: string[] };
+/**
+ * กล่องแจ้งปัญหาในฟอร์ม (แทน toast ที่หายไปเอง) · แสดงค้างในขั้นนั้นจนกว่าจะแก้
+ *  block = ไปต่อไม่ได้ (แดง · role=alert) · warn = เตือนให้ตรวจ (เหลือง · role=status)
+ *  focus = ชื่อกล่อง ให้ฟอร์มเลื่อนมาและย้ายโฟกัสมาที่กล่องเมื่อกดถัดไป/บันทึกแล้วไม่ผ่าน
+ */
+function FormCallout({ tone = "block", title, children, actions, focus }: { tone?: "block" | "warn"; title: ReactNode; children?: ReactNode; actions?: ReactNode; focus?: string }) {
+  return (
+    <div data-form-callout={focus} tabIndex={-1} role={tone === "block" ? "alert" : "status"} className={`form-callout is-${tone}`}>
+      <div className="form-callout-head">
+        <Icon name={tone === "block" ? "alert" : "info"} className="h-5 w-5" />
+        <div className="min-w-0 flex-1"><b>{title}</b>{children && <div className="form-callout-body">{children}</div>}</div>
+      </div>
+      {actions && <div className="form-callout-actions">{actions}</div>}
+    </div>
+  );
+}
+
+function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, onClose, onSave, onRenew, onView }: {
+  rooms: string[][]; residents: string[][]; contracts?: string[][]; initial?: string[]; fromQuote?: string; onClose: () => void;
+  /** คืนสัญญาเดิมที่ยังใช้งานอยู่ = บันทึกไม่ได้ (สัญญาซ้อน) ฟอร์มแสดงกล่องแจ้งพร้อมปุ่มต่อสัญญา */
+  onSave: (r: string[], photos: IdPhotos) => string[] | void;
+  /** ปิดฟอร์มแล้วต่อสัญญา / ดูสัญญาเดิม (ใช้เมื่อชื่อนี้มีสัญญาใช้งานอยู่แล้ว) */
+  onRenew?: (c: string[]) => void; onView?: (c: string[]) => void;
+}) {
   const [photos, setPhotos] = useState<IdPhotos>({ employer: "", resident: "" });
   /** ต่อสัญญา (initial = สัญญาเดิม) · เปิดจากใบเสนอราคา initial เป็นแค่ข้อมูลตั้งต้น ไม่ใช่การต่อสัญญา */
   const renewing = !!initial && fromQuote === undefined;
@@ -302,7 +330,19 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, on
   const [priceOk, setPriceOk] = useState("");
   const [row, setRow] = useState<string[] | null>(null);
   const [room, setRoom] = useState("");
-  const [warn, setWarn] = useState("");
+  /** กดถัดไป/บันทึกในขั้นนี้แล้วไม่ผ่านกี่ครั้ง (0 = ยังไม่กด) · ไม่ผ่าน = กล่องแจ้งปัญหาค้างไว้ ตรวจใหม่ทุกครั้งที่แก้ข้อมูล หายเองเมื่อแก้ครบ */
+  const [tried, setTried] = useState(0);
+  /** ครั้งล่าสุดกดบันทึกแบบเลือกห้อง (ตรวจห้อง) หรือบันทึกโดยยังไม่เลือกห้อง */
+  const [triedRoom, setTriedRoom] = useState(false);
+  /** กดเลือกห้องที่เต็ม/ปิดปรับปรุง (ค้างไว้จนกว่าจะเลือกห้องที่ใช้ได้ หรือบันทึกโดยยังไม่เลือกห้อง) */
+  const [pickIssue, setPickIssue] = useState<{ msg: string } | null>(null);
+  /** ช่องแรกที่เบราว์เซอร์ตรวจไม่ผ่าน (ช่องบังคับกรอก / เลขบัตร / เบอร์โทร) */
+  const [invalid, setInvalid] = useState<{ el: HTMLInputElement; msg: string; field: string } | null>(null);
+  /** สัญญาซ้อนที่หน้าทะเบียนสัญญาตรวจพบตอนบันทึก (ข้อมูลเพิ่งโหลด) */
+  const [saveLive, setSaveLive] = useState<string[] | null>(null);
+  const [, rerender] = useState(0);
+  const step3Ref = useRef<HTMLDivElement>(null);
+  const gridRef = useRef<HTMLDivElement>(null);
   const norm = (x: string) => x.trim().replace(/\s+/g, " ");
   /** ค่าเริ่มต้นจากสัญญาเดิม (ต่อสัญญา) */
   const d = (i: number) => (initial?.[i] && initial[i] !== "-" ? initial[i] : undefined);
@@ -338,34 +378,61 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, on
     ];
   };
 
+  /** เปิดสัญญาใหม่ (ไม่ใช่ต่อสัญญา): สัญญาใช้งานอยู่/รอชำระมัดจำของชื่อนี้ในสาขานี้ · มี = ต้องใช้ "ต่อสัญญา" แทน */
+  const liveOf = (name: string, branch: string) => (!renewing ? contracts.find((c) => norm(c[2] ?? "") === name && c[1] === branch && isLive(c)) : undefined);
+  const curBranch = () => String((formRef.current?.elements.namedItem("branch") as HTMLSelectElement | null)?.value ?? "").trim();
+  /** ขั้น 1: ปัญหาแรกที่ต้องแก้ก่อนไปกรอกค่าใช้จ่าย (ลำดับเดิม) · ชื่อผู้จ้าง/ผู้รับบริการเป็นช่องบังคับ (*) ตรวจด้วยกันที่นี่ */
+  const check1 = (): FormProblem | null => {
+    if (endDate && endDate < start) return { msg: "วันสิ้นสุดสัญญาต้องไม่ก่อนวันเริ่มสัญญา", field: "วันสิ้นสุดสัญญา" };
+    if (!drugA.trim()) return { msg: `กรุณาระบุประวัติแพ้ยา หรือกด "${NO_ALLERGY}"`, field: "ประวัติแพ้ยา" };
+    if (!foodA.trim()) return { msg: `กรุณาระบุประวัติแพ้อาหาร หรือกด "${NO_ALLERGY}"`, field: "ประวัติแพ้อาหาร" };
+    const branch = curBranch();
+    if (!branch) return { msg: "กรุณาเลือกสาขา", field: "สาขา (Branch)" };
+    if (!norm(boss)) return { msg: "กรุณากรอกชื่อ นามสกุล ผู้จ้าง", field: renewing ? "ชื่อ นามสกุล ผู้จ้าง" : "ชื่อผู้ว่าจ้าง" };
+    if (!norm(who)) return { msg: "กรุณากรอกชื่อ นามสกุล ผู้รับบริการ", field: "ชื่อผู้รับบริการ" };
+    const live = liveOf(norm(who), branch);
+    return live ? { msg: "", live } : null;
+  };
+  /** ขั้น 2: รายการค่าบริการ */
+  const check2 = (): FormProblem | null =>
+    items.some((x) => x.desc.trim() && (!(x.qty > 0) || x.price < 0)) ? { msg: "กรุณาตรวจจำนวนและราคาของรายการค่าบริการ · จำนวนต้องมากกว่า 0 และราคาต้องไม่ติดลบ" } : null;
+  /** ไปขั้นอื่น: ล้างกล่องแจ้งปัญหาของขั้นเดิม */
+  const goStep = (s: 1 | 2 | 3) => { setStep(s); setTried(0); setInvalid(null); setSaveLive(null); window.scrollTo(0, 0); };
+  /** เลื่อนไปและโฟกัสช่องที่ต้องแก้ (หาจาก aria-label) */
+  const focusField = (f: string | HTMLElement) => {
+    const sel = typeof f === "string" ? `[aria-label="${f}"]` : "";
+    const el = typeof f === "string" ? step3Ref.current?.querySelector<HTMLElement>(sel) ?? formRef.current?.querySelector<HTMLElement>(sel) : f;
+    el?.scrollIntoView({ block: "center", behavior: "smooth" }); el?.focus({ preventScroll: true });
+  };
+  /** เบราว์เซอร์ตรวจช่องไม่ผ่านตอนกดถัดไป: จำช่องแรกไว้แสดงในกล่องแจ้งปัญหา (เบราว์เซอร์ย้ายโฟกัสไปที่ช่องให้เอง) */
+  const onInvalid = (e: FormEvent) => {
+    const el = e.target as HTMLInputElement;
+    const field = el.getAttribute("aria-label") ?? "";
+    const where = field ? `ช่อง "${field}"` : "ช่องที่มีเครื่องหมาย *";
+    const msg = el.validity.valueMissing ? `กรุณา${el.tagName === "SELECT" ? "เลือก" : "กรอก"}${where}` : `${where} · ${el.title || el.validationMessage}`;
+    setInvalid((p) => p ?? { el, msg, field });
+  };
+
   /** ขั้น 1 → 2: ตรวจรายละเอียดแล้วไปกรอกค่าใช้จ่าย */
   const toCosts = () => {
-    if (endDate && endDate < start) return toast("วันสิ้นสุดสัญญาต้องไม่ก่อนวันเริ่มสัญญา");
-    if (!drugA.trim()) return toast(`กรุณาระบุประวัติแพ้ยา หรือกด "${NO_ALLERGY}"`);
-    if (!foodA.trim()) return toast(`กรุณาระบุประวัติแพ้อาหาร หรือกด "${NO_ALLERGY}"`);
+    if (check1()) { setTried((n) => n + 1); return; }
     const r = buildRow();
-    if (!r[1]) return toast("กรุณาเลือกสาขา");
-    // เปิดสัญญาใหม่ (ไม่ใช่ต่อสัญญา): คนที่มีสัญญาใช้งานอยู่/รอชำระมัดจำในสาขานี้แล้ว ให้ใช้ "ต่อสัญญา" แทน
-    const live = !renewing ? contracts.find((c) => norm(c[2] ?? "") === r[2] && c[1] === r[1] && isLive(c)) : undefined;
-    if (live) return toast(`${r[2]} มีสัญญา ${live[0] || "ที่บันทึกไว้"} (${live[5]}) ในสาขา${r[1]}อยู่แล้ว · ถ้าเป็นคนเดิม ให้กด "ต่อสัญญา" ที่สัญญาเดิมแทน · ถ้าเป็นคนละคนที่ชื่อซ้ำ ให้เพิ่มชื่อเล่นหรือปีเกิดต่อท้ายชื่อ`);
     if (r[2] !== row?.[2] || r[1] !== row?.[1]) { setSamePerson(""); setSuffix(""); }
     setRow(r);
-    setStep(2);
-    window.scrollTo(0, 0);
+    goStep(2);
   };
 
   /** ขั้น 2 → 3: ตรวจค่าใช้จ่ายแล้วไปเลือกห้อง */
   const toRooms = () => {
-    if (items.some((x) => x.desc.trim() && (!(x.qty > 0) || x.price < 0))) return toast("กรุณาตรวจจำนวนและราคาของรายการค่าบริการ");
+    if (check2()) { setTried((n) => n + 1); return; }
     const r = buildRow();
     setRow(r);
     // ผู้รับบริการที่มีห้องอยู่แล้ว (ต่อสัญญา): เลือกห้องเดิมไว้ให้
     const cur = residents.find((x) => norm(x[0]) === r[2] && x[3] === r[1] && staying(x[5] ?? ""));
     const curRoom = cur ? findRoom(all, r[1], cur[2]) : undefined;
     setRoom(curRoom ? curRoom.no : room && findRoom(all, r[1], room) ? room : "");
-    setWarn("");
-    setStep(3);
-    window.scrollTo(0, 0);
+    setPickIssue(null); setTriedRoom(false);
+    goStep(3);
   };
 
   /**
@@ -384,24 +451,39 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, on
     return rate ? { fee: rate, pick: "custom" } : null;
   };
 
+  /**
+   * ขั้น 3: ชื่อตรงกับผู้รับบริการที่ย้ายออกแล้ว ต้องเลือกว่าเป็นคนเดิมหรือคนละคน · คนละคน = ต้องมีข้อความต่อท้าย และชื่อใหม่ต้องไม่ซ้ำในสาขา
+   *  ชื่อใหม่ซ้ำ = บอกใต้ช่องทันทีระหว่างพิมพ์ · ข้อความต่อท้ายว่าง = บอกหลังกดบันทึก
+   */
+  const nameClash = !!(row && pastRes && samePerson === "new" && newName && residents.some((r) => norm(r[0]) === newName && r[3] === row[1]));
+  const suffixMsg = nameClash ? `มีผู้รับบริการชื่อ "${newName}" ในสาขา${row?.[1] ?? ""}แล้ว กรุณาใช้ข้อความต่อท้ายอื่น`
+    : tried && pastRes && samePerson === "new" && !newName ? "กรุณาเพิ่มข้อความต่อท้ายชื่อ เช่น ชื่อเล่น หรือปีเกิด เพื่อแยกจากคนเดิม" : "";
+  const nameIssue = !!pastRes && (!samePerson || (samePerson === "new" && (!newName || nameClash)));
+  /** ห้องที่เลือกใช้ได้หรือไม่ (ห้องอาจเต็ม/ปิดหลังจากเลือก เพราะข้อมูลโหลดใหม่) */
+  const roomIssue = () => { if (!row) return ""; const r = findRoom(all, row[1], room); return r ? roomProblem(r, finalName) : "กรุณาเลือกห้องพัก"; };
+
   /** ขั้น 3: บันทึกสัญญา (มีห้อง / ยังไม่มีห้อง) */
   const finish = (withRoom: boolean) => {
     if (!row) return;
-    if (pastRes) {
-      if (!samePerson) { const m = `${row[2]} เคยเป็นผู้รับบริการของสาขา${row[1]}และย้ายออกไปแล้ว · กรุณาเลือกว่าเป็นคนเดิมกลับมาพัก หรือคนละคนที่ชื่อซ้ำ`; setWarn(m); return toast(m); }
-      if (samePerson === "new") {
-        if (!newName) { const m = "คนละคนที่ชื่อซ้ำ: กรุณาเพิ่มข้อความต่อท้ายชื่อ เช่น ชื่อเล่น หรือปีเกิด เพื่อแยกจากคนเดิม"; setWarn(m); return toast(m); }
-        if (residents.some((r) => norm(r[0]) === newName && r[3] === row[1])) { const m = `มีผู้รับบริการชื่อ "${newName}" ในสาขา${row[1]}แล้ว กรุณาใช้ข้อความต่อท้ายอื่น`; setWarn(m); return toast(m); }
-      }
-    }
-    if (withRoom) {
-      const r = findRoom(all, row[1], room);
-      if (!r) return toast("กรุณาเลือกห้องพัก");
-      const problem = roomProblem(r, finalName);
-      if (problem) { setWarn(problem); return toast(problem); }
-    }
-    onSave(buildRow().map((x, i) => (i === 6 ? (withRoom ? room : NO_ROOM) : i === 2 ? finalName : x)), photos);
+    setTriedRoom(withRoom);
+    if (!withRoom) setPickIssue(null);
+    if (nameIssue || liveOf(finalName, row[1]) || (withRoom && roomIssue())) { setTried((n) => n + 1); return; }
+    const clash = onSave(buildRow().map((x, i) => (i === 6 ? (withRoom ? room : NO_ROOM) : i === 2 ? finalName : x)), photos);
+    if (clash) { setSaveLive(clash); setTried((n) => n + 1); }
   };
+
+  // กดถัดไป/บันทึกไม่ผ่าน: เลื่อนไปและย้ายโฟกัสไปที่กล่องแจ้งปัญหากล่องแรกของขั้นนั้น (โปรแกรมอ่านหน้าจออ่านให้ทันที)
+  useEffect(() => {
+    if (!tried) return;
+    const box = (step === 3 ? step3Ref.current : formRef.current)?.querySelector<HTMLElement>("[data-form-callout]");
+    box?.scrollIntoView({ block: "center", behavior: "smooth" }); box?.focus({ preventScroll: true });
+  }, [tried, step]);
+  // กดห้องที่เลือกไม่ได้: โฟกัสกล่องแจ้งใต้ผังห้อง
+  useEffect(() => {
+    if (!pickIssue) return;
+    const box = step3Ref.current?.querySelector<HTMLElement>('[data-form-callout="room"]');
+    box?.scrollIntoView({ block: "nearest", behavior: "smooth" }); box?.focus({ preventScroll: true });
+  }, [pickIssue]);
 
   // ค่าห้องที่เลือกในขั้นที่ 2 เทียบกับห้องที่เลือก (เตือนเท่านั้น)
   const picked = row && room ? findRoom(all, row[1], room) : undefined;
@@ -415,9 +497,38 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, on
 
   const pick = (r: RoomInfo) => {
     const problem = roomProblem(r, row?.[2]);
-    if (problem) { setWarn(problem); toast(problem); return; }
-    setWarn(""); setRoom(r.no);
+    if (problem) { setPickIssue({ msg: problem }); return; }
+    setPickIssue(null); setRoom(r.no);
   };
+  /** "เลือกห้องอื่น": โฟกัสการ์ดห้องแรกที่ยังรับได้ */
+  const freeIdx = row ? options.findIndex((r) => !roomProblem(r, row[2])) : -1;
+  const focusFreeRoom = () => { const el = gridRef.current?.children[freeIdx] as HTMLElement | undefined; el?.scrollIntoView({ block: "center", behavior: "smooth" }); el?.focus({ preventScroll: true }); };
+  const roomMsg = pickIssue?.msg || (tried && triedRoom ? roomIssue() : "");
+  const live3 = step === 3 && tried && row ? liveOf(finalName, row[1]) ?? saveLive ?? undefined : undefined;
+  /** ปัญหาของขั้น 1-2 ที่แสดงเหนือปุ่ม (ช่องที่เบราว์เซอร์ตรวจไม่ผ่านก่อน) */
+  const stepProblem: FormProblem | null = invalid ? { msg: invalid.msg, el: invalid.el, field: invalid.field || undefined }
+    : !tried ? null : step === 1 ? check1() : step === 2 ? check2() : null;
+  const backToName = () => { goStep(1); setTimeout(() => focusField("ชื่อผู้รับบริการ"), 50); };
+  /** ชื่อนี้มีสัญญาใช้งานอยู่แล้ว: ทางออก = ต่อสัญญาฉบับเดิม / ดูสัญญาเดิม / แก้ชื่อ (คนละคนที่ชื่อซ้ำ) */
+  const liveBox = (live: string[]) => {
+    const suffixHere = step === 3 && !!pastRes && samePerson === "new";
+    return (
+      <FormCallout focus="step" title={`${live[2]} มีสัญญา ${live[0] || "ที่บันทึกไว้"} (${live[5]}) ในสาขา${live[1]}อยู่แล้ว`}
+        actions={<>
+          {onRenew && <button type="button" className={CALLOUT_PRIMARY} onClick={() => onRenew(live)}>ต่อสัญญาฉบับเดิม</button>}
+          {onView && <button type="button" className={CALLOUT_SOFT} onClick={() => onView(live)}>ดูสัญญาเดิม</button>}
+          <button type="button" className={CALLOUT_SOFT} onClick={() => (suffixHere ? focusField("ข้อความต่อท้ายชื่อ") : step === 3 ? backToName() : focusField("ชื่อผู้รับบริการ"))}>
+            {suffixHere ? "แก้ข้อความต่อท้ายชื่อ" : step === 3 ? "ย้อนกลับไปแก้ชื่อ" : "แก้ชื่อผู้รับบริการ"}</button>
+        </>}>
+        <p>ถ้าเป็นคนเดิม ให้ต่อสัญญาฉบับเดิมแทนการเปิดสัญญาใหม่ · ถ้าเป็นคนละคนที่ชื่อซ้ำ ให้เพิ่มชื่อเล่นหรือปีเกิดต่อท้ายชื่อ</p>
+        {(onRenew || onView) && <p className="form-callout-note">กดต่อสัญญาหรือดูสัญญาเดิม ฟอร์มนี้จะปิด ข้อมูลที่กรอกไว้จะไม่ถูกบันทึก</p>}
+      </FormCallout>
+    );
+  };
+  const calloutOf = (p: FormProblem) => p.live ? liveBox(p.live) : (
+    <FormCallout focus="step" title={p.msg}
+      actions={p.el || p.field ? <button type="button" className={CALLOUT_SOFT} onClick={() => focusField(p.el ?? p.field ?? "")}>{p.field ? `ไปที่ช่อง "${p.field}"` : "ไปที่ช่องนี้"}</button> : undefined} />
+  );
 
   return (
     <Section title={fromQuote !== undefined ? `เปิดสัญญาใหม่ · จากใบเสนอราคา ${fromQuote}` : initial ? `ต่อสัญญา · ${initial[2]} (สัญญาเดิม ${initial[0]})` : "เปิดสัญญาใหม่"}>
@@ -427,7 +538,8 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, on
         <span className={step === 3 ? "is-active" : ""}><b>3</b>เลือกห้องพัก</span>
       </div>
 
-      <form ref={formRef} className={`space-y-8 ${step === 3 ? "hidden" : ""}`} onSubmit={(e) => { e.preventDefault(); if (step === 1) toCosts(); else toRooms(); }}>
+      <form ref={formRef} className={`space-y-8 ${step === 3 ? "hidden" : ""}`} onSubmit={(e) => { e.preventDefault(); if (step === 1) toCosts(); else toRooms(); }}
+        onInvalidCapture={onInvalid} onChangeCapture={() => { if (invalid?.el.validity.valid) setInvalid(null); if (tried) rerender((n) => n + 1); }}>
         <div className={step === 1 ? "space-y-8" : "hidden"}>
         <div className="grid gap-4 md:grid-cols-2">
           <Field label="สาขา (Branch)" required className="md:col-span-2"><select name="branch" defaultValue={d(1) ?? ""}><option value="">-- กรุณาเลือกสาขา --</option>{branchNames.map((b) => <option key={b}>{b}</option>)}</select></Field>
@@ -550,51 +662,69 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, on
           </div>
         </div>
 
+        {/* ปัญหาที่ทำให้ไปขั้นถัดไปไม่ได้: ค้างไว้เหนือปุ่มจนกว่าจะแก้ */}
+        {stepProblem && calloutOf(stepProblem)}
         {step === 1 ? <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           <button type="button" className="btn-soft" onClick={onClose}>ยกเลิก</button>
-          <button className="btn-primary">ถัดไป: ค่าใช้จ่าย <Icon name="arrow" className="h-4 w-4" /></button>
+          <button className="btn-primary" onClick={() => setInvalid(null)}>ถัดไป: ค่าใช้จ่าย <Icon name="arrow" className="h-4 w-4" /></button>
         </div> : <div className="flex flex-col-reverse gap-2 border-t border-cream-200 pt-4 sm:flex-row sm:justify-end">
-          <button type="button" className="btn-soft" onClick={() => { setStep(1); window.scrollTo(0, 0); }}>ย้อนกลับไปแก้รายละเอียด</button>
-          <button className="btn-primary">ถัดไป: เลือกห้องพัก <Icon name="arrow" className="h-4 w-4" /></button>
+          <button type="button" className="btn-soft" onClick={() => goStep(1)}>ย้อนกลับไปแก้รายละเอียด</button>
+          <button className="btn-primary" onClick={() => setInvalid(null)}>ถัดไป: เลือกห้องพัก <Icon name="arrow" className="h-4 w-4" /></button>
         </div>}
       </form>
 
-      {step === 3 && row && <div className="space-y-5">
+      {step === 3 && row && <div ref={step3Ref} className="space-y-5">
         <div className="rounded-2xl border border-cream-200 bg-cream-50/60 px-4 py-3 text-sm text-gold-700">
           <p><span className="text-gold-500">ผู้รับบริการ</span> <b className="font-medium text-gold-800">{row[2]}</b>{row[13] ? ` · ${row[13]} ปี` : ""} · <span className="text-gold-500">สาขา</span> {row[1]} · <span className="text-gold-500">ผู้ว่าจ้าง</span> {row[3]}{contractTotal(row) ? <> · <span className="text-gold-500">ยอดรวม</span> {money(contractTotal(row))} บาท/เดือน</> : ""}</p>
           {existing && <p className="mt-1 text-xs text-gold-500">มีชื่อนี้ในทะเบียนผู้รับบริการแล้ว ระบบจะอัปเดตห้องให้คนเดิม ไม่สร้างรายชื่อซ้ำ</p>}
         </div>
-        {pastRes && <div role="group" aria-label="เป็นคนเดิมหรือไม่" className="space-y-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
-          <p><b>ชื่อนี้เคยเป็นผู้รับบริการของสาขา{row[1]}</b>{pastRes[6] ? ` (HN ${pastRes[6]})` : ""} และย้ายออกไปแล้ว · เลือกให้ถูกก่อนบันทึก ระบบจะไม่รวมประวัติให้เอง</p>
-          <div className="flex flex-wrap gap-2">
-            {([["same", "เป็นคนเดิม (กลับมาพักอีกครั้ง)"], ["new", "คนละคน (ชื่อซ้ำ)"]] as const).map(([k, t]) => (
-              <button key={k} type="button" aria-pressed={samePerson === k} onClick={() => { setSamePerson(k); setWarn(""); }}
-                className={`rounded-full px-3 py-1.5 text-xs font-medium ${samePerson === k ? "bg-gold-700 text-white" : "border border-cream-300 bg-white text-gold-700 hover:border-gold-300"}`}>{t}</button>
+        {/* ชื่อตรงกับคนที่ย้ายออกแล้ว: เตือน (เหลือง) · กดบันทึกแล้วยังเลือก/กรอกไม่ครบ = ไปต่อไม่ได้ (แดง) */}
+        {pastRes && <FormCallout tone={tried && nameIssue ? "block" : "warn"} focus={tried && nameIssue ? "step" : undefined}
+          title={<>ชื่อนี้เคยเป็นผู้รับบริการของสาขา{row[1]}{pastRes[6] ? ` (HN ${pastRes[6]})` : ""} และย้ายออกไปแล้ว</>}>
+          <p>{tried && !samePerson ? "กรุณาเลือกว่าเป็นคนเดิมกลับมาพัก หรือคนละคนที่ชื่อซ้ำ ก่อนบันทึก" : "เลือกให้ถูกก่อนบันทึก ระบบจะไม่รวมประวัติให้เอง"}</p>
+          <div role="radiogroup" aria-label="เป็นคนเดิมหรือไม่" aria-required="true" className="choice-cards">
+            {([["same", "เป็นคนเดิม (กลับมาพักอีกครั้ง)", "ใช้ทะเบียนเดิม (HN ประวัติการรักษา โรคประจำตัว ยา) · สถานะเปลี่ยนเป็นเข้าพักอีกครั้ง"],
+              ["new", "คนละคน (ชื่อซ้ำ)", "สร้างทะเบียนผู้รับบริการใหม่ (HN ใหม่) ไม่รวมกับคนเดิม · ต้องเพิ่มข้อความต่อท้ายชื่อ"]] as const).map(([k, t, s]) => (
+              <button key={k} type="button" role="radio" aria-checked={samePerson === k} onClick={() => setSamePerson(k)} className={`choice-card ${samePerson === k ? "is-on" : ""}`}>
+                <span className="choice-card-dot" aria-hidden="true" /><span><b>{t}</b><small>{s}</small></span>
+              </button>
             ))}
           </div>
-          {samePerson === "same" && <p className="text-xs">ใช้ทะเบียนเดิม (HN ประวัติการรักษา โรคประจำตัว ยา) · สถานะเปลี่ยนเป็นเข้าพักอีกครั้ง</p>}
-          {samePerson === "new" && <Field label="ข้อความต่อท้ายชื่อ (ใช้แยกจากคนเดิม)" required>
-            <input value={suffix} onChange={(e) => setSuffix(e.target.value)} placeholder="เช่น ชื่อเล่น หรือปีเกิด 2485" aria-label="ข้อความต่อท้ายชื่อ" />
-            <p className="field-hint">{newName ? <>จะบันทึกเป็น <b>{newName}</b> · สร้างทะเบียนผู้รับบริการใหม่ (HN ใหม่) ไม่รวมกับคนเดิม</> : "ระบบไม่ให้มีชื่อซ้ำในสาขาเดียวกัน จึงต้องเพิ่มข้อความต่อท้าย"}</p>
-          </Field>}
-        </div>}
-        {warn && <p role="alert" className="room-warn">{warn}</p>}
+          {samePerson === "new" && <>
+            <Field label="ข้อความต่อท้ายชื่อ (ใช้แยกจากคนเดิม)" required>
+              <input value={suffix} onChange={(e) => setSuffix(e.target.value)} placeholder="เช่น ชื่อเล่น หรือปีเกิด 2485" aria-label="ข้อความต่อท้ายชื่อ"
+                aria-invalid={suffixMsg ? true : undefined} aria-describedby="contract-suffix-msg" autoFocus />
+            </Field>
+            <p id="contract-suffix-msg" className={suffixMsg ? "field-error" : "field-hint"}>{suffixMsg || (newName ? <>จะบันทึกเป็น <b>{newName}</b> · สร้างทะเบียนผู้รับบริการใหม่ (HN ใหม่) ไม่รวมกับคนเดิม</> : "ระบบไม่ให้มีชื่อซ้ำในสาขาเดียวกัน จึงต้องเพิ่มข้อความต่อท้าย")}</p>
+          </>}
+        </FormCallout>}
         {!options.length ? <div className="empty-state"><Icon name="bed" /><p>สาขา{row[1]}ยังไม่มีห้องในระบบ {can(user, "rooms.manage") ? "สร้างห้องที่เมนูห้องพักและเตียง หรือบันทึกสัญญาไปก่อนแล้วจัดห้องภายหลัง" : "แจ้งผู้จัดการสาขาให้สร้างห้อง หรือบันทึกสัญญาไปก่อนแล้วจัดห้องภายหลัง"}</p>
           {can(user, "rooms.manage") && <button type="button" className="mt-3 text-sm text-gold-700 underline-offset-4 hover:underline" onClick={() => go("rooms")}>ไปที่ห้องพักและเตียง (ข้อมูลที่กรอกจะไม่ถูกบันทึก)</button>}</div>
           : <>
             <p className="text-sm text-gold-600">เลือกห้องที่ยังว่าง · สาขา{row[1]} ว่าง {free} เตียง จาก {options.length} ห้อง</p>
-            {free === 0 && <p role="alert" className="room-warn">ห้องของสาขา{row[1]}เต็มทุกห้องแล้ว บันทึกสัญญาโดยยังไม่เลือกห้อง แล้วแจ้งผู้จัดการสาขาให้เพิ่มห้องหรือเพิ่มจำนวนผู้ป่วยต่อห้อง</p>}
-            <div className="room-grid">{options.map((r) => <RoomCard key={r.i} room={r} selected={roomKey(r.no) === roomKey(room)} onClick={() => pick(r)} />)}</div>
-            {picked && mismatch && <div role="status" className="space-y-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
-              <p className="text-sm text-amber-950"><b>ห้อง {picked.no} ({picked.type}) ค่าห้องคือ {money(mismatch.fee)} บาท/เดือน</b> {Number(fee) ? <>แต่ค่าห้องที่เลือกในขั้นที่ 2 คือ <b>{money(Number(fee))} บาท</b></> : "แต่ยังไม่ได้เลือกค่าห้องในขั้นที่ 2"} · ตรวจอีกครั้งก่อนบันทึก</p>
-              <div className="flex flex-wrap gap-2">
-                <button type="button" className="btn-primary !min-h-0 !py-2 !text-sm" onClick={() => applyRoomPrice(mismatch)}>ใช้ค่าห้อง {money(mismatch.fee)}</button>
-                {Number(fee) > 0 && <button type="button" className="btn-soft !min-h-0 !py-2 !text-sm" onClick={() => setPriceOk(picked.no)}>ราคาเดิมถูกแล้ว ไม่ต้องเปลี่ยน</button>}
-              </div>
-            </div>}
+            {free === 0 && <FormCallout tone="warn" title={`ห้องของสาขา${row[1]}เต็มทุกห้องแล้ว`}
+              actions={<button type="button" className={CALLOUT_SOFT} onClick={() => finish(false)}>บันทึกโดยยังไม่เลือกห้อง</button>}>
+              <p>บันทึกสัญญาโดยยังไม่เลือกห้อง แล้วแจ้งผู้จัดการสาขาให้เพิ่มห้องหรือเพิ่มจำนวนผู้ป่วยต่อห้อง</p>
+            </FormCallout>}
+            <div ref={gridRef} className="room-grid">{options.map((r) => <RoomCard key={r.i} room={r} selected={roomKey(r.no) === roomKey(room)} onClick={() => pick(r)} />)}</div>
+            {/* ห้องที่กด/ที่เลือกไว้ใช้ไม่ได้ (เต็ม / ปิดปรับปรุง / ไม่พบห้อง): ค้างใต้ผังห้องจนกว่าจะเลือกห้องที่ใช้ได้ */}
+            {roomMsg && <FormCallout focus="room" title={roomMsg}
+              actions={<>
+                {freeIdx >= 0 && <button type="button" className={CALLOUT_PRIMARY} onClick={focusFreeRoom}>เลือกห้องอื่น</button>}
+                <button type="button" className={CALLOUT_SOFT} onClick={() => finish(false)}>บันทึกโดยยังไม่เลือกห้อง</button>
+              </>} />}
+            {picked && mismatch && <FormCallout tone="warn" title={`ห้อง ${picked.no} (${picked.type}) ค่าห้องคือ ${money(mismatch.fee)} บาท/เดือน`}
+              actions={<>
+                <button type="button" className={CALLOUT_PRIMARY} onClick={() => applyRoomPrice(mismatch)}>ใช้ค่าห้อง {money(mismatch.fee)}</button>
+                {Number(fee) > 0 && <button type="button" className={CALLOUT_SOFT} onClick={() => setPriceOk(picked.no)}>ราคาเดิมถูกแล้ว ไม่ต้องเปลี่ยน</button>}
+              </>}>
+              <p>{Number(fee) ? <>แต่ค่าห้องที่เลือกในขั้นที่ 2 คือ <b>{money(Number(fee))} บาท</b></> : "แต่ยังไม่ได้เลือกค่าห้องในขั้นที่ 2"} · ตรวจอีกครั้งก่อนบันทึก</p>
+            </FormCallout>}
           </>}
+        {/* ชื่อนี้มีสัญญาใช้งานอยู่แล้ว (ตรวจซ้ำตอนบันทึก) */}
+        {live3 && liveBox(live3)}
         <div className="flex flex-col-reverse gap-2 border-t border-cream-200 pt-4 sm:flex-row sm:justify-end">
-          <button type="button" className="btn-soft" onClick={() => { setStep(2); window.scrollTo(0, 0); }}>ย้อนกลับไปแก้ค่าใช้จ่าย</button>
+          <button type="button" className="btn-soft" onClick={() => goStep(2)}>ย้อนกลับไปแก้ค่าใช้จ่าย</button>
           <button type="button" className="btn-soft" onClick={() => finish(false)}>บันทึกโดยยังไม่เลือกห้อง</button>
           <button type="button" className="btn-primary" disabled={!room} onClick={() => finish(true)}>{room ? `บันทึกสัญญา · ห้อง ${room}` : "เลือกห้องก่อนบันทึก"}</button>
         </div>
@@ -709,11 +839,12 @@ export function Contracts() {
    * สัญญาใหม่ / ต่อสัญญา: เพิ่มหรืออัปเดตผู้รับบริการพร้อมห้องก่อน (server ออก HN ให้) แล้วจึงบันทึกสัญญา
    * มีค่าบริการล่วงหน้า/เงินประกัน = ออกใบแจ้งหนี้ให้ที่เมนูใบแจ้งหนี้และใบเสร็จ · รอชำระมัดจำ = จองห้องไว้ก่อน
    */
-  const create = (r: string[], photos: IdPhotos) => {
+  const create = (r: string[], photos: IdPhotos): string[] | void => {
     const oldId = renew !== null ? ids[renew] : undefined;
     // กันสัญญาซ้อน: เปิดสัญญาใหม่ให้คนที่มีสัญญาใช้งานอยู่/รอชำระมัดจำในสาขานี้แล้วไม่ได้ (ฟอร์มตรวจแล้ว ตรวจซ้ำกันข้อมูลเพิ่งโหลด)
+    //  คืนสัญญาเดิมให้ฟอร์มแสดงกล่องแจ้งค้างไว้ พร้อมปุ่มต่อสัญญาฉบับเดิม
     const live = renew === null ? rows.find((c) => norm(c[2] ?? "") === norm(r[2]) && c[1] === r[1] && isLive(c)) : undefined;
-    if (live) return toast(`${r[2]} มีสัญญา ${live[0] || "ที่บันทึกไว้"} (${live[5]}) อยู่แล้ว · ใช้ "ต่อสัญญา" ที่สัญญาเดิมแทน`);
+    if (live) return live;
     const j = resIndex(r[2], r[1]);
     const p0 = j >= 0 ? res.rows[j] : undefined;
     // คนที่ยังพักอยู่ (เข้าอยู่ / แอดมิท รพ.) คงสถานะเดิม เช่น ต่อสัญญาระหว่างแอดมิทยังเป็นแอดมิท · คนใหม่/กลับมาพักใหม่ ตามสถานะสัญญา
@@ -894,8 +1025,14 @@ export function Contracts() {
     toast(roomChanged ? `ย้ายห้องแล้ว · ${v[2]} · ไปห้อง ${v[6]}` : `แก้ไขสัญญาแล้ว · ${v[0] || ""} ${v[2]}`.trim());
   };
 
+  /** แถวสัญญาที่ฟอร์มส่งกลับมา → ลำดับในทะเบียน (ข้อมูลโหลดใหม่ระหว่างนั้น = หาจากเลขที่สัญญา) */
+  const contractIndex = (c: string[]) => { const i = rows.indexOf(c); return i >= 0 || !c[0] ? i : rows.findIndex((x) => x[0] === c[0]); };
+  // ชื่อนี้มีสัญญาใช้งานอยู่แล้ว: ปิดฟอร์มใหม่ แล้วเปิดฟอร์มต่อสัญญาของสัญญาเดิม (เหมือนกด "ต่อสัญญา" ในทะเบียน) / เปิดดูรายละเอียดสัญญาเดิม
+  //  key เปลี่ยน = ฟอร์มเริ่มใหม่ด้วยข้อมูลสัญญาเดิม
   if (creating || renew !== null)
-    return <ContractForm rooms={rooms.rows} residents={res.rows} contracts={rows} initial={renew !== null ? rows[renew] : fromQuote?.prefill} fromQuote={fromQuote ? fromQuote.quoteNo : undefined} onClose={() => { setCreating(false); setRenew(null); setFromQuote(null); }} onSave={create} />;
+    return <ContractForm key={renew !== null ? `renew-${renew}` : "new"} rooms={rooms.rows} residents={res.rows} contracts={rows} initial={renew !== null ? rows[renew] : fromQuote?.prefill} fromQuote={fromQuote ? fromQuote.quoteNo : undefined} onClose={() => { setCreating(false); setRenew(null); setFromQuote(null); }} onSave={create}
+      onRenew={(c) => { const i = contractIndex(c); if (i < 0) return; setCreating(false); setFromQuote(null); setRenew(i); window.scrollTo(0, 0); }}
+      onView={(c) => { const i = contractIndex(c); if (i < 0) return; setCreating(false); setRenew(null); setFromQuote(null); setDlg({ mode: "view", i }); }} />;
   const dcRow = dc ? rows[dc.i] : null;
   const dcRes = dcRow ? res.rows[resIndex(dcRow[2], dcRow[1])] : undefined;
   const owing = dcRow ? owingOf(dcRow) : [];

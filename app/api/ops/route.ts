@@ -48,7 +48,8 @@ export async function GET(req: NextRequest) {
             to_char(d.scheduled_time, 'HH24:MI') AS time
           FROM task_nudges n JOIN daily_tasks d ON d.id = n.task_id
           WHERE n.branch_name = $1 AND d.status NOT IN ('เสร็จแล้ว', 'ตรวจแล้ว')
-            AND n.work_date >= (now() AT TIME ZONE 'Asia/Bangkok')::date - 1
+            -- วันทำงานเดียวกับ KinApp (เปลี่ยนตอน 07:00): เวรดึกยังเห็นจนจบเวร · หลัง 07:00 ไม่ค้างของเมื่อวาน
+            AND n.work_date >= (now() AT TIME ZONE 'Asia/Bangkok' - interval '7 hours')::date
             AND (
               -- ถึงฉันโดยตรง และยังไม่ตอบ
               (n.target = $2 AND n.reply IS NULL)

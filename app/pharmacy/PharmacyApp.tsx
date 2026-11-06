@@ -4,7 +4,7 @@ import CsvIcon from "@/components/CsvIcon";
 import Image from "next/image";
 import Link from "next/link";
 import Icon from "@/components/Icon";
-import { DataTable, Field, Modal, PageHeader, PrintLetterhead, Section, Select, StatusBadge, Tabs } from "@/components/ui";
+import { DataTable, Field, Modal, PageHeader, PrintLetterhead, Section, Select, StatFilter, StatusBadge, Tabs } from "@/components/ui";
 import { AppProvider, useApp } from "@/lib/app";
 import { downloadCsv, refreshData, useCrud, useRecords } from "@/lib/store";
 import { OfflineBar } from "@/components/Pwa";
@@ -63,6 +63,8 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   const today = iso();
   // กด "เพิ่มยาให้ผู้ป่วยคนนี้" จากหน้าจัดยา → เปิดฟอร์มรับยาพร้อมชื่อผู้ป่วย
   const [addFor, setAddFor] = useState<string | null>(null);
+  /** ตัวกรองหน้ายาของผู้ป่วย: "" ทั้งหมด · low ใกล้หมด · hold งดยาชั่วคราว (คงไว้เมื่อสลับหน้า) */
+  const [invView, setInvView] = useState("");
   // ตรวจ QA เจอซองจัดผิด → รีเซตแล้วเปิดหน้าจัดยาของผู้ป่วยและวันนั้นให้เลย
   const [focus, setFocus] = useState<{ who: string; date: string } | null>(null);
 
@@ -78,7 +80,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
 
   const todayNeed = RESIDENTS.flatMap((w) => MEALS.filter((m) => drugsFor(drugs, w, m, today).length).map((m) => ({ w, m })));
   const packedToday = todayNeed.filter(({ w, m }) => packs.some((p) => p.date === today && p.who === w && p.meal === m)).length;
-  const low = drugs.filter((x) => !x.hold && x.stock <= (x.bulk ? 1 : x.dose * x.meals.length * 2));
+  const low = drugs.filter(isLowDrug);
   const waitQa = packs.filter((p) => p.qa === "รอตรวจ").length;
   const current = NAV.find((n) => n.id === page)!;
 
@@ -122,10 +124,10 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
         <OfflineBar />
         <main className="workspace-main" key={page}>
           <PrintLetterhead title="ระบบบริหารจัดการยา" className="page-letterhead" />
-          {page === "dashboard" && <Dashboard go={go} need={todayNeed.length} packed={packedToday} low={low} waitQa={waitQa} />}
+          {page === "dashboard" && <Dashboard go={go} need={todayNeed.length} packed={packedToday} low={low} waitQa={waitQa} onLow={() => { setInvView("low"); go("inventory"); }} />}
           {page === "dispense" && <Dispense drugs={drugs} setDrugs={setDrugs} packs={packs} setPacks={setPacks} go={go} me={user.name} focus={focus} onAddDrug={(w) => { setAddFor(w); go("inventory"); }} />}
           {page === "qa" && <QA packs={packs} setPacks={setPacks} drugs={drugs} setDrugs={setDrugs} me={user.name} go={go} onRedo={(who, date) => { setFocus({ who, date }); go("dispense"); }} />}
-          {page === "inventory" && <Inventory drugs={drugs} setDrugs={setDrugs} master={master} addFor={addFor} onAdded={() => setAddFor(null)} />}
+          {page === "inventory" && <Inventory drugs={drugs} setDrugs={setDrugs} master={master} addFor={addFor} onAdded={() => setAddFor(null)} lowView={invView} onLowView={setInvView} />}
           {page === "central" && <CentralStock />}
           {page === "supplies" && <SupplyStock />}
           {page === "audit" && <Audit drugs={drugs} setDrugs={setDrugs} />}
@@ -142,7 +144,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
 }
 
 /* ---------- แดชบอร์ด ---------- */
-function Dashboard({ go, need, packed, low, waitQa }: { go: (p: Page) => void; need: number; packed: number; low: Drug[]; waitQa: number }) {
+function Dashboard({ go, need, packed, low, waitQa, onLow }: { go: (p: Page) => void; need: number; packed: number; low: Drug[]; waitQa: number; onLow: () => void }) {
   const { items: stock } = useStockAlerts();
   // แถบขั้นตอนพร้อมตัวเลขของวันนี้ · วิธีทำแต่ละขั้น (พนักงาน / ระบบ) อยู่ที่หน้าคู่มือ
   const steps: { t: string; note: string; tone?: "now" | "warn" | "done"; p: Page | "kinapp" }[] = [
@@ -162,7 +164,7 @@ function Dashboard({ go, need, packed, low, waitQa }: { go: (p: Page) => void; n
         ))}
       </ol>
       <div className="mb-6 flex flex-wrap items-center gap-2">
-        <button className="btn-soft" onClick={() => go("inventory")}><Icon name="alert" className="h-4 w-4" /> เติมยาใกล้หมด{low.length ? ` ${low.length}` : ""}</button>
+        <button className="btn-soft" onClick={onLow}><Icon name="alert" className="h-4 w-4" /> เติมยาใกล้หมด{low.length ? ` ${low.length}` : ""}</button>
         <button className="btn-soft" onClick={() => go("audit")}><Icon name="check" className="h-4 w-4" /> สุ่มนับยา</button>
         <button className="step-link ml-auto !mt-0" onClick={() => go("manual")}>วิธีทำแต่ละขั้น<Icon name="arrow" className="h-3.5 w-3.5" /></button>
       </div>
@@ -405,8 +407,11 @@ const postStock = async (body: object) => {
   return d as { left: number; unit: string; priced: boolean };
 };
 const LIQUID = FORMS[1];
+/** ยาใกล้หมด: เหลือไม่ถึง 2 วัน (ยาขวดเหลือ 1 หน่วย) · ยางดชั่วคราวไม่นับ */
+const isLowDrug = (x: Drug) => !x.hold && x.stock <= (x.bulk ? 1 : x.dose * x.meals.length * 2);
 
-function Inventory({ drugs, setDrugs, master, addFor, onAdded }: { drugs: Drug[]; setDrugs: (x: Drug[]) => void; master: string[][]; addFor: string | null; onAdded: () => void }) {
+/** view: "" ทั้งหมด · low ใกล้หมด (ปุ่ม "เติมยาใกล้หมด" ในหน้าแรกเปิดมาที่นี่) · hold งดยาชั่วคราว */
+function Inventory({ drugs, setDrugs, master, addFor, onAdded, lowView, onLowView }: { drugs: Drug[]; setDrugs: (x: Drug[]) => void; master: string[][]; addFor: string | null; onAdded: () => void; lowView: string; onLowView: (v: string) => void }) {
   const RESIDENTS = useNames();
   const { toast, confirm } = useApp();
   const [f, setF] = useState(blankForm);
@@ -434,7 +439,8 @@ function Inventory({ drugs, setDrugs, master, addFor, onAdded }: { drugs: Drug[]
   };
   const [filter, setFilter] = useState("");
   const toggle = (k: "meals" | "days" | "warn", v: string) => setF({ ...f, [k]: f[k].includes(v) ? f[k].filter((x) => x !== v) : [...f[k], v] });
-  const shown = drugs.filter((x) => !filter || x.who === filter);
+  const mine = drugs.filter((x) => !filter || x.who === filter);
+  const shown = mine.filter((x) => !lowView || (lowView === "low" ? isLowDrug(x) : x.hold));
   // เบิกจากคลังกลางของศูนย์: ยาที่สาขาของผู้ป่วยมีคงเหลือ
   const { residents } = useResidents();
   const [central, setCentral] = useState<CDrug[] | null>(null);
@@ -503,14 +509,23 @@ function Inventory({ drugs, setDrugs, master, addFor, onAdded }: { drugs: Drug[]
       <PageHeader title="ยาของผู้ป่วย (รับเข้า · แก้ไข)" sub="รับยาเข้าและแก้ยอดยาของแต่ละคน"
         actions={<><button className="btn-soft" onClick={() => window.print()}><Icon name="print" className="h-4 w-4" /> พิมพ์ใบรับยาเข้า</button><button className="btn-primary" onClick={() => { setF(blankForm()); setOpen(true); }}><Icon name="plus" className="h-4 w-4" /> บันทึกข้อมูลยาใหม่จากโรงพยาบาล</button></>} />
       <Section title="คลังยาทั้งหมด (แยกตามผู้สูงอายุ)" actions={<div className="min-w-52"><Select options={RESIDENTS} placeholder="ผู้สูงอายุทั้งหมด" value={filter} onChange={setFilter} /></div>}>
+        <StatFilter label="กรองยา" value={lowView} onChange={onLowView} items={[
+          { k: "", t: "ทั้งหมด", n: mine.length, tone: "all" },
+          { k: "low", t: "ใกล้หมด", n: mine.filter(isLowDrug).length, tone: "bad" },
+          { k: "hold", t: "งดยาชั่วคราว", n: mine.filter((x) => x.hold).length, tone: "muted" },
+        ]} />
         <DataTable
           columns={["ผู้สูงอายุ", "ชื่อยา", "วิธีทาน", "มื้อ", "คงเหลือ", "สถานะ"]}
           rows={shown.map((x) => [x.who, `${x.name} · [${x.src === CENTRAL ? CENTRAL : "ญาตินำมา"}]`, x.how || "-", x.bulk ? "ยาขวด / ไม่แพ็คซอง" : `${x.meals.join(", ")} · ครั้งละ ${x.dose} ${x.unit}`, stockText(x), x.hold ? "งดยาชั่วคราว" : x.status])}
+          onRow={(i) => setView(shown[i])} rowLabel="กดเพื่อดูรายละเอียดยา"
+          // ปุ่มหลัก 1 ปุ่มต่อแถว: ยาคลังกลางที่ใกล้หมด = เติม · นอกนั้น = แก้ไข · ที่เหลืออยู่ในเมนู ⋯
           actions={[
-            { label: "รายละเอียดยา", onClick: (i) => setView(shown[i]) },
-            { label: "แก้ไข", onClick: (i) => setEdit({ ...shown[i], doseText: String(shown[i].dose), tag: "" }) },
-            { label: "เติมจากคลังกลาง", hidden: (i) => !shown[i].sdid, onClick: (i) => setRefill({ x: shown[i], qty: "" }) },
-            { label: "ลบ", danger: true, onClick: (i) => confirm({ title: "ลบยาออกจากตะกร้า", message: `ต้องการลบ ${shown[i].name} ของ ${shown[i].who} ใช่หรือไม่`, danger: true, okLabel: "ลบ", onOk: () => { setDrugs(drugs.filter((x) => x.id !== shown[i].id)); toast("ลบยาแล้ว"); } }) },
+            { label: "เติมจากคลังกลาง", tone: "primary", hidden: (i) => !shown[i].sdid || !isLowDrug(shown[i]), onClick: (i) => setRefill({ x: shown[i], qty: "" }) },
+            { label: "แก้ไข", tone: "primary", hidden: (i) => !!shown[i].sdid && isLowDrug(shown[i]), onClick: (i) => setEdit({ ...shown[i], doseText: String(shown[i].dose), tag: "" }) },
+            { label: "แก้ไข", more: true, hidden: (i) => !shown[i].sdid || !isLowDrug(shown[i]), onClick: (i) => setEdit({ ...shown[i], doseText: String(shown[i].dose), tag: "" }) },
+            { label: "เติมจากคลังกลาง", more: true, hidden: (i) => !shown[i].sdid || isLowDrug(shown[i]), onClick: (i) => setRefill({ x: shown[i], qty: "" }) },
+            { label: "รายละเอียดยา", more: true, onClick: (i) => setView(shown[i]) },
+            { label: "ลบ", more: true, danger: true, onClick: (i) => confirm({ title: "ลบยาออกจากตะกร้า", message: `ต้องการลบ ${shown[i].name} ของ ${shown[i].who} ใช่หรือไม่`, danger: true, okLabel: "ลบ", onOk: () => { setDrugs(drugs.filter((x) => x.id !== shown[i].id)); toast("ลบยาแล้ว"); } }) },
           ]}
         />
       </Section>
@@ -770,10 +785,11 @@ function Master({ master, setMaster, drugs }: { master: string[][]; setMaster: (
       <PageHeader title="ฐานข้อมูลยา (Master Drugs)" sub="รายชื่อยากลางของระบบ" actions={<button className="btn-primary" onClick={() => { setName(""); setUse(""); setOpen(true); }}><Icon name="plus" className="h-4 w-4" /> เพิ่มยาตัวใหม่</button>} />
       <Section title="รายชื่อยาทั้งหมด">
         <DataTable columns={["ชื่อยา", "สรรพคุณ / การออกฤทธิ์", "ผู้ป่วยที่ใช้", "คงเหลือรวม", "ใช้ไปแล้ว"]} rows={rows}
-          actions={[{ label: "ดูรายคน", hidden: (i) => !usersOf(master[i][0]).length, onClick: (i) => setOpen2(master[i][0]) },{ label: "ลบ", danger: true, onClick: (i) => confirm({ title: "ลบยาจากฐานข้อมูล", message: `ต้องการลบ ${master[i][0]} ใช่หรือไม่`, danger: true, okLabel: "ลบ", onOk: () => { setMaster(master.filter((_, j) => j !== i)); toast("ลบแล้ว"); } }) }]} />
+          onRow={(i) => setOpen2(master[i][0])} rowLabel="กดเพื่อดูคงเหลือรายคน"
+          actions={[{ label: "ดูรายคน", hidden: (i) => !usersOf(master[i][0]).length, onClick: (i) => setOpen2(master[i][0]) },{ label: "ลบ", more: true, danger: true, onClick: (i) => confirm({ title: "ลบยาจากฐานข้อมูล", message: `ต้องการลบ ${master[i][0]} ใช่หรือไม่`, danger: true, okLabel: "ลบ", onOk: () => { setMaster(master.filter((_, j) => j !== i)); toast("ลบแล้ว"); } }) }]} />
       </Section>
       <Modal open={!!open2} wide title={open2 ? `คงเหลือรายคน · ${open2}` : ""} onClose={() => setOpen2(null)} footer={<button className="btn-primary" onClick={() => setOpen2(null)}>ปิด</button>}>
-        {open2 && <DataTable search={false} columns={["ผู้ป่วย", "ชื่อยาในตะกร้า", "รับเข้า", "ใช้ไปแล้ว", "คงเหลือ", "ใช้ได้อีก"]}
+        {open2 && <DataTable search={false} empty="ยังไม่มีผู้ป่วยใช้ยานี้" columns={["ผู้ป่วย", "ชื่อยาในตะกร้า", "รับเข้า", "ใช้ไปแล้ว", "คงเหลือ", "ใช้ได้อีก"]}
           rows={usersOf(open2).map((x) => [x.who, x.name, x.received ? `${x.received.toLocaleString("en-US")} ${x.unit}` : "ไม่ทราบ", x.received ? `${Math.max(0, x.received - x.stock).toLocaleString("en-US")} ${x.unit}` : "-", stockText(x), daysLeft(x) === null ? "-" : `${daysLeft(x)} วัน`])} />}
       </Modal>
       <Modal open={open} title="เพิ่มฐานข้อมูลยาใหม่" onClose={() => setOpen(false)} footer={<><button className="btn-soft" onClick={() => setOpen(false)}>ยกเลิก</button><button className="btn-primary" onClick={() => {

@@ -162,6 +162,9 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const bonus = feed.bonusToday;
   const [fab, setFab] = useState(false);
+  // หน้างานวันนี้แบบกระชับ: แถว "ต้องรู้ก่อนเริ่มงาน" พับไว้ก่อน · วิธีติดตั้งบน iPhone เปิดเป็นหน้าต่างเล็ก
+  const [know, setKnow] = useState(false);
+  const [iosHelp, setIosHelp] = useState(false);
   const [modal, setModal] = useState<null | "facility" | "task" | "sop" | "proxy" | "bonus" | "dispense" | "metrics" | "handover" | "write" | "pwd" | "manual" | "viewtask">(null);
   /** งานที่เปิดอยู่ = รหัสแถวงาน (string) · ซองยาที่เปิดอยู่ = รหัสซอง (number) */
   const [cur, setCur] = useState<string | number | null>(null);
@@ -377,7 +380,10 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
         {tab === "tasks" && (
           <>
             <div className="ka-head">
-              <div><h1>สวัสดี {shortName(user.name)}</h1><p>{new Date().toLocaleDateString("th-TH", { weekday: "short", day: "numeric", month: "short" })} · {myShiftText}</p></div>
+              <div><div className="ka-hello"><h1>สวัสดี {shortName(user.name)}</h1>
+                {/* งานที่หัวหน้าให้ดาวต่ำ (ต้องแก้) · กดไปดูที่แท็บ "ฉัน" */}
+                {fixCount > 0 && <button type="button" className="ka-fix" onClick={() => { setTab("perf"); setPerfView("me"); window.scrollTo(0, 0); }} aria-label={`งานต้องแก้ ${fixCount} งาน · ดูที่แท็บฉัน`}><Icon name="alert" className="h-3.5 w-3.5" />ต้องแก้ {fixCount}</button>}
+              </div><p>{new Date().toLocaleDateString("th-TH", { weekday: "short", day: "numeric", month: "short" })} · {myShiftText}</p></div>
               <div className="relative" onClick={(e) => e.stopPropagation()}>
                 <button type="button" className="ka-pill" aria-expanded={fab} onClick={() => setFab(!fab)}><Icon name="plus" className="h-4 w-4" />ผลงานพิเศษ</button>
                 {fab && (
@@ -407,57 +413,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
               );
             })}
 
-            {pushCard === "install" && (
-              <section className="ka-push" aria-label="ติดตั้ง KinApp">
-                <Icon name="download" className="h-5 w-5 shrink-0" />
-                <div>
-                  <b>{push.state === "on" ? "ติดตั้ง KinApp ให้แจ้งเตือนเป็นชื่อ KinApp" : "ติดตั้ง KinApp ก่อนรับแจ้งเตือน"}</b>
-                  {pwa.iosHint
-                    ? <ol className="ka-push-steps"><li>กดปุ่มแชร์ของ Safari (สี่เหลี่ยมมีลูกศรขึ้น)</li><li>เลือก "เพิ่มไปยังหน้าจอโฮม"</li><li>เปิด KinApp จากไอคอนบนหน้าจอโฮม แล้วกดเปิดการแจ้งเตือน</li></ol>
-                    : <p>{push.state === "on" ? "ตอนนี้แจ้งเตือนขึ้นเป็น Chrome · ติดตั้งแล้วจะขึ้นเป็นชื่อและโลโก้ KinApp" : "แจ้งเตือนจะขึ้นเป็นชื่อและโลโก้ KinApp และเปิดแอปได้จากหน้าจอโทรศัพท์"}</p>}
-                  <div className="ka-push-a">
-                    {pwa.canInstall && <button type="button" className="is-go" onClick={async () => { if (await pwa.install()) toast(push.state === "on" ? "ติดตั้ง KinApp แล้ว · แจ้งเตือนครั้งต่อไปจะขึ้นเป็น KinApp" : "ติดตั้ง KinApp แล้ว · เปิดจากไอคอนบนหน้าจอโทรศัพท์ แล้วกดเปิดการแจ้งเตือน"); }}>ติดตั้ง KinApp</button>}
-                    <button type="button" onClick={() => hideCard("kin-install-hide")}>ไว้ทีหลัง</button>
-                  </div>
-                </div>
-              </section>
-            )}
-            {(pushCard === "enable" || pushCard === "denied") && (
-              <section className="ka-push" aria-label="เปิดการแจ้งเตือน">
-                <Icon name="bell" className="h-5 w-5 shrink-0" />
-                <div>
-                  <b>รับแจ้งเตือนบนโทรศัพท์</b>
-                  <p>{pushCard === "enable" ? "เด้งเตือนทันทีเมื่อหัวหน้าตามงาน แม้ล็อกจออยู่" : "เคยกดไม่อนุญาตไว้ · เปิดได้ที่ตั้งค่าของเครื่อง → การแจ้งเตือน → KinApp"}</p>
-                  <div className="ka-push-a">
-                    {pushCard === "enable" && <button type="button" className="is-go" disabled={push.busy} onClick={async () => toast(await push.enable())}>{push.busy ? "กำลังเปิด…" : "เปิดการแจ้งเตือน"}</button>}
-                    <button type="button" onClick={() => hideCard("kin-push-hide")}>ไว้ทีหลัง</button>
-                  </div>
-                </div>
-              </section>
-            )}
-
             <CheckInCard user={user} compact />
-
-            <div className="ka-stats" role="group" aria-label="สรุปงานของฉัน">
-              <button type="button" className={taskTab === "todo" ? "is-on" : ""} onClick={() => setTaskTab("todo")}><b>{myPending.length}</b>รอทำ</button>
-              <button type="button" className={taskTab === "sent" ? "is-on" : ""} onClick={() => setTaskTab("sent")}><b>{mySent.length}</b>ส่งแล้ว</button>
-              <button type="button" className={fixCount ? "is-warn" : ""} onClick={() => { setTab("perf"); setPerfView("me"); window.scrollTo(0, 0); }}><b>{fixCount}</b>ต้องแก้</button>
-            </div>
-
-            {(handover.length > 0 || appts.length > 0) && <>
-              <p className="ka-h">ต้องรู้ก่อนเริ่มงาน</p>
-              <ul className="ka-list">
-                {handover.length > 0 && (
-                  <li><button type="button" className="ka-row" onClick={() => open("handover")}>
-                    <span className="ka-dot is-warn" /><span className="ka-t"><b>สมุดส่งเวร {handover.length} เรื่อง</b><small>{handover[0].who ? `${handover[0].who} · ` : ""}{handover[0].text}</small></span><Icon name="chevron" className="ka-chev" />
-                  </button></li>
-                )}
-                {appts.map((a, k) => (
-                  <li key={k} className="ka-row"><span className="ka-dot" /><span className="ka-t"><b>นัด{a.when} น.</b><small>{a.who} · {a.what}</small></span></li>
-                ))}
-              </ul>
-            </>}
-            {handover.length === 0 && <button type="button" className="ka-link" onClick={() => open("handover")}><Icon name="book" className="h-4 w-4" />สมุดส่งเวร · เขียนส่งเวร</button>}
 
             {nextTask && taskTab === "todo" && <>
               <p className="ka-h">งานถัดไป</p>
@@ -469,6 +425,45 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
                 <button type="button" className="btn-primary ka-btn-sm" onClick={() => { open("task", nextTask.id); setProxyFor(null); }}><Icon name="camera" className="h-4 w-4" />ส่งงาน</button>
               </div>
             </>}
+
+            {/* ต้องรู้ก่อนเริ่มงาน: แถวเดียว กดเพื่อกาง/พับ (เริ่มต้นพับไว้) · ไม่มีส่งเวรค้าง = ลิงก์เขียนส่งเวรอยู่ในแถวเดียวกัน */}
+            <section className="ka-know" aria-label="ต้องรู้ก่อนเริ่มงาน">
+              <div className="ka-know-bar">
+                {(handover.length > 0 || appts.length > 0) && (
+                  <button type="button" className="ka-know-t" aria-expanded={know} aria-controls="ka-know-body" onClick={() => setKnow(!know)}>
+                    <span className={`ka-dot ${handover.length > 0 ? "is-warn" : ""}`} />
+                    <span className="ka-know-x">{[handover.length > 0 ? `สมุดส่งเวร ${handover.length} เรื่อง` : "", appts.length > 0 ? `นัด ${appts.length} รายการ` : ""].filter(Boolean).join(" · ")}</span>
+                    <Icon name="chevron" className={`ka-know-c ${know ? "is-open" : ""}`} />
+                  </button>
+                )}
+                {handover.length === 0 && <button type="button" className="ka-link" onClick={() => open("handover")}><Icon name="book" className="h-4 w-4" />สมุดส่งเวร · เขียนส่งเวร</button>}
+              </div>
+              {know && (handover.length > 0 || appts.length > 0) && (
+                <ul id="ka-know-body" className="ka-list">
+                  {handover.length > 0 && (
+                    <li><button type="button" className="ka-row" onClick={() => open("handover")}>
+                      <span className="ka-dot is-warn" /><span className="ka-t"><b>สมุดส่งเวร {handover.length} เรื่อง</b><small>{handover[0].who ? `${handover[0].who} · ` : ""}{handover[0].text}</small></span><Icon name="chevron" className="ka-chev" />
+                    </button></li>
+                  )}
+                  {appts.map((a, k) => (
+                    <li key={k} className="ka-row"><span className="ka-dot" /><span className="ka-t"><b>นัด{a.when} น.</b><small>{a.who} · {a.what}</small></span></li>
+                  ))}
+                </ul>
+              )}
+            </section>
+
+            {/* แถบเดียวบรรทัดเดียว: ติดตั้งแอปมาก่อน แล้วจึงเปิดแจ้งเตือน · × = ไว้ทีหลัง (จำในเครื่อง) */}
+            {pushCard && (
+              <section className="ka-pbar" aria-label={pushCard === "install" ? "ติดตั้ง KinApp" : "เปิดการแจ้งเตือน"}>
+                <Icon name={pushCard === "install" ? "download" : "bell"} className="h-4 w-4 shrink-0" />
+                <p>{pushCard === "install" ? (push.state === "on" ? "ติดตั้งให้แจ้งเตือนเป็น KinApp" : "ติดตั้ง KinApp ก่อนรับแจ้งเตือน")
+                  : pushCard === "enable" ? "รับแจ้งเตือนเมื่อหัวหน้าตามงาน" : "เปิดแจ้งเตือนได้ที่ตั้งค่าเครื่อง"}</p>
+                {pushCard === "install" && pwa.canInstall && <button type="button" className="ka-pbar-go" onClick={async () => { if (await pwa.install()) toast(push.state === "on" ? "ติดตั้ง KinApp แล้ว · แจ้งเตือนครั้งต่อไปจะขึ้นเป็น KinApp" : "ติดตั้ง KinApp แล้ว · เปิดจากไอคอนบนหน้าจอโทรศัพท์ แล้วกดเปิดการแจ้งเตือน"); }}>ติดตั้ง</button>}
+                {pushCard === "install" && !pwa.canInstall && pwa.iosHint && <button type="button" className="ka-pbar-go" onClick={() => setIosHelp(true)}>วิธีติดตั้ง</button>}
+                {pushCard === "enable" && <button type="button" className="ka-pbar-go" disabled={push.busy} aria-label="เปิดการแจ้งเตือน" onClick={async () => toast(await push.enable())}>{push.busy ? "กำลังเปิด…" : "เปิด"}</button>}
+                <button type="button" className="ka-pbar-x" aria-label="ซ่อนไว้ก่อน" title="ซ่อนไว้ก่อน" onClick={() => hideCard(pushCard === "install" ? "kin-install-hide" : "kin-push-hide")}><Icon name="close" className="h-4 w-4" /></button>
+              </section>
+            )}
 
             <div className="ka-seg" role="tablist" aria-label="รายการงาน">
               <button type="button" role="tab" aria-selected={taskTab === "todo"} onClick={() => setTaskTab("todo")}>รอทำ {taskView === "mine" ? myPending.length : pendingAll.length}</button>
@@ -849,6 +844,11 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
       <VitalsDialog open={vitalsFor !== null} residents={RESIDENTS.map((r) => r.name)} resident={vitalsFor ?? undefined} recorder={user.name}
         onClose={() => setVitalsFor(null)} onSave={(row) => addHealth(row)} />
       <ResidentProfile id={profile} onClose={() => setProfile(null)} />
+
+      {/* วิธีติดตั้ง KinApp บน iPhone (เปิดจากแถบติดตั้งบนหน้างานวันนี้) */}
+      <Modal open={iosHelp} title="ติดตั้ง KinApp บน iPhone" onClose={() => setIosHelp(false)} footer={<button type="button" className="btn-primary w-full" onClick={() => setIosHelp(false)}>เข้าใจแล้ว</button>}>
+        <ol className="ka-ios-steps"><li>กดปุ่มแชร์ของ Safari (สี่เหลี่ยมมีลูกศรขึ้น)</li><li>เลือก "เพิ่มไปยังหน้าจอโฮม"</li><li>เปิด KinApp จากไอคอนบนหน้าจอโฮม แล้วกดเปิดการแจ้งเตือน</li></ol>
+      </Modal>
 
       {/* สมุดส่งเวร */}
       <Modal open={modal === "handover"} title="สมุดส่งเวร" onClose={close} footer={<button className="btn-primary w-full" onClick={() => { setHoWho(""); setHoText(""); setModal("write"); }}><Icon name="plus" className="h-4 w-4" /> เขียนส่งเวรใหม่</button>}>
