@@ -7,7 +7,7 @@ import PasswordDialog from "@/components/PasswordDialog";
 import { AppProvider } from "@/lib/app";
 import { useSession } from "@/lib/session";
 import { can, hasConsole } from "@/lib/perms";
-import { NAV, ViewId } from "@/lib/nav";
+import { EXPORT_SOURCES, NAV, ViewId } from "@/lib/nav";
 
 /** แต่ละหน้าโหลดตอนเปิดใช้เท่านั้น (หน้าแรกไม่ต้องรอโค้ดของทุกเมนู) */
 const view = (load: () => Promise<() => JSX.Element>) =>
@@ -35,6 +35,7 @@ const Tutorials = view(() => import("@/components/views/Tutorials").then((m) => 
 const Rooms = view(() => import("@/components/views/Rooms").then((m) => m.Rooms));
 const Billing = view(() => import("@/components/views/Billing").then((m) => m.Billing));
 const PriceList = view(() => import("@/components/views/PriceList").then((m) => m.PriceList));
+const Exports = view(() => import("@/components/views/Exports").then((m) => m.Exports));
 
 const VIEWS: Record<ViewId, ComponentType> = {
   careplan: Workflow,
@@ -60,6 +61,7 @@ const VIEWS: Record<ViewId, ComponentType> = {
   rooms: Rooms,
   billing: Billing,
   prices: PriceList,
+  exports: Exports,
 };
 
 function Splash() {
@@ -93,7 +95,7 @@ export default function Home() {
   if (!user) return <Login onLogin={setUser} />;
   if (!hasConsole(user)) return <NurseOnly name={user.name} onLogout={logout} />;
   // เห็นเฉพาะเมนูที่ติ๊กสิทธิ์ไว้ (lib/perms)
-  const views = NAV.flatMap((n) => (n.kind === "view" && can(user, n.id) ? [n.id] : []));
+  const views = NAV.flatMap((n) => (n.kind === "view" && (n.id === "exports" ? EXPORT_SOURCES.some((p) => can(user, p)) : can(user, n.id)) ? [n.id] : []));
   const shown = !views.includes(view) ? views[0] : view;
   const View = VIEWS[shown];
   const go = (v: ViewId) => { setView(v); window.scrollTo(0, 0); };

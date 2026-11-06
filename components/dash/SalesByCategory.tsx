@@ -2,7 +2,9 @@
 import { KeyboardEvent, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Icon from "../Icon";
 import { Invoice, money } from "@/lib/billing";
-import { useCrud, useRecords } from "@/lib/store";
+import { downloadCsv, useCrud, useRecords } from "@/lib/store";
+import CsvIcon from "../CsvIcon";
+import PeopleSpend from "./PeopleSpend";
 import { CONTRACTS, RESIDENTS } from "@/lib/mock";
 import { usePriceList } from "@/lib/usePrices";
 import { DP_NAME, SALE_CATS, SaleCat, saleLines } from "@/lib/salesCategory";
@@ -145,9 +147,17 @@ export default function SalesByCategory({ branch, month }: { branch: string; mon
   if (!meta.loaded && !all.length) return <p className="py-10 text-center text-sm text-gold-500">กำลังโหลดยอดขาย…</p>;
   return (
     <div className="space-y-5">
-      <div className="pl-chips sc-filter" role="group" aria-label="เลือกหมวด">
-        <button type="button" aria-pressed={!cat} onClick={() => setCat("")}>ทุกหมวด</button>
-        {cats.map((c) => <button key={c.id} type="button" aria-pressed={cat === c.id} onClick={() => setCat(cat === c.id ? "" : c.id)}><span className="pl-code">{c.id}</span> {c.name}</button>)}
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="pl-chips sc-filter" role="group" aria-label="เลือกหมวด">
+          <button type="button" aria-pressed={!cat} onClick={() => setCat("")}>ทุกหมวด</button>
+          {cats.map((c) => <button key={c.id} type="button" aria-pressed={cat === c.id} onClick={() => setCat(cat === c.id ? "" : c.id)}><span className="pl-code">{c.id}</span> {c.name}</button>)}
+        </div>
+        {/* ส่งออกทุกรายการ (ไม่ตัดที่ 10 อันดับ) ตามหมวด ช่วงเวลา และคำค้นที่เลือกอยู่ */}
+        <button type="button" className="btn-soft" disabled={!items.length} onClick={() => downloadCsv(`ยอดขาย-${name}-${range === "month" ? month : `12เดือน-ถึง-${month}`}${branch ? `-${branch}` : ""}`,
+          ["อันดับ", "รหัส", "รายการ", "หมวด", "หมวดย่อย", "จำนวน", "ยอดขาย (บาท)", "สัดส่วน (%)"],
+          items.map((x, i) => { const tot = items.reduce((n, y) => n + y.amount, 0); return [String(i + 1), x.code, x.item, SALE_CATS.find((c) => c.id === x.cat)?.name ?? x.cat, x.sub, String(x.qty), money(x.amount), tot ? String(Math.round((x.amount / tot) * 1000) / 10) : "0"]; }))}>
+          <CsvIcon /> ส่งออก CSV ({range === "month" ? monLabel(month) : "12 เดือน"})
+        </button>
       </div>
 
       <section className="card sc-card">
@@ -191,7 +201,7 @@ export default function SalesByCategory({ branch, month }: { branch: string; mon
           </header>
           <div className="relative">
             <Icon name="search" className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-gold-400" />
-            <input type="search" value={q} onChange={(e) => setQ(e.target.value)} className="!pl-10" placeholder="ค้นหารายการหรือรหัส เช่น พ่นยา หรือ NS-21" aria-label="ค้นหารายการขายดี" />
+            <input type="search" value={q} onChange={(e) => setQ(e.target.value)} className="!pl-10" placeholder="ค้นหาชื่อหรือรหัส เช่น NS-21" aria-label="ค้นหารายการขายดี" />
           </div>
           {top.length ? <ol className="sc-top">
             {top.map((x, i) => (
@@ -223,6 +233,8 @@ export default function SalesByCategory({ branch, month }: { branch: string; mon
           })}
         </div>
       </section>}
+
+      <PeopleSpend list={list} prices={prices} month={month} branch={branch} branchOf={branchOf} />
     </div>
   );
 }

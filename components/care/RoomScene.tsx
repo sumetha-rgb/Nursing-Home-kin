@@ -16,7 +16,11 @@ type Pick = { kind: "room"; i: number } | { kind: "bed"; i: number; bed: string;
 const WALL_H = 1.15, T = 0.12, BATH = 1.9, BED_W = 1.0, BED_L = 2.05, PITCH = 1.8, ROW = 3.2, PER_ROW = 4;
 /** สีสถานะ (ป้ายเหนือห้อง) และสีพื้นห้องอ่อน ๆ ตามสถานะ */
 const WALL = { free: "#2f9e7a", part: "#d49a2a", full: "#d0574a", closed: "#9a948a" };
-const FLOOR_TINT = { free: "#f3fbf8", part: "#fffaf0", full: "#fff3f1", closed: "#f1f0ee" };
+const FLOOR_TINT = { free: "#f6f9f3", part: "#fdf7ea", full: "#fcf1ee", closed: "#f1eee9" };
+/** สีเตียงตามสถานะ: แผ่นรองใต้เตียงและป้ายเตียง · ว่าง = เขียว · มีคน = ทอง · ห้องปิดปรับปรุง = เทา */
+const BED = { free: "#3f9a6e", taken: "#b8862f", closed: "#a39c90" };
+/** ชื่อสั้นบนป้ายเตียง: ตัดคำนำหน้า เหลือชื่อแรก */
+const shortName = (n: string) => n.replace(/^(คุณ|นางสาว|นาย|นาง|น\.ส\.)\s*/, "").trim().split(/\s+/)[0] || n;
 const CHIP = (r: RoomInfo) => (r.closed ? "ปิดปรับปรุง" : r.full ? "เต็ม" : r.people.length ? `ว่าง ${r.free}` : "ว่าง");
 const esc = (x: string) => x.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 const statusOf = (r: RoomInfo) => (r.closed ? "closed" : r.full ? "full" : r.people.length ? "part" : "free") as keyof typeof WALL;
@@ -77,7 +81,7 @@ export default function RoomScene({ rooms, selected, onRoom, onPerson, onFail }:
     const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 500);
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true; controls.dampingFactor = 0.08; controls.maxPolarAngle = 1.38; controls.screenSpacePanning = true;
-    scene.add(new THREE.HemisphereLight(0xffffff, 0xe3eeeb, 1.7), new THREE.AmbientLight(0xffffff, 0.45));
+    scene.add(new THREE.HemisphereLight(0xffffff, 0xefe6d6, 1.7), new THREE.AmbientLight(0xffffff, 0.45));
     const sun = new THREE.DirectionalLight(0xffffff, 1.6);
     sun.castShadow = !small; sun.shadow.mapSize.set(2048, 2048);
     scene.add(sun, sun.target);
@@ -92,9 +96,11 @@ export default function RoomScene({ rooms, selected, onRoom, onPerson, onFail }:
       return mats.get(k)!;
     };
     const textures: THREE.Texture[] = [];
-    const floorTex = tileTexture("#ffffff", "#e7ecea"); textures.push(floorTex);
-    const bathTex = tileTexture("#e8f4f6", "#cfe2e6"); textures.push(bathTex);
+    const floorTex = tileTexture("#ffffff", "#ece4d6"); textures.push(floorTex);
+    const bathTex = tileTexture("#f3eee4", "#e2d7c4"); textures.push(bathTex);
     const pickables: THREE.Object3D[] = [];
+    /** ตำแหน่งเตียงในห้อง (ก่อนวางห้องลงฉาก) ไว้ทำป้ายชื่อลอยเหนือเตียง */
+    const bedSpots: { i: number; label: string; who?: string; x: number; z: number }[] = [];
 
     const box = (g: THREE.Group, sx: number, sy: number, sz: number, x: number, y: number, z: number, m: THREE.Material, shadow = true) => {
       const b = new THREE.Mesh(unit, m); b.scale.set(sx, sy, sz); b.position.set(x, y, z);
@@ -109,7 +115,7 @@ export default function RoomScene({ rooms, selected, onRoom, onPerson, onFail }:
       const g = new THREE.Group();
       const { w, d } = roomSize(r.capacity);
       const st = statusOf(r);
-      const wallM = mat("#f4f6f5", { rough: 0.6 }), capM = mat("#7fcdbd", { rough: 0.5 });
+      const wallM = mat("#f8f4ec", { rough: 0.6 }), capM = mat("#c9a66b", { rough: 0.5 });
       // พื้น
       const fm = new THREE.MeshStandardMaterial({ map: floorTex.clone(), color: FLOOR_TINT[st], roughness: 0.9 }); (fm.map as THREE.Texture).repeat.set(w / 0.6, d / 0.6); (fm.map as THREE.Texture).needsUpdate = true; textures.push(fm.map!);
       const fl = plane(g, w, d, w / 2, d / 2, 0.002, fm); fl.userData.pick = { kind: "room", i: r.i } satisfies Pick; pickables.push(fl);
@@ -123,19 +129,22 @@ export default function RoomScene({ rooms, selected, onRoom, onPerson, onFail }:
       // ห้องน้ำ: พื้นกระเบื้องฟ้า ผนังกั้น โถส้วม อ่างล้างหน้า
       const bm = new THREE.MeshStandardMaterial({ map: bathTex.clone(), roughness: 0.6 }); (bm.map as THREE.Texture).repeat.set(BATH / 0.3, BATH / 0.3); (bm.map as THREE.Texture).needsUpdate = true; textures.push(bm.map!);
       plane(g, BATH, BATH, BATH / 2, BATH / 2, 0.004, bm);
-      const inner = mat("#eef3f2");
+      const inner = mat("#f1ebdf");
       box(g, T * 0.8, WALL_H, BATH - 0.9, BATH, WALL_H / 2, (BATH - 0.9) / 2, inner);
       box(g, BATH, WALL_H, T * 0.8, BATH / 2, WALL_H / 2, BATH, inner);
       const white = mat("#ffffff", { rough: 0.35 });
       box(g, 0.38, 0.4, 0.5, 0.35, 0.2, 0.42, white); box(g, 0.42, 0.45, 0.16, 0.35, 0.45, 0.14, white);
-      box(g, 0.55, 0.75, 0.4, 1.35, 0.375, 0.28, mat("#dfe7e5")); box(g, 0.42, 0.06, 0.3, 1.35, 0.78, 0.28, white);
+      box(g, 0.55, 0.75, 0.4, 1.35, 0.375, 0.28, mat("#e6dccb")); box(g, 0.42, 0.06, 0.3, 1.35, 0.78, 0.28, white);
       // เตียง
-      const wood = mat("#e1e7e6", { rough: 0.5 }), woodDark = mat("#b9cecb", { rough: 0.5 }), sheet = mat("#ffffff"), blanket = mat("#f2b7c7"), blanket2 = mat("#f6c8d4"), folded = mat("#bfe3da");
-      const skin = mat("#ecc6a2"), hair = mat("#5b4430"), curtain = mat("#bfe6dd", { opacity: 0.92 }), rail = mat("#b4c2bf"), screen = mat("#d6edea", { opacity: 0.7, rough: 0.2 });
+      const wood = mat("#ebe1cf", { rough: 0.5 }), woodDark = mat("#c9b48a", { rough: 0.5 }), sheet = mat("#ffffff"), blanket = mat("#e3bf7e"), blanket2 = mat("#edd3a2"), folded = mat("#bfe0cb");
+      const skin = mat("#ecc6a2"), hair = mat("#5b4430"), curtain = mat("#eadbbd", { opacity: 0.92 }), rail = mat("#bfb19a"), screen = mat("#efe5d2", { opacity: 0.7, rough: 0.2 });
       r.beds.forEach((b, k) => {
         const row = Math.floor(k / PER_ROW), col = k % PER_ROW;
         const x0 = BATH + 0.45 + col * PITCH + (PITCH - BED_W) / 2, z0 = 0.35 + row * ROW + (row === 0 ? 0 : 0.2);
         const cx = x0 + BED_W / 2, cz = z0 + BED_L / 2;
+        bedSpots.push({ i: r.i, label: b.label, who: b.who, x: cx, z: cz });
+        const bs = r.closed ? BED.closed : b.who ? BED.taken : BED.free;
+        plane(g, BED_W + 0.34, BED_L + 0.3, cx, cz, 0.008, mat(bs, { opacity: 0.22 }));
         box(g, BED_W, 0.32, BED_L, cx, 0.16, cz, wood);
         box(g, BED_W - 0.08, 0.14, BED_L - 0.12, cx, 0.39, cz + 0.03, sheet);
         box(g, BED_W, 0.78, 0.07, cx, 0.39, z0 + 0.035, woodDark);
@@ -156,15 +165,15 @@ export default function RoomScene({ rooms, selected, onRoom, onPerson, onFail }:
         // ฉากกั้นระหว่างเตียงในแถวเดียวกัน
         if (col < PER_ROW - 1 && k + 1 < r.beds.length) box(g, 0.05, 1.05, 0.95, x0 + BED_W + (PITCH - BED_W) / 2, 0.55, z0 + BED_L - 0.6, screen);
         // ป้ายเตียง
-        const bt = label([{ text: b.label, size: 150, color: b.who ? "#c0587a" : "#5fae9c" }], 256, 256); textures.push(bt);
-        const bp = plane(g, 0.42, 0.42, cx, z0 + BED_L + 0.35, 0.006, new THREE.MeshBasicMaterial({ map: bt, transparent: true }));
+        const bt = label([{ text: b.label, size: 150, color: bs }], 256, 256); textures.push(bt);
+        const bp = plane(g, 0.6, 0.6, cx, z0 + BED_L + 0.4, 0.01, new THREE.MeshBasicMaterial({ map: bt, transparent: true }));
         bp.userData.pick = { kind: "bed", i: r.i, bed: b.label, who: b.who } satisfies Pick; pickables.push(bp);
         // พื้นที่จิ้มเตียง (มองไม่เห็น)
         const hit = new THREE.Mesh(unit, new THREE.MeshBasicMaterial({ visible: false })); hit.scale.set(BED_W + 0.1, 1, BED_L + 0.1); hit.position.set(cx, 0.5, cz);
         hit.userData.pick = { kind: "bed", i: r.i, bed: b.label, who: b.who } satisfies Pick; g.add(hit); pickables.push(hit);
       });
       // เก้าอี้ญาติ มุมหน้าห้อง
-      box(g, 0.6, 0.4, 0.6, w - 0.7, 0.2, d - 0.75, mat("#cfd9d7")); box(g, 0.6, 0.5, 0.12, w - 0.7, 0.55, d - 0.47, mat("#bdcac8"));
+      box(g, 0.6, 0.4, 0.6, w - 0.7, 0.2, d - 0.75, mat("#ddd0b8")); box(g, 0.6, 0.5, 0.12, w - 0.7, 0.55, d - 0.47, mat("#cbbb9c"));
       return { g, w, d };
     }
 
@@ -183,9 +192,9 @@ export default function RoomScene({ rooms, selected, onRoom, onPerson, onFail }:
     const bbox = new THREE.Box3().setFromObject(world);
     const size = bbox.getSize(new THREE.Vector3()), center = bbox.getCenter(new THREE.Vector3());
     // ฐานอาคารพอดีตัว (ไม่มีพื้นที่โล่งรอบ ๆ)
-    const slab = new THREE.Mesh(unit, mat("#e4ebe9", { rough: 0.9 }));
+    const slab = new THREE.Mesh(unit, mat("#ece3d2", { rough: 0.9 }));
     slab.scale.set(size.x + 1.2, 0.25, size.z + 1.2); slab.position.set(center.x, -0.126, center.z); slab.receiveShadow = true; scene.add(slab);
-    const slabEdge = new THREE.Mesh(unit, mat("#7fcdbd", { rough: 0.5 }));
+    const slabEdge = new THREE.Mesh(unit, mat("#c9a66b", { rough: 0.5 }));
     slabEdge.scale.set(size.x + 1.3, 0.06, size.z + 1.3); slabEdge.position.set(center.x, -0.27, center.z); scene.add(slabEdge);
     const span = Math.max(size.x, size.z);
     sun.position.set(center.x + span * 0.4, span + 12, center.z + span * 0.3); sun.target.position.copy(center);
@@ -193,18 +202,24 @@ export default function RoomScene({ rooms, selected, onRoom, onPerson, onFail }:
     controls.maxDistance = span * 3 + 25; controls.minDistance = 2.5;
 
     // กรอบเรืองแสงของห้องที่เลือก
-    const glow = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ color: 0x3fb59b, transparent: true, opacity: 0.4 }));
+    const glow = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ color: 0xc9a66b, transparent: true, opacity: 0.45 }));
     glow.rotation.x = -Math.PI / 2; glow.visible = false; scene.add(glow);
 
     let need = true;
     const fit = (top = false) => {
-      // ระยะกล้องที่ทำให้ทั้งอาคารพอดีกรอบภาพ (เผื่อป้ายลอยเหนือห้อง)
-      const half = Math.tan((camera.fov * Math.PI) / 360);
-      const need2 = Math.max(size.z * 0.62 + 1.2, (size.x * 0.55 + 1) / Math.max(0.6, camera.aspect));
-      const r = need2 / half;
-      controls.target.copy(center).setY(0.6);
-      const dir = top ? new THREE.Vector3(0, 1, 0.02) : new THREE.Vector3(0.42, 0.95, 0.85);
-      camera.position.copy(controls.target).add(dir.normalize().multiplyScalar(r));
+      // หาระยะกล้องที่ใกล้ที่สุดที่มุมทั้ง 8 ของอาคารยังอยู่ในกรอบภาพ (เผื่อขอบบนให้ป้ายเลขห้อง) · คำนวณครั้งเดียวตอนเปิด/เปลี่ยนชั้น/กดปุ่ม
+      controls.target.copy(center).setY(0.4);
+      const dir = (top ? new THREE.Vector3(0, 1, 0.02) : new THREE.Vector3(0.42, 0.95, 0.85)).normalize();
+      const corners = [0, 1].flatMap((a) => [0, 1].flatMap((b) => [0, 1].map((c) => new THREE.Vector3(a ? bbox.max.x : bbox.min.x, c ? WALL_H + 0.9 : 0, b ? bbox.max.z : bbox.min.z))));
+      const v = new THREE.Vector3();
+      const fits = (r: number) => {
+        camera.position.copy(controls.target).addScaledVector(dir, r); camera.lookAt(controls.target); camera.updateMatrixWorld();
+        return corners.every((c) => { v.copy(c).project(camera); return v.z < 1 && Math.abs(v.x) < 0.9 && v.y < 0.8 && v.y > -0.92; });
+      };
+      let lo = 2, hi = Math.max(10, Math.max(size.x, size.z) * 4);
+      while (!fits(hi) && hi < 400) hi *= 1.6;
+      for (let n = 0; n < 24; n++) { const mid = (lo + hi) / 2; if (fits(mid)) hi = mid; else lo = mid; }
+      camera.position.copy(controls.target).addScaledVector(dir, hi);
       controls.update(); need = true;
     };
     const zoom = (k: number) => { const v = camera.position.clone().sub(controls.target).multiplyScalar(k); if (v.length() > controls.minDistance && v.length() < controls.maxDistance) camera.position.copy(controls.target).add(v); need = true; };
@@ -226,13 +241,29 @@ export default function RoomScene({ rooms, selected, onRoom, onPerson, onFail }:
       const p = pos.get(b.r.i)!;
       return { t, v: new THREE.Vector3(p.x + p.w * 0.5, WALL_H + 0.45, p.z + p.d * 0.5) };
     });
-    const tmp = new THREE.Vector3();
+    // ป้ายชื่อเหนือเตียงที่มีคน (เลขเตียง + ชื่อแรก) · ซูมออกไกลแล้วซ่อน ไม่ให้ภาพรก
+    const bedTags = bedSpots.filter((b) => b.who).map((b) => {
+      const p = pos.get(b.i)!;
+      const t = document.createElement("button"); t.type = "button"; t.className = "r3d-bed";
+      t.innerHTML = `<i>${esc(b.label)}</i>${esc(shortName(b.who!))}`;
+      t.setAttribute("aria-label", `เตียง ${b.label} ${b.who}`);
+      t.addEventListener("click", () => cb.current.onPerson(b.i, b.label, b.who!)); tagLayer.appendChild(t);
+      return { t, v: new THREE.Vector3(p.x + b.x, 0.95, p.z + b.z), a: new THREE.Vector3(p.x + b.x - BED_W / 2, 0.5, p.z + b.z), c: new THREE.Vector3(p.x + b.x + BED_W / 2, 0.5, p.z + b.z) };
+    });
+    const tmp = new THREE.Vector3(), tmp2 = new THREE.Vector3();
     const placeTags = () => {
       const w = el.clientWidth, h = el.clientHeight;
       for (const { t, v } of tags) {
         tmp.copy(v).project(camera);
         if (tmp.z > 1) { t.style.display = "none"; continue; }
         t.style.display = ""; t.style.transform = `translate(${((tmp.x + 1) / 2) * w}px, ${((1 - tmp.y) / 2) * h}px) translate(-50%, -100%)`;
+      }
+      for (const { t, v, a, c } of bedTags) {
+        tmp.copy(a).project(camera); tmp2.copy(c).project(camera);
+        const px = Math.hypot((tmp2.x - tmp.x) * w, (tmp2.y - tmp.y) * h) / 2;
+        tmp.copy(v).project(camera);
+        if (tmp.z > 1 || px < 46) { t.style.display = "none"; continue; }
+        t.style.display = ""; t.style.transform = `translate(${((tmp.x + 1) / 2) * w}px, ${((1 - tmp.y) / 2) * h}px) translate(-50%, -50%)`;
       }
     };
 
@@ -309,8 +340,8 @@ export default function RoomScene({ rooms, selected, onRoom, onPerson, onFail }:
     <div className="r3d">
       <div className="r3d-bar">
         {floors.length > 1 && <div className="r3d-floors" role="tablist" aria-label="เลือกชั้น/โซน">{floors.map((f) => <button key={f || "-"} type="button" role="tab" aria-selected={f === cur} className={f === cur ? "is-on" : ""} onClick={() => setFloor(f)}>{f || "ไม่ระบุชั้น"}</button>)}</div>}
-        <ul className="rmap-legend" aria-label="สีป้ายสถานะห้อง">
-          <li><i style={{ background: WALL.free }} />ว่างทั้งห้อง</li><li><i style={{ background: WALL.part }} />มีคนบางส่วน</li><li><i style={{ background: WALL.full }} />เต็ม</li><li><i style={{ background: WALL.closed }} />ปิดปรับปรุง</li>
+        <ul className="rmap-legend" aria-label="ความหมายของสี">
+          <li><i style={{ background: BED.free }} />เตียงว่าง</li><li><i style={{ background: BED.taken }} />มีคนพัก</li><li><i style={{ background: WALL.full }} />ห้องเต็ม</li><li><i style={{ background: WALL.closed }} />ปิดปรับปรุง</li>
         </ul>
       </div>
       <div ref={host} className="r3d-canvas">
@@ -321,7 +352,7 @@ export default function RoomScene({ rooms, selected, onRoom, onPerson, onFail }:
           <button type="button" aria-label="มุมมองเอียง" onClick={() => api.current?.fit(false)}><Icon name="refresh" className="h-4 w-4" /></button>
           <button type="button" aria-label="มองจากด้านบน" onClick={() => api.current?.fit(true)}><Icon name="eye" className="h-4 w-4" /></button>
         </div>
-        <p className="r3d-hint">ลากเพื่อหมุน · เลื่อนลูกกลิ้ง/บีบนิ้วเพื่อซูม · คลิกขวาหรือสองนิ้วเพื่อเลื่อน · จิ้มคนบนเตียงเพื่อดูรายละเอียด</p>
+        <p className="r3d-hint">ลากเพื่อหมุน · เลื่อนลูกกลิ้งหรือบีบนิ้วเพื่อซูม (ซูมใกล้แล้วเห็นชื่อบนเตียง) · คลิกขวาหรือสองนิ้วเพื่อเลื่อน · จิ้มคนบนเตียงเพื่อดูรายละเอียด</p>
       </div>
     </div>
   );

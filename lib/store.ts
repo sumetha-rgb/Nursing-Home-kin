@@ -216,6 +216,20 @@ if (isBrowser) {
   window.addEventListener("focus", () => { lastTouch = Date.now(); refreshMounted(); });
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") lastTouch = Date.now(); refreshMounted(); });
 }
+/**
+ * ดึงชุดข้อมูลครั้งเดียวสำหรับงานที่ไม่ต้องแสดงบนหน้าจอ (เช่น หน้าส่งออกข้อมูล)
+ *  มีในเครื่องแล้ว = ดึงใหม่จากฐานข้อมูลก่อน (ได้ข้อมูลล่าสุด) · ดึงไม่ได้ใช้ของในเครื่อง · ไม่ seed ข้อมูลตัวอย่าง
+ */
+export async function fetchKey<T>(key: string): Promise<T[]> {
+  try {
+    const r = await call(key);
+    return r.items.map((x) => x.data as T);
+  } catch (e) {
+    const cur = store.get(key);
+    if (cur?.loaded && !cur.error) return cur.items.map((x) => x.data as T);
+    throw new Error(e instanceof Rejected && e.userMessage ? e.userMessage : `โหลดข้อมูล ${key} ไม่สำเร็จ`);
+  }
+}
 /** ให้หน้าจอสั่งดึงข้อมูลใหม่ทันที (เช่น ปุ่มรีเฟรช) */
 export const refreshData = (key?: string) => (key ? refresh(key) : refreshMounted());
 
@@ -292,7 +306,8 @@ export function downloadCsv(name: string, columns: string[], rows: string[][]) {
   // เขียนเป็น ="0812345678" ให้ Excel และ Google Sheets อ่านเป็นข้อความ (เป็นตัวเลขล้วน จึงไม่ใช่สูตรอันตราย)
   const esc = (v: string) => {
     const s = String(v ?? "");
-    if (/^(0\d+|\d{12,})$/.test(s)) return `"=""${s}"""`;
+    // วันที่แบบ 06-11-2569: Excel แปลงเป็นวันที่เองเฉพาะวันที่ ≤ 12 (กลายเป็น 6/11/2569 ปนกับ 30-10-2569) · บังคับเป็นข้อความให้เหมือนกันทุกแถว
+    if (/^(0\d+|\d{12,}|\d{2}-\d{2}-\d{4})$/.test(s)) return `"=""${s}"""`;
     return `"${safe(s).replace(/"/g, '""')}"`;
   };
   const csv = "﻿" + [columns, ...rows].map((r) => r.map(esc).join(",")).join("\r\n");

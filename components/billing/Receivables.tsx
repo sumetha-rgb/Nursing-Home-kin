@@ -3,24 +3,13 @@ import { useState } from "react";
 import CsvIcon from "@/components/CsvIcon";
 import Icon from "../Icon";
 import { DataTable, Section } from "../ui";
-import { balanceOf, bahtText, docDate, Invoice, isOpen, money, todayIso } from "@/lib/billing";
-import { downloadCsv } from "@/lib/store";
+import { balanceOf, bahtText, docDate, Invoice, money, todayIso } from "@/lib/billing";
+import { AGE_BUCKETS, BucketKey, bucketOf, Debtor, debtorsCsv, debtorsOf } from "@/lib/exportsCsv";
 import { PAY_CHANNELS } from "@/lib/contractText";
 import { DocBranch, DocFoot, DocHead, DocTitle, KV, longDate, Paper, PrintModal, Signs } from "../print/Docs";
 
-/** ช่วงอายุหนี้ นับจากวันที่ออกใบ · ค้างนานขึ้นสีเข้มขึ้น */
-const BUCKETS = [
-  { k: "b0", t: "0–30 วัน", min: 0, max: 30, c: "is-b0" },
-  { k: "b1", t: "31–60 วัน", min: 31, max: 60, c: "is-b1" },
-  { k: "b2", t: "61–90 วัน", min: 61, max: 90, c: "is-b2" },
-  { k: "b3", t: "เกิน 90 วัน", min: 91, max: Infinity, c: "is-b3" },
-] as const;
-type BucketKey = (typeof BUCKETS)[number]["k"];
-
-const ageOf = (x: Invoice, today: string) => Math.max(0, Math.floor((Date.parse(today) - Date.parse(x.date.slice(0, 10))) / 864e5));
-const bucketOf = (age: number) => BUCKETS.find((b) => age >= b.min && age <= b.max)!.k;
-
-type Debtor = { key: string; who: string; payer: string; hn: string; branch: string; address: string; contract: string; docs: { x: Invoice; age: number }[]; by: Record<BucketKey, number>; total: number; oldest: number };
+/** ช่วงอายุหนี้และการรวมรายคน อยู่ที่ lib/exportsCsv (ใช้ร่วมกับหน้าส่งออกข้อมูล) */
+const BUCKETS = AGE_BUCKETS;
 
 /**
  * ลูกหนี้ค้างชำระตามอายุหนี้ (หน้าใบแจ้งหนี้และใบเสร็จ)
@@ -30,28 +19,15 @@ export default function Receivables({ list, branchOf, branchInfo, by }: { list: 
   const today = todayIso();
   const [pick, setPick] = useState<BucketKey | "">("");
   const [doc, setDoc] = useState<Debtor | null>(null);
-  const open = list.filter(isOpen).map((x) => ({ x, age: ageOf(x, today) })).filter(({ x }) => balanceOf(x) > 0);
+  const { open, debtors } = debtorsOf(list, branchOf, today);
   const sumOf = (k: BucketKey) => open.filter((d) => bucketOf(d.age) === k).reduce((n, d) => n + balanceOf(d.x), 0);
   const countOf = (k: BucketKey) => open.filter((d) => bucketOf(d.age) === k).length;
   const grand = open.reduce((n, d) => n + balanceOf(d.x), 0);
-
-  // รวมรายคน (ผู้รับบริการ + สาขา) · เรียงคนที่ค้างนานที่สุดก่อน
-  const map = new Map<string, Debtor>();
-  for (const d of open) {
-    const branch = branchOf(d.x), key = `${d.x.who}|${branch}`;
-    if (!map.has(key)) map.set(key, { key, who: d.x.who, payer: d.x.payer, hn: d.x.hn, branch, address: d.x.address, contract: d.x.contract, docs: [], by: { b0: 0, b1: 0, b2: 0, b3: 0 }, total: 0, oldest: 0 });
-    const m = map.get(key)!;
-    m.docs.push(d); m.by[bucketOf(d.age)] += balanceOf(d.x); m.total += balanceOf(d.x); m.oldest = Math.max(m.oldest, d.age);
-    if (!m.payer && d.x.payer) m.payer = d.x.payer;
-    if (!m.address && d.x.address) m.address = d.x.address;
-  }
-  const debtors = [...map.values()].sort((a, b) => b.oldest - a.oldest || b.total - a.total);
   const shown = pick ? debtors.filter((d) => d.by[pick] > 0) : debtors;
   const multi = new Set(debtors.map((d) => d.branch)).size > 1;
   const r2 = (n: number) => (n ? money(n) : "-");
 
-  const exportCsv = () => downloadCsv(`ลูกหนี้ตามอายุหนี้-${today}`, ["ผู้รับบริการ", "HN", "สาขา", "ผู้ชำระ", "ใบค้าง", ...BUCKETS.map((b) => b.t), "รวมค้าง", "ค้างนานสุด (วัน)"],
-    debtors.map((d) => [d.who, d.hn || "", d.branch, d.payer, String(d.docs.length), ...BUCKETS.map((b) => money(d.by[b.k])), money(d.total), String(d.oldest)]));
+  const exportCsv = () => debtorsCsv(debtors, `ลูกหนี้ตามอายุหนี้-${today}`);
 
   if (!open.length) return null;
   return (

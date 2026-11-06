@@ -106,7 +106,7 @@ export function RowMenu({ items, i }: { items: RowAction[]; i: number }) {
 /** ปุ่มที่กดแล้วเปิดเมนูย่อย (รวมปุ่มที่ใช้ไม่บ่อยไว้ปุ่มเดียว เช่น ส่งออก ▾) · hint = คำอธิบายสั้นต่อท้ายในเมนู */
 /** primary = ปุ่มหลักสีทอง (เช่น มอบหมายงาน ▾) */
 export function MenuButton({ label, icon, items, primary }: { label: string; icon?: ReactNode; items: { label: string; hint?: string; onClick: () => void }[]; primary?: boolean }) {
-  const [at, setAt] = useState<{ x: number; y: number; up?: number } | null>(null);
+  const [at, setAt] = useState<{ x: number; y: number; up?: number; right?: number } | null>(null);
   useEffect(() => {
     if (!at) return;
     const close = () => setAt(null);
@@ -115,11 +115,11 @@ export function MenuButton({ label, icon, items, primary }: { label: string; ico
   }, [at]);
   return <>
     <button type="button" className={primary ? "btn-primary" : "btn-soft"} aria-haspopup="menu" aria-expanded={!!at}
-      onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setAt(at ? null : { x: Math.min(r.left, window.innerWidth - 270), y: r.bottom, up: window.innerHeight - r.bottom < 60 + items.length * 44 ? window.innerHeight - r.top : undefined }); }}>{icon}{label} <span aria-hidden="true" className="text-[10px]">▾</span></button>
+      onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setAt(at ? null : { x: Math.min(r.left, window.innerWidth - 270), y: r.bottom, up: window.innerHeight - r.bottom < 60 + items.length * 44 ? window.innerHeight - r.top : undefined, right: r.left + r.width / 2 > window.innerWidth / 2 ? Math.max(8, window.innerWidth - r.right) : undefined }); }}>{icon}{label} <span aria-hidden="true" className="text-[10px]">▾</span></button>
     {at && <>
       <button type="button" aria-label="ปิดเมนู" className="fixed inset-0 z-40 cursor-default" onClick={() => setAt(null)} />
-      <div role="menu" className="fixed z-50 min-w-60 rounded-2xl border border-cream-300 bg-white py-1 shadow-lg" style={at.up !== undefined ? { left: Math.max(8, at.x), bottom: at.up + 6 } : { left: Math.max(8, at.x), top: at.y + 6 }}>
-        {items.map((x) => <button key={x.label} type="button" role="menuitem" className="block w-full whitespace-nowrap px-4 py-2 text-left text-sm text-gold-800 hover:bg-cream-50" onClick={() => { setAt(null); x.onClick(); }}>{x.label}{x.hint && <span className="ml-2 text-xs text-gold-500">{x.hint}</span>}</button>)}
+      <div role="menu" className="fixed z-50 min-w-60 rounded-2xl border border-cream-300 bg-white py-1 shadow-lg" style={{ ...(at.right !== undefined ? { right: at.right } : { left: Math.max(8, at.x) }), ...(at.up !== undefined ? { bottom: at.up + 6 } : { top: at.y + 6 }), maxWidth: "calc(100vw - 16px)" }}>
+        {items.map((x) => <button key={x.label} type="button" role="menuitem" className="block w-full px-4 py-2 text-left text-sm text-gold-800 hover:bg-cream-50 sm:whitespace-nowrap" onClick={() => { setAt(null); x.onClick(); }}>{x.label}{x.hint && <span className="ml-2 text-xs text-gold-500">{x.hint}</span>}</button>)}
       </div>
     </>}
   </>;

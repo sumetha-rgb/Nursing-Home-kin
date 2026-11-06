@@ -50,7 +50,7 @@ function MonthBars({ data, unit = "บาท" }: { data: { label: string; value:
 }
 
 /** แท่งแนวนอน (สัดส่วนต่อยอดรวม) · ชื่อและยอดเป็นตัวอักษร สีแท่งบอกขนาดอย่างเดียว */
-function ShareBars({ rows }: { rows: { label: string; value: number; note?: string }[] }) {
+export function ShareBars({ rows }: { rows: { label: string; value: number; note?: string }[] }) {
   const max = Math.max(1, ...rows.map((r) => r.value));
   if (!rows.length) return <p className="rounded-xl bg-cream-50 px-4 py-6 text-center text-sm text-gold-600">ยังไม่มีข้อมูลเดือนนี้</p>;
   return (

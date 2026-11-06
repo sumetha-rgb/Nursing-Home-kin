@@ -1,7 +1,6 @@
 "use client";
 import { ReactNode, useEffect, useRef } from "react";
 import Icon from "../Icon";
-import { Avatar } from "../Avatar";
 import { Modal } from "../ui";
 import { bahtText, contractLines, contractMonthSum, contractRoomName, money, svcDiscount, svcNet } from "@/lib/billing";
 // ย้ายไปไว้ที่ lib/billing (ใช้ร่วมกับหน้าใบแจ้งหนี้) · ส่งต่อให้ไฟล์ที่ import จากที่นี่
@@ -423,16 +422,18 @@ function MiniMonth({ y, m, d }: { y: number; m: number; d: number }) {
 /**
  * ใบนัดหมาย 2 ส่วนในแผ่นเดียว: ส่วนบนติดหน้าห้อง · ส่วนล่างฉีกให้ญาติหรือผู้พาไป
  *  การเตรียมตัว: แสดงเป็นข้อให้ติ๊กเมื่อกรอกไว้ (แยกข้อด้วย · หรือขึ้นบรรทัดใหม่) · ไม่ได้กรอก = ไม่แสดงกล่องนี้
- *  nth = นัดที่เท่าไรของผู้รับบริการคนนี้ในเดือนนั้น
+ *  ผู้รับบริการ: แสดงแค่ชื่อ นำหน้าด้วย "คุณ" (ไม่ใส่ HN รูป หรือข้อมูลอื่น เพราะใบนี้ติดหน้าห้อง)
  */
-export function ApptSlip({ resident, residentId, hn, room, bed, nth, date, time, purpose, caregiver, prep, branch, by }: {
-  resident: string; residentId?: string; hn?: string; room?: string; bed?: string; nth?: number; date: string; time: string; purpose: string; caregiver?: string; prep?: string; branch?: DocBranch; by?: string;
+/** "นายสมชาย ใจดี" → "คุณสมชาย ใจดี" · ชื่อที่มีคำนำหน้าอื่น (เช่น พล.อ. ดร.) คงไว้ตามเดิม */
+const khun = (name: string) => { const n = name.trim().replace(/^(นางสาว|นาย|นาง|น\.ส\.|คุณ)\s*/, ""); return /^(พล|พ\.|ร\.|จ\.|ด\.|ดร\.|ศ\.|รศ\.|ผศ\.|นพ\.|พญ\.|พระ)/.test(n) ? n : `คุณ${n}`; };
+export function ApptSlip({ resident, date, time, purpose, caregiver, prep, branch, by }: {
+  resident: string; date: string; time: string; purpose: string; caregiver?: string; prep?: string; branch?: DocBranch; by?: string;
 }) {
   const iso = date.match(/^(\d{4})-(\d{2})-(\d{2})/);
   const y = iso ? +iso[1] : 0, m = iso ? +iso[2] : 0, d = iso ? +iso[3] : 0;
   const dow = iso ? DOW[new Date(Date.UTC(y, m - 1, d)).getUTCDay()] : "";
   const steps = blank(prep).split(/\r?\n|·|•/).map((x) => x.trim()).filter(Boolean);
-  const where = [blank(room) && `ห้อง ${room}`, blank(bed) && `เตียง ${bed}`].filter(Boolean).join(" · ");
+  const who = khun(resident);
   const phone = branch?.phone || COMPANY.phone;
   return (
     <article className="doc-paper is-half ap">
@@ -443,11 +444,7 @@ export function ApptSlip({ resident, residentId, hn, room, bed, nth, date, time,
         <div className="ap-kind"><b>ใบนัดหมาย</b><small>APPOINTMENT</small></div>
       </header>
       <div className="ap-body">
-        <div className="ap-person">
-          <Avatar kind="resident" id={residentId} name={resident} size={50} className="ap-ava" />
-          <div className="ap-nm"><b>{resident}</b>{hn && <span>HN {hn}</span>}</div>
-          <div className="ap-chips">{where && <span className="dark">{where}</span>}{!!nth && m > 0 && <span>นัดที่ {nth} ของเดือน {SHORT[m - 1]}</span>}</div>
-        </div>
+        <p className="ap-person">{who}</p>
         <div className="ap-when">
           <div className="ap-big">
             <div className="ap-d"><small>{dow ? `วัน${dow}` : ""}</small><b>{d || "-"}</b><span>{m ? `${SHORT[m - 1]} ${y + 543}` : ""}</span></div>
@@ -472,7 +469,7 @@ export function ApptSlip({ resident, residentId, hn, room, bed, nth, date, time,
       <div className="ap-cut"><span>✂ ฉีกส่วนนี้ให้ญาติหรือผู้พาไป</span></div>
       <div className="ap-stub">
         <div className="ap-sd"><small>{dow}</small><b>{d || "-"}</b><small>{m ? `${SHORT[m - 1]} ${String(y + 543).slice(2)}` : ""}</small></div>
-        <div className="ap-sm"><span className="ap-lbl">นัดของ {resident}</span><b>{val(purpose)}</b><span>{blank(caregiver) ? `ผู้พาไป ${caregiver} · ` : ""}โทรสาขา {phone}</span></div>
+        <div className="ap-sm"><span className="ap-lbl">นัดของ{who}</span><b>{val(purpose)}</b><span>{blank(caregiver) ? `ผู้พาไป ${caregiver} · ` : ""}โทรสาขา {phone}</span></div>
         <div className="ap-st"><b>{time || "-"}</b><small>น.</small></div>
       </div>
     </article>

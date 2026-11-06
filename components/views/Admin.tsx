@@ -35,8 +35,8 @@ const BRANCH_FIELDS: FieldDef[] = [
   { label: "เลขบัญชีหลัก" },
   { label: "เลขบัญชีสำรอง" },
 ];
-const BRANCH_COLS = ["รหัสสาขา", "ชื่อสาขา", "นิติบุคคล", "เบอร์ติดต่อ", "ประเภทกิจการ", "บัญชีรับโอนหลัก", "บัญชีรับโอนสำรอง/ย่อย", "สถานะ"];
-const BRANCH_IDX = [0, 1, 2, 3, 7, 15, 16, 10];
+export const BRANCH_COLS = ["รหัสสาขา", "ชื่อสาขา", "นิติบุคคล", "เบอร์ติดต่อ", "ประเภทกิจการ", "บัญชีรับโอนหลัก", "บัญชีรับโอนสำรอง/ย่อย", "สถานะ"];
+export const BRANCH_IDX = [0, 1, 2, 3, 7, 15, 16, 10];
 
 export function Branches() {
   const {rows,add,update,remove,clear}=useCrud("branches",BRANCHES);

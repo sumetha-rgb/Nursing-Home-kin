@@ -1,10 +1,11 @@
-export type ViewId = "careplan"|"contracts"|"residents"|"tasks_table"|"tasks"|"appointments"|"health_logs"|"feedbacks"|"dashboard"|"official-docs"|"branches"|"staff"|"facility_tasks"|"master_tasks"|"quotations"|"audit"|"roster"|"reviews"|"kpi"|"tutorials"|"rooms"|"billing"|"prices";
+export type ViewId = "careplan"|"contracts"|"residents"|"tasks_table"|"tasks"|"appointments"|"health_logs"|"feedbacks"|"dashboard"|"official-docs"|"branches"|"staff"|"facility_tasks"|"master_tasks"|"quotations"|"audit"|"roster"|"reviews"|"kpi"|"tutorials"|"rooms"|"billing"|"prices"|"exports";
 /** กลุ่มเมนู: 4 บริหาร · 0 งานดูแล · 1 ขายและการเงิน · 3 ทีมงาน · 2 เครื่องมือและระบบ (ลำดับที่แสดงอยู่ที่ GROUPS ใน Shell.tsx) */
 export type NavGroup = 0|1|2|3|4;
 export type NavItem = {kind:"view";id:ViewId;label:string;icon:string;group:NavGroup}|{kind:"link";href:string;label:string;icon:string;group:NavGroup;perm:"app.staff"|"app.pharmacy"};
 export const NAV:NavItem[]=[
 {kind:"view",id:"dashboard",label:"ภาพรวมและรายงาน",icon:"chart",group:4},
 {kind:"view",id:"branches",label:"ข้อมูลสาขา",icon:"building",group:4},
+{kind:"view",id:"exports",label:"ส่งออกข้อมูล",icon:"download",group:4},
 {kind:"view",id:"careplan",label:"งานวันนี้",icon:"grid",group:0},
 {kind:"view",id:"residents",label:"ผู้รับบริการ",icon:"user",group:0},
 {kind:"view",id:"rooms",label:"ห้องพักและเตียง",icon:"bed",group:0},
@@ -29,3 +30,5 @@ export const NAV:NavItem[]=[
 {kind:"link",href:"/staff",label:"KinApp (แอปพยาบาล)",icon:"phone",group:2,perm:"app.staff"},
 {kind:"link",href:"/pharmacy",label:"ห้องยา (จัดยา · คลัง)",icon:"pill",group:2,perm:"app.pharmacy"},
 ];
+/** หน้า "ส่งออกข้อมูล" ไม่มีสิทธิ์ของตัวเอง: เห็นเมนูเมื่อมีสิทธิ์หน้าต้นทางของไฟล์ใดไฟล์หนึ่ง (แต่ละไฟล์ตรวจสิทธิ์ของตัวเองอีกชั้น) */
+export const EXPORT_SOURCES: ViewId[] = ["billing", "dashboard", "quotations", "contracts", "appointments", "health_logs", "tasks_table", "roster", "kpi", "staff", "branches", "prices", "facility_tasks", "master_tasks"];

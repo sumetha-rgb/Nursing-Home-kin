@@ -62,8 +62,8 @@ export default function KpiCharts({ pct, counts, vs }: { pct: PctKpi[]; counts: 
   return (
     <div className="kc">
       <section className="card kc-card">
-        <header className="kc-h"><div><h3>ตัวชี้วัดที่เป็น % เทียบเป้า</h3><p>กดแถวเพื่อดูแนวโน้ม · เทียบกับ {prevName}</p></div></header>
-        <div className="kc-leg" aria-hidden="true"><span><i className="cur" />ช่วงนี้</span><span><i className="prev" />{prevName}</span><span><i className="goal" />เป้า</span></div>
+        <header className="kc-h"><div><h3>ตัวชี้วัดที่เป็น % เทียบเป้า</h3><p>เทียบกับช่วง {prevName} กดที่แต่ละแถวเพื่อดูแนวโน้ม</p></div></header>
+        <div className="kc-leg" aria-hidden="true"><span><i className="cur" />ช่วงนี้</span><span><i className="prev" />ช่วง {prevName}</span><span><i className="goal" />เส้นเป้าหมาย</span></div>
         <div className="kc-bullets" role="list">
           {pct.map((x) => {
             const gap = x.cur === null ? null : x.cur - x.goal;
@@ -91,7 +91,7 @@ export default function KpiCharts({ pct, counts, vs }: { pct: PctKpi[]; counts: 
       </section>}
 
       {counts.length > 0 && <section className="card kc-card is-wide">
-        <header className="kc-h"><div><h3>ตัวชี้วัดที่เป็นจำนวน</h3><p>แท่งอ่อน = {prevName} · แท่งเข้ม = ช่วงนี้ · กดเพื่อดูรายละเอียด</p></div></header>
+        <header className="kc-h"><div><h3>ตัวชี้วัดที่เป็นจำนวน</h3><p>แท่งสีอ่อนคือช่วง {prevName} แท่งสีเข้มคือช่วงนี้ ตัวเลขสี<span className="kc-ok-t">เขียว</span>แปลว่าดีขึ้น สี<span className="kc-bad-t">แดง</span>แปลว่าแย่ลงและควรตรวจดู กดที่การ์ดเพื่อดูรายละเอียด</p></div></header>
         <div className="kc-counts">
           {counts.map((c) => {
             const max = Math.max(c.cur, c.prev, 1), d = c.cur - c.prev;
@@ -102,7 +102,7 @@ export default function KpiCharts({ pct, counts, vs }: { pct: PctKpi[]; counts: 
                 <span className="kc-count-n">{c.label}</span>
                 <span className="kc-pair" aria-hidden="true"><i className="p" style={{ height: `${Math.max(4, (c.prev / max) * 100)}%` }} /><i className="c" style={{ height: `${Math.max(4, (c.cur / max) * 100)}%` }} /></span>
                 <b>{c.text ?? c.cur.toLocaleString("en-US")} <small>{c.unit}</small></b>
-                <small className={`kc-d ${good === null ? "" : good ? "is-ok" : "is-bad"}`}>{d === 0 ? `เท่ากับ ${prevName}` : `${d > 0 ? "▲ เพิ่มขึ้น" : "▼ ลดลง"} ${Math.abs(d).toLocaleString("en-US")}`}</small>
+                <small className={`kc-d ${good === null ? "" : good ? "is-ok" : "is-bad"}`}>{d === 0 ? `เท่ากับช่วง ${prevName}` : `${d > 0 ? "▲ มากขึ้น" : "▼ น้อยลง"} ${Math.abs(d).toLocaleString("en-US")} ${c.unit} ${good ? "ดีขึ้น" : "ควรตรวจดู"}`}</small>
               </button>
             );
           })}

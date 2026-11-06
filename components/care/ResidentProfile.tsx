@@ -9,6 +9,8 @@ import { PrintModal, ProfileDoc, ReferralDoc } from "@/components/print/Docs";
 import { MedPhotoModal } from "@/components/pharmacy/MedPhotos";
 import { useBranchInfo } from "@/components/views/Billing";
 import { useSession } from "@/lib/session";
+import ResidentBilling from "./ResidentBilling";
+import { can } from "@/lib/perms";
 import { ADMISSION_FIELDS } from "@/lib/clinic";
 import { fetchProfile, Profile, thDate, thWhen } from "@/lib/care";
 import { evaluateVitals, LEVEL_TH, levelOf, LIMITS, parseVitals, Vitals } from "@/lib/vitals";
@@ -58,11 +60,11 @@ const limitLines = (k: keyof Vitals) => {
   return out;
 };
 
-const TABS = ["ภาพรวม", "แรกรับ/ประเมิน", "บันทึกพยาบาล", "สัญญาณชีพ", "ยาและการให้ยา", "กายภาพ", "เวชภัณฑ์", "งานดูแลและนัดหมาย", "สมุดส่งเวร"];
+const TABS = ["ภาพรวม", "แรกรับ/ประเมิน", "บันทึกพยาบาล", "สัญญาณชีพ", "ยาและการให้ยา", "กายภาพ", "เวชภัณฑ์", "งานดูแลและนัดหมาย", "สมุดส่งเวร", "ค่าใช้จ่าย"];
 /** แท็บแบ่ง 2 แถวตามกลุ่ม ไม่ต้องเลื่อนซ้ายขวา */
 const TAB_GROUPS = [
   { label: "ข้อมูลทั่วไป", tabs: ["ภาพรวม", "แรกรับ/ประเมิน", "งานดูแลและนัดหมาย", "สมุดส่งเวร"] },
-  { label: "การดูแลรายวัน", tabs: ["บันทึกพยาบาล", "สัญญาณชีพ", "ยาและการให้ยา", "กายภาพ", "เวชภัณฑ์"] },
+  { label: "การดูแลรายวัน", tabs: ["บันทึกพยาบาล", "สัญญาณชีพ", "ยาและการให้ยา", "กายภาพ", "เวชภัณฑ์"] },  { label: "การเงิน", tabs: ["ค่าใช้จ่าย"], money: true },
 ];
 const CLINICAL: Record<string, ClinicalTab> = { "แรกรับ/ประเมิน": "admission", "บันทึกพยาบาล": "nursing", "กายภาพ": "physio", "เวชภัณฑ์": "supplies" };
 
@@ -74,6 +76,8 @@ export default function ResidentProfile({ id, onClose }: { id: string | null; on
   const { toast } = useApp();
   const { c, reload } = useClinic(id);
   const { user } = useSession();
+  // แท็บค่าใช้จ่าย: เฉพาะคนที่ดูใบแจ้งหนี้หรือสัญญาได้ (แคชเชียร์ ผู้จัดการ ผู้บริหาร)
+  const canMoney = can(user, "billing") || can(user, "contracts");
   const branchInfo = useBranchInfo();
   const [doc, setDoc] = useState<null | "profile" | "referral">(null);
   const [packPic, setPackPic] = useState<{ id: string; title: string } | null>(null);
@@ -126,13 +130,14 @@ export default function ResidentProfile({ id, onClose }: { id: string | null; on
           {allergy.length > 0 && <p role="alert" className="care-allergy"><Icon name="alert" className="h-5 w-5 shrink-0" /><span><b>ระวัง · {allergy.join(" · ")}</b><small>ข้อมูลจากสัญญา · ตรวจก่อนให้ยาและอาหารทุกครั้ง</small></span></p>}
 
           <div className="print-hide space-y-2 rounded-2xl border border-cream-300 bg-cream-50 p-3" role="group" aria-label="เลือกหัวข้อ">
-            {TAB_GROUPS.map((g) => <div key={g.label} className="flex flex-col gap-1.5 sm:flex-row sm:items-center">
+            {TAB_GROUPS.filter((g) => !("money" in g) || canMoney).map((g) => <div key={g.label} className="flex flex-col gap-1.5 sm:flex-row sm:items-center">
               <span className="w-28 shrink-0 text-xs font-medium text-gold-500">{g.label}</span>
               <div className="flex flex-wrap gap-1.5">{g.tabs.map((t) => <button type="button" key={t} aria-pressed={tab === t} onClick={() => setTab(t)}
                 className={`rounded-full px-3.5 py-1.5 text-sm transition ${tab === t ? "bg-gold-700 font-medium text-white shadow-sm" : "border border-cream-300 bg-white text-gold-700 hover:border-gold-300"}`}>{t}</button>)}</div>
             </div>)}
           </div>
 
+          {tab === "ค่าใช้จ่าย" && canMoney && <ResidentBilling name={r.full_name} hn={r.hn as string | null | undefined} />}
           {tab === TABS[0] && (
             <div className="grid gap-4 md:grid-cols-2">
               {ci && <section className="profile-box md:col-span-2">

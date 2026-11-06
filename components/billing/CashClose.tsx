@@ -7,6 +7,7 @@ import { docDate, money, todayIso } from "@/lib/billing";
 import { useApp } from "@/lib/app";
 import { useBranchNames } from "@/lib/branches";
 import { downloadCsv } from "@/lib/store";
+import { closesCsv } from "@/lib/exportsCsv";
 
 /**
  * สถานะการปิดยอดรายสาขา 30 วันล่าสุด (แท็บการเงินในภาพรวมและรายงาน)
@@ -145,9 +146,7 @@ export default function CashClose({ open, onClose, isGlobal }: { open: boolean; 
     const rows = closes.filter(inBranch).filter((c) => (!rg.from || c.date >= rg.from) && c.date <= rg.to);
     if (!rows.length) return toast(`ไม่มีการปิดยอดช่วง${rg.key} (${rg.label})`);
     const name = isGlobal ? branch || "ทุกสาขา" : rows[0].branch;
-    downloadCsv(`ปิดยอดรายวัน-${name}-${rg.from ? (rg.from === rg.to ? rg.from : `${rg.from}-ถึง-${rg.to}`) : `ถึง-${rg.to}`}`,
-      ["วันที่", "สาขา", "รายการรับชำระ", "เงินสดในระบบ", "เงินโอน", "บัตรเครดิต", "รวมรับ", "เงินสดที่นับได้", "ส่วนต่างเงินสด", "หมายเหตุ", "ปิดยอดโดย", "เวลาปิดยอด", "ตรวจรับรองโดย", "เวลาตรวจรับรอง"],
-      rows.map((c) => [docDate(c.date), c.branch, String(c.payments), money(c.cash), money(c.transfer), money(c.credit), money(c.cash + c.transfer + c.credit), money(c.counted), money(diffOf(c)), c.note, c.closedBy, c.closedAt, c.approvedBy ?? "", c.approvedAt ?? ""]));
+    closesCsv(rows, `ปิดยอดรายวัน-${name}-${rg.from ? (rg.from === rg.to ? rg.from : `${rg.from}-ถึง-${rg.to}`) : `ถึง-${rg.to}`}`);
     toast(`ส่งออกการปิดยอด${rg.key}แล้ว ${rows.length} วัน`);
   };
 

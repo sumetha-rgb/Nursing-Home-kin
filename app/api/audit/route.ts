@@ -19,7 +19,7 @@ const PAGE = 50;
  */
 /**
  * บันทึกการส่งออกไฟล์ที่มีข้อมูลส่วนบุคคล (เช่น ทะเบียนสัญญา CSV)
- *  POST { what: "contracts" | "health", count }
+ *  POST { what: "contracts" | "health" | "spend" | "appointments", count }
  */
 export async function POST(req: NextRequest) {
   const me = await currentUser(req);
@@ -31,6 +31,10 @@ export async function POST(req: NextRequest) {
     await audit(req, me, [{ area: "contracts", action: "export", recordId: null, summary: `ส่งออกทะเบียนสัญญา CSV ${n} สัญญา (มีเลขบัตรประชาชนและที่อยู่)`, branch }]);
   } else if (b.what === "health" && can(me, "health_logs")) {
     await audit(req, me, [{ area: "health", action: "export", recordId: null, summary: `ส่งออกบันทึกสุขภาพ CSV ${n} รายการ (ข้อมูลสุขภาพ)`, branch }]);
+  } else if (b.what === "spend" && (can(me, "billing") || can(me, "dashboard"))) {
+    await audit(req, me, [{ area: "billing", action: "export", recordId: null, summary: `ส่งออกค่าใช้จ่ายรายบุคคล CSV ${n} แถว (มีชื่อและยอดเงินของผู้รับบริการ)`, branch }]);
+  } else if (b.what === "appointments" && can(me, "appointments")) {
+    await audit(req, me, [{ area: "appointments", action: "export", recordId: null, summary: `ส่งออกนัดหมาย CSV ${n} รายการ (มีชื่อผู้รับบริการ)`, branch }]);
   } else return forbidden();
   return NextResponse.json({ ok: true });
 }

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { docDate, Invoice, lineAmount, lineDiscount, lineNet, money, parseItems, BillItem } from "./billing";
 import { downloadCsv } from "./store";
+import { lineCode } from "./priceList";
 
 /** ยอดรับเงินจริงต่อวันต่อสาขา (รวมทุกงวดที่รับในวันนั้น · ไม่นับใบที่ยกเลิก) จาก /api/billing?op=paid_days */
 export type PaidDay = { branch: string; date: string; amount: number };
@@ -36,6 +37,16 @@ export function itemCategory(i: BillItem) {
   return "บริการอื่น";
 }
 
+/** ยอดสุทธิของบรรทัด (หลังส่วนลด รวม VAT) · บรรทัดหักเงินที่รับไว้แล้วเป็นยอดติดลบ */
+export function lineTotal(i: BillItem) {
+  if (i.credit) return -lineAmount(i);
+  return Math.round(lineNet(i) * (100 + (i.vat ?? 0))) / 100;
+}
+/** ชื่อรายการสำหรับรวมยอด: ตัดวงเล็บท้ายที่มีวันที่ (เช่น "(เบิก 30/10/2569)" "(ซื้อ 30/10/2569)") ให้รายการเดียวกันรวมเป็นแถวเดียว */
+export const itemName = (desc: string) => desc.replace(/\s*\([^()]*\d{1,2}\/\d{1,2}\/\d{2,4}[^()]*\)\s*$/, "").trim();
+/** หมวดที่ไม่นับเป็นยอดขาย: เงินประกันคืนเมื่อกลับบ้าน · บรรทัดหักเงินเป็นการหักยอด ไม่ใช่การขาย */
+export const NOT_SALES = ["เงินประกัน", "หักเงินที่รับไว้แล้ว"];
+
 /** ทุกบรรทัดของทุกใบ: เห็นว่าแต่ละใบเป็นค่าห้อง คอร์ส ยา หรือเวชภัณฑ์เท่าไร · บรรทัดหักเงินที่รับไว้แล้วเป็นยอดติดลบ */
 export function exportInvoiceLines(list: Invoice[], branchOf: (x: Invoice) => string, name: string) {
   const r2 = (n: number) => Math.round(n * 100) / 100;
@@ -43,23 +54,23 @@ export function exportInvoiceLines(list: Invoice[], branchOf: (x: Invoice) => st
     parseItems(x.items).map((i, k) => {
       if (i.credit) {
         const amt = lineAmount(i);
-        return [x.no ?? "", docDate(x.date), branchOf(x), x.who, x.hn || "", x.kind, x.status, String(k + 1), i.desc, itemCategory(i), String(i.qty), money(i.price), money(-amt), "0.00", money(-amt), "0", "0.00", money(-amt)];
+        return [x.no ?? "", docDate(x.date), branchOf(x), x.who, x.hn || "", x.kind, x.status, String(k + 1), "", i.desc, itemCategory(i), String(i.qty), money(i.price), money(-amt), "0.00", money(-amt), "0", "0.00", money(-amt)];
       }
       const base = lineNet(i), vat = r2((base * (i.vat ?? 0)) / 100);
-      return [x.no ?? "", docDate(x.date), branchOf(x), x.who, x.hn || "", x.kind, x.status, String(k + 1), i.desc, itemCategory(i), String(i.qty), money(i.price), money(lineAmount(i)), money(lineDiscount(i)), money(base), String(i.vat ?? 0), money(vat), money(base + vat)];
+      return [x.no ?? "", docDate(x.date), branchOf(x), x.who, x.hn || "", x.kind, x.status, String(k + 1), lineCode(i), i.desc, itemCategory(i), String(i.qty), money(i.price), money(lineAmount(i)), money(lineDiscount(i)), money(base), String(i.vat ?? 0), money(vat), money(base + vat)];
     }));
-  downloadCsv(name, ["เลขที่เอกสาร", "วันที่", "สาขา", "ผู้รับบริการ", "HN", "ประเภทใบ", "สถานะใบ", "บรรทัด", "รายการ", "หมวด", "จำนวน", "ราคาต่อหน่วย", "ยอดก่อนส่วนลด", "ส่วนลด", "ก่อน VAT", "VAT (%)", "VAT", "สุทธิ"], rows);
+  downloadCsv(name, ["เลขที่เอกสาร", "วันที่", "สาขา", "ผู้รับบริการ", "HN", "ประเภทใบ", "สถานะใบ", "บรรทัด", "รหัสสินค้า", "รายการ", "หมวด", "จำนวน", "ราคาต่อหน่วย", "ยอดก่อนส่วนลด", "ส่วนลด", "ก่อน VAT", "VAT (%)", "VAT", "สุทธิ"], rows);
   return rows.length;
 }
 
 type PayRow = { date: string; no: string | null; n: number; branch: string; who: string; hn: string | null; payer: string | null; kind: string; status: string; cash: number; transfer: number; credit: number; amount: number; cashier: string; note: string; slip: boolean };
 
 /** การรับเงินทุกงวด: กระทบยอดเงินสด / เงินโอน / บัตร กับบัญชีธนาคารรายวัน */
-export async function exportPayments(branch: string, name: string) {
+export async function exportPayments(branch: string, name: string, inRange: (d: string) => boolean = () => true) {
   const r = await fetch(`/api/billing?op=payments${branch ? `&branch=${encodeURIComponent(branch)}` : ""}`, { cache: "no-store" });
   const d = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(d.error || "ดึงข้อมูลการรับเงินไม่สำเร็จ");
-  const items = (d.items ?? []) as PayRow[];
+  const items = ((d.items ?? []) as PayRow[]).filter((p) => inRange(String(p.date ?? "").slice(0, 10)));
   downloadCsv(name, ["วันที่รับเงิน", "เลขที่เอกสาร", "งวดที่", "สาขา", "ผู้รับบริการ", "HN", "ผู้ชำระ", "ประเภทใบ", "สถานะใบ", "เงินสด", "เงินโอน", "บัตรเครดิต", "รวมรับงวดนี้", "ผู้รับเงิน", "มีสลิป", "หมายเหตุ"],
     items.map((p) => [docDate(p.date), p.no ?? "", String(p.n), p.branch ?? "", p.who ?? "", p.hn ?? "", p.payer ?? "", p.kind ?? "", p.status ?? "", money(p.cash), money(p.transfer), money(p.credit), money(p.amount), p.cashier, p.slip ? "มี" : "", p.note]));
   return items.length;

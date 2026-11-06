@@ -392,11 +392,8 @@ export function Appointments() {
       />
       <PrintModal open={slip !== null && !!rows[slip]} title="ใบนัดหมาย" onClose={() => setSlip(null)}>
         {slip !== null && rows[slip] && (() => {
-          const a = rows[slip], ri = res.rows.findIndex((r) => r[0] === a[2]), r = res.rows[ri];
-          // นัดที่เท่าไรของคนนี้ในเดือนเดียวกัน (นับตามวันเวลานัด)
-          const key = apptKey(a), month = apptIso(a[0]).slice(0, 7);
-          const nth = rows.filter((x) => x[2] === a[2] && apptIso(x[0]).slice(0, 7) === month && apptKey(x) <= key).length;
-          return <ApptSlip resident={a[2]} residentId={ri >= 0 ? res.ids[ri] : undefined} hn={r?.[6]} room={r?.[2]} bed={r?.[7]} nth={nth} date={apptIso(a[0])} time={(a[1] ?? "").slice(0, 5)}
+          const a = rows[slip], r = residentOf(a[2]);
+          return <ApptSlip resident={a[2]} date={apptIso(a[0])} time={(a[1] ?? "").slice(0, 5)}
             purpose={a[3]} caregiver={a[4]} prep={a[5]} branch={branchInfo(r?.[3] ?? user?.branch ?? "")} by={user?.name} />;
         })()}
       </PrintModal>
