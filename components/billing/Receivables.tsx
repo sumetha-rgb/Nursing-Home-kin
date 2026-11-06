@@ -55,7 +55,7 @@ export default function Receivables({ list, branchOf, branchInfo, by }: { list: 
 
   if (!open.length) return null;
   return (
-    <Section title="ลูกหนี้ค้างชำระตามอายุหนี้" sub="นับจากวันที่ออกใบ · ยิ่งค้างนานสียิ่งเข้ม · กดช่วงอายุเพื่อดูเฉพาะคนในช่วงนั้น · พิมพ์ใบแจ้งยอดค้างชำระรวมทุกใบให้ญาติได้"
+    <Section title="ลูกหนี้ค้างชำระตามอายุหนี้" sub="นับจากวันที่ออกใบ"
       actions={<button className="btn-soft" onClick={exportCsv}><CsvIcon /> ส่งออก CSV</button>}>
       <div className="aging">
         <div className="aging-bar" role="img" aria-label={`ยอดค้างรวม ${money(grand)} บาท`}>

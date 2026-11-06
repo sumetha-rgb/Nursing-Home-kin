@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sql } from "@/lib/db";
 import { familyLinkOf } from "@/lib/familyLink";
+import { SHARED_BRANCHES } from "@/lib/schema";
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
@@ -33,9 +34,11 @@ export async function GET(req: NextRequest) {
       FROM family_updates WHERE resident_id = $1 AND branch_name = $2 AND (created_at AT TIME ZONE 'Asia/Bangkok')::date = $3::date`, [l.resident_id, l.branch_name, date])) as typeof tasks;
     tasks.push(...ups);
     tasks.sort((a, b) => String(a.time ?? "").localeCompare(String(b.time ?? "")));
+    // ซองยาเก่าที่ยังไม่มีรหัส ผูกด้วยชื่อได้เฉพาะสาขาของลิงก์ ข้อมูลส่วนกลาง หรือแถวเก่าที่ไม่มีสาขา (กันคนชื่อซ้ำต่างสาขา · เหมือน MINE ใน /api/care)
     const packs = (await sql(`
       SELECT meal, bool_or(given) AS given, to_char(max(given_at), 'HH24:MI') AS at
-      FROM medication_packs WHERE ${mine()} AND pack_date = $3::date GROUP BY meal`, [...p, date])) as { meal: string; given: boolean; at: string | null }[];
+      FROM medication_packs WHERE (resident_id = $1 OR (resident_id IS NULL AND resident_name = $2 AND (branch_name IS NULL OR branch_name = $3 OR branch_name = ANY($5))))
+        AND pack_date = $4::date GROUP BY meal`, [...p, l.branch_name, date, SHARED_BRANCHES])) as { meal: string; given: boolean; at: string | null }[];
     const meds = packs.sort((a, b) => MEALS.indexOf(a.meal) - MEALS.indexOf(b.meal));
     const days = (await sql(`
       SELECT d FROM (

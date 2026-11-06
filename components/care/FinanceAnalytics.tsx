@@ -3,11 +3,11 @@ import { useEffect, useState } from "react";
 import CsvIcon from "@/components/CsvIcon";
 import Icon from "../Icon";
 import { MetricGrid, Section, Tile } from "../ui";
-import { balanceOf, BILL_KINDS, docDate, DRAFT, Invoice, isOpen, money, PAID, PARTIAL, VOID } from "@/lib/billing";
+import { balanceOf, BILL_KINDS, docDate, DRAFT, Invoice, invoiceBranch, isOpen, money, PAID, PARTIAL, VOID } from "@/lib/billing";
 import { downloadCsv, useCrud, useRecords } from "@/lib/store";
 import { CONTRACTS, RESIDENTS } from "@/lib/mock";
 import { useApp } from "@/lib/app";
-import { exportInvoiceLines, exportPayments } from "@/lib/billingExport";
+import { exportInvoiceLines, exportPayments, usePaidDays } from "@/lib/billingExport";
 import { cashHandoff } from "@/lib/handoff";
 import { useSession } from "@/lib/session";
 import { useBranchInfo } from "../views/Billing";
@@ -80,8 +80,8 @@ export default function FinanceAnalytics({ branch, compact, onTiles, month, prev
   const { go, toast } = useApp();
   const { user } = useSession();
   const branchInfo = useBranchInfo();
-  // ใบแจ้งหนี้ไม่มีสาขาฝั่งหน้าจอ: ดูจากสัญญา หรือผู้รับบริการ
-  const branchOf = (x: Invoice) => con.rows.find((c) => c[0] === x.contract)?.[1] ?? res.rows.find((r) => r[0] === x.who)?.[3] ?? "";
+  // ใบแจ้งหนี้ไม่มีสาขาฝั่งหน้าจอ: ดูจากสัญญา หรือผู้รับบริการ หรือสาขาของผู้ใช้ (เหมือนหน้าใบแจ้งหนี้และใบเสร็จ)
+  const branchOf = (x: Invoice) => invoiceBranch(x, con.rows, res.rows, user?.branch);
   const list = (branch ? all.filter((x) => branchOf(x) === branch) : all).filter((x) => x.status !== VOID);
   // เดือนที่เลือกจากตัวเลือกช่วงเวลา (ค่าเริ่มต้น = เดือนนี้) · กราฟ 12 เดือนจบที่เดือนนั้น
   const now = month ?? monthKey();
@@ -90,7 +90,13 @@ export default function FinanceAnalytics({ branch, compact, onTiles, month, prev
   const today = new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10);
   const cut = now === today.slice(0, 7) ? Number(today.slice(8, 10)) : 0;
   const upTo = (d: string | undefined, day: number) => !day || Number((d ?? "").slice(8, 10)) <= day;
-  const paidIn = (m: string, day = 0) => list.filter((x) => (x.status === PAID || x.status === PARTIAL) && (x.paidDate ?? "").startsWith(m) && upTo(x.paidDate, day)).reduce((n, x) => n + (x.paid ?? 0), 0);
+  // รับชำระของเดือน = รวมเงินที่รับแต่ละงวดตามวันที่รับจริง (จาก /api/billing) · ยังโหลดไม่ได้ = ประมาณจากยอดสะสมของใบตามวันที่รับล่าสุด (แบบเดิม)
+  const from = `${prev < months[0] ? prev : months[0]}-01`;
+  const days = usePaidDays(from, all.reduce((n, x) => n + (x.paid ?? 0), 0));
+  const dayRows = days ? (branch ? days.filter((p) => p.branch === branch) : days) : null;
+  const paidIn = (m: string, day = 0) => dayRows
+    ? dayRows.filter((p) => p.date.startsWith(m) && upTo(p.date, day)).reduce((n, p) => n + p.amount, 0)
+    : list.filter((x) => (x.status === PAID || x.status === PARTIAL) && (x.paidDate ?? "").startsWith(m) && upTo(x.paidDate, day)).reduce((n, x) => n + (x.paid ?? 0), 0);
   const billedIn = (m: string, day = 0) => list.filter((x) => x.status !== DRAFT && x.date.startsWith(m) && upTo(x.date, day));
   const open = list.filter(isOpen), drafts = list.filter((x) => x.status === DRAFT);
   const owe = open.reduce((n, x) => n + balanceOf(x), 0);

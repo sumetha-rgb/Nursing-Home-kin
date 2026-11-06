@@ -11,7 +11,7 @@ import { useApp } from "@/lib/app";
 import { useAutoRefresh } from "@/lib/autoRefresh";
 import { ROLE_INFO, Role } from "@/lib/roles";
 import { useBranchNames } from "@/lib/branches";
-import { assignShift, Attendance, dayTitle, fetchDay, fetchMonth, isoDate, Month, Shift, shortName, SHIFTS, WEEKDAYS, ymOf } from "@/lib/roster";
+import { assignOne, assignShift, Attendance, dayTitle, fetchDay, fetchMonth, isoDate, Month, Shift, shortName, SHIFTS, WEEKDAYS, ymOf } from "@/lib/roster";
 
 /** ตารางเวรของสาขา: ผู้จัดการดูภาพรวมทั้งเดือน กดวันเพื่อจัดคนเข้าเวรและดูรูปเช็คชื่อ */
 export function Roster() {
@@ -24,6 +24,8 @@ export function Roster() {
   const [error, setError] = useState("");
   const [day, setDay] = useState<string | null>(null);
   const [pick, setPick] = useState<Record<string, string[]>>({});
+  /** รายชื่อเวรตอนเปิดหน้าต่าง (บันทึกเฉพาะคนที่เพิ่ม/เอาออก ไม่ทับคนที่คนอื่นเพิ่งจัด) */
+  const [orig, setOrig] = useState<Record<string, string[]>>({});
   const [att, setAtt] = useState<Attendance[]>([]);
   const [photo, setPhoto] = useState<Attendance | null>(null);
   const [busy, setBusy] = useState(false);
@@ -50,15 +52,22 @@ export function Roster() {
   const openDay = async (d: string) => {
     if (!data) return;
     setDay(d);
-    setPick(Object.fromEntries(SHIFTS.map((s) => [s.key, data.shifts.filter((x) => x.date === d && x.shift === s.key).map((x) => x.staff_id)])));
+    const cur = Object.fromEntries(SHIFTS.map((s) => [s.key, data.shifts.filter((x) => x.date === d && x.shift === s.key).map((x) => x.staff_id)]));
+    setPick(cur); setOrig(cur);
     setAtt([]);
     try { setAtt((await fetchDay(d, data.branch ?? undefined)).attendance); } catch { /* แสดงเฉพาะตารางเวร */ }
+  };
+  /** บันทึกเฉพาะส่วนต่างทีละคน (เพิ่ม/เอาออก) · คนที่ไม่ได้แตะในหน้าจอนี้ไม่ถูกลบ แม้ข้อมูลในหน้าจอจะเก่า */
+  const applyDiff = async (d: string, sh: string, from: string[], to: string[]) => {
+    const br = data?.branch ?? undefined;
+    for (const id of to.filter((x) => !from.includes(x))) await assignOne(d, sh, id, true, br);
+    for (const id of from.filter((x) => !to.includes(x))) await assignOne(d, sh, id, false, br);
   };
   const save = async () => {
     if (!day || !data) return;
     setBusy(true);
     try {
-      for (const s of SHIFTS) await assignShift(day, s.key, pick[s.key] ?? [], data.branch ?? undefined);
+      for (const s of SHIFTS) await applyDiff(day, s.key, orig[s.key] ?? [], pick[s.key] ?? []);
       toast(`บันทึกเวรแล้ว · วันที่ ${Number(day.slice(8))} · พยาบาลเห็นใน KinApp ทันที`);
       setDay(null); load();
     } catch (e) { toast((e as Error).message); }
@@ -149,16 +158,16 @@ export function Roster() {
     const r = e.currentTarget.getBoundingClientRect(), H = Math.min(team.length * 44, 300) + 130;
     setCrew({ d, sh, sel: onShift(d, sh), x: Math.max(8, Math.min(r.left + r.width / 2 - 140, window.innerWidth - 290)), y: r.bottom + H > window.innerHeight ? Math.max(8, r.top - H - 4) : r.bottom + 4 });
   };
-  /** บันทึกรายชื่อทั้งกะ (แทนที่รายชื่อเดิมของกะนั้น) */
+  /** บันทึกรายชื่อทั้งกะ: ส่งเฉพาะคนที่ติ๊กเพิ่ม/เอาออก (ไม่แทนที่ทั้งกะ คนที่คนอื่นเพิ่งจัดไม่หาย) */
   const saveCrew = async () => {
     if (!crew || !data?.branch) return;
     const { d, sh, sel } = crew, cur = onShift(d, sh);
     setCrew(null);
     if (cur.length === sel.length && cur.every((x) => sel.includes(x))) return;
     setSaving(`cov|${d}|${sh}`);
-    try { await assignShift(d, sh, sel, data.branch ?? undefined); await load(); toast(`บันทึกเวร${sh} ${dm(d)} แล้ว · ${sel.length} คน`); }
+    try { await applyDiff(d, sh, cur, sel); toast(`บันทึกเวร${sh} ${dm(d)} แล้ว`); }
     catch (e) { toast((e as Error).message); }
-    finally { setSaving(""); }
+    finally { await load(); setSaving(""); }
   };
   const openMenu = (e: React.MouseEvent<HTMLButtonElement>, id: string, name: string, d: string) => {
     if (!data?.branch) return toast("กรุณาเลือกสาขาก่อนจัดเวร");
@@ -166,7 +175,7 @@ export function Roster() {
     const r = e.currentTarget.getBoundingClientRect();
     setMenu({ id, name, d, x: Math.min(r.left, window.innerWidth - 230), y: r.bottom + 230 > window.innerHeight ? r.top - 222 : r.bottom + 4 });
   };
-  /** ตั้งเวรของคนนั้นในวันนั้น · บันทึกเฉพาะกะที่เปลี่ยน (แทนที่รายชื่อเดิมของกะนั้น) */
+  /** ตั้งเวรของคนนั้นในวันนั้น · บันทึกเฉพาะกะที่เปลี่ยน เพิ่ม/เอาออกคนนี้คนเดียว (ไม่แตะคนอื่นในกะ) */
   const setCell = async (id: string, d: string, next: string[]) => {
     setMenu(null);
     if (!data?.branch) return;
@@ -176,12 +185,10 @@ export function Roster() {
     try {
       for (const sh of SHIFTS) {
         if (cur.includes(sh.key) === next.includes(sh.key)) continue;
-        const ids = weekShifts.filter((x) => x.date === d && x.shift === sh.key).map((x) => x.staff_id).filter((x) => x !== id);
-        await assignShift(d, sh.key, next.includes(sh.key) ? [...ids, id] : ids, data.branch ?? undefined);
+        await assignOne(d, sh.key, id, next.includes(sh.key), data.branch ?? undefined);
       }
-      await load();
     } catch (e) { toast((e as Error).message); }
-    finally { setSaving(""); }
+    finally { await load(); setSaving(""); }
   };
   // ตัวกรองและกลุ่ม: ค้นหาชื่อ · เฉพาะคนที่มีเวรสัปดาห์นี้ · กลุ่มตามตำแหน่ง ย่อ/ขยายได้
   const [who, setWho] = useState("");
@@ -223,7 +230,7 @@ export function Roster() {
 
   return (
     <>
-      <PageHeader title="ตารางเวร" sub={view === "สัปดาห์" ? "กดช่องของแต่ละคน หรือกดแถวคนเช้า / คนดึก เพื่อเลือกพนักงานทั้งกะ" : "กดวันที่เพื่อจัดเวรหรือดูการเช็คชื่อ"}
+      <PageHeader title="ตารางเวร" sub={view === "สัปดาห์" ? "กดช่องเพื่อจัดเวร" : "กดวันที่เพื่อจัดเวรหรือดูการเช็คชื่อ"}
         actions={<>
           <Tabs tabs={["สัปดาห์", "ทั้งเดือน"]} value={view} onChange={(v) => setView(v as "สัปดาห์" | "ทั้งเดือน")} />
           <MenuButton label="ส่งออก CSV" icon={<CsvIcon />} items={[

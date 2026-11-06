@@ -13,13 +13,13 @@ import { useBranchNames } from "@/lib/branches";
 import { CONTRACTS, RESIDENTS } from "@/lib/mock";
 import { contractRoomTitle } from "../print/Docs";
 import { TH_MONTHS } from "@/lib/appointments";
-import { useCrud } from "@/lib/store";
+import { refreshData, useCrud } from "@/lib/store";
 import { todayIso } from "@/lib/billing";
 import { useApp } from "@/lib/app";
 import { useSession } from "@/lib/session";
 import { can } from "@/lib/perms";
 import { findRoom, freeBed, RoomInfo, roomInfos, roomKey, roomLabel, roomProblem, ROOM_STATUSES, staying, withRoom } from "@/lib/rooms";
-import { MetricGrid, Modal, PageHeader, Section, Select, StatusBadge, Tabs } from "../ui";
+import { Modal, PageHeader, Section, Select, StatFilter, StatusBadge, Tabs } from "../ui";
 import { SearchSelect } from "../SearchSelect";
 
 type Dlg = { mode: "add" | "edit"; i?: number; preset?: string[] } | null;
@@ -45,6 +45,9 @@ export function Rooms() {
   const [who, setWho] = useState("");
   const [place, setPlace] = useState<number | null>(null);
   const [view, setView] = useState("การ์ด");
+  /** ตัวกรองห้อง: "" ทั้งหมด · free มีเตียงว่าง · full เต็ม · closed ปิดปรับปรุง (กรองในมุมมองการ์ด) */
+  const [rf, setRf] = useState("");
+  const rfOk = (r: RoomInfo) => !rf || (rf === "free" ? !r.closed && r.free > 0 : rf === "full" ? !r.closed && r.full : r.closed);
   const [wide, setWide] = useState(false);
   const [sel, setSel] = useState<number | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -100,7 +103,8 @@ export function Rooms() {
 
   useEffect(() => { if (selected && typeof window !== "undefined" && window.innerWidth < 1100) panelRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }); }, [sel]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const setRoom = (i: number, room: string, bed = "") => res.update(i, withRoom(res.rows[i], room, bed));
+  /** server เปลี่ยนห้องในสัญญาที่ใช้งานอยู่/รอชำระมัดจำของคนนี้ตาม (ไม่มีห้อง = "-") · บันทึกเสร็จแล้วดึงทะเบียนสัญญาใหม่ให้หน้าจอตรงกัน */
+  const setRoom = (i: number, room: string, bed = "") => { res.update(i, withRoom(res.rows[i], room, bed)).then(() => { refreshData("contracts"); refreshData("residents"); }); };
   const openPerson = (roomI: number, bed: string, who: string) => {
     const room = all.find((r) => r.i === roomI);
     const idx = res.rows.findIndex((r) => r[0] === who && r[3] === room?.branch);
@@ -207,18 +211,18 @@ export function Rooms() {
 
   return (
     <>
-      <PageHeader title="ห้องพักและเตียง" sub={admin ? "สร้างห้อง กำหนดจำนวนเตียง และเพิ่มผู้ป่วยเข้าเตียง" : move ? "ดูห้องและเตียง เพิ่มผู้ป่วยเข้าเตียงหรือย้ายห้อง" : "ดูห้องว่างของสาขา เพื่อเลือกห้องตอนเปิดสัญญา"}
+      <PageHeader title="ห้องพักและเตียง" sub="ห้องและเตียงของสาขา"
         actions={<>
           <Tabs tabs={VIEWS} value={view} onChange={setView} />
           {branchNames.length > 1 && <div className="min-w-44"><Select options={branchNames} placeholder="รวมทุกสาขา" value={branch} onChange={setBranch} /></div>}
           {admin && <button className="btn-primary" onClick={() => setDlg({ mode: "add" })}><Icon name="plus" className="h-4 w-4" /> สร้างห้อง</button>}
         </>} />
-      <MetricGrid items={[
-        { label: "ห้องทั้งหมด", value: list.length, unit: "ห้อง", icon: "bed", accent: true, note: list.length - open.length ? `ปิดปรับปรุง ${list.length - open.length} ห้อง` : undefined },
-        { label: "รองรับได้", value: open.reduce((n, r) => n + r.capacity, 0), unit: "คน", icon: "building" },
-        { label: "พักอยู่", value: open.reduce((n, r) => n + r.people.length, 0), unit: "คน", icon: "user" },
-        { label: "เตียงว่าง", value: free, unit: "เตียง", icon: "check", note: full.length ? `ห้องเต็ม ${full.length} ห้อง` : undefined },
-      ]} />
+      <StatFilter label="กรองห้อง" value={rf} onChange={(k) => { setRf(k); if (k && showMap) setView("การ์ด"); }} items={[
+        { k: "", t: "ทุกห้อง", n: list.length, tone: "all" },
+        { k: "free", t: "มีเตียงว่าง", n: open.filter((r) => r.free > 0).length, tone: "good" },
+        { k: "full", t: "เต็ม", n: full.length, tone: "muted" },
+        ...(list.length - open.length ? [{ k: "closed", t: "ปิดปรับปรุง", n: list.length - open.length, tone: "bad" as const }] : []),
+      ]} summary={<>พักอยู่ <b>{open.reduce((n, r) => n + r.people.length, 0)}</b> จาก <b>{open.reduce((n, r) => n + r.capacity, 0)}</b> เตียง · ว่าง <b>{free}</b></>} />
       {open.length > 0 && free === 0 && <p role="alert" className="room-warn mb-4">ห้องเต็มทุกห้องแล้ว ไม่สามารถรับผู้รับบริการใหม่ได้ {admin ? "สร้างห้องเพิ่ม หรือเพิ่มจำนวนเตียงในห้องก่อนเปิดสัญญาใหม่" : "แจ้งผู้จัดการสาขาให้เพิ่มห้องก่อนเปิดสัญญาใหม่"}</p>}
       {waiting.length > 0 && <div id="room-waiting" className="mb-6"><Section title={`รอจัดห้อง ${waiting.length} คน`}
         actions={<span className={`rw-free ${free < waiting.length ? "is-short" : ""}`}>ว่างตอนนี้ {free} เตียง{free < waiting.length ? ` · ขาดอีก ${waiting.length - free}` : ""}</span>}>
@@ -257,7 +261,8 @@ export function Rooms() {
           {panel}
         </div>
         : <div>{branches.map((b) => <Section key={b} title={branches.length > 1 || !branch ? `สาขา${b}` : "ห้องทั้งหมด"} sub={`${list.filter((r) => r.branch === b).length} ห้อง · ว่าง ${list.filter((r) => r.branch === b && !r.closed).reduce((n, r) => n + r.free, 0)} เตียง`}>
-          <div className="room-grid">{list.filter((r) => r.branch === b).map((r) => card(r))}</div>
+          <div className="room-grid">{list.filter((r) => r.branch === b && rfOk(r)).map((r) => card(r))}</div>
+          {!list.some((r) => r.branch === b && rfOk(r)) && <p className="py-4 text-center text-sm text-gold-500">ไม่มีห้องตามตัวกรองนี้</p>}
         </Section>)}</div>}
       {!showMap && selected && <div className="mt-4">{panel}</div>}
 

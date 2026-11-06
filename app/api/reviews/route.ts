@@ -17,7 +17,8 @@ export const fetchCache = "force-no-store";
  *  GET  ?op=mine                    คะแนนและรีวิวของฉัน (พนักงานทุกระดับ)
  *  GET  ?op=all_links              ลิงก์ครอบครัวทั้งหมดของสาขา (ผู้จัดการ/หัวหน้าพยาบาล) ล่าสุด 300 ลิงก์
  *  GET  ?op=links&resident=…        ลิงก์รีวิวของผู้รับบริการคนนี้ · ผู้จัดการขึ้นไป
- *  POST { op: "create", residentId } สร้างลิงก์ใหม่ (รหัสสุ่ม หมดอายุใน LINK_DAYS วัน)
+ *  POST { op: "create", residentId } สร้างลิงก์ใหม่ (รหัสสุ่ม หมดอายุใน LINK_DAYS วัน) · ผู้รับบริการที่ย้ายออกแล้ว = 409
+ *  (ย้ายออก / D/C / ยกเลิกสัญญา: ลิงก์ที่ยังใช้ได้ถูกปิดอัตโนมัติตอนบันทึกสถานะผู้รับบริการ ที่ api/data/residents)
  *  POST { op: "purge", resident? }   ลบลิงก์ที่ยกเลิก/หมดอายุแล้วออกจากระบบ (ผู้จัดการ/หัวหน้าพยาบาล) · รีวิวที่ได้รับแล้วยังอยู่ครบ
  *  POST { op: "revoke", id }         ยกเลิกลิงก์
  */
@@ -93,10 +94,12 @@ export async function POST(req: NextRequest) {
   const b = await req.json().catch(() => ({}));
   try {
     if (b.op === "create") {
-      const [r] = (await sql`SELECT id, full_name, branch_name FROM residents WHERE id = ${String(b.residentId ?? "")}`) as Record<string, string>[];
+      const [r] = (await sql`SELECT id, full_name, branch_name, status FROM residents WHERE id = ${String(b.residentId ?? "")}`) as Record<string, string>[];
       if (!r) return bad("ไม่พบผู้รับบริการ", 404);
       if (scoped(me) && r.branch_name !== me.branch) return forbidden();
       if (!r.branch_name) return bad("ผู้รับบริการยังไม่มีสาขา");
+      // ย้ายออกแล้ว: ไม่เปิดลิงก์ใหม่ให้ญาติ (ลิงก์เดิมปิดอัตโนมัติตอนย้ายออก · ดู api/data residents)
+      if (String(r.status ?? "").startsWith("ย้ายออก")) return bad(`${r.full_name} ย้ายออกแล้ว จึงสร้างลิงก์ครอบครัวไม่ได้`, 409);
       const id = randomUUID();
       const token = randomBytes(18).toString("base64url");
       await sql`INSERT INTO review_links (id, token, resident_id, resident_name, branch_name, created_by, expires_at)

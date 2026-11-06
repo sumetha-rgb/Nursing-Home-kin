@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
 
 /**
  * ที่เก็บข้อมูลฝั่งหน้าเว็บ ซิงก์กับฐานข้อมูล Neon ผ่าน /api/data/[key]
@@ -47,6 +47,8 @@ const put = (key: string, e: Partial<Entry>) => {
 };
 
 class Offline extends Error {}
+/** server ปฏิเสธการบันทึก · userMessage = ข้อความภาษาไทยจาก server (ช่อง error) ไว้แสดงผู้ใช้ */
+class Rejected extends Error { constructor(text: string, public status: number, public userMessage: string) { super(text); } }
 async function call(key: string, body?: object) {
   let res: Response;
   try {
@@ -54,9 +56,21 @@ async function call(key: string, body?: object) {
   } catch { throw new Offline("offline"); }
   // 401 = session หมดอายุ / 502-504 = เซิร์ฟเวอร์ไม่ตอบ: เก็บไว้ส่งใหม่ ไม่ทิ้งงานที่บันทึกไว้
   if (res.status === 401 || res.status >= 502) throw new Offline(String(res.status));
-  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+  if (!res.ok) {
+    const text = await res.text();
+    let msg = "";
+    try { msg = String((JSON.parse(text) as { error?: string }).error ?? ""); } catch { /* ไม่ใช่ JSON */ }
+    throw new Rejected(`${res.status} ${text}`, res.status, msg);
+  }
   return (await res.json()) as { seeded: boolean; items: Item<unknown>[] };
 }
+
+/**
+ * ผลการบันทึกแต่ละครั้ง (ส่งสำเร็จ / server ปฏิเสธพร้อมเหตุผล)
+ * server ปฏิเสธ = ส่ง event "kin-sync-error" { key, message } ให้หน้าจอแสดงข้อความ แล้วโหลดข้อมูลจริงจาก server มาแทน
+ */
+export type SyncResult = { ok: boolean; error?: string };
+export const SYNC_ERROR_EVENT = "kin-sync-error";
 
 /* ---------- สถานะการเชื่อมต่อ (ใช้แสดงแถบออฟไลน์) ---------- */
 type Op = { key: string; body: object };
@@ -104,11 +118,15 @@ async function flush() {
         if (e instanceof Offline) { online = false; setStatus(); return; }
         console.error(`บันทึกข้อมูล ${op.key} ไม่สำเร็จ`, e);
         outbox.shift(); saveOutbox();
+        const message = (e instanceof Rejected && e.userMessage) || "บันทึกไม่สำเร็จ กรุณาลองใหม่";
+        waiters.get(op)?.({ ok: false, error: message }); waiters.delete(op);
+        try { window.dispatchEvent(new CustomEvent(SYNC_ERROR_EVENT, { detail: { key: op.key, message } })); } catch { /* ไม่เป็นไร */ }
         put(op.key, { error: true, loaded: false });
         load(op.key, () => []);
         continue;
       }
       online = true; outbox.shift(); saveOutbox();
+      waiters.get(op)?.({ ok: true }); waiters.delete(op);
       if (!outbox.some((o) => o.key === op.key)) put(op.key, { items: r.items, error: false });
     }
     for (const key of stale) { stale.delete(key); put(key, { loaded: false }); load(key, () => []); }
@@ -116,10 +134,15 @@ async function flush() {
     flushing = false;
   }
 }
-function sync(key: string, body: object) {
-  outbox.push({ key, body });
+/** รอผลของรายการในคิว (เก็บในหน่วยความจำเท่านั้น · ปิดแอปก่อนส่ง = ไม่มีผล แต่รายการยังส่งต่อเอง) */
+const waiters = new Map<Op, (r: SyncResult) => void>();
+function sync(key: string, body: object): Promise<SyncResult> {
+  const op = { key, body };
+  outbox.push(op);
   saveOutbox();
+  const p = new Promise<SyncResult>((res) => waiters.set(op, res));
   flush();
+  return p;
 }
 
 if (isBrowser) {
@@ -223,7 +246,8 @@ export function useCrud(key: string, initial: string[][]) {
     add: (r: string[]) => { const it = { id: newId(), data: r }; local([it, ...items]); sync(key, { op: "upsert", items: [it] }); return it.id; },
     /** เพิ่มหลายรายการในครั้งเดียว (เช่น สร้างห้อง 101–110) */
     addMany: (rs: string[][]) => { const its = rs.map((data) => ({ id: newId(), data })); local([...its, ...items]); sync(key, { op: "upsert", items: its }); },
-    update: (i: number, r: string[]) => { const it = { ...items[i], data: r }; local(items.map((x, j) => (j === i ? it : x))); sync(key, { op: "upsert", items: [it] }); },
+    /** คืน Promise ผลการบันทึก (ใช้รอให้ server รับก่อนทำขั้นถัดไป เช่น อัปโหลดรูปหลักฐานหลังส่งงานสำเร็จ) */
+    update: (i: number, r: string[]) => { const it = { ...items[i], data: r }; local(items.map((x, j) => (j === i ? it : x))); return sync(key, { op: "upsert", items: [it] }); },
     /** คืนฟังก์ชันกู้คืน (ปุ่ม "เลิกทำ" ในแจ้งเตือน): ใส่รายการเดิมกลับที่ตำแหน่งเดิมด้วยรหัสเดิม */
     remove: (i: number) => {
       const it = items[i];
@@ -247,7 +271,8 @@ export function useCrud(key: string, initial: string[][]) {
  */
 export function useRecords<T extends { id: string | number }>(key: string, initial: T[]) {
   const { items, loaded, error } = useEntry<T>(key, () => initial.map((data) => ({ id: String(data.id), data })));
-  const list = items.map((x) => x.data);
+  // รายการเดิมจนกว่าข้อมูลใน store เปลี่ยน (ผู้เรียกใช้ useMemo ที่ขึ้นกับ list ได้)
+  const list = useMemo(() => items.map((x) => x.data), [items]);
   const setList = (next: T[]) => {
     const prev = new Map(items.map((x) => [x.id, x.data]));
     const nextIds = new Set(next.map((x) => String(x.id)));

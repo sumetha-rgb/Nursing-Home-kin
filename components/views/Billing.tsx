@@ -4,7 +4,7 @@ import CsvIcon from "@/components/CsvIcon";
 import Icon from "../Icon";
 import PhotoPicker from "../PhotoPicker";
 import BillDoc, { Branch, DocFormat } from "../billing/BillDoc";
-import { balanceOf, BILL_KINDS, creditOf, grandOf, BillItem, docDate, Invoice, isOpen, lineAmount, lineDiscount, money, PAID, PARTIAL, Payment, todayIso, totals, UNPAID, DEFAULT_VAT, contractVat, DRAFT, lineNet, vatOf, VOID } from "@/lib/billing";
+import { balanceOf, BILL_KINDS, creditOf, grandOf, BillItem, docDate, Invoice, isOpen, lineAmount, lineDiscount, money, PAID, PARTIAL, parseItems, Payment, todayIso, totals, UNPAID, DEFAULT_VAT, contractVat, DRAFT, lineNet, vatOf, VOID, contractMonthLines, invoiceBranch, isRoomLine } from "@/lib/billing";
 import { CONTRACTS, RESIDENTS } from "@/lib/mock";
 import { newId, useCrud, useRecords, downloadCsv, refreshData } from "@/lib/store";
 import { useApp } from "@/lib/app";
@@ -14,11 +14,10 @@ import { staying } from "@/lib/rooms";
 import { billHandoff, cashHandoff } from "@/lib/handoff";
 import Receivables from "../billing/Receivables";
 import CashClose from "../billing/CashClose";
-import { exportInvoiceLines, exportPayments } from "@/lib/billingExport";
-import { contractLines, contractRoomName } from "../print/Docs";
-import { DataTable, Field, MenuButton, MetricGrid, Modal, PageHeader, Section, StatusBadge, Tabs } from "../ui";
+import { exportInvoiceLines, exportPayments, usePaidDays } from "@/lib/billingExport";
+import { DataTable, Field, MenuButton, Modal, PageHeader, Section, StatFilter, StatusBadge, Tabs } from "../ui";
 import { ResidentPicker } from "../SearchSelect";
-import { lineCode, pickName, rateCode, rateText, roomByPrice, searchPrices } from "@/lib/priceList";
+import { lineCode, pickName, rateCode, rateText, searchPrices } from "@/lib/priceList";
 import { usePriceList } from "@/lib/usePrices";
 import { saveTaxInfo, useTaxInfo } from "@/lib/taxInfo";
 
@@ -53,12 +52,6 @@ function LineDesc({ value, onText, onPick }: { value: string; onText: (v: string
 const num = (x: string) => Number(String(x).replace(/,/g, "")) || 0;
 const val = (x?: string) => num(x && x !== "-" ? x : "");
 
-const isRoomLine = (d: string) => /ห้อง|room/i.test(d);
-
-/**
- * ค่าบริการต่อเดือนตามสัญญา (แจกแจงรายการ)
- *  มีรายการค่าห้องในสัญญา = ค่าห้องรวมค่าดูแลแล้ว ไม่ใส่ราคาโปรแกรมซ้ำ · ไม่มี = ราคาโปรแกรม + รายการอื่น
- */
 /** ใบที่ยังชำระไม่ครบ: ค้างมากี่วันนับจากวันที่ออกใบ · เกิน 30 วัน = เกินกำหนด */
 const overdue = (x: Invoice) => {
   if (!isOpen(x)) return "-";
@@ -66,29 +59,14 @@ const overdue = (x: Invoice) => {
   return d > 30 ? `เกินกำหนด ${d} วัน` : `ค้าง ${d} วัน`;
 };
 
-export function contractMonthLines(r: string[]): BillItem[] {
-  const no = r[6] && r[6] !== "-" ? r[6] : "";
-  const items = contractLines(r).filter((x) => x.price > 0);
-  const hasRoom = items.some((x) => isRoomLine(x.desc));
-  const rate = contractVat(r);
-  const fee = val(r[4]), kind = roomByPrice(fee), own = contractRoomName(r);
-  // ชื่อห้องที่ตั้งเอง (ค่าห้องกำหนดเอง) > ประเภทห้องจากราคาในใบราคา > ชื่อโปรแกรม
-  const feeDesc = own ? (/^ห้อง/.test(own) ? `ค่า${own}` : `ค่าห้อง ${own}`) : kind ? `ค่า${kind.name}${kind.promo ? " ราคาโปรโมชัน" : ""}` : r[21] && r[21] !== "-" ? r[21] : "ค่าบริการรายเดือน";
-  return [
-    ...(!hasRoom && fee ? [{ desc: `${feeDesc}${no ? ` · ห้อง ${no}` : ""}`, qty: 1, price: fee, discount: 0, vat: rate, code: lineCode({ desc: feeDesc, price: fee }) }] : []),
-    ...items.map((x) => {
-      const room = isRoomLine(x.desc);
-      return { desc: no && room && !x.desc.includes(no) ? `${x.desc} · ห้อง ${no}` : x.desc, qty: x.qty, price: x.price, discount: Number(x.discount) || 0, pct: Number(x.pct) || 0, vat: room ? rate : 0, ...(lineCode(x) ? { code: lineCode(x) } : {}) };
-    }),
-  ];
-}
+// ค่าบริการต่อเดือนตามสัญญา (contractMonthLines) อยู่ที่ lib/billing ใช้ร่วมกับเอกสารพิมพ์สัญญา
 
 /**
  * รายการใบแจ้งหนี้แรกเข้าจากสัญญา: ค่าบริการแจกแจง หักมัดจำห้องที่จ่ายตอนจอง (ที่บรรทัดค่าห้อง) · บวกเงินประกัน
  *  ยอด "ชำระล่วงหน้า" ใช้เมื่อสัญญาไม่มีรายการค่าบริการเลย
  */
-export function contractStartLines(r: string[]): BillItem[] {
-  const prepaid = val(r[18]), deposit = val(r[19]), dep = val(r[27]);
+export function contractStartLines(r: string[], prior: Invoice[] = []): BillItem[] {
+  const prepaid = val(r[18]), deposit = val(r[19]), dep = roomDepositDue(r, prior);
   const months = prepaidMonths(r);
   // ล่วงหน้าหลายเดือน: คูณจำนวนในแต่ละบรรทัด (VAT คิดตามยอดจริง)
   const service = contractMonthLines(r).map((l) => (months > 1 ? { ...l, qty: l.qty * months, desc: `${l.desc} (ล่วงหน้า ${months} เดือน)` } : l));
@@ -97,8 +75,88 @@ export function contractStartLines(r: string[]): BillItem[] {
     ...service,
     ...(deposit ? [{ desc: "เงินประกัน", qty: 1, price: deposit, discount: 0, code: "DP-01" }] : []),
     // มัดจำห้องที่จ่ายตอนจอง = เงินที่รับไว้แล้ว หักหลังรวม VAT (VAT ค่าห้องคิดจากราคาเต็ม)
-    ...(dep ? [{ desc: "หัก มัดจำห้องพักที่ชำระตอนจอง", qty: 1, price: dep, discount: 0, credit: true, code: "AD-01" }] : []),
+    ...(dep ? [{ desc: ROOM_DEP_DESC, qty: 1, price: dep, discount: 0, credit: true, code: "AD-01" }] : []),
   ];
+}
+const ROOM_DEP_DESC = "หัก มัดจำห้องพักที่ชำระตอนจอง";
+/**
+ * มัดจำห้องที่ต้องหักในใบแรกเข้า · 0 = ไม่ต้องหัก
+ *  ต่อสัญญาคัดลอกยอดมัดจำห้องมาที่สัญญาใหม่ด้วย: ถ้าเคยหักมัดจำก้อนเดียวกัน (AD-01 ยอดเท่ากัน) ในใบที่ไม่ยกเลิกของผู้รับบริการคนนี้แล้ว ไม่หักซ้ำ
+ *  prior = ใบแจ้งหนี้ของสาขาเดียวกับสัญญา (ผู้เรียกกรองสาขาให้)
+ */
+export function roomDepositDue(r: string[], prior: Invoice[] = []) {
+  const dep = val(r[27]);
+  if (!dep) return 0;
+  const used = prior.some((x) => x.status !== VOID && x.who === r[2] && parseItems(x.items).some((i) => i.credit && lineCode(i) === "AD-01" && Math.abs(lineAmount(i) - dep) < 0.005));
+  return used ? 0 : dep;
+}
+
+/** ใบแรกเข้าของสัญญา (ออกจาก contractStartLines): ประเภทมัดจำ/แรกเข้า หรือมีเงินประกัน ค่าบริการล่วงหน้า หักมัดจำห้องตอนจอง */
+export function isStartInvoice(x: Invoice, items?: BillItem[]) {
+  if (x.kind === BILL_KINDS[0]) return true;
+  if (x.kind === BILL_KINDS[5]) return false;
+  return (items ?? parseItems(x.items)).some((i) => { const d = i.desc.trim(); return (!i.credit && lineCode(i) === "DP-01") || d === ROOM_DEP_DESC || /\(ล่วงหน้า \d+ เดือน\)$|^ชำระค่าบริการล่วงหน้า/.test(d); });
+}
+const baseDesc = (d: string) => d.replace(/\s*\(ล่วงหน้า \d+ เดือน\)$/, "").trim();
+/**
+ * ใบนี้มีบรรทัดค่าห้อง / ค่าบริการรายเดือนตามสัญญาหรือไม่ (ดูจากบรรทัด ไม่ดูประเภทใบ เพราะประเภทใบแก้ได้)
+ *  รหัส RM-* · ชื่อมีคำว่าห้อง (ไม่ใช่ยา เวชภัณฑ์ มัดจำ) · ชื่อตรงกับรายการรายเดือนของสัญญา c
+ */
+export function hasMonthLine(items: BillItem[], c?: string[]) {
+  return hasMonthLineOf(items, c ? monthDescs(c) : null);
+}
+/** ชื่อรายการรายเดือนของสัญญา (ไม่มีวงเล็บล่วงหน้า) */
+const monthDescs = (c: string[]) => new Set(contractMonthLines(c).map((l) => baseDesc(l.desc)));
+function hasMonthLineOf(items: BillItem[], own: Set<string> | null) {
+  return items.some((i) => {
+    const d = i.desc.trim();
+    if (i.credit || !(i.price > 0) || !d) return false;
+    return /^RM-/.test(lineCode(i)) || (isRoomLine(d) && !/^(ยา|เวชภัณฑ์):|มัดจำ/.test(d)) || !!own?.has(baseDesc(d));
+  });
+}
+/** วันเริ่มสัญญา (วว/ดด/ปปปป พ.ศ. หรือ YYYY-MM-DD) → "YYYY-MM" · ไม่มี = "" */
+export function contractStartMonth(r: string[]) {
+  const s = String(r[7] ?? "").trim();
+  const iso = s.match(/^(\d{4})-(\d{2})/), th = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  const ce = (y: number) => (y > 2400 ? y - 543 : y);
+  if (iso) return `${ce(Number(iso[1]))}-${iso[2]}`;
+  if (th) return `${ce(Number(th[3]))}-${th[2].padStart(2, "0")}`;
+  return "";
+}
+const addMonths = (ym: string, n: number) => { const [y, m] = ym.split("-").map(Number); return new Date(Date.UTC(y, m - 1 + n, 1)).toISOString().slice(0, 7); };
+/**
+ * เดือน month ("YYYY-MM") ของสัญญา c เรียกเก็บแล้วหรือยัง (ใช้ตัดสิน "ครบรอบบิล" / "ออกใบเดือนนี้")
+ *  (ก) ใบแรกเข้าที่ไม่ยกเลิกของสัญญานี้ ครอบคลุมเดือนเริ่มสัญญาถึงเดือนเริ่ม + จำนวนเดือนที่ชำระล่วงหน้า − 1 (ออกใบก่อนเดือนเริ่ม = นับเดือนที่ออกใบด้วย)
+ *  (ข) ใบที่ไม่ยกเลิกของสัญญานี้ ลงวันที่ในเดือนนั้น ที่มีบรรทัดค่าห้อง/ค่าบริการรายเดือนตามสัญญา (หรือประเภทค่าบริการรายเดือน)
+ *  ใบรอตรวจสอบยอดนับว่าออกแล้ว
+ */
+export function contractBilledFor(c: string[], month: string, invoices: Invoice[] | BilledIndex) {
+  if (!c[0]) return false;
+  const list = (Array.isArray(invoices) ? buildBilledIndex(invoices) : invoices).get(c[0]);
+  if (!list?.length) return false;
+  const start = contractStartMonth(c), months = prepaidMonths(c);
+  let own: Set<string> | null = null; // รายการรายเดือนของสัญญา คำนวณครั้งเดียวเมื่อต้องใช้
+  return list.some(({ x, items, isStart }) => {
+    const d = (x.date ?? "").slice(0, 7);
+    if (isStart) {
+      const s = start || d, from = d && d < s ? d : s;
+      if (from && month >= from && month <= addMonths(s, months - 1)) return true;
+    }
+    return d === month && (x.kind === BILL_KINDS[1] || hasMonthLineOf(items, own ??= monthDescs(c)));
+  });
+}
+/** ใบที่ไม่ยกเลิก จัดกลุ่มตามเลขที่สัญญา พร้อมรายการที่แยกแล้ว (สร้างครั้งเดียวต่อรายการใบ ใช้กับ contractBilledFor หลายสัญญา) */
+export type BilledIndex = Map<string, { x: Invoice; items: BillItem[]; isStart: boolean }[]>;
+export function buildBilledIndex(invoices: Invoice[]): BilledIndex {
+  const m: BilledIndex = new Map();
+  for (const x of invoices) {
+    if (!x.contract || x.status === VOID) continue;
+    const items = parseItems(x.items);
+    const g = m.get(x.contract) ?? [];
+    if (!g.length) m.set(x.contract, g);
+    g.push({ x, items, isStart: isStartInvoice(x, items) });
+  }
+  return m;
 }
 /** ค่าบริการต่อเดือนตามสัญญา (รวม VAT) */
 export const contractMonthTotal = (r: string[]) => totals(contractMonthLines(r)).net;
@@ -109,8 +167,8 @@ export function prepaidMonths(r: string[]) {
 }
 
 /** หมายเหตุใบแจ้งหนี้แรกเข้า: มัดจำห้องที่หักแล้ว และยอดชำระล่วงหน้าที่ตกลงในสัญญา */
-export function contractStartNote(r: string[]): string {
-  const prepaid = val(r[18]), dep = val(r[27]), months = prepaidMonths(r);
+export function contractStartNote(r: string[], prior: Invoice[] = []): string {
+  const prepaid = val(r[18]), dep = roomDepositDue(r, prior), months = prepaidMonths(r);
   return [prepaid && contractMonthLines(r).length ? `ชำระค่าบริการล่วงหน้า ${months} เดือน` : "", dep ? `หักมัดจำห้องพักที่ชำระตอนจอง ${money(dep)} บาท` : ""].filter(Boolean).join(" · ");
 }
 
@@ -156,12 +214,15 @@ export function Billing() {
   const shown = list.filter((x) => tab === "ทั้งหมด" || (tab === UNPAID ? isOpen(x) : x.status === tab));
   const month = todayIso().slice(0, 7);
   const unpaid = list.filter(isOpen);
-  // รับชำระเดือนนี้ = ยอดเงินที่รับจริงในเดือนนี้ (รวมงวดของใบที่ยังไม่ครบ) · ใช้วันที่รับล่าสุดของแต่ละใบ
-  const paidMonth = list.filter((x) => (x.status === PAID || x.status === PARTIAL) && (x.paidDate ?? "").startsWith(month));
+  // รับชำระเดือนนี้ = ยอดเงินที่รับจริงในเดือนนี้ รวมจากการรับเงินแต่ละงวด (วันที่รับของงวดนั้น)
+  //  ยังโหลดยอดรายงวดไม่ได้: ประมาณจากยอดชำระสะสมของใบที่รับล่าสุดเดือนนี้ (แบบเดิม)
+  const paidDays = usePaidDays(`${month}-01`, list.reduce((n, x) => n + (x.paid ?? 0), 0));
+  const paidMonthSum = paidDays ? paidDays.filter((p) => p.date.startsWith(month)).reduce((n, p) => n + p.amount, 0)
+    : list.filter((x) => (x.status === PAID || x.status === PARTIAL) && (x.paidDate ?? "").startsWith(month)).reduce((n, x) => n + (x.paid ?? 0), 0);
   const people = res.rows.filter((r) => staying(r[5] ?? ""));
-  /** ครบรอบบิล: สัญญาใช้งานอยู่ ที่ยังไม่มีใบรายเดือนหรือแรกเข้า (ไม่ยกเลิก) ลงวันที่เดือนนี้ */
-  const due = con.rows.map((c, i) => ({ c, id: con.ids[i] })).filter(({ c }) => c[5] === "ใช้งานอยู่"
-    && !list.some((x) => x.contract === c[0] && x.status !== VOID && (x.kind === BILL_KINDS[0] || x.kind === BILL_KINDS[1]) && x.date.startsWith(month)));
+  /** ครบรอบบิล: สัญญาใช้งานอยู่ ที่เดือนนี้ยังไม่ได้เรียกเก็บ (ไม่นับเดือนที่ชำระล่วงหน้าไว้แล้วในใบแรกเข้า) */
+  const billed = useMemo(() => buildBilledIndex(list), [list]);
+  const due = con.rows.map((c, i) => ({ c, id: con.ids[i] })).filter(({ c }) => c[5] === "ใช้งานอยู่" && !contractBilledFor(c, month, billed));
   const makeDue = () => confirm({
     title: "สร้างใบค่าบริการเดือนนี้", okLabel: `สร้าง ${due.length} ใบ`,
     message: `สร้างใบแจ้งหนี้ค่าบริการรายเดือนตามสัญญา ${due.length} ใบ เป็นสถานะ "${DRAFT}" · ตรวจรายการแต่ละใบ (เช่น ค่ายา เวชภัณฑ์เพิ่ม) แล้วกด ยืนยันยอด ก่อนรับชำระ`,
@@ -176,11 +237,13 @@ export function Billing() {
     },
   });
   /** ผู้ที่ชำระค่าบริการเดือนนี้ครบแล้ว (ใบแรกเข้า / รายเดือน ลงวันที่เดือนนี้) · ไม่ให้เลือกออกใบแจ้งหนี้ซ้ำ เดือนถัดไปกลับมาเลือกได้ */
-  const paidNow = new Set(list.filter((x) => x.status === PAID && (x.kind === BILL_KINDS[0] || x.kind === BILL_KINDS[1]) && x.date.startsWith(month)).map((x) => x.who));
+  const paidNow = new Set(list.filter((x) => x.status === PAID && x.date.startsWith(month) && (isStartInvoice(x) || x.kind === BILL_KINDS[1] || hasMonthLine(parseItems(x.items)))).map((x) => x.who));
   const billable = people.filter((r) => !paidNow.has(r[0]));
   const residentOf = (name: string) => res.rows.find((r) => r[0] === name);
   /** สัญญาล่าสุดของผู้รับบริการ (ผู้ว่าจ้าง ที่อยู่ เลขที่สัญญา) */
   const contractOf = (name: string) => con.rows.find((r) => r[2] === name && r[5] !== "สิ้นสุดสัญญา") ?? con.rows.find((r) => r[2] === name);
+  /** สาขาของใบ (ใบไม่มีสาขาฝั่งหน้าจอ): จากสัญญา หรือผู้รับบริการ */
+  const invBranch = (x: Invoice) => invoiceBranch(x, con.rows, res.rows, user?.branch);
 
   // มาจากปุ่ม "ออกใบแจ้งหนี้" ในทะเบียนสัญญา · รอข้อมูลสัญญาโหลดก่อนเปิดฟอร์ม
   const [billFor, setBillFor] = useState<{ id: string; dc?: boolean } | null>(null);
@@ -198,8 +261,12 @@ export function Billing() {
       setAutoPull(true); loadUnbilled(c[2]);
       return;
     }
-    const items = contractStartLines(c);
-    setForm({ id: newId(), date: todayIso(), who: c[2], hn: p?.[6] ?? "", payer: c[3] ?? "", address: c[10] ?? "", kind: c[5] === "รอชำระเงินมัดจำ" ? BILL_KINDS[0] : BILL_KINDS[1], contract: c[0] ?? "", items: "[]", total: 0, discount: 0, net: 0, status: UNPAID, note: contractStartNote(c) });
+    // สัญญาใช้งานอยู่ที่ออกใบแรกเข้าแล้ว = ใบค่าบริการรายเดือน (ไม่มีเงินประกัน ค่าล่วงหน้า หักมัดจำ) · ยังไม่มีใบแรกเข้า = ใบแรกเข้า
+    const monthly = c[5] === "ใช้งานอยู่" && list.some((x) => x.contract === c[0] && x.status !== VOID && isStartInvoice(x));
+    const prior = list.filter((x) => invBranch(x) === c[1]);
+    const items = monthly ? contractMonthLines(c) : contractStartLines(c, prior);
+    setForm({ id: newId(), date: todayIso(), who: c[2], hn: p?.[6] ?? "", payer: c[3] ?? "", address: c[10] ?? "", kind: monthly ? BILL_KINDS[1] : BILL_KINDS[0], contract: c[0] ?? "", items: "[]", total: 0, discount: 0, net: 0, status: UNPAID,
+      note: monthly ? `ค่าบริการประจำเดือน ${docDate(todayIso()).slice(3)}` : contractStartNote(c, prior) });
     setLines(items.length ? items : [blankItem()]); setVatRate(contractVat(c) || DEFAULT_VAT);
     loadUnbilled(c[2]);
   }, [billFor, con.ids, con.rows, res.rows]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -225,7 +292,9 @@ export function Billing() {
     if (!add.length) return;
     setLines([...lines.filter((l) => l.desc.trim()), ...add.map((x) => ({ desc: x.course ? `${x.item_name} (ซื้อ ${x.at.slice(0, 10)})` : x.session ? x.item_name : x.med ? `ยา: ${x.item_name} ${x.qty} ${x.unit} (จ่าย ${x.at.slice(0, 10)})` : `เวชภัณฑ์: ${x.item_name} (เบิก ${x.at.slice(0, 10)})`, qty: x.qty, price: x.price, discount: 0 }))]);
     setPulled([...pulled, ...add.map((x) => x.id)]);
-    if (form && form.kind === BILL_KINDS[1]) setForm({ ...form, kind: (add.every((x) => x.course || x.session) ? BILL_KINDS.find((k) => k.startsWith("คอร์ส")) : BILL_KINDS.find((k) => k.startsWith("เวชภัณฑ์"))) ?? form.kind });
+    // เปลี่ยนประเภทใบตามของที่ดึงเข้า เฉพาะใบว่างที่ยังเป็นค่าเริ่มต้น · ใบที่มีค่าห้อง/ค่าบริการรายเดือนตามสัญญาแล้วคงประเภทเดิม (ไม่งั้นเดือนนี้จะดูเหมือนยังไม่ได้เรียกเก็บ)
+    const keep = hasMonthLine(lines, form?.contract ? con.rows.find((c) => c[0] === form.contract) : undefined);
+    if (form && form.kind === BILL_KINDS[1] && !keep) setForm({ ...form, kind: (add.every((x) => x.course || x.session) ? BILL_KINDS.find((k) => k.startsWith("คอร์ส")) : BILL_KINDS.find((k) => k.startsWith("เวชภัณฑ์"))) ?? form.kind });
   };
   const pickResident = (name: string) => {
     if (!form) return;
@@ -280,6 +349,19 @@ export function Billing() {
     toast(`ออกใบแจ้งหนี้แล้ว · ${form.who} · ${money(totals(items).net)} บาท · ระบบออกเลขที่เอกสารให้`);
   };
 
+  /**
+   * ยกเลิกเอกสาร: ส่งตรงไปที่ server แล้วรอผล (ไม่บันทึกล่วงหน้าในหน้าจอ) เพื่อแจ้งเหตุผลได้ถ้า server ไม่ยอม
+   *  เช่น อีกเครื่องเพิ่งรับชำระใบนี้ · server คืนยา เวชภัณฑ์ คอร์สกายภาพที่ผูกกับใบนี้ให้ดึงเข้าใบใหม่ได้
+   */
+  const voidInv = async (x: Invoice) => {
+    try {
+      const r = await fetch("/api/data/invoices", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "upsert", items: [{ id: String(x.id), data: { ...x, status: VOID } }] }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || "ยกเลิกเอกสารไม่สำเร็จ");
+      refreshData("invoices");
+      toast(`ยกเลิกเอกสารแล้ว · ${x.no ?? ""} · ${x.who}`);
+    } catch (e) { toast((e as Error).message); refreshData("invoices"); }
+  };
   const openPay = (x: Invoice) => { setPay(x); setSlip(""); setAmt({ cash: "", credit: "", transfer: String(balanceOf(x)), date: todayIso() }); };
   const left = pay ? balanceOf(pay) : 0;
   const now = num(amt.cash) + num(amt.credit) + num(amt.transfer);
@@ -301,8 +383,8 @@ export function Billing() {
       refreshData("invoices");
       toast(d.status === PAID ? `รับชำระครบแล้ว · ${pay.no ?? ""} · ${pay.who} · ออกเป็นใบเสร็จรับเงิน` : `รับชำระบางส่วนแล้ว · ${pay.no ?? ""} · รับ ${money(now)} บาท · คงเหลือ ${money(left - now)} บาท`);
       setTab(d.status === PAID ? PAID : UNPAID);
-      // ชำระครบ และสัญญายังรอชำระมัดจำ: ถามเปลี่ยนเป็นใช้งานอยู่ + ให้ผู้รับบริการเข้าพัก
-      const k = d.status === PAID && pay.contract && can(user, "contracts") ? con.rows.findIndex((c) => c[0] === pay.contract && c[5] === "รอชำระเงินมัดจำ") : -1;
+      // ชำระครบเฉพาะใบแรกเข้าของสัญญา และสัญญายังรอชำระมัดจำ: ถามเปลี่ยนเป็นใช้งานอยู่ + ให้ผู้รับบริการเข้าพัก
+      const k = d.status === PAID && pay.contract && isStartInvoice(pay) && can(user, "contracts") ? con.rows.findIndex((c) => c[0] === pay.contract && c[5] === "รอชำระเงินมัดจำ") : -1;
       if (k >= 0) {
         const c = con.rows[k], j = res.rows.findIndex((r) => r[0] === c[2] && r[3] === c[1]);
         confirm({
@@ -335,27 +417,28 @@ export function Billing() {
         actions={<>
           <MenuButton label="ส่งออก CSV" icon={<CsvIcon />} items={[
             { label: "เอกสารทั้งหมด", hint: "1 แถวต่อใบ", onClick: () => downloadCsv("การเงิน", ["เลขที่เอกสาร", "วันที่", "HN", "ผู้รับบริการ", "ประเภท", "ยอดสุทธิ", "ชำระแล้ว", "คงเหลือ", "สถานะ"], rows) },
-            { label: "รายการในใบ", hint: "แยกค่าห้อง คอร์ส ยา", onClick: () => { const n = exportInvoiceLines(list, (x) => con.rows.find((c) => c[0] === x.contract)?.[1] ?? res.rows.find((r) => r[0] === x.who)?.[3] ?? "", "การเงิน-รายการในใบ"); toast(`ส่งออกรายการในใบแล้ว ${n} บรรทัด`); } },
+            { label: "รายการในใบ", hint: "แยกค่าห้อง คอร์ส ยา", onClick: () => { const n = exportInvoiceLines(list, (x) => invoiceBranch(x, con.rows, res.rows), "การเงิน-รายการในใบ"); toast(`ส่งออกรายการในใบแล้ว ${n} บรรทัด`); } },
             { label: "การรับเงิน", hint: "แยกเงินสด โอน บัตร", onClick: () => exportPayments("", "การเงิน-การรับเงินรายงวด").then((n) => toast(`ส่งออกการรับเงินแล้ว ${n} งวด`)).catch((e) => toast((e as Error).message)) },
           ]} />
           <button className="btn-soft" title="นับเงินสดสิ้นวันเทียบกับยอดรับชำระในระบบ" onClick={() => setCashOpen(true)}><Icon name="check" className="h-4 w-4" /> ปิดยอดรายวัน</button>
           <button className="btn-soft" onClick={() => setCourse({ who: "", name: "กายภาพบำบัด (ครั้งละ 45 นาที)", total: "10", price: "", busy: false })}><Icon name="plus" className="h-4 w-4" /> ขายคอร์สกายภาพ</button>
           <button className="btn-primary" onClick={startNew}><Icon name="plus" className="h-4 w-4" /> ออกใบแจ้งหนี้</button>
         </>} />
-      <MetricGrid items={[
-        { label: "ค้างชำระ", value: unpaid.length, unit: "ใบ", icon: "receipt", accent: true, note: unpaid.length ? `ค้างรวม ${money(unpaid.reduce((n, x) => n + balanceOf(x), 0))} บาท` : undefined },
-        { label: "รับชำระเดือนนี้", value: money(paidMonth.reduce((n, x) => n + (x.paid ?? 0), 0)), unit: "บาท", icon: "check", note: `${paidMonth.length} เอกสาร` },
-        { label: "ใบเสร็จทั้งหมด", value: list.filter((x) => x.status === PAID).length, unit: "ใบ", icon: "files" },
-        { label: DRAFT, value: list.filter((x) => x.status === DRAFT).length, unit: "ใบ", icon: "history", note: "ออกจากสัญญาอัตโนมัติ · ตรวจแล้วกดยืนยันยอด" },
-      ]} />
-      {due.length > 0 && <Section title="ครบรอบบิลเดือนนี้" sub={`สัญญาที่ใช้งานอยู่แต่ยังไม่มีใบค่าบริการเดือนนี้ ${due.length} สัญญา · สร้างเป็นใบรอตรวจสอบยอดแล้วตรวจทีละใบ หรือกดออกใบทีละสัญญา`}
+      {due.length > 0 && <Section title="ครบรอบบิลเดือนนี้" sub={`${due.length} สัญญายังไม่มีใบของเดือนนี้`}
         actions={<button className="btn-primary" onClick={makeDue}><Icon name="plus" className="h-4 w-4" /> สร้างใบรอตรวจสอบยอดทั้งหมด ({due.length})</button>}>
         <DataTable search={false} columns={["เลขที่สัญญา", "ผู้รับบริการ", "ผู้ว่าจ้าง", "ห้อง", "ค่าบริการ/เดือน (บาท)"]}
           rows={due.map(({ c }) => [c[0], c[2], c[3] || "-", c[6] && c[6] !== "-" ? c[6] : "-", money(totals(contractMonthLines(c)).net)])}
           actions={[{ label: "ออกใบ", onClick: (k) => setBillFor({ id: due[k].id }) }]} />
       </Section>}
 
-      <Section title="เอกสารการเงิน" actions={<Tabs tabs={["ทั้งหมด", DRAFT, UNPAID, PAID, VOID]} value={tab} onChange={setTab} />}>
+      <Section title="เอกสารการเงิน">
+        <StatFilter label="กรองเอกสาร" value={tab} onChange={setTab} items={[
+          { k: "ทั้งหมด", t: "ทั้งหมด", n: list.length, tone: "all" },
+          { k: DRAFT, t: DRAFT, n: list.filter((x) => x.status === DRAFT).length, tone: "warn" },
+          { k: UNPAID, t: UNPAID, n: unpaid.length, tone: "bad" },
+          { k: PAID, t: PAID, n: list.filter((x) => x.status === PAID).length, tone: "good" },
+          { k: VOID, t: VOID, n: list.filter((x) => x.status === VOID).length, tone: "muted" },
+        ]} summary={<>ค้างรวม <b>{money(unpaid.reduce((n, x) => n + balanceOf(x), 0))}</b> · รับเดือนนี้ <b>{money(paidMonthSum)}</b> บาท</>} />
         <DataTable columns={["เลขที่เอกสาร", "วันที่", "HN", "ผู้รับบริการ", "ประเภท", "ยอดสุทธิ (บาท)", "ชำระแล้ว", "คงเหลือ", "ค้างมา", "สถานะ"]} rows={rows} badgeCols={[8]}
           empty={meta.loaded ? "ยังไม่มีเอกสาร" : "กำลังโหลด…"}
           onRow={(k) => { setFormat("customer"); setCopy(false); setView(shown[k]); }} rowLabel="กดเพื่อดูหรือพิมพ์เอกสาร"
@@ -364,11 +447,11 @@ export function Billing() {
             { label: "ยืนยันยอด", tone: "primary", hidden: (k) => shown[k].status !== DRAFT, onClick: (k) => { const x = shown[k]; if (x.status !== DRAFT) return toast("เอกสารนี้ยืนยันยอดแล้ว"); confirm({ title: "ยืนยันยอดใบแจ้งหนี้", okLabel: "ยืนยันยอด", message: `ตรวจรายการและยอด ${money(x.net)} บาท ของ ${x.who} ถูกต้องแล้วใช่หรือไม่ · ยืนยันแล้วจะเป็น "${UNPAID}" และรับชำระได้ · ถ้ายอดไม่ถูกให้ยกเลิกใบนี้แล้วออกใบใหม่`, onOk: () => { setList(list.map((y) => (y.id === x.id ? { ...x, status: UNPAID } : y))); setTab(UNPAID); toast(`ยืนยันยอดแล้ว · ${x.no ?? ""} · ${x.who} · พร้อมรับชำระ`); } }); } },
             { label: "รับชำระ", tone: "primary", hidden: (k) => !isOpen(shown[k]), onClick: (k) => openPay(shown[k]) },
             { label: "ดู / พิมพ์", more: true, onClick: (k) => { setFormat("customer"); setCopy(false); setView(shown[k]); } },
-            ...(admin ? [{ label: "ยกเลิกใบนี้…", danger: true, more: true, hidden: (k: number) => shown[k].status === VOID, onClick: (k: number) => { const x = shown[k]; if (x.status === VOID) return; confirm({ title: "ยกเลิกเอกสาร", message: `ต้องการยกเลิก ${x.no ?? ""} (${money(x.net)} บาท) ใช่หรือไม่ เอกสารยังเก็บไว้ในระบบพร้อมสถานะยกเลิก`, danger: true, okLabel: "ยกเลิกเอกสาร", onOk: () => { setList(list.map((y) => (y.id === x.id ? { ...x, status: VOID } : y))); toast(`ยกเลิกเอกสารแล้ว · ${x.no ?? ""} · ${x.who}`); } }); } }] : []),
+            ...(admin ? [{ label: "ยกเลิกใบนี้…", danger: true, more: true, hidden: (k: number) => shown[k].status === VOID || shown[k].status === PAID || shown[k].status === PARTIAL, onClick: (k: number) => { const x = shown[k]; if (x.status === VOID) return; if (x.status === PAID || x.status === PARTIAL) return toast("เอกสารที่รับชำระแล้วยกเลิกไม่ได้"); confirm({ title: "ยกเลิกเอกสาร", message: `ต้องการยกเลิก ${x.no ?? ""} (${money(x.net)} บาท) ใช่หรือไม่ เอกสารยังเก็บไว้ในระบบพร้อมสถานะยกเลิก`, danger: true, okLabel: "ยกเลิกเอกสาร", onOk: () => voidInv(x) }); } }] : []),
           ]} />
       </Section>
 
-      <Receivables list={list} branchOf={(x) => con.rows.find((c) => c[0] === x.contract)?.[1] ?? res.rows.find((r) => r[0] === x.who)?.[3] ?? user?.branch ?? ""} branchInfo={branchInfo} by={user?.name} />
+      <Receivables list={list} branchOf={invBranch} branchInfo={branchInfo} by={user?.name} />
       <CashClose open={cashOpen} onClose={() => setCashOpen(false)} isGlobal={user?.role === "Global Admin"} />
 
       {/* ออกใบแจ้งหนี้ */}
@@ -537,10 +620,10 @@ export function Billing() {
  * ใบแจ้งหนี้แรกเข้าจากสัญญาใหม่ · แจกแจงค่าห้องตามสัญญา · คืน null ถ้าสัญญาไม่มีรายการค่าบริการเลย
  *  กรอกยอดล่วงหน้าหรือเงินประกัน = ค้างชำระ (เรียกเก็บได้ทันที) · ไม่ได้กรอก = รอตรวจสอบยอด (การเงินตรวจแล้วกดยืนยันยอดก่อนรับชำระ)
  */
-export function contractInvoice(row: string[], hn: string): Invoice | null {
-  const items = contractStartLines(row);
+export function contractInvoice(row: string[], hn: string, prior: Invoice[] = []): Invoice | null {
+  const items = contractStartLines(row, prior);
   if (!items.length) return null;
   const ready = !!(val(row[18]) || val(row[19]));
-  const note = [contractStartNote(row), ready ? "" : "ออกอัตโนมัติจากสัญญา (ไม่ได้ระบุยอดล่วงหน้า) · รอการเงินตรวจสอบยอดก่อนเรียกเก็บ"].filter(Boolean).join(" · ");
+  const note = [contractStartNote(row, prior), ready ? "" : "ออกอัตโนมัติจากสัญญา (ไม่ได้ระบุยอดล่วงหน้า) · รอการเงินตรวจสอบยอดก่อนเรียกเก็บ"].filter(Boolean).join(" · ");
   return { id: newId(), date: todayIso(), who: row[2], hn, payer: row[3], address: row[10] ?? "", kind: BILL_KINDS[0], contract: row[0], items: JSON.stringify(items), ...totals(items), status: ready ? UNPAID : DRAFT, note };
 }

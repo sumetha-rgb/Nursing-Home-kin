@@ -82,7 +82,7 @@ export function StaffKpi() {
       )}
       {error && <p role="alert" className="form-error my-3"><Icon name="alert" className="h-4 w-4 shrink-0" />{error}</p>}
 
-      <Section title={`อันดับ KPI · ${monthTitle(month)}`} sub={`คะแนนเฉลี่ยของทีม ${fmt(avg)} · ${ranked.length} คนมีคะแนน · ส่วนที่ยังไม่มีข้อมูลไม่นับ และเกลี่ยน้ำหนักที่เหลือให้ครบ 100`}>
+      <Section title={`อันดับ KPI · ${monthTitle(month)}`} sub={`เฉลี่ยทีม ${fmt(avg)} · มีคะแนน ${ranked.length} คน`}>
         <DataTable columns={["อันดับ", "พนักงาน", "คะแนนรวม", ...KPI_PARTS.map((p) => `${p.label} ${w?.[p.key] ?? ""}%`)]} search={rows.length > 8}
           rows={rows.map((r) => [r.rank ? String(r.rank) : "-", `${r.name}${branches.length > 1 && !branch ? ` · ${r.branch}` : ""}`, fmt(r.total), ...KPI_PARTS.map((p) => cell(r, p.key))])}
           empty="ยังไม่มีพนักงานในสาขานี้"

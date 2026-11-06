@@ -1,7 +1,27 @@
 "use client";
 // ส่งออกข้อมูลการเงินเป็น CSV สำหรับฝ่ายบัญชี (หน้าใบแจ้งหนี้และใบเสร็จ และแท็บการเงินในภาพรวมและรายงาน)
+import { useEffect, useState } from "react";
 import { docDate, Invoice, lineAmount, lineDiscount, lineNet, money, parseItems, BillItem } from "./billing";
 import { downloadCsv } from "./store";
+
+/** ยอดรับเงินจริงต่อวันต่อสาขา (รวมทุกงวดที่รับในวันนั้น · ไม่นับใบที่ยกเลิก) จาก /api/billing?op=paid_days */
+export type PaidDay = { branch: string; date: string; amount: number };
+/**
+ * ยอดรับเงินรายวันตั้งแต่วันที่ from (YYYY-MM-DD) · ใช้รวมเป็น "รับเดือนนี้" / รายรับรายเดือน ตามวันที่รับของแต่ละงวด
+ *  sig = ค่าที่เปลี่ยนเมื่อมีการรับชำระ (เช่น ยอดชำระสะสมของทุกใบ) ให้ดึงใหม่ · คืน null ระหว่างโหลดหรือดึงไม่ได้ (ให้ผู้เรียกใช้ยอดประมาณแบบเดิม)
+ */
+export function usePaidDays(from: string, sig: unknown): PaidDay[] | null {
+  const [rows, setRows] = useState<PaidDay[] | null>(null);
+  useEffect(() => {
+    let live = true;
+    fetch(`/api/billing?op=paid_days&from=${encodeURIComponent(from)}`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (live) setRows(d ? ((d.items ?? []) as PaidDay[]).map((x) => ({ branch: x.branch ?? "", date: String(x.date ?? ""), amount: Number(x.amount) || 0 })) : null); })
+      .catch(() => { if (live) setRows(null); });
+    return () => { live = false; };
+  }, [from, JSON.stringify(sig)]); // eslint-disable-line react-hooks/exhaustive-deps
+  return rows;
+}
 
 /** หมวดของบรรทัดในใบแจ้งหนี้ (ใช้รวมยอดขายตามหมวด) */
 export function itemCategory(i: BillItem) {

@@ -25,14 +25,16 @@ export default function BillDoc({ inv, branch, format, copy, slips = [], payment
   inv: Invoice; branch: Branch; format: DocFormat; copy: boolean; slips?: Payment[]; payment?: Payment; printedBy: string;
 }) {
   // payment = ใบรับเงินของงวดนั้น · ไม่มี = ใบรวมของทั้งเอกสาร
+  // ใบกำกับภาษีมีใบเดียว = ใบเสร็จรวมของใบที่ชำระครบ · ใบรับเงินรายงวด (รวมงวดสุดท้าย) เป็นใบรับเงินธรรมดา ไม่แจกแจง VAT แสดงยอดที่รับครั้งนี้
   const partial = !payment && inv.status === PARTIAL;
   const paid = inv.status === PAID || inv.status === PARTIAL || !!payment;
-  const full = payment ? payment.paidBefore + payment.amount >= inv.net - 0.005 : inv.status === PAID;
+  const full = !payment && inv.status === PAID;
   const RECEIPT = ["ใบเสร็จรับเงิน / ใบกำกับภาษี", "RECEIPT / TAX INVOICE"];
-  const title = payment ? (full ? RECEIPT : [`ใบรับเงิน (งวดที่ ${payment.n})`, "RECEIPT"]) : full ? RECEIPT : partial ? ["ใบแจ้งหนี้ (ชำระบางส่วน)", "INVOICE"] : ["ใบแจ้งหนี้", "INVOICE"];
+  const title = payment ? [`ใบรับเงิน (งวดที่ ${payment.n})`, "RECEIPT"] : full ? RECEIPT : partial ? ["ใบแจ้งหนี้ (ชำระบางส่วน)", "INVOICE"] : ["ใบแจ้งหนี้", "INVOICE"];
   usePriceList();
   const items = parseItems(inv.items);
-  const tax = vatOf(items);
+  // ใบรับเงินรายงวด: ไม่แจกแจง VAT (ภาษีอยู่ในใบเสร็จรับเงิน / ใบกำกับภาษีใบรวม)
+  const tax = vatOf(payment ? [] : items);
   // บรรทัดหักเงินที่รับไว้แล้ว (มัดจำห้องตอนจอง) แสดงใต้ยอดรวม VAT ไม่ใช่ในรายการสินค้า/บริการ
   const sale = items.filter((i) => !i.credit), credits = items.filter((i) => i.credit), credit = creditOf(items);
   const grand = Math.round((inv.net + credit) * 100) / 100;
@@ -74,7 +76,7 @@ export default function BillDoc({ inv, branch, format, copy, slips = [], payment
   // ทั้งสองแบบใช้กรอบเดียวกัน · สำหรับผู้ชำระ: ซ่อนคอลัมน์ส่วนลด/VAT ที่ไม่มี แสดงยอดสะสม/คงเหลือของการชำระเป็นงวด และหมายเหตุ
   const cust = format === "customer";
   const anyDisc = sale.some((i) => lineDiscount(i) > 0), anyVat = sale.some((i) => i.vat);
-  const colDisc = !cust || anyDisc, colVat = !cust || anyVat;
+  const colDisc = !cust || anyDisc, colVat = !payment && (!cust || anyVat);
   // รหัสจากหน้าราคา: เฉพาะใบฝ่ายการเงิน (คอลัมน์ "รหัส") · ใบที่ให้ผู้ชำระไม่แสดงรหัส
   const colCode = !cust;
   const cols = [["ลำดับ", "NO."], ...(colCode ? [["รหัส", "CODE"]] : []), ["รายการ", "DESCRIPTION"], ...(colDisc ? [["จำนวนเงิน", "AMOUNT"], ["ส่วนลด", "DISCOUNT"]] : []), ...(colVat ? [["VAT", ""]] : []), [colDisc ? "คงเหลือ" : "จำนวนเงิน", colDisc ? "NET AMOUNT" : "AMOUNT"]];

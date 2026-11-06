@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Icon from "../Icon";
 import { MASTER_TASKS } from "@/lib/mock";
-import { useCrud } from "@/lib/store";
+import { SYNC_ERROR_EVENT, useCrud } from "@/lib/store";
 import { taskHandoff } from "@/lib/handoff";
 import { useApp } from "@/lib/app";
 import { fetchNurses, useResidents } from "@/lib/care";
@@ -74,6 +74,12 @@ export function DailyTasks() {
   const { rows: master } = useCrud("master", MASTER_TASKS);
   const { residents } = useResidents();
   const { toast, confirm } = useApp();
+  // server ปฏิเสธการบันทึกงานประจำวัน (เช่น งานนี้มีคนส่งแล้ว / ไม่มีสิทธิ์) แสดงเหตุผล · รายการโหลดใหม่จาก server ให้เอง
+  useEffect(() => {
+    const onErr = (e: Event) => { const d = (e as CustomEvent<{ key: string; message: string }>).detail; if (d?.message && d.key.startsWith("daily-")) toast(d.message); };
+    window.addEventListener(SYNC_ERROR_EVENT, onErr);
+    return () => window.removeEventListener(SYNC_ERROR_EVENT, onErr);
+  }, [toast]);
   const [i, setI] = useState<number | null>(null);
   const [star, setStar] = useState("5");
   const [note, setNote] = useState("");
@@ -160,7 +166,8 @@ export function DailyTasks() {
     }
     setAssign(false); setPickRes([]); setPickTask([]); setAssignErr("");
     if (repeat && plan.length) {
-      fetch("/api/care", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "routines_add", items: plan }) })
+      // skipDate: วันนี้หน้าจอมอบหมายให้แล้ว · วันอื่นที่ระบบสร้างงานไปแล้ว (ถึง 14 วันข้างหน้า) server ใส่งานประจำใหม่ให้เอง
+      fetch("/api/care", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "routines_add", items: plan, skipDate: date }) })
         .then((r) => r.json()).then((d) => { loadRoutines(); toast(`ตั้งงานประจำแล้ว ${d.added ?? 0} รายการ · ระบบสร้างงานให้เองทุกวัน`); })
         .catch(() => toast("มอบหมายงานวันนี้แล้ว แต่ตั้งงานประจำไม่สำเร็จ"));
       return;
@@ -207,7 +214,7 @@ export function DailyTasks() {
       const r = await fetch("/api/ops", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "nudge", taskId: id, message: nudge.msg.trim() }) });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d.error || "ตามงานไม่สำเร็จ");
-      toast(`ตามงานแล้ว · ${rows[nudge.k][1]} · ${d.target ? `ถึง ${d.target}` : "ถึงทุกคนในสาขา"}`);
+      toast(`ตามงานแล้ว · ${rows[nudge.k][1]} · ${d.target ? `ถึง ${d.target}` : `ถึงพยาบาลที่อยู่${String(rows[nudge.k][4] || "เวร").replace("กะ", "เวร")}`}`);
       setNudge(null); loadNudges();
     } catch (e) { toast((e as Error).message); }
     finally { setNudging(false); }
@@ -302,7 +309,7 @@ export function DailyTasks() {
         footer={<><button className="btn-soft" onClick={() => setNudge(null)}>ยกเลิก</button><button className="btn-primary" disabled={nudging} onClick={sendNudge}>{nudging ? "กำลังส่ง…" : "ส่งถึง KinApp"}</button></>}>
         {nudge && rows[nudge.k] && <div className="space-y-3">
           <p className="text-sm text-gold-700"><b className="font-semibold text-gold-800">{rows[nudge.k][1]}</b> · {rows[nudge.k][0]} · เวลา {String(rows[nudge.k][3]).slice(0, 5)}</p>
-          <p className="text-sm text-gold-600">ส่งถึง: <b className="font-medium text-gold-800">{rows[nudge.k][2] && rows[nudge.k][2] !== "-" && rows[nudge.k][2] !== ANYONE ? rows[nudge.k][2] : "ทุกคนในสาขา (งานนี้ยังไม่ระบุผู้รับผิดชอบ)"}</b></p>
+          <p className="text-sm text-gold-600">ส่งถึง: <b className="font-medium text-gold-800">{rows[nudge.k][2] && rows[nudge.k][2] !== "-" && rows[nudge.k][2] !== ANYONE ? rows[nudge.k][2] : `พยาบาลที่อยู่${String(rows[nudge.k][4] || "เวร").replace("กะ", "เวร")}ของวันนี้ (งานนี้ยังไม่ระบุผู้รับผิดชอบ · ยังไม่จัดเวร = ทุกคนในสาขา)`}</b></p>
           <Field label="ข้อความ (ถ้ามี)"><input value={nudge.msg} maxLength={200} onChange={(e) => setNudge({ ...nudge, msg: e.target.value })} placeholder="เช่น ช่วยทำก่อนพักเที่ยงนะ" /></Field>
           <p className="field-hint">ขึ้นเป็นแถบแดงบนสุดใน KinApp ภายใน 1 นาทีถ้าเปิดแอปอยู่ · พยาบาลส่งงาน หรือตอบว่าทำไม่ได้พร้อมเหตุผล · สถานะขึ้นใต้ชื่องานในหน้านี้</p>
         </div>}
@@ -333,7 +340,7 @@ export function DailyTasks() {
 
       {/* งานประจำ */}
       <Modal open={routineOpen} wide title="งานประจำ (ทำซ้ำทุกวัน)" onClose={() => setRoutineOpen(false)} footer={<button className="btn-primary" onClick={() => setRoutineOpen(false)}>ปิด</button>}>
-        <p className="form-intro">งานในรายการนี้ระบบสร้างให้เองทุกวัน ตั้งแต่วันนี้ถึงล่วงหน้า 14 วัน เมื่อมีคนเปิดดูวันนั้นครั้งแรก · เพิ่มงานประจำได้ที่ &quot;มอบหมายจากแม่แบบงานมาตรฐาน&quot; แล้วติ๊ก &quot;ทำซ้ำทุกวัน&quot;</p>
+        <p className="form-intro">ระบบสร้างงานเหล่านี้ให้ทุกวัน ล่วงหน้า 14 วัน</p>
         <DataTable search={false} columns={["ผู้รับบริการ", "สาขา", "งาน", "กะ", "เวลา", "ตั้งโดย"]} empty="ยังไม่มีงานประจำ"
           rows={routines.map((r) => [r.resident_name, r.branch_name, r.task_name, r.shift, r.sched_time, r.created_by ?? "-"])}
           actions={[{ label: "หยุดทำซ้ำ", danger: true, onClick: (i) => stopRoutine(routines[i]) }]} />

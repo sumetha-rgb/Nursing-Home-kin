@@ -7,11 +7,19 @@ import Icon from "./Icon";
 import { BRANCH_NAMES } from "@/lib/mock";
 import { api, SessionUser } from "@/lib/session";
 import { DEMO_ACCOUNTS, DEMO_PASSWORD, ROLE_INFO, ROLES, Role, SHOW_DEMO } from "@/lib/roles";
-import { Modal } from "./ui";
+import { Modal, Tabs } from "./ui";
+import { usePwa } from "./Pwa";
 
 const ROLE_ICON: Record<Role, string> = { "Global Admin": "grid", "Branch Admin": "building", "Head Nurse": "pill", Cashier: "receipt", Nurse: "heart" };
 
 export default function Login({ onLogin, staff = false }: { onLogin: (u: SessionUser) => void; staff?: boolean }) {
+  // KinApp: ติดตั้งแอปก่อนเข้าสู่ระบบ · iPhone ที่เข้าระบบใน Safari แล้วค่อยติดตั้ง ต้องเข้าระบบใหม่อีกครั้งในแอป
+  const pwa = usePwa();
+  const [installInfo, setInstallInfo] = useState(false);
+  // ปุ่ม "ติดตั้งแอป" ขึ้นทุกเครื่องที่ยังไม่ได้ติดตั้ง · วิธีติดตั้งมีทั้ง Android และ iPhone (เปิดแท็บตามเครื่องที่ใช้)
+  const canOffer = staff && !pwa.installed;
+  const [osTab, setOsTab] = useState("Android");
+  useEffect(() => { if (pwa.iosHint || /iphone|ipad|ipod/i.test(navigator.userAgent)) setOsTab("iPhone"); }, [pwa.iosHint]);
   const branchNames = useBranchNames({ all: true });
   const [mode, setMode] = useState<"login" | "register">("login");
   const [show, setShow] = useState(false);
@@ -61,7 +69,7 @@ export default function Login({ onLogin, staff = false }: { onLogin: (u: Session
   const reg = mode === "register";
 
   return <main className="auth-page">
-    <header className="auth-top"><a href="/" className="brand-lockup"><Image src="/logo-mark.png" alt="KIN" width={48} height={36} priority /><span>KIN<span className="brand-divider" />THE ART OF CARE</span></a><span className="auth-top-note">REHABILITATION & HOMECARE</span><Link href={staff ? "/" : "/staff"} className="auth-top-link">{staff ? "ระบบจัดการ KIN" : "แอปพนักงาน"}<Icon name="arrow" className="h-4 w-4" /></Link></header>
+    <header className="auth-top"><a href="/" className="brand-lockup"><Image src="/logo-mark.png" alt="KIN" width={48} height={36} priority /><span>KIN<span className="brand-divider" />THE ART OF CARE</span></a>{canOffer && <button type="button" className="auth-install-btn" onClick={() => setInstallInfo(true)} aria-label="ติดตั้ง KinApp บนโทรศัพท์ · ดูวิธีติดตั้ง"><Icon name="download" className="h-[18px] w-[18px]" /><span>ติดตั้งแอป</span><i aria-hidden /></button>}<span className="auth-top-note">REHABILITATION & HOMECARE</span><Link href={staff ? "/" : "/staff"} className="auth-top-link">{staff ? "ระบบจัดการ KIN" : "แอปพนักงาน"}<Icon name="arrow" className="h-4 w-4" /></Link></header>
     <div className="auth-stage">
       <section className="auth-editorial">
         <span className="kicker"><span className="small-line" /> PEOPLE. PURPOSE. CARE.</span>
@@ -138,5 +146,41 @@ export default function Login({ onLogin, staff = false }: { onLogin: (u: Session
       </section>
     </div>
     <footer className="auth-bottom"><span>KIN REHABILITATION & HOMECARE</span><span>Thoughtfully designed. Carefully connected.</span></footer>
+    <Modal open={installInfo} title="ติดตั้ง KinApp บนโทรศัพท์" onClose={() => setInstallInfo(false)}
+      footer={pwa.canInstall && osTab === "Android"
+        ? <><button type="button" className="btn-soft" onClick={() => setInstallInfo(false)}>ไว้ทีหลัง</button><button type="button" className="btn-primary" onClick={async () => { if (await pwa.install()) setInstallInfo(false); }}><Icon name="download" className="h-4 w-4" /> ติดตั้ง KinApp</button></>
+        : <button type="button" className="btn-primary" onClick={() => setInstallInfo(false)}>เข้าใจแล้ว</button>}>
+      <div className="space-y-4 text-sm leading-6 text-gold-700">
+        <div className="install-why">
+          <p><b>ติดตั้งก่อนเข้าสู่ระบบ</b> แล้วเปิด KinApp จากไอคอน KIN บนหน้าจอโทรศัพท์</p>
+          <ul>
+            <li>เปิดแอปได้ทันที ไม่ต้องพิมพ์ที่อยู่เว็บ</li>
+            <li>รับแจ้งเตือนเมื่อหัวหน้าตามงาน เป็นชื่อและโลโก้ KinApp</li>
+            <li>เข้าสู่ระบบครั้งเดียวในแอป</li>
+          </ul>
+        </div>
+        <Tabs tabs={["Android", "iPhone"]} value={osTab} onChange={setOsTab} />
+        {osTab === "iPhone" ? <>
+          <ol className="install-steps">
+            <li>เปิดหน้านี้ใน <b>Safari</b> (ถ้าเปิดจาก LINE, Facebook หรือ Chrome ให้คัดลอกลิงก์ไปเปิดใน Safari)</li>
+            <li>กดปุ่ม <b>แชร์</b> (สี่เหลี่ยมมีลูกศรชี้ขึ้น) แถบล่างของจอ</li>
+            <li>เลื่อนลงแล้วกด <b>เพิ่มไปยังหน้าจอโฮม</b> · iOS 18 อาจต้องกด &quot;ดูเพิ่มเติม&quot; ก่อน · ถ้ามีสวิตช์ &quot;เปิดเป็นเว็บแอป&quot; ให้เปิดไว้</li>
+            <li>กด <b>เพิ่ม</b> แล้วเปิด KinApp จาก<b>ไอคอนบนหน้าจอโฮม</b> จึงเข้าสู่ระบบ</li>
+            <li>ในแอป กดแท็บ <b>ฉัน</b> → <b>แจ้งเตือนบนโทรศัพท์</b> → อนุญาต</li>
+          </ol>
+          <p className="install-note">ต้องเป็น iOS 16.4 ขึ้นไปจึงรับแจ้งเตือนได้ (ดูที่ ตั้งค่า → ทั่วไป → เกี่ยวกับ) · ถ้าเข้าสู่ระบบใน Safari ก่อน ต้องเข้าสู่ระบบอีกครั้งในแอปที่ติดตั้ง</p>
+        </> : <>
+          {pwa.canInstall
+            ? <p>กดปุ่ม <b>ติดตั้ง KinApp</b> ด้านล่าง แล้วกดยืนยัน ไอคอน KIN จะอยู่บนหน้าจอโทรศัพท์ เปิดจากไอคอนแล้วเข้าสู่ระบบได้เลย</p>
+            : <ol className="install-steps">
+              <li>เปิดหน้านี้ใน <b>Chrome</b></li>
+              <li>กดเมนู <b>⋮</b> มุมขวาบนของ Chrome</li>
+              <li>เลือก <b>ติดตั้งแอป</b> หรือ <b>เพิ่มลงในหน้าจอหลัก → ติดตั้ง</b> (อย่าเลือก &quot;สร้างทางลัด&quot;)</li>
+              <li>เปิด KinApp จาก<b>ไอคอน KIN</b> บนหน้าจอ แล้วเข้าสู่ระบบ</li>
+            </ol>}
+          <p className="install-note">ติดตั้งแล้วจะเห็น KinApp ในรายการแอปทั้งหมดของโทรศัพท์ · เปิดแจ้งเตือนในแอปที่แท็บ ฉัน → แจ้งเตือนบนโทรศัพท์</p>
+        </>}
+      </div>
+    </Modal>
   </main>;
 }

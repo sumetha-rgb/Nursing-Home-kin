@@ -11,7 +11,8 @@ import { branchBeds, roomInfos } from "@/lib/rooms";
 import { RESIDENTS } from "@/lib/mock";
 import { downloadCsv, useCrud } from "@/lib/store";
 import { useApp } from "@/lib/app";
-import { DataTable, Field, FieldDef, FormDialog, Modal, PageHeader, Section, MetricGrid, StatusBadge, Tabs } from "../ui";
+import { Avatar } from "../Avatar";
+import { DataTable, Field, FieldDef, FormDialog, Modal, PageHeader, Section, StatFilter, StatusBadge, Tabs } from "../ui";
 import { Group, Item } from "./ContractView";
 
 /* ---------- จัดการสาขา ---------- */
@@ -55,9 +56,8 @@ export function Branches() {
   const shown=rows.map((r,i)=>({r,i})).filter(({r})=>!query||[r[0],r[1],r[2],r[3]].some(v=>v.includes(query)));
   const deleteBranch=(i:number)=>confirm({title:"ลบสาขา",message:`ต้องการลบสาขา ${rows[i][1]} ใช่หรือไม่`,danger:true,okLabel:"ลบสาขา",onOk:()=>{const n=rows[i][1];remove(i);toast(`ลบสาขาแล้ว · ${n}`);}});
   return <>
-    <PageHeader title="ข้อมูลสาขา" sub={canEdit?"ทุกพื้นที่ของ KIN เชื่อมต่อกันด้วยมาตรฐานการดูแลเดียวกัน":"ข้อมูลสาขาของคุณ (ดูได้อย่างเดียว) · ต้องการแก้ไขเบอร์โทร ที่อยู่ หรือข้อมูลอื่น แจ้งผู้บริหาร"} actions={<><button className="btn-soft" onClick={()=>downloadCsv("สาขา",BRANCH_COLS,table)}><CsvIcon /> ส่งออก CSV</button>{canEdit&&<button className="btn-primary" onClick={()=>setDlg({mode:"add",i:-1})}><Icon name="plus" className="h-4 w-4" />เพิ่มสาขา</button>}</>} />
-    <MetricGrid items={[{label:"สาขาในเครือ",value:rows.length,unit:"สาขา",accent:true,icon:"building"},{label:"เปิดให้บริการ",value:rows.filter(r=>r[10]==="เปิด").length,unit:"สาขา",icon:"check"},{label:"จำนวนเตียงรองรับ",value:rows.reduce((n,r)=>n+bedsOf(r),0),unit:"เตียง",icon:"heart",note:beds.size?"นับจากห้องพักและเตียง":undefined},{label:"สำนักงานและสาขาภายใน",value:rows.filter(r=>r[10]==="ภายใน").length,unit:"แห่ง",icon:"id"}]} />
-    <div className="mb-5 flex flex-wrap items-center justify-between gap-4"><h2 className="text-[17px] font-medium text-gold-800">พื้นที่แห่งความใส่ใจ</h2><Tabs tabs={["การ์ดสาขา","ตารางข้อมูล"]} value={layout} onChange={setLayout} /></div>
+    <PageHeader title="ข้อมูลสาขา" sub={canEdit?undefined:"ดูได้อย่างเดียว · แก้ไขแจ้งผู้บริหาร"} actions={<><button className="btn-soft" onClick={()=>downloadCsv("สาขา",BRANCH_COLS,table)}><CsvIcon /> ส่งออก CSV</button>{canEdit&&<button className="btn-primary" onClick={()=>setDlg({mode:"add",i:-1})}><Icon name="plus" className="h-4 w-4" />เพิ่มสาขา</button>}</>} />
+    <div className="mb-5 flex flex-wrap items-center justify-between gap-4"><p className="stat-sum !ml-0">สาขาในเครือ <b>{rows.length}</b> · เปิดให้บริการ <b>{rows.filter(r=>r[10]==="เปิด").length}</b> · เตียงรองรับ <b>{rows.reduce((n,r)=>n+bedsOf(r),0)}</b>{rows.some(r=>r[10]==="ภายใน")?<> · สำนักงานภายใน <b>{rows.filter(r=>r[10]==="ภายใน").length}</b></>:null}</p><Tabs tabs={["การ์ดสาขา","ตารางข้อมูล"]} value={layout} onChange={setLayout} /></div>
     {layout==="การ์ดสาขา"?<><div className="table-search mb-5"><Icon name="search" /><input aria-label="ค้นหาสาขา" placeholder="ค้นหาชื่อหรือรหัสสาขา…" value={query} onChange={e=>setQuery(e.target.value)} /></div><div className="branch-grid">{shown.map(({r,i})=><article className="branch-card" key={i}><div className="branch-card-head"><span><Icon name="building" className="h-6 w-6" /></span><StatusBadge value={r[10]} /></div><div className="branch-card-body"><h3>{r[1]}</h3><p className="branch-card-id">KIN HOMECARE · {r[0]}</p><dl><div><dt>รองรับการดูแล</dt><dd>{bedsOf(r)} เตียง{beds.get(r[1])?` · พักอยู่ ${beds.get(r[1])!.people} (${beds.get(r[1])!.pct}%)`:""}</dd></div><div><dt>ติดต่อสาขา</dt><dd>{r[3]||"—"}</dd></div><div><dt>ประเภทสาขา</dt><dd>{r[6]||"—"}</dd></div></dl><p className="mb-5 text-xs leading-7 text-gold-500">{r[8]||r[4]}</p><div className="branch-card-footer"><button className="btn-soft" onClick={()=>setDlg({mode:"edit",i})}>{canEdit?"รายละเอียดและแก้ไข":"ดูรายละเอียด"} <Icon name="arrow" className="h-4 w-4" /></button>{canEdit&&<button className="row-action danger" onClick={()=>deleteBranch(i)}>ลบ</button>}</div></div></article>)}</div>{!shown.length&&<div className="card empty-state">ไม่พบสาขาที่ค้นหา</div>}</>:<Section title="ทะเบียนสาขา"><DataTable columns={BRANCH_COLS} rows={table} actions={canEdit?[{label:"แก้ไข",onClick:i=>setDlg({mode:"edit",i})},{label:"ลบ",danger:true,onClick:deleteBranch}]:[{label:"ดู",onClick:i=>setDlg({mode:"edit",i})}]} /></Section>}
     <details className="mt-8 text-xs text-gold-500"><summary className="cursor-pointer">การจัดการข้อมูลขั้นสูง</summary><div className="mt-4 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-red-100 bg-red-50/40 p-5"><p>ลบข้อมูลทุกสาขาออกจากระบบตัวอย่าง</p><button className="btn-danger" onClick={()=>confirm({title:"ล้างสาขาทั้งหมด",message:"ต้องการลบข้อมูลสาขาทั้งหมดใช่หรือไม่",danger:true,okLabel:"ล้างทั้งหมด",onOk:()=>{clear();toast("ล้างข้อมูลแล้ว");}})}>ล้างข้อมูลสาขา</button></div></details>
     {/* ผู้จัดการสาขาแก้ไม่ได้: แสดงเป็นหน้าอ่านแบ่งกลุ่ม */}
@@ -148,23 +148,23 @@ export function Staff() {
   const shown = users.filter((u) => filter === "ทั้งหมด" || u.status === filter);
   const pending = users.filter((u) => u.status === "รออนุมัติ").length;
   return <>
-    <PageHeader title="ทีมและสิทธิ์การใช้งาน" sub={global ? "สร้างบัญชีเข้าสู่ระบบ อนุมัติผู้สมัคร และกำหนดสิทธิ์ให้เหมาะกับหน้าที่" : `จัดการบัญชีพยาบาลและแคชเชียร์ของสาขา${me?.branch ?? ""}`}
+    <PageHeader title="ทีมและสิทธิ์การใช้งาน" sub={global ? "บัญชีเข้าสู่ระบบและสิทธิ์ของทีม" : `บัญชีของทีมสาขา${me?.branch ?? ""}`}
       actions={<><button className="btn-soft" onClick={() => downloadCsv("ผู้ใช้งานระบบ", STAFF_COLS, users.map(toForm))}><CsvIcon /> ส่งออก CSV</button><button className="btn-primary" onClick={() => setDlg({ mode: "add" })}><Icon name="plus" className="h-4 w-4" />สร้างบัญชีสมาชิก</button></>} />
-    <MetricGrid items={[
-      { label: "สมาชิกในระบบ", value: users.length, unit: "คน", icon: "user", accent: true },
-      { label: "กำลังปฏิบัติงาน", value: users.filter((u) => u.status === "ทำงาน").length, unit: "คน", icon: "check" },
-      { label: "รออนุมัติ", value: pending, unit: "คน", icon: "bell", note: pending ? "สมัครเองจากหน้าเข้าสู่ระบบ" : undefined },
-      { label: "มีบัญชีล็อกอิน", value: users.filter((u) => u.email).length, unit: "คน", icon: "lock" },
-    ]} />
-    <Section title="สมาชิกทีม KIN" sub="อนุมัติผู้สมัคร แก้ไขสิทธิ์ และรีเซตรหัสผ่าน" actions={<Tabs tabs={["ทั้งหมด", ...STATUSES]} value={filter} onChange={setFilter} />}>
+    <Section title="สมาชิกทีม KIN">
+      <StatFilter label="กรองตามสถานะ" value={filter} onChange={setFilter} items={[
+        { k: "ทั้งหมด", t: "ทั้งหมด", n: users.length, tone: "all" },
+        ...STATUSES.map((st) => ({ k: st, t: st, n: users.filter((u) => u.status === st).length, tone: (st === "ทำงาน" ? "good" : st === "รออนุมัติ" ? "warn" : "muted") as "good" | "warn" | "muted" })),
+      ]} summary={<>มีบัญชีเข้าระบบ <b>{users.filter((u) => u.email).length}</b> คน</>} />
       <DataTable columns={[...STAFF_COLS.slice(0, 3), "ตำแหน่ง", "สิทธิ์", ...STAFF_COLS.slice(4)]} rows={shown.map((u) => [u.full_name, u.email ?? "—", u.contract_type ?? "—", roleTh(u.access_level), u.access_level === "Global Admin" ? "ทุกสิทธิ์" : u.permissions ? `กำหนดเอง ${u.permissions.length} รายการ` : "ตามตำแหน่ง", u.branch_name ?? "—", u.status])}
         empty={loading ? "กำลังโหลดรายชื่อ…" : "ไม่พบสมาชิก"}
+        render={(n, col) => (col === 0 && shown[n] ? <span className="flex items-center gap-2.5"><Avatar kind="staff" id={shown[n].id} name={shown[n].full_name} size={32} /><b className="font-semibold">{shown[n].full_name}</b></span> : undefined)}
+        onRow={(n) => setDlg({ mode: "edit", u: shown[n] })} rowLabel="กดเพื่อแก้ไขข้อมูลสมาชิก"
         actions={[
-          { label: "สิทธิ์", onClick: (n) => setPerm(shown[n]) },
-          { label: "อนุมัติ", onClick: (n) => shown[n].status === "รออนุมัติ" ? run({ action: "approve", id: shown[n].id }, `อนุมัติ ${shown[n].full_name} แล้ว`) : toast("บัญชีนี้ไม่ได้อยู่ในสถานะรออนุมัติ") },
-          { label: "แก้ไข", onClick: (n) => setDlg({ mode: "edit", u: shown[n] }) },
-          { label: "รีเซตรหัสผ่าน", onClick: (n) => { setNewPw(""); setReset(shown[n]); } },
-          { label: "ลบ", danger: true, onClick: (n) => { const u = shown[n]; confirm({ title: "ลบบัญชีสมาชิก", message: `ต้องการลบบัญชี ${u.full_name} ใช่หรือไม่ บัญชีนี้จะเข้าสู่ระบบไม่ได้อีก`, danger: true, okLabel: "ลบบัญชี", onOk: () => { run({ action: "delete", id: u.id }, "ลบบัญชีเรียบร้อย"); } }); } },
+          { label: "อนุมัติ", tone: "primary", hidden: (n) => shown[n].status !== "รออนุมัติ", onClick: (n) => run({ action: "approve", id: shown[n].id }, `อนุมัติ ${shown[n].full_name} แล้ว`) },
+          { label: "แก้ไข", more: true, onClick: (n) => setDlg({ mode: "edit", u: shown[n] }) },
+          { label: "สิทธิ์การใช้งาน", more: true, onClick: (n) => setPerm(shown[n]) },
+          { label: "รีเซตรหัสผ่าน", more: true, onClick: (n) => { setNewPw(""); setReset(shown[n]); } },
+          { label: "ลบบัญชี", danger: true, more: true, onClick: (n) => { const u = shown[n]; confirm({ title: "ลบบัญชีสมาชิก", message: `ต้องการลบบัญชี ${u.full_name} ใช่หรือไม่ บัญชีนี้จะเข้าสู่ระบบไม่ได้อีก`, danger: true, okLabel: "ลบบัญชี", onOk: () => { run({ action: "delete", id: u.id }, "ลบบัญชีเรียบร้อย"); } }); } },
         ]} />
     </Section>
     <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-5">{[...ROLES].reverse().map((r) => <div key={r} className="rounded-xl border border-cream-200 bg-cream-100/50 p-4"><p className="text-sm font-medium text-gold-800">{ROLE_INFO[r].th}</p><p className="mt-1 text-xs leading-6 text-gold-600">{ROLE_INFO[r].sees}</p></div>)}</div>

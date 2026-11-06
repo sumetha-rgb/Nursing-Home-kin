@@ -41,6 +41,23 @@ export async function pushTo(userIds: string[], msg: PushMsg): Promise<number> {
   } catch { return 0; }
 }
 
+/**
+ * พยาบาลที่อยู่เวรของงานนั้น (ตารางเวร วันที่ของงาน + กะ "กะเช้า"/"กะดึก")
+ * งานกะดึกของวันที่ D (รวมช่วงหลังเที่ยงคืนก่อน 07:00) เป็นเวรดึกที่เริ่ม 19:00 ของวันที่ D
+ * ยังไม่ได้จัดใครเข้าเวรนั้น = พยาบาลทุกคนในสาขา (เหมือนเดิม)
+ */
+export async function shiftStaffIds(branch: string, workDate: string, shift?: string | null): Promise<string[]> {
+  const sh = String(shift ?? "").replace(/^กะ/, "");
+  if (sh) {
+    try {
+      const rows = (await sql`SELECT s.staff_id AS id FROM staff_shifts s JOIN staff_users u ON u.id = s.staff_id
+        WHERE s.branch_name = ${branch} AND s.shift_date = ${workDate}::date AND s.shift = ${sh} AND u.status = 'ทำงาน'`) as { id: string }[];
+      if (rows.length) return rows.map((r) => r.id);
+    } catch { /* ใช้ทุกคนในสาขาแทน */ }
+  }
+  return staffIds(branch, null);
+}
+
 /** พนักงานที่ยังทำงานอยู่ในสาขา: ระบุชื่อ = เฉพาะคนนั้น · ไม่ระบุ = พยาบาลและหัวหน้าพยาบาลทุกคนในสาขา */
 export async function staffIds(branch: string, name?: string | null): Promise<string[]> {
   try {

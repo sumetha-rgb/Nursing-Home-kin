@@ -1057,3 +1057,16 @@ CREATE TABLE IF NOT EXISTS push_subs (
 );
 COMMENT ON TABLE push_subs IS 'เครื่องที่รับแจ้งเตือนของพนักงาน (Web Push)';
 CREATE INDEX IF NOT EXISTS push_subs_user ON push_subs (user_id);
+
+-- ---------------------------------------------------------------- รูปโปรไฟล์ (พนักงาน / ผู้รับบริการ)
+-- แยกจากตารางรายชื่อ เพื่อไม่ให้หน้ารายชื่อโหลดรูปทุกคน · รูปย่อ JPEG ไม่เกิน 320px เก็บเป็น data URL
+-- kind = staff (id ของ staff_users) | resident (id ของ residents)
+CREATE TABLE IF NOT EXISTS profile_photos (
+  kind        text NOT NULL,
+  ref_id      text NOT NULL,
+  photo       text NOT NULL,
+  updated_by  text,
+  updated_at  timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (kind, ref_id)
+);
+COMMENT ON TABLE profile_photos IS 'รูปโปรไฟล์พนักงานและผู้รับบริการ';

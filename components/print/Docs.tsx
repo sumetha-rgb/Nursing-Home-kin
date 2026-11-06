@@ -2,7 +2,10 @@
 import { ReactNode, useEffect, useRef } from "react";
 import Icon from "../Icon";
 import { Modal } from "../ui";
-import { bahtText, money, svcDiscount, svcNet } from "@/lib/billing";
+import { bahtText, contractLines, contractMonthSum, contractRoomName, money, svcDiscount, svcNet } from "@/lib/billing";
+// ย้ายไปไว้ที่ lib/billing (ใช้ร่วมกับหน้าใบแจ้งหนี้) · ส่งต่อให้ไฟล์ที่ import จากที่นี่
+export { contractLines, contractMonthSum, contractRoomName } from "@/lib/billing";
+export type { ContractLine } from "@/lib/billing";
 import { extraServices, packages, rateColumns, roomByPrice, rooms } from "@/lib/priceList";
 import { usePriceList } from "@/lib/usePrices";
 import { isNoAllergy } from "@/lib/medicalLists";
@@ -115,18 +118,6 @@ export const DEFAULT_TERMS = "";
 
 /** แถวสัญญา: [เลขที่, สาขา, ผู้รับบริการ, ผู้ว่าจ้าง, ราคาโปรแกรม, สถานะ, ห้อง, วันเริ่ม, บัตรผู้ว่าจ้าง, โทร, ที่อยู่, ความเกี่ยวข้อง, บัตรผู้รับบริการ, อายุ, บริการพื้นฐาน, รายการเพิ่มเติม, ค่าเพิ่มเติม, แพ็กเกจ, ล่วงหน้า, ประกัน, หมายเหตุ,
  *  โปรแกรม, วันสิ้นสุด, รายการ (JSON), โรงพยาบาลตามสิทธิ์, แพ้ยา, แพ้อาหาร, หักมัดจำห้อง, ยา/เวชภัณฑ์ที่ใช้ประจำ] */
-/** room = ชื่อห้องที่ตั้งเองเมื่อกำหนดค่าห้องเอง (เก็บใน items_json ไม่ใช่รายการค่าบริการ) */
-export type ContractLine = { desc: string; qty: number; unit: string; price: number; discount?: number; pct?: number; room?: boolean; code?: string };
-const rawLines = (r: string[]): ContractLine[] | null => { try { const x = JSON.parse(r[23] || "[]"); if (Array.isArray(x)) return x; } catch { /* สัญญาเก่า */ } return null; };
-/** รายการค่าบริการของสัญญา · สัญญาเก่าที่ยังไม่มีรายการ: แปลงจากค่าบริการเพิ่มเติมรายเดือนเดิม */
-export function contractLines(r: string[]): ContractLine[] {
-  const x = rawLines(r);
-  if (x) return x.filter((l) => !l.room);
-  const extra = numOf(r[16]);
-  return extra ? [{ desc: blank(r[15]) ? `ค่าบริการเพิ่มเติม (${r[15]})` : "ค่าบริการเพิ่มเติม", qty: 1, unit: "เดือน", price: extra }] : [];
-}
-/** ชื่อห้องที่ตั้งเอง (ค่าห้องกำหนดเอง) */
-export const contractRoomName = (r: string[]) => rawLines(r)?.find((l) => l.room)?.desc?.trim() ?? "";
 /** ชื่อห้องของค่าห้อง: ตั้งเอง > ประเภทห้องในใบราคาจากราคา */
 export function contractRoomTitle(r: string[]) {
   const own = contractRoomName(r);
@@ -144,8 +135,9 @@ const Break = () => <div className="doc-break" aria-hidden="true" />;
 export function ContractDoc({ r, hn, bed, branch, terms, by, copy, chronic }: { r: string[]; hn?: string; bed?: string; branch?: DocBranch; terms?: string; by?: string; copy?: boolean; chronic?: string }) {
   usePriceList();
   const lines = contractLines(r);
-  const fee = numOf(r[4]), total = contractTotal(r), dep = numOf(r[27]), prepaid = numOf(r[18]), deposit = numOf(r[19]);
-  const net = total - dep;
+  // ยอดต่อเดือนคิดแบบเดียวกับใบแจ้งหนี้ (รวม VAT ค่าห้อง) ให้สัญญาที่ลงนามตรงกับใบแจ้งหนี้และทะเบียนสัญญา
+  const fee = numOf(r[4]), sum = contractMonthSum(r), total = sum.total, dep = numOf(r[27]), prepaid = numOf(r[18]), deposit = numOf(r[19]);
+  const net = Math.round((total - dep) * 100) / 100;
   const legal = branch?.legal || COMPANY.legal;
   const room = blank(r[6]) ? `ห้อง ${r[6]}${bed ? ` เตียง ${bed}` : ""}` : "";
   const extra = (terms ?? "").split(/\n+/).map((x) => x.trim()).filter(Boolean);
@@ -170,11 +162,15 @@ export function ContractDoc({ r, hn, bed, branch, terms, by, copy, chronic }: { 
       <div className="doc-tbl"><table>
         <thead><tr><th>รายการ</th><th className="n">จำนวนเงิน (บาท)</th></tr></thead>
         <tbody>
-          <tr><td><b>{val(r[21]) === "-" ? "ค่าบริการ" : r[21]}</b>{contractRoomTitle(r) && ` · ${contractRoomTitle(r)}`}</td><td className="n">{fee ? money(fee) : ""}</td></tr>
+          <tr><td><b>{val(r[21]) === "-" ? "ค่าบริการ" : r[21]}</b>{contractRoomTitle(r) && ` · ${contractRoomTitle(r)}`}</td><td className="n">{fee && sum.feeIn ? money(fee) : ""}</td></tr>
           {lines.map((x, i) => <tr key={i}><td>&nbsp;- {x.desc}{x.qty !== 1 || !["เดือน", "แพ็กเกจ"].includes(x.unit) ? ` (${x.qty.toLocaleString("en-US")} ${x.unit}${x.price ? ` × ${money(x.price)}` : ""})` : ""}{svcDiscount(x) ? ` ส่วนลด${x.pct ? ` ${x.pct}%` : ""} ${money(svcDiscount(x))}` : ""}</td><td className="n">{x.price ? money(svcNet(x)) : "รวมในโปรแกรม"}</td></tr>)}
         </tbody>
         <tfoot>
-          <tr><td>ยอดรวมทั้งหมด</td><td className="n">{money(total)}</td></tr>
+          {sum.vat > 0 && <>
+            <tr><td>รวมก่อนภาษีมูลค่าเพิ่ม</td><td className="n">{money(sum.base)}</td></tr>
+            <tr><td>ภาษีมูลค่าเพิ่ม {sum.rate}% (ค่าห้อง)</td><td className="n">{money(sum.vat)}</td></tr>
+          </>}
+          <tr><td>ยอดรวมทั้งหมด{sum.vat > 0 ? " (รวมภาษีมูลค่าเพิ่ม)" : ""}</td><td className="n">{money(total)}</td></tr>
           {dep > 0 && <tr><td>หักค่ามัดจำห้องพัก</td><td className="n">-{money(dep)}</td></tr>}
           {dep > 0 && <tr><td>ยอดรวมทั้งหมด ({bahtText(net)})</td><td className="n">{money(net)}</td></tr>}
         </tfoot>

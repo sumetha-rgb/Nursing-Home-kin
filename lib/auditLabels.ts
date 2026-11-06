@@ -9,6 +9,7 @@ export const ACTION_LABEL: Record<string, string> = {
 
 /** กลุ่มตัวกรอง → action ที่อยู่ในกลุ่ม */
 export const ACTION_GROUPS: Record<string, string[]> = {
+  "ต้องตรวจ": ["login_failed", "delete", "clear"],
   "เพิ่ม": ["create", "register"],
   "แก้ไข": ["update", "approve", "replace", "acknowledge", "permissions"],
   "ลบ": ["delete", "clear"],

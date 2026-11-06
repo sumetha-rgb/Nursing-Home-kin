@@ -11,10 +11,11 @@ import { apptIso, upcomingAppts } from "@/lib/appointments";
 import CashierOnly from "@/components/CashierOnly";
 import { can } from "@/lib/perms";
 import Icon from "@/components/Icon";
+import { Avatar, AvatarEdit } from "@/components/Avatar";
 import { Field, Modal, Select } from "@/components/ui";
 import { ResidentPicker } from "@/components/SearchSelect";
 import { AppProvider, useApp } from "@/lib/app";
-import { downloadCsv, useCrud, useRecords } from "@/lib/store";
+import { downloadCsv, SYNC_ERROR_EVENT, useCrud, useRecords } from "@/lib/store";
 import { useResidents } from "@/lib/care";
 import { useAutoRefresh } from "@/lib/autoRefresh";
 import { HEALTH } from "@/lib/mock";
@@ -35,7 +36,7 @@ import { NO_ALLERGY } from "@/lib/medicalLists";
 
 /* ---------- ข้อมูลจำลอง ---------- */
 /** งานวันนี้ใน KinApp (มาจากหน้างานประจำวันของผู้จัดการ) */
-type Task = { id: number; rid?: string; who: string; title: string; time: string; ins: string; done?: string; note?: string; shift?: string; status?: string; by?: string; owner?: string };
+type Task = { id: string; rid?: string; who: string; title: string; time: string; ins: string; done?: string; note?: string; shift?: string; status?: string; by?: string; owner?: string };
 
 const HANDOVER0 = [
   { id: 1, type: "เฝ้าระวังอาการ", who: "คุณมาลี ศรีสุข", text: "แขนขวาอ่อนแรงมากขึ้นเล็กน้อย ให้ตรวจซ้ำทุก 4 ชม.", by: "พยาบาล วิภา", at: "เมื่อวาน 19:10" },
@@ -49,18 +50,20 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: "meds", label: "จ่ายยา", icon: "pill" },
   { id: "residents", label: "ผู้รับบริการ", icon: "user" },
   { id: "roster", label: "ตารางเวร", icon: "calendar" },
-  { id: "perf", label: "ผลงาน", icon: "trophy" },
+  { id: "perf", label: "ฉัน", icon: "me" },
 ];
 /** เหตุผลที่ทำแทน (ต่อท้ายในบันทึกงาน "ทำแทน <ชื่อ> · <เหตุผล>") */
 const PROXY_REASONS = ["ไม่อยู่ในเวร", "ติดงานอื่น", "งานด่วน", "อื่น ๆ"];
 const LATE_MIN = 30;
 /** ตัวย่อในวงกลม: ตัดคำนำหน้า และข้ามสระนำ (เ แ โ ใ ไ) เช่น นางเชียงราย ไทรงาม → ชท */
-const initials = (name: string) => {
-  const w = name.replace(/^(คุณ|นางสาว|นาย|นาง|น\.ส\.|พว\.)\s*/, "").trim().split(/\s+/);
-  const c = (x = "") => (/^[เแโใไ]/.test(x) ? x.charAt(1) : x.charAt(0));
-  return (c(w[0]) + (w[1] ? c(w[1]) : (w[0] ?? "").replace(/^[เแโใไ]/, "").charAt(1))) || name.charAt(0);
-};
 
+
+/**
+ * วันทำงานของ KinApp (YYYY-MM-DD) ตามเวลาไทย UTC+7 เสมอ ไม่ขึ้นกับเขตเวลาของเครื่อง
+ * ตัดวันที่ 07:00 น. (เปลี่ยนเวร) ตรงกับตารางเวรและหน้ามอบหมายงาน: 00:00–06:59 ยังเป็นวันของเวรดึกเมื่อวาน
+ */
+// เวลาไทย (UTC+7) ลบ 7 ชั่วโมงของการตัดวัน 07:00 = เวลา UTC พอดี · วันที่ UTC จึงเป็นวันทำงานของ KinApp
+const workDayTh = (t = Date.now()) => new Date(t).toISOString().slice(0, 10);
 
 /* ---------- ตัวช่วย UI ---------- */
 const Empty = ({ t }: { t: string }) => <p className="rounded-2xl bg-cream-50 py-6 text-center text-sm text-gold-500">{t}</p>;
@@ -76,9 +79,29 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   // แจ้งเตือนบนโทรศัพท์: การ์ดชวนเปิดบนหน้างาน (ซ่อนได้) + เมนูโปรไฟล์
   const push = usePush();
   // ติดตั้งแอปก่อน (หัวแจ้งเตือนเป็นชื่อและโลโก้ KinApp แทน Chrome) แล้วค่อยเปิดแจ้งเตือน · "ไว้ทีหลัง" จำไว้ในเครื่อง
+  // ค่าที่จำในเครื่อง: การ์ดที่กด "ไว้ทีหลัง" · ป้ายแนะนำ "ฉัน" (ครั้งเดียว) · ตัวอักษรใหญ่
   const [hidden, setHidden] = useState<string[]>([]);
-  useEffect(() => { try { setHidden(["kin-push-hide", "kin-install-hide"].filter((k) => localStorage.getItem(k) === "1")); } catch { /* ไม่เป็นไร */ } }, []);
+  const [prefs, setPrefs] = useState(false);
+  const [big, setBig] = useState(false);
+  useEffect(() => {
+    try {
+      setHidden(["kin-push-hide", "kin-install-hide", "kin-coach-me"].filter((k) => localStorage.getItem(k) === "1"));
+      setBig(localStorage.getItem("kin-big") === "1");
+    } catch { /* ไม่เป็นไร */ }
+    setPrefs(true);
+  }, []);
   const hideCard = (k: string) => { setHidden((h) => [...h, k]); try { localStorage.setItem(k, "1"); } catch { /* ไม่เป็นไร */ } };
+  const toggleBig = () => { const v = !big; setBig(v); try { localStorage.setItem("kin-big", v ? "1" : "0"); } catch { /* ไม่เป็นไร */ } toast(v ? "เปิดตัวอักษรใหญ่แล้ว" : "กลับเป็นตัวอักษรปกติแล้ว"); };
+  const goMe = () => { setTab("perf"); setPerfView("me"); window.scrollTo(0, 0); hideCard("kin-coach-me"); };
+  const installApp = async () => {
+    if (pwa.canInstall) { if (await pwa.install()) toast("ติดตั้ง KinApp แล้ว · เปิดได้จากหน้าจอโทรศัพท์"); }
+    else toast(pwa.iosHint ? "กดปุ่มแชร์ของ Safari แล้วเลือก \"เพิ่มไปยังหน้าจอโฮม\"" : "เปิดเมนูของเบราว์เซอร์ (⋮) แล้วเลือก \"ติดตั้งแอป\" หรือ \"เพิ่มลงในหน้าจอหลัก\"");
+  };
+  const togglePush = async () => {
+    if (push.state === "on") toast(await push.disable());
+    else if (push.state === "off") toast(await push.enable());
+    else toast(push.state === "ios" ? "iPhone: กดปุ่มแชร์ของ Safari → \"เพิ่มไปยังหน้าจอโฮม\" แล้วเปิด KinApp จากไอคอน จึงเปิดแจ้งเตือนได้" : "เคยกดไม่อนุญาตไว้ · เปิดได้ที่ตั้งค่าของเครื่อง → การแจ้งเตือน → KinApp");
+  };
   const needInstall = !pwa.installed && (pwa.canInstall || pwa.iosHint);
   const pushCard: "install" | "enable" | "denied" | null =
     push.state === "loading" || (push.state === "none" && !pwa.iosHint) ? null
@@ -86,10 +109,17 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
     : hidden.includes("kin-push-hide") ? null
     : push.state === "off" ? "enable" : push.state === "denied" ? "denied" : null;
   const [tab, setTab] = useState<Tab>("tasks");
-  // งานวันนี้ = งานที่ผู้จัดการมอบหมายในหน้า "ตรวจงานประจำวัน" ของวันนี้ · ส่งงานแล้วสถานะกลับไปให้ผู้จัดการตรวจ
-  const { rows: drows, ids: dids, update: updDaily } = useCrud(`daily-${iso()}`, []);
+  useEffect(() => { if (prefs && tab === "perf" && !hidden.includes("kin-coach-me")) hideCard("kin-coach-me"); }, [prefs, tab]); // eslint-disable-line react-hooks/exhaustive-deps
+  // เวลาปัจจุบัน (อัปเดตทุกนาที) ใช้ตัดสินวันทำงานและงานเลยเวลา
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => { const h = setInterval(() => setNow(Date.now()), 60_000); return () => clearInterval(h); }, []);
+  // งานวันนี้ = งานที่ผู้จัดการมอบหมายในหน้า "ตรวจงานประจำวัน" ของวันทำงานนี้ · ส่งงานแล้วสถานะกลับไปให้ผู้จัดการตรวจ
+  // วันทำงานตามเวลาไทย: ก่อน 07:00 ยังเป็นวันของเวรดึกเมื่อคืน (เปลี่ยนวันตอนเปลี่ยนเวร 07:00 ไม่ใช่เที่ยงคืน)
+  const workDay = workDayTh(now);
+  const { rows: drows, ids: dids, update: updDaily } = useCrud(`daily-${workDay}`, []);
+  // รหัสงาน = รหัสแถวในฐานข้อมูล (ไม่ใช้ลำดับในรายการ เพราะลำดับเปลี่ยนได้เมื่อดึงข้อมูลใหม่)
   const tasks: Task[] = drows
-    .map((r, k) => ({ id: k + 1, rid: dids[k], who: r[0], title: r[1], time: String(r[3] ?? "").slice(0, 5), ins: r[6] && r[6] !== "-" ? r[6] : "ไม่มีคำสั่งงานเพิ่มเติม", done: r[5] && r[5] !== "รอทำ" ? (r[8] && r[8] !== "-" ? String(r[8]).slice(0, 5) : "ส่งแล้ว") : undefined, note: r[9] && r[9] !== "-" ? r[9] : "", shift: r[4], status: r[5], by: r[10] && r[10] !== "-" ? r[10] : undefined, owner: r[2] && r[2] !== "-" ? r[2] : undefined }))
+    .map((r, k) => ({ id: dids[k], rid: dids[k], who: r[0], title: r[1], time: String(r[3] ?? "").slice(0, 5), ins: r[6] && r[6] !== "-" ? r[6] : "ไม่มีคำสั่งงานเพิ่มเติม", done: r[5] && r[5] !== "รอทำ" ? (r[8] && r[8] !== "-" ? String(r[8]).slice(0, 5) : "ส่งแล้ว") : undefined, note: r[9] && r[9] !== "-" ? r[9] : "", shift: r[4], status: r[5], by: r[10] && r[10] !== "-" ? r[10] : undefined, owner: r[2] && r[2] !== "-" ? r[2] : undefined }))
     .sort((a, b) => a.time.localeCompare(b.time));
   // คิวจ่ายยา = ซองยาที่ห้องยาจัด (แอปจัดยา) ของวันนี้ · ตรวจ QA ผ่านแล้วจึงจ่ายได้
   const [packs, setPacks] = useRecords<Pack>("pharmacy-packs", []);
@@ -123,12 +153,18 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   const [feed, setFeed] = useState<Feed>({ kudos: [], cheers: [], bonusToday: 0 });
   const loadFeed = () => { fetch("/api/ops?op=feed", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).then((d) => d && setFeed(d)).catch(() => {}); };
   useEffect(loadFeed, []);
-  useAutoRefresh(loadFeed); // ผลงานพิเศษ คำชม กำลังใจของทีม
+  useAutoRefresh(() => { loadFeed(); loadShift(); }); // ผลงานพิเศษ คำชม กำลังใจของทีม ตามงาน และเวรของฉัน
+  // server ปฏิเสธการบันทึก (เช่น งานนี้มีคนส่งแล้ว ซองยานี้ให้ยาแล้ว) แสดงเหตุผล · ข้อมูลในเครื่องโหลดใหม่จาก server ให้เอง
+  useEffect(() => {
+    const onErr = (e: Event) => { const d = (e as CustomEvent<{ key: string; message: string }>).detail; if (d?.message && /^(daily-|pharmacy-packs$|staff-)/.test(d.key)) toast(d.message); };
+    window.addEventListener(SYNC_ERROR_EVENT, onErr);
+    return () => window.removeEventListener(SYNC_ERROR_EVENT, onErr);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const bonus = feed.bonusToday;
-  const [menu, setMenu] = useState(false);
   const [fab, setFab] = useState(false);
   const [modal, setModal] = useState<null | "facility" | "task" | "sop" | "proxy" | "bonus" | "dispense" | "metrics" | "handover" | "write" | "pwd" | "manual" | "viewtask">(null);
-  const [cur, setCur] = useState<number | null>(null);
+  /** งานที่เปิดอยู่ = รหัสแถวงาน (string) · ซองยาที่เปิดอยู่ = รหัสซอง (number) */
+  const [cur, setCur] = useState<string | number | null>(null);
   const [photo, setPhoto] = useState("");
   const [note, setNote] = useState("");
   const [shareFam, setShareFam] = useState(true);
@@ -137,7 +173,6 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   const [hoText, setHoText] = useState("");
   const [hoWho, setHoWho] = useState("");
   const [hoType, setHoType] = useState(TYPES[0]);
-  const [praised, setPraised] = useState<string[]>([]);
   // อัปเดตถึงครอบครัว (ข้อความ/รูป) และลิงก์ให้ญาติ
   const [fu, setFu] = useState<{ id: string; name: string; text: string; photo: string; busy: boolean } | null>(null);
   const [linkFor, setLinkFor] = useState<string | null>(null);
@@ -154,11 +189,25 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
     } catch (e) { toast((e as Error).message); setFu((x) => (x ? { ...x, busy: false } : x)); }
   };
 
-  const close = () => { setModal(null); setPhoto(""); setNote(""); setShareFam(true); setCur(null); setMenu(false); setProxyFor(null); setProxyReason(PROXY_REASONS[0]); };
-  const open = (m: NonNullable<typeof modal>, i: number | null = null) => { setCur(i); setPhoto(""); setNote(""); setModal(m); };
+  const close = () => { setModal(null); setPhoto(""); setNote(""); setShareFam(true); setCur(null); setProxyFor(null); setProxyReason(PROXY_REASONS[0]); };
+  const open = (m: NonNullable<typeof modal>, i: string | number | null = null) => { setCur(i); setPhoto(""); setNote(""); setModal(m); };
   // งานของฉัน = งานที่ระบุชื่อฉัน หรืองานที่ไม่ระบุคนในกะที่ฉันเข้าเวร (จากตารางเวร)
-  const [myShift, setMyShift] = useState<string | null | undefined>(undefined);
-  useEffect(() => { fetchToday().then((d) => setMyShift(d.shift?.shift ?? null)).catch(() => setMyShift(null)); }, []);
+  // ดึงเวรใหม่เป็นระยะ (พร้อม feed) และเมื่อกลับมาที่แอป · เปลี่ยนเวร 07:00/19:00 ระหว่างเปิดแอปค้างไว้ก็ถูกต้อง
+  type ShiftRef = { date: string; shift: string } | null;
+  const [shiftInfo, setShiftInfo] = useState<{ cur: ShiftRef; next: ShiftRef } | undefined>(undefined);
+  const loadShift = () => { fetchToday().then((d) => setShiftInfo({ cur: d.shift ?? null, next: d.next ?? null })).catch(() => setShiftInfo((x) => x ?? { cur: null, next: null })); };
+  /** เวรที่แสดงบนหัวแอป: เวรตอนนี้ หรือเวรถัดไปของวันนี้ */
+  const shownShift = shiftInfo === undefined ? undefined : (shiftInfo.cur ?? shiftInfo.next)?.shift ?? null;
+  // เวรของวันทำงานที่แสดงอยู่ (วันที่ของเวร = workDay) · ก่อน 07:00 เวรเช้าของวันนี้เป็นของวันทำงานถัดไป
+  //  ไม่นับงานกะเช้าของเมื่อวาน (ยังอยู่ในวันทำงานนี้) เป็นงานของฉัน
+  const myShift = shiftInfo === undefined ? undefined : [shiftInfo.cur, shiftInfo.next].find((x) => x?.date === workDay)?.shift ?? null;
+  useEffect(() => {
+    loadShift();
+    // กลับมาเปิดแอปจากพื้นหลัง (PWA บางเครื่องไม่ยิง focus) · focus และทุก 1 นาทีอยู่ใน useAutoRefresh ด้านบน
+    const onShow = () => { if (document.visibilityState === "visible") loadShift(); };
+    document.addEventListener("visibilitychange", onShow);
+    return () => document.removeEventListener("visibilitychange", onShow);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const isMine = (k: Task) => k.owner === user.name || (!k.owner && !!myShift && k.shift === `กะ${myShift}`);
   const [taskView, setTaskView] = useState<"mine" | "all">("mine");
   // ส่งงานได้: งานที่ระบุชื่อฉัน · งานกลางของเวรที่ฉันเข้า · หัวหน้าพยาบาล/ผู้ตรวจงาน ส่งงานกลางได้ทุกเวร
@@ -207,16 +256,12 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   const myPending = pendingAll.filter(isMine);
   const waiting = taskView === "mine" ? myPending : pendingAll;
   const t = cur !== null ? tasks.find((x) => x.id === cur) : undefined;
-  // เวลาปัจจุบัน (อัปเดตทุกนาที) ใช้ตัดสินงานเลยเวลา · งานกะดึกก่อน 07:00 เป็นของวันถัดไป (เหมือนหน้ามอบหมายงาน)
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => { const h = setInterval(() => setNow(Date.now()), 60_000); return () => clearInterval(h); }, []);
+  // กำหนดเวลาของงาน (เวลาไทย) · งานกะดึกก่อน 07:00 เป็นของวันถัดจากวันทำงาน (เหมือนหน้ามอบหมายงาน)
   const dueAt = (k: Task) => {
     const m = k.time.match(/^(\d{1,2}):(\d{2})/);
     if (!m) return null;
-    const d = new Date(`${todayIso}T00:00:00`);
-    if (k.shift === "กะดึก" && Number(m[1]) < 7) d.setDate(d.getDate() + 1);
-    d.setHours(Number(m[1]), Number(m[2]), 0, 0);
-    return d.getTime();
+    const t = Date.parse(`${workDay}T${m[1].padStart(2, "0")}:${m[2]}:00+07:00`);
+    return k.shift === "กะดึก" && Number(m[1]) < 7 ? t + 864e5 : t;
   };
   const isLate = (k: Task) => !k.done && (dueAt(k) ?? Infinity) + LATE_MIN * 60e3 < now;
   const dueIn = (k: Task) => { const d = dueAt(k); if (d === null) return null; const min = Math.round((d - now) / 60e3); return <small className={min < 0 ? "is-late" : ""}>{min < 0 ? `เลย ${-min} นาที` : min < 60 ? `อีก ${min} นาที` : `อีก ${Math.floor(min / 60)} ชม.`}</small>; };
@@ -227,7 +272,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   const nextTask = myPending.filter((k) => !isLate(k))[0] ?? myLate[0];
   const doneForMe = doneTasks.filter((k) => k.owner === user.name && k.by && k.by !== user.name);
   const fixCount = myReviews.filter((r) => r.stars <= 2).length;
-  const myShiftText = myShift === undefined ? "กำลังตรวจตารางเวร…" : myShift ? `เวร${myShift} ${SHIFTS.find((x) => x.key === myShift)?.time ?? ""}` : "วันนี้ไม่มีเวรในตาราง";
+  const myShiftText = shownShift === undefined ? "กำลังตรวจตารางเวร…" : shownShift ? `เวร${shownShift} ${SHIFTS.find((x) => x.key === shownShift)?.time ?? ""}` : "วันนี้ไม่มีเวรในตาราง";
   const roomOf = (name: string) => { const r = RESIDENTS.find((x) => x.name === name)?.room; return r && r !== "-" ? r : ""; };
   const ownerTag = (k: Task) => (k.owner === user.name ? <em className="ka-me">งานของคุณ</em> : !isMine(k) ? <em className="ka-own">{k.owner ? `ของ${k.owner}` : `ทีม${k.shift ?? "เวร"}`}</em> : null);
   // ตามงาน: แถบแดงบนสุด + ป้าย "ถูกตาม" ที่งาน · ตอบว่าทำไม่ได้ = ส่งเหตุผลถึงหัวหน้า
@@ -303,7 +348,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   };
 
   return (
-    <div className="staff-app mx-auto min-h-dvh w-full max-w-lg pb-28 sm:border-x sm:border-cream-300/60" onClick={() => menu && setMenu(false)}>
+    <div className="staff-app mx-auto min-h-dvh w-full max-w-lg pb-28 sm:border-x sm:border-cream-300/60">
       {/* header */}
       <header className="sticky top-0 z-30 flex items-center justify-between gap-3 border-b border-cream-300/60 bg-white/95 px-4 py-3 backdrop-blur">
         <div className="flex items-center gap-2.5">
@@ -312,33 +357,22 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
         </div>
         <div className="flex items-center gap-2">
           <AlertsBell compact />
-          <div className="relative" onClick={(e) => e.stopPropagation()}>
-            <button onClick={() => setMenu(!menu)} className="flex min-w-0 max-w-[40vw] items-center gap-2 rounded-full border border-cream-300 py-1 pl-1 pr-1 text-sm sm:max-w-none sm:pr-3" aria-label={user.name}><span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-gold-700 text-xs font-semibold text-white">{user.name.charAt(0)}</span><span className="hidden truncate sm:inline">{user.name}</span></button>
-            {menu && (
-              <div className="absolute right-0 top-[calc(100%+8px)] w-56 overflow-hidden rounded-2xl border border-cream-300 bg-white shadow-soft">
-                <div className="border-b border-cream-300/60 px-4 py-3"><p className="text-sm font-medium">{user.name}</p><p className="text-xs text-gold-500">{ROLE_INFO[user.role].th} · {user.branch}</p></div>
-                {!pwa.installed && <button className="flex w-full items-center gap-2 px-4 py-3 text-sm font-medium text-gold-800 hover:bg-cream-100" onClick={async () => {
-                  setMenu(false);
-                  if (pwa.canInstall) { if (await pwa.install()) toast("ติดตั้ง KinApp แล้ว · เปิดได้จากหน้าจอโทรศัพท์"); }
-                  else toast(pwa.iosHint ? "กดปุ่มแชร์ของ Safari แล้วเลือก \"เพิ่มไปยังหน้าจอโฮม\"" : "เปิดเมนูของเบราว์เซอร์ (⋮) แล้วเลือก \"ติดตั้งแอป\" หรือ \"เพิ่มลงในหน้าจอหลัก\"");
-                }}><Icon name="download" className="h-4 w-4" /> ติดตั้ง KinApp บนเครื่อง</button>}
-                {push.state !== "loading" && push.state !== "none" && <button className="flex w-full items-center gap-2 px-4 py-3 text-sm hover:bg-cream-100" disabled={push.busy} onClick={async () => {
-                  setMenu(false);
-                  if (push.state === "on") toast(await push.disable());
-                  else if (push.state === "off") toast(await push.enable());
-                  else toast(push.state === "ios" ? "iPhone: กดปุ่มแชร์ของ Safari → \"เพิ่มไปยังหน้าจอโฮม\" แล้วเปิด KinApp จากไอคอน จึงเปิดแจ้งเตือนได้" : "เคยกดไม่อนุญาตไว้ · เปิดได้ที่ตั้งค่าของเครื่อง → การแจ้งเตือน → KinApp");
-                }}><Icon name="bell" className="h-4 w-4" /> {push.state === "on" ? "ปิดแจ้งเตือนในเครื่องนี้" : "เปิดแจ้งเตือนในเครื่องนี้"}</button>}
-                <button className="flex w-full items-center gap-2 px-4 py-3 text-sm hover:bg-cream-100" onClick={() => open("manual")}><Icon name="book" className="h-4 w-4" /> คู่มือผู้ใช้งาน</button>
-                <button className="flex w-full items-center gap-2 px-4 py-3 text-sm hover:bg-cream-100" onClick={() => open("pwd")}><Icon name="lock" className="h-4 w-4" /> เปลี่ยนรหัสผ่าน</button>
-                <button className="flex w-full items-center gap-2 px-4 py-3 text-sm text-red-600 hover:bg-red-50" onClick={onLogout}><Icon name="logout" className="h-4 w-4" /> ออกจากระบบ</button>
-              </div>
-            )}
-          </div>
+          <button type="button" className={`ka-me ${tab === "perf" ? "is-on" : ""}`} onClick={goMe} aria-label="หน้าฉัน: รูปโปรไฟล์ ผลงาน และตั้งค่า">
+            <Avatar kind="staff" id={user.id} name={user.name} size={30} />
+            <span>{shortName(user.name)}</span>
+            <Icon name="chevron" className="h-3.5 w-3.5" />
+          </button>
         </div>
+        {prefs && !hidden.includes("kin-coach-me") && tab !== "perf" && (
+          <div className="ka-coach" role="note">
+            <p>รูปโปรไฟล์ แจ้งเตือน และตั้งค่า อยู่ที่ปุ่มชื่อของคุณ หรือแท็บ <b>ฉัน</b> ด้านล่าง</p>
+            <button type="button" onClick={() => hideCard("kin-coach-me")}>เข้าใจแล้ว</button>
+          </div>
+        )}
         <div className="absolute inset-x-0 top-full"><OfflineBar /></div>
       </header>
 
-      <main className="space-y-4 px-4 py-5">
+      <main className="space-y-4 px-4 py-5" style={big ? { zoom: 1.12 } : undefined}>
         <BranchNotice user={user} />
         {tab === "tasks" && (
           <>
@@ -447,7 +481,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
                 <button type="button" role="radio" aria-checked={taskView === "mine"} onClick={() => setTaskView("mine")}>ของฉันและทีม {myPending.length}</button>
                 <button type="button" role="radio" aria-checked={taskView === "all"} onClick={() => setTaskView("all")}>ทั้งสาขา {pendingAll.length}</button>
               </div>
-              {myShift === null && taskView === "mine" && <p className="ka-note">วันนี้ไม่มีเวรของคุณในตาราง · แสดงเฉพาะงานที่ระบุชื่อคุณ</p>}
+              {myShift === null && taskView === "mine" && <p className="ka-note">{shownShift ? `เวร${shownShift}ของคุณเป็นของวันทำงานอื่น (เปลี่ยนวัน 07:00 น.)` : "วันนี้ไม่มีเวรของคุณในตาราง"} · แสดงเฉพาะงานที่ระบุชื่อคุณ</p>}
               {myPending.length === 0 && (taskView === "mine" || pendingAll.length === 0) && <Empty t={pendingAll.length ? "ไม่มีงานของคุณค้างแล้ว · กด \"ทั้งสาขา\" เพื่อดูงานของทีม" : tasks.length ? "ไม่มีงานค้างแล้ว เยี่ยมมาก" : "ยังไม่มีงานที่ผู้จัดการมอบหมายสำหรับวันนี้"} />}
               {myLate.length > 0 && <><p className="ka-h is-bad">เลยเวลา · {myLate.length}</p><ul className="ka-list">{myLate.map(taskRow)}</ul></>}
               {myGroups.map(([time, list]) => <div key={time}><p className="ka-h">{time || "ไม่ระบุเวลา"} · {list.length} งาน</p><ul className="ka-list">{list.map(taskRow)}</ul></div>)}
@@ -517,7 +551,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
                 const room = roomOf(m.who);
                 return (
                   <li key={m.id} className={`ka-pack ${m.given ? "is-done" : ""}`}>
-                    <div className="ka-pack-h"><span className="ka-pic">{initials(m.who)}</span>
+                    <div className="ka-pack-h"><Avatar kind="resident" id={RESIDENTS.find((x) => x.name === m.who)?.id} name={m.who} size={40} />
                       <span className="ka-t"><b>{m.who}</b><small>{room ? `ห้อง ${room}` : "ยังไม่มีห้อง"} · {m.items.length} รายการ{allergy[m.who] && <em className="ka-flag bad">แพ้ {allergy[m.who]}</em>}</small></span></div>
                     <div className="ka-pills">{m.items.map((x) => {
                       const l = low.find((d) => x.includes(d.name));
@@ -542,15 +576,18 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
               <button type="button" role="radio" aria-checked={resTodo} onClick={() => setResTodo(true)}>ยังไม่วัดวันนี้ {RESIDENTS.filter((r) => !measured[r.name]).length}</button>
             </div>
             {resList.length === 0 ? <Empty t={resQ ? `ไม่พบ "${resQ}"` : "วัดสัญญาณชีพครบทุกคนแล้ว"} /> : (
-              <ul className="ka-list">{resList.map((r) => (
-                <li key={r.id ?? r.name} className="ka-row">
-                  <button type="button" className="ka-row-main" onClick={() => setResPick(r)}>
-                    <span className="ka-pic">{initials(r.name)}</span>
+              <ul className="ka-res-list">{resList.map((r) => (
+                // การ์ดทั้งใบกดดูข้อมูลได้ ("ดูข้อมูล ›") · ปุ่มวัดสัญญาณชีพแยกลงบรรทัดล่าง ไม่ติดกับลูกศร
+                <li key={r.id ?? r.name} className="ka-res">
+                  <button type="button" className="ka-res-main" onClick={() => setResPick(r)} aria-label={`ดูข้อมูล ${r.name}`}>
+                    <Avatar kind="resident" id={r.id} name={r.name} size={46} />
                     <span className="ka-t"><b>{r.name}</b><small>{r.room && r.room !== "-" ? `ห้อง ${r.room}` : "ยังไม่มีห้อง"} · {r.age} ปี{allergy[r.name] && <em className="ka-flag bad">แพ้ {allergy[r.name]}</em>}</small></span>
+                    <span className="ka-res-go">ดูข้อมูล<Icon name="chevron" className="h-4 w-4 -rotate-90" /></span>
                   </button>
-                  <button type="button" className={`ka-vital ${measured[r.name] ? "is-done" : ""}`} onClick={() => setVitalsFor(r.name)}>
-                    <Icon name={measured[r.name] ? "check" : "pulse"} className="h-4 w-4" />{measured[r.name] ? `วัดแล้ว ${measured[r.name]}` : "สัญญาณชีพ"}
-                  </button>
+                  <div className="ka-res-foot">
+                    <span className={`ka-res-st ${measured[r.name] ? "is-done" : ""}`}><i aria-hidden />{measured[r.name] ? `วัดแล้ว ${measured[r.name]} น.` : "ยังไม่วัดวันนี้"}</span>
+                    <button type="button" className="ka-res-vital" onClick={() => setVitalsFor(r.name)}><Icon name="pulse" className="h-4 w-4" />{measured[r.name] ? "วัดอีกครั้ง" : "วัดสัญญาณชีพ"}</button>
+                  </div>
                 </li>
               ))}</ul>
             )}
@@ -563,7 +600,21 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
           const sc = me ? { family: me.family?.score ?? null, manager: me.manager?.score ?? null, tasks: me.tasks?.score ?? null, punctual: me.punctual?.score ?? null } : null;
           return (
             <>
-              <div className="ka-head"><div><h1>ผลงาน</h1><p>{new Date().toLocaleDateString("th-TH", { month: "long", year: "numeric" })}</p></div></div>
+              <section className="ka-me-card">
+                <AvatarEdit kind="staff" id={user.id} name={user.name} size={76} onDone={(m) => toast(m)}
+                  title={<span className="ka-me-name"><b>{user.name}</b><small>{ROLE_INFO[user.role].th} · สาขา{user.branch || "-"}</small></span>} />
+              </section>
+              <ul className="ka-set" aria-label="ตั้งค่าและบัญชี">
+                {push.state !== "loading" && push.state !== "none" && <li><button type="button" disabled={push.busy} onClick={togglePush}>
+                  <Icon name="bell" className="h-5 w-5" /><span><b>แจ้งเตือนบนโทรศัพท์</b><small>{push.state === "on" ? "เด้งเมื่อหัวหน้าตามงาน" : push.state === "ios" ? "ติดตั้งแอปที่หน้าจอโฮมก่อน" : push.state === "denied" ? "เปิดได้ที่ตั้งค่าของเครื่อง" : "ยังไม่ได้เปิด"}</small></span>
+                  <em className={push.state === "on" ? "is-on" : ""}>{push.state === "on" ? "เปิด" : "ปิด"}</em></button></li>}
+                {!pwa.installed && <li><button type="button" onClick={installApp}><Icon name="download" className="h-5 w-5" /><span><b>ติดตั้ง KinApp บนเครื่อง</b><small>เปิดจากไอคอนบนหน้าจอได้เลย</small></span><Icon name="chevron" className="ka-set-go h-4 w-4 -rotate-90" /></button></li>}
+                <li><button type="button" onClick={toggleBig}><span className="ka-set-aa" aria-hidden>Aa</span><span><b>ตัวอักษรใหญ่</b><small>ขยายทุกหน้าในแอปนี้</small></span><em className={big ? "is-on" : ""}>{big ? "เปิด" : "ปิด"}</em></button></li>
+                <li><button type="button" onClick={() => open("manual")}><Icon name="book" className="h-5 w-5" /><span><b>คู่มือผู้ใช้งาน</b></span><Icon name="chevron" className="ka-set-go h-4 w-4 -rotate-90" /></button></li>
+                <li><button type="button" onClick={() => open("pwd")}><Icon name="lock" className="h-5 w-5" /><span><b>เปลี่ยนรหัสผ่าน</b></span><Icon name="chevron" className="ka-set-go h-4 w-4 -rotate-90" /></button></li>
+                <li><button type="button" className="is-out" onClick={onLogout}><Icon name="logout" className="h-5 w-5" /><span><b>ออกจากระบบ</b></span></button></li>
+              </ul>
+              <p className="ka-h">ผลงาน · {new Date().toLocaleDateString("th-TH", { month: "long", year: "numeric" })}</p>
               <section className="ka-kpi">
                 <div className="ka-ring" style={{ ["--p" as string]: me?.total ?? 0 }}><b>{me?.total ?? "-"}</b><small>คะแนน</small></div>
                 <div className="ka-t">
@@ -634,11 +685,6 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
                       <span className="ka-rank">{r.rank}</span>
                       <span className="ka-t"><b>{r.name}{r.id === user.id ? " (ฉัน)" : ""}</b><span className="ka-rank-bar"><i style={{ width: `${r.total ?? 0}%` }} /></span></span>
                       <b className="ka-score">{r.total}</b>
-                      {r.id !== user.id && <button disabled={praised.includes(r.name)} className={`ka-praise ${praised.includes(r.name) ? "is-done" : ""}`} onClick={() => {
-                        fetch("/api/ops", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "kudos_peer", staff: r.name }) })
-                          .then(async (x) => { const j = await x.json().catch(() => ({})); if (!x.ok) throw new Error(j.error); setPraised([...praised, r.name]); toast(`ชื่นชมแล้ว · ${r.name} · เพื่อนเห็นใน KinApp`); })
-                          .catch((e) => toast((e as Error).message || "ชื่นชมไม่สำเร็จ"));
-                      }}>{praised.includes(r.name) ? "ชื่นชมแล้ว" : "ชื่นชม"}</button>}
                     </li>
                   ))}</ol>
                 )}
@@ -675,17 +721,24 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
       <Modal open={modal === "task"} title="ส่งงาน (Proof of Work)" onClose={close}
         footer={<button className="btn-primary w-full" onClick={() => {
           if (!photo) return toast("กรุณาถ่ายภาพก่อนส่งงาน");
-          const k = (cur as number) - 1;
+          // หางานจากรหัสแถวตอนกดยืนยัน (ลำดับในรายการอาจเปลี่ยนหลังดึงข้อมูลใหม่)
+          const id = String(cur ?? "");
+          const k = dids.indexOf(id);
+          if (k < 0) { close(); return toast("ไม่พบงานนี้แล้ว (อาจถูกลบหรือย้ายวัน) · กรุณาเปิดรายการงานใหม่"); }
+          if (drows[k][5] && drows[k][5] !== "รอทำ") { close(); return toast(`งานนี้ส่งไปแล้ว${drows[k][10] && drows[k][10] !== "-" ? `โดย ${drows[k][10]}` : ""} · ไม่ต้องส่งซ้ำ`); }
           const row = [...drows[k]]; while (row.length < 11) row.push("-");
           const now = new Date();
-          row[5] = "เสร็จแล้ว"; row[8] = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`; row[9] = [proxyFor ? `ทำแทน ${proxyFor}` : "", proxyFor ? proxyReason : "", note.trim()].filter(Boolean).join(" · ") || "-"; row[10] = user.name;
-          updDaily(k, row);
-          // รูปหลักฐาน: ประทับวันเวลา ผู้รับบริการ และชื่องาน แล้วเก็บแยกให้ผู้จัดการเปิดดูตอนตรวจงาน
-          const id = dids[k];
-          stampPhoto(photo, [`ส่งงาน ${now.toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" })} น. · ${now.toLocaleDateString("th-TH", { day: "numeric", month: "short", year: "numeric" })}`, `${row[0]} · ${row[1]}`, `${user.name} · สาขา${user.branch ?? "-"}`])
-            .then((p) => fetch("/api/care", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "task_photo", id, photo: p, share: shareFam }) }))
-            .then((r) => { if (!r.ok) throw new Error(); })
-            .catch(() => toast("ส่งงานแล้ว แต่อัปโหลดรูปไม่สำเร็จ กรุณาตรวจอินเทอร์เน็ต"));
+          row[5] = "เสร็จแล้ว"; row[8] = new Date(now.getTime() + 7 * 3600e3).toISOString().slice(11, 16); row[9] = [proxyFor ? `ทำแทน ${proxyFor}` : "", proxyFor ? proxyReason : "", note.trim()].filter(Boolean).join(" · ") || "-"; row[10] = user.name;
+          const shot = photo, share = shareFam;
+          // รูปหลักฐาน: ส่งหลัง server รับการส่งงานแล้วเท่านั้น (มีคนส่งก่อน = ไม่ส่งรูปทับของเขา) · ออฟไลน์ = รอส่งพร้อมงาน
+          // ประทับวันเวลา ผู้รับบริการ และชื่องาน แล้วเก็บแยกให้ผู้จัดการเปิดดูตอนตรวจงาน
+          updDaily(k, row).then((res) => {
+            if (!res.ok) return; // เหตุผลขึ้นจาก event ของที่เก็บข้อมูล
+            return stampPhoto(shot, [`ส่งงาน ${now.toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" })} น. · ${now.toLocaleDateString("th-TH", { day: "numeric", month: "short", year: "numeric" })}`, `${row[0]} · ${row[1]}`, `${user.name} · สาขา${user.branch ?? "-"}`])
+              .then((p) => fetch("/api/care", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "task_photo", id, photo: p, share }) }))
+              .then(async (r) => { if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error); })
+              .catch((e) => toast((e as Error).message || "ส่งงานแล้ว แต่อัปโหลดรูปไม่สำเร็จ กรุณาตรวจอินเทอร์เน็ต"));
+          });
           close(); toast(`${proxyFor ? `ส่งงานแทน ${proxyFor} แล้ว` : "ส่งงานแล้ว"} · ${row[1]} · ${row[0]}${shareFam ? " · แชร์รูปให้ญาติแล้ว" : ""}`); setProxyFor(null);
         }}>ยืนยันการส่งงาน</button>}>
         {t && <div className="space-y-4">
@@ -722,6 +775,8 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
 
       <Modal open={!!resPick} title={resPick?.name ?? ""} onClose={() => setResPick(null)}>
         {resPick && <div className="space-y-3">
+          {resPick.id && <AvatarEdit kind="resident" id={resPick.id} name={resPick.name} size={72} onDone={(m) => toast(m)}
+            title={<span className="ka-me-name"><b>{resPick.name}</b></span>} />}
           <p className="text-sm text-gold-600">{resPick.room && resPick.room !== "-" ? `ห้อง ${resPick.room}` : "ยังไม่มีห้อง"} · {resPick.age} ปี{measured[resPick.name] ? ` · วัดสัญญาณชีพแล้ว ${measured[resPick.name]} น.` : ""}</p>
           {allergy[resPick.name] && <p className="ka-wait is-bad">แพ้ {allergy[resPick.name]}</p>}
           <div className="ka-acts">
@@ -775,7 +830,12 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
       <Modal open={modal === "dispense"} title="ยืนยันการจ่ายยา" onClose={close}
         footer={<><button className="btn-soft" onClick={close}>ยกเลิก</button><button className="btn-primary" onClick={() => {
           if (!photo) return toast("กรุณาถ่ายรูปยืนยันการให้ยาก่อน (แตะช่องกล้องด้านบน)");
-          setPacks(packs.map((m) => (m.id === cur ? { ...m, given: true, gby: user.name, gat: nowTh() } : m))); close(); toast(`ให้ยาแล้ว · ${md?.who ?? ""} มื้อ${md?.meal ?? ""} · ห้องยาเห็นสถานะนี้ทันที`);
+          // ตรวจกับข้อมูลล่าสุดในเครื่องก่อน · server ตรวจซ้ำอีกชั้น (ซองที่ให้แล้ว / QA ยังไม่ผ่าน = ปฏิเสธ แจ้งเหตุผลผ่าน event)
+          if (!md) { close(); return toast("ไม่พบซองยานี้แล้ว · กรุณาเปิดรายการใหม่"); }
+          if (md.given) { close(); return toast(`ซองนี้ให้ยาไปแล้วโดย ${md.gby ?? "-"}${md.gat ? ` เมื่อ ${md.gat}` : ""}`); }
+          if (md.qa !== "ตรวจผ่าน") { close(); return toast("ซองนี้ยังไม่ผ่านการตรวจ QA ของห้องยา · ยังให้ยาไม่ได้"); }
+          // ส่งเฉพาะซองนี้ (useRecords บันทึกเฉพาะรายการที่เปลี่ยน) · server ใช้ข้อมูลซองบน server ใส่แค่ผู้ให้ยาและเวลา
+          setPacks(packs.map((m) => (m.id === md.id ? { ...m, given: true, gby: user.name, gat: nowTh() } : m))); close(); toast(`ให้ยาแล้ว · ${md.who} มื้อ${md.meal} · ห้องยาเห็นสถานะนี้ทันที`);
         }}>ยืนยันว่าจ่ายแล้ว</button></>}>
         {md && <div className="space-y-4">
           <div className="rounded-2xl bg-cream-50 p-4"><p className="font-semibold text-gold-900">{md.who}</p><p className="text-sm text-gold-600">มื้อ{md.meal} · จัดโดย {md.by}{md.qby ? ` · ตรวจ QA โดย ${md.qby}` : ""}</p></div>

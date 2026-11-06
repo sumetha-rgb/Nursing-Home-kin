@@ -103,6 +103,8 @@ export function FacilityTasks() {
   const [dlg, setDlg] = useState<Dlg>(null);
   const shown = rows.map((r, i) => ({ r, i })).filter(({ r }) =>
     (!q || r[0].includes(q)) && (!cat || r[1] === cat) && (mode === "ทั้งหมด" || (mode === "มอบหมายคนรับผิดชอบ") === isManual(r[3])));
+  const needAssign = (n: number) => isManual(shown[n].r[3]) && !facOf(shown[n].i)?.assignee;
+  const startAssign = (n: number) => { setAssign({ i: shown[n].i, who: global ? "" : facOf(shown[n].i)?.assignee ?? "", branch: global ? "" : user?.branch ?? "" }); if (!nurses.length) fetchNurses().then(setNurses).catch(() => toast("โหลดรายชื่อพยาบาลไม่สำเร็จ")); };
   // ฟอร์มมี 6 ช่อง ส่วนตารางแสดง 4 คอลัมน์: ชื่องาน, หมวดหมู่, เวลา/ความถี่, ระบบจ่ายงาน
   const toRow = (v: string[]) => [v[0], v[1], [v[4], v[3]].filter(Boolean).join(" / "), v[2], v[5]];
   return (
@@ -129,12 +131,15 @@ export function FacilityTasks() {
         <DataTable
           columns={[...FAC_COLS, "ผู้รับผิดชอบ", "สถานะรอบนี้", "ทำล่าสุด"]}
           rows={shown.map((x) => { const f = facOf(x.i); const manual = isManual(x.r[3]); return [x.r[0], x.r[1], x.r[2], isManual(x.r[3]) ? "มอบหมายคนรับผิดชอบ" : "ขึ้นให้ทุกคน", manual ? f?.assignee || "ยังไม่ได้มอบหมาย" : "ทุกคนในสาขา", !f ? "-" : f.done ? "ทำแล้ว" : manual && !f.assignee ? "รอมอบหมาย" : f.late ? "เลยเวลา" : "รอทำ", f?.last ? `${f.last.at.slice(8, 10)}/${f.last.at.slice(5, 7)} ${f.last.at.slice(11)} · ${f.last.by}${f.monthCount ? ` · เดือนนี้ ${f.monthCount} ครั้ง` : ""}` : "ยังไม่เคยทำ"]; })}
+          onRow={(n) => loadHist(shown[n].i, new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 7))} rowLabel="กดเพื่อดูประวัติของงานนี้"
           actions={[
-            { label: "มอบหมาย", hidden: (n) => !isManual(shown[n].r[3]), onClick: (n) => { setAssign({ i: shown[n].i, who: global ? "" : facOf(shown[n].i)?.assignee ?? "", branch: global ? "" : user?.branch ?? "" }); if (!nurses.length) fetchNurses().then(setNurses).catch(() => toast("โหลดรายชื่อพยาบาลไม่สำเร็จ")); } },
-            { label: "ประวัติ", onClick: (n) => loadHist(shown[n].i, new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 7)) },
-            { label: "ดูรูปล่าสุด", hidden: (n) => !facOf(shown[n].i)?.last, onClick: (n) => { const f = facOf(shown[n].i); if (f) openPic(f, shown[n].r[0]); } },
-            { label: "แก้ไข", onClick: (n) => setDlg({ mode: "edit", i: shown[n].i }) },
-            { label: "ลบ", danger: true, onClick: (n) => confirm({ title: "ลบงานทั่วไป", message: `ต้องการลบ "${shown[n].r[0]}" ใช่หรือไม่`, danger: true, okLabel: "ลบ", onOk: () => { const r = shown[n].r; const undo = remove(shown[n].i); toast({ type: "del", title: "ลบงานทั่วไปแล้ว", detail: r[0], action: { label: "เลิกทำ", run: () => { undo(); toast(`กู้คืนงานแล้ว · ${r[0]}`); } } }); } }) },
+            // ปุ่มหลักตามสถานะ: ยังไม่มีผู้รับผิดชอบ = มอบหมาย · มีรูปรอบล่าสุด = ดูรูป · ที่เหลืออยู่ในเมนู ⋯
+            { label: "มอบหมาย", tone: "primary", hidden: (n) => !needAssign(n), onClick: (n) => startAssign(n) },
+            { label: "ดูรูป", tone: "primary", hidden: (n) => needAssign(n) || !facOf(shown[n].i)?.last, onClick: (n) => { const f = facOf(shown[n].i); if (f) openPic(f, shown[n].r[0]); } },
+            { label: "เปลี่ยนผู้รับผิดชอบ", more: true, hidden: (n) => !isManual(shown[n].r[3]) || needAssign(n), onClick: (n) => startAssign(n) },
+            { label: "ประวัติรอบที่ผ่านมา", more: true, onClick: (n) => loadHist(shown[n].i, new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 7)) },
+            { label: "แก้ไขงาน", more: true, onClick: (n) => setDlg({ mode: "edit", i: shown[n].i }) },
+            { label: "ลบงาน", danger: true, more: true, onClick: (n) => confirm({ title: "ลบงานทั่วไป", message: `ต้องการลบ "${shown[n].r[0]}" ใช่หรือไม่`, danger: true, okLabel: "ลบ", onOk: () => { const r = shown[n].r; const undo = remove(shown[n].i); toast({ type: "del", title: "ลบงานทั่วไปแล้ว", detail: r[0], action: { label: "เลิกทำ", run: () => { undo(); toast(`กู้คืนงานแล้ว · ${r[0]}`); } } }); } }) },
           ]}
         />
       </Section>

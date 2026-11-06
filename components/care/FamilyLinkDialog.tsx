@@ -39,8 +39,11 @@ export default function FamilyLinkDialog({ open, onClose, residentId = "" }: { o
   useEffect(() => { setFresh(null); if (open) load(resId); }, [open, resId, load]);
 
   const name = residents.find((r) => r.id === resId)?.full_name ?? "";
+  // ย้ายออกแล้ว: สร้างลิงก์ใหม่ไม่ได้ (ลิงก์เดิมถูกปิดตอนย้ายออก)
+  const movedOut = String(residents.find((r) => r.id === resId)?.status ?? "").startsWith("ย้ายออก");
   const create = async () => {
     if (!resId) return toast("กรุณาเลือกผู้รับบริการก่อน");
+    if (movedOut) return toast(`${name} ย้ายออกแล้ว จึงสร้างลิงก์ครอบครัวไม่ได้`);
     try { const d = await call<{ token: string }>("/api/reviews", { op: "create", residentId: resId }); setFresh(d.token); load(resId); toast(`สร้างลิงก์ครอบครัวแล้ว · ${name} · กดคัดลอกแล้วส่งให้ญาติทาง LINE`); }
     catch (e) { toast((e as Error).message); }
   };
@@ -77,8 +80,8 @@ export default function FamilyLinkDialog({ open, onClose, residentId = "" }: { o
                 </div>
               </div>
             </div>
-          ) : <p className="rounded-xl bg-cream-50 px-4 py-3 text-sm text-gold-700">ผู้รับบริการคนนี้ยังไม่มีลิงก์ที่ใช้งานได้</p>}
-          <button type="button" className={token ? "btn-soft" : "btn-primary"} onClick={create}><Icon name="plus" className="h-4 w-4" /> {token ? "สร้างลิงก์ใหม่" : "สร้างลิงก์ครอบครัว"}</button>
+          ) : <p className="rounded-xl bg-cream-50 px-4 py-3 text-sm text-gold-700">{movedOut ? "ผู้รับบริการคนนี้ย้ายออกแล้ว ลิงก์ครอบครัวถูกปิด และสร้างลิงก์ใหม่ไม่ได้" : "ผู้รับบริการคนนี้ยังไม่มีลิงก์ที่ใช้งานได้"}</p>}
+          {!movedOut && <button type="button" className={token ? "btn-soft" : "btn-primary"} onClick={create}><Icon name="plus" className="h-4 w-4" /> {token ? "สร้างลิงก์ใหม่" : "สร้างลิงก์ครอบครัว"}</button>}
           {links.length > 0 && (
             <label className="flex items-center gap-2 text-sm text-gold-700">
               <input type="checkbox" checked={old} onChange={(e) => setOld(e.target.checked)} />

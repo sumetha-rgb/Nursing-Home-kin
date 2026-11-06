@@ -45,7 +45,7 @@ export default function CourseSummary({ branch, compact, onTiles }: { branch: st
   return (
     <div>
       <MetricGrid items={tiles} />
-      <Section title="คอร์สกายภาพ" sub="ใครซื้อคอร์สอะไร ใช้ไปกี่ครั้ง เหลือกี่ครั้ง · ตัดคอร์สเมื่อนักกายภาพบันทึก Progress note"
+      <Section title="คอร์สกายภาพ" sub="คอร์สที่ซื้อ ใช้ไป และคงเหลือ"
         actions={<>
           <Tabs tabs={TABS} value={tab} onChange={setTab} />
           <button className="btn-soft" onClick={() => downloadCsv(`คอร์สกายภาพ-${tab}`, cols, rows)}><CsvIcon /> ส่งออก CSV</button>

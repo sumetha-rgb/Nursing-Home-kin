@@ -17,6 +17,27 @@ export type Tile={label:string;value:string|number;unit?:string;note?:string;ico
 export function MetricGrid({items}:{items:Tile[]}) {
   return <div className="metrics-grid">{items.map(item=><div key={item.label} className={"metric "+(item.accent?"accent":"")}><div className="metric-top"><span>{item.label}</span><Icon name={item.icon||"chart"} /></div><div className="metric-value">{item.value}<small>{item.unit}</small></div>{item.note&&<p className="metric-note">{item.note}</p>}</div>)}</div>;
 }
+/**
+ * ปุ่มกรองที่มีตัวเลขในตัว (แทนแถวกล่องตัวเลข) · กดแล้วกรองตาราง · summary = บรรทัดสรุปยอดด้านขวา
+ * tone: all = ทั้งหมด · bad แดง · warn ส้ม · muted เทา · good เขียว
+ */
+export type StatItem = { k: string; t: string; n?: number | string; tone?: "all" | "bad" | "warn" | "muted" | "good" };
+const STAT_TONE = { all: "is-all", bad: "is-late", warn: "is-review", muted: "is-todo", good: "is-done" } as const;
+export function StatFilter({ items, value, onChange, label, summary }: { items: StatItem[]; value: string; onChange: (k: string) => void; label: string; summary?: ReactNode }) {
+  return (
+    <div className="stat-row">
+      <div className="stat-filter" role="radiogroup" aria-label={label}>
+        {items.map((f) => {
+          const tone = f.tone ?? (f.k ? "muted" : "all");
+          return <button key={f.k || "all"} type="button" role="radio" aria-checked={value === f.k} className={`${STAT_TONE[tone]} ${value === f.k ? "is-on" : ""}`} onClick={() => onChange(f.k)}>
+            {tone !== "all" && <i aria-hidden />}{f.t}{f.n !== undefined && <> <b>{f.n}</b></>}
+          </button>;
+        })}
+      </div>
+      {summary && <p className="stat-sum">{summary}</p>}
+    </div>
+  );
+}
 export function StatusBadge({value}:{value:string}) {
   // เขียว = เสร็จ/ใช้งานได้ · ส้ม = รอ/ใกล้ถึงเกณฑ์ · แดง = ปัญหาที่ต้องจัดการ · เทา = จบแล้ว/ไม่ใช้งาน (สิ้นสุดสัญญา ลาออก ย้ายออก หมดอายุ)
   const success=/^(เพิ่ม|อนุมัติ|สมัครสมาชิก|เข้าสู่ระบบ$|ตรวจแล้ว|เสร็จแล้ว|เสร็จสิ้น|แก้ไขแล้ว|ใช้งานอยู่|ทำงาน|เปิด|เข้าอยู่|สำเร็จ|ตรวจผ่าน|จัดยาแล้ว|จ่ายยาแล้ว|ปกติ|ชำระแล้ว|ทำแล้ว|พร้อมใช้งาน|เผยแพร่แล้ว)/.test(value);

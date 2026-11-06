@@ -34,7 +34,7 @@ export function CashCloseStatus({ branch, onOpen }: { branch: string; onOpen?: (
   const exportCsv = () => downloadCsv(`สถานะปิดยอด-30วัน-${branch || "ทุกสาขา"}-${today}`, ["สาขา", "วันที่มีรับเงิน", "ปิดยอดแล้ว", "ยังไม่ปิดยอด (วัน)", "วันที่ยังไม่ปิด", "รอตรวจรับรอง", "วันที่เงินสดขาด", "ส่วนต่างเงินสดรวม", "ปิดยอดล่าสุด"],
     rows.map((r) => [r.b, String(r.days), String(r.closed), String(r.open.length), r.open.map(docDate).join(" "), String(r.wait), String(r.short), money(r.diff), r.last ? docDate(r.last) : ""]));
   return (
-    <Section title="สถานะปิดยอดรายวัน (30 วัน)" sub="ไม่นับวันนี้ · วันที่มีรับเงินแต่ยังไม่นับเงินสดปิดยอดเป็นสีแดง · ส่วนต่าง = เงินสดที่นับได้ลบยอดในระบบ"
+    <Section title="สถานะปิดยอดรายวัน (30 วัน)" sub="แดง = ยังไม่ได้ปิดยอด · ส่วนต่าง = เงินที่นับได้ − ยอดในระบบ"
       actions={<><button className="btn-soft" disabled={!rows.length} onClick={exportCsv}><CsvIcon /> ส่งออก CSV</button>{onOpen && <button className="btn-soft" onClick={onOpen}>ไปปิดยอด</button>}</>}>
       <DataTable search={false} columns={["สาขา", "วันที่มีรับเงิน", "ปิดยอดแล้ว", "ยังไม่ปิดยอด", "รอตรวจรับรอง", "ส่วนต่างเงินสดรวม", "ปิดยอดล่าสุด"]} empty="ยังไม่มีการรับเงินใน 30 วัน"
         rows={rows.map((r) => [r.b, `${r.days} วัน`, `${r.closed} วัน`, r.open.length ? `${r.open.length} วัน` : "-", r.wait ? `${r.wait} วัน` : "-", r.diff ? money(r.diff) : "ตรงยอด", r.last ? docDate(r.last) : "-"])}

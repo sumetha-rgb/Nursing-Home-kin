@@ -4,6 +4,7 @@ import { currentUser, forbidden, unauthorized } from "@/lib/auth";
 import { audit } from "@/lib/audit";
 import type { SessionUser } from "@/lib/roles";
 import { can } from "@/lib/perms";
+import { SHARED_BRANCHES } from "@/lib/schema";
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
@@ -22,7 +23,8 @@ export const fetchCache = "force-no-store";
  *  GET  ?op=alerts              แจ้งเตือนสัญญาณชีพที่ยังไม่มีคนรับทราบ
  *  POST { op: "ack", id, note } รับทราบแจ้งเตือน (บันทึกประวัติการใช้งาน)
  *  GET  ?op=routines            งานประจำ (ทำซ้ำทุกวัน) ที่ยังใช้อยู่
- *  POST { op: "routines_add", items: [{ resident, task, ins, shift, time }] }  เพิ่มงานประจำ (ผู้จัดการขึ้นไป)
+ *  POST { op: "routines_add", items: [{ resident, task, ins, shift, time }], skipDate? }  เพิ่มงานประจำ (ผู้จัดการขึ้นไป)
+ *       ใส่งานให้วันที่ระบบสร้างไปแล้ว (วันนี้ถึง +14 วัน) ด้วย ยกเว้น skipDate (วันที่หน้าจอมอบหมายเองแล้ว)
  *  POST { op: "routine_stop", id }  หยุดทำซ้ำ
  *  GET  ?op=surveys[&branch=]       ผลประเมินความพึงพอใจจากครอบครัว (ผู้จัดการขึ้นไป)
  *  GET  ?op=task_photos&ids=a,b   รูปหลักฐานหลายงาน (ผลงานทีมใน KinApp)
@@ -50,14 +52,18 @@ const scoped = (me: SessionUser) => me.role !== "Global Admin";
 /** ตรวจสอบข่าวและลิงก์ที่ทีมส่งถึงญาติ: ผู้ที่มีเมนูผู้รับบริการ รีวิวพนักงาน หรือเสียงจากครอบครัว */
 const isFamilyAdmin = (me: SessionUser) => can(me, "residents") || can(me, "reviews") || can(me, "feedbacks");
 
-/** รายการของผู้รับบริการคนนี้: ผูกด้วยรหัส หรือข้อมูลเก่าที่ยังไม่มีรหัสแต่ชื่อตรงกัน */
-const MINE = `(resident_id = $1 OR (resident_id IS NULL AND resident_name = $2))`;
+/**
+ * รายการของผู้รับบริการคนนี้: ผูกด้วยรหัส หรือข้อมูลเก่าที่ยังไม่มีรหัสแต่ชื่อตรงกัน
+ *  ข้อมูลเก่าที่ผูกด้วยชื่อ ต้องอยู่สาขาเดียวกัน (หรือข้อมูลส่วนกลาง) · กันคนชื่อซ้ำต่างสาขาปนเข้าประวัติ
+ */
+const SHARED_SQL = SHARED_BRANCHES.map((b) => `'${b.replace(/'/g, "''")}'`).join(", "); // ค่าคงที่ใน lib/schema (ไม่ใช่ข้อมูลจากผู้ใช้)
+const MINE = `(resident_id = $1 OR (resident_id IS NULL AND resident_name = $2 AND (branch_name IS NULL OR branch_name = $3 OR branch_name IN (${SHARED_SQL}))))`;
 
 async function profile(me: SessionUser, id: string) {
   const [r] = (await sql`SELECT id, full_name, age, room, branch_name, chronic_diseases, status, hn FROM residents WHERE id = ${id}`) as Record<string, unknown>[];
   if (!r) return null;
   if (scoped(me) && r.branch_name !== me.branch) return "forbidden";
-  const p = [r.id, r.full_name];
+  const p = [r.id, r.full_name, r.branch_name];
   const q = (text: string) => sql(text, p) as Promise<Record<string, unknown>[]>;
   const [health, daily, meds, packs, appts, tasks, handovers, alerts, contracts, plans, stockMeds, care] = await Promise.all([
     q(`SELECT id, recorded_at::text AS at, vital_signs, o2_sat, dtx, weight_height, note, recorded_by FROM health_logs WHERE ${MINE} ORDER BY recorded_at DESC NULLS LAST LIMIT 90`),
@@ -78,7 +84,7 @@ async function profile(me: SessionUser, id: string) {
       GROUP BY m.created_at, d.name, d.unit, m.moved_by, m.note, m.med_id ORDER BY m.created_at DESC LIMIT 60`, [r.id]) as Promise<Record<string, unknown>[]>,
     // ข้อมูลสำคัญสำหรับการดูแลจากสัญญาล่าสุด (ทีมดูแลทุกคนเห็น) · ไม่ส่งเลขบัตร ที่อยู่ หรือยอดเงิน
     q(`SELECT drug_allergy, food_allergy, regular_meds, hospital, hospital_alt, employer_name, relationship, employer_phone FROM contracts
-        WHERE ${MINE} AND coalesce(status, '') <> 'ยกเลิกสัญญา' ORDER BY created_at DESC LIMIT 1`),
+        WHERE ${MINE} AND coalesce(status, '') <> 'ยกเลิกสัญญา' ORDER BY (status IN ('ใช้งานอยู่', 'รอชำระเงินมัดจำ')) DESC NULLS LAST, created_at DESC LIMIT 1`),
   ]);
   return { resident: r, health, daily, meds, packs, appts, tasks, handovers, alerts, contracts, plans, stockMeds, careInfo: care[0] ?? null };
 }
@@ -312,9 +318,11 @@ export async function POST(req: NextRequest) {
   if (b.op === "task_photo") {
     const photo = typeof b.photo === "string" ? b.photo : "";
     if (!photo.startsWith("data:image/") || photo.length > 600_000) return bad("รูปไม่ถูกต้องหรือมีขนาดใหญ่เกินไป");
-    const [t] = (await sql`SELECT branch_name FROM daily_tasks WHERE id = ${String(b.id)}`) as Record<string, string>[];
+    const [t] = (await sql`SELECT branch_name, done_by FROM daily_tasks WHERE id = ${String(b.id)}`) as Record<string, string>[];
     if (!t) return bad("ไม่พบงานนี้", 404);
     if (scoped(me) && t.branch_name !== me.branch) return forbidden();
+    // งานที่คนอื่นส่งไปแล้ว: ห้ามรูปของคนที่ส่งไม่ทันทับรูปหลักฐานเดิม
+    if (t.done_by && t.done_by !== "-" && t.done_by !== me.name && !can(me, "tasks.review")) return bad(`งานนี้ส่งไปแล้วโดย ${t.done_by} · ไม่ต้องส่งรูปซ้ำ`, 409);
     // share = แชร์รูปนี้ในสมุดภาพของครอบครัว (พนักงานเลือกตอนส่งงาน ค่าเริ่มต้นแชร์)
     await sql`UPDATE daily_tasks SET photo = ${photo}, photo_at = now(), share_family = ${b.share !== false} WHERE id = ${String(b.id)}`;
     return NextResponse.json({ ok: true });
@@ -357,6 +365,7 @@ export async function POST(req: NextRequest) {
     const have = (await sql`SELECT resident_id, task_name, shift FROM care_routines WHERE active`) as Record<string, string>[];
     let added = 0;
     const logs = [];
+    const made: { resident_id: string; resident_name: string; branch_name: string; task_name: string; instruction: string; shift: string; sched_time: string }[] = [];
     for (const it of items) {
       const r = res.find((x) => x.full_name === it.resident && (!scoped(me) || x.branch_name === me.branch));
       if (!r || !it.task || !it.shift || !/^\d{2}:\d{2}/.test(it.time ?? "")) continue;
@@ -365,8 +374,25 @@ export async function POST(req: NextRequest) {
       await sql`INSERT INTO care_routines (id, resident_id, resident_name, branch_name, task_name, instruction, shift, sched_time, created_by)
                 VALUES (${id}, ${r.id}, ${r.full_name}, ${r.branch_name}, ${it.task}, ${it.ins ?? "-"}, ${it.shift}, ${it.time.slice(0, 5)}, ${me.name})`;
       have.push({ resident_id: r.id, task_name: it.task, shift: it.shift });
+      made.push({ resident_id: r.id, resident_name: r.full_name, branch_name: r.branch_name, task_name: it.task, instruction: it.ins ?? "-", shift: it.shift, sched_time: it.time.slice(0, 5) });
       logs.push({ area: "routines", action: "create", recordId: id, summary: `${r.full_name} · ${it.task} · ${it.shift} ${it.time.slice(0, 5)}`, branch: r.branch_name });
       added++;
+    }
+    // วันที่ระบบสร้างงานประจำไปแล้ว (วันนี้ถึงล่วงหน้า 14 วัน) ใส่งานประจำใหม่ให้ด้วย แถวแบบเดียวกับที่ระบบสร้างเอง
+    // ข้ามวันที่หน้าจอมอบหมายให้อยู่แล้ว (skipDate) และงานที่มีอยู่แล้ว (ผู้รับบริการ + งาน + กะ เดียวกัน) · เรียกซ้ำไม่เพิ่มซ้ำ
+    if (made.length) {
+      const skip = typeof b.skipDate === "string" ? b.skipDate : "";
+      const dates = ((await sql`SELECT substring(collection from 7) AS d FROM app_seed
+        WHERE collection LIKE 'daily-____-__-__'
+          AND substring(collection from 7)::date BETWEEN (now() AT TIME ZONE 'Asia/Bangkok')::date AND (now() AT TIME ZONE 'Asia/Bangkok')::date + 14`) as { d: string }[])
+        .map((x) => x.d).filter((d) => d !== skip);
+      const top = Date.now();
+      const q = dates.flatMap((d) => made.map((r, i) => sql`
+        INSERT INTO daily_tasks (id, sort_order, work_date, branch_name, resident_id, resident_name, task_name, assignee, scheduled_time, shift, status, instruction)
+        SELECT ${crypto.randomUUID()}, ${top - i}::float8, ${d}::date, ${r.branch_name}, ${r.resident_id}, ${r.resident_name}, ${r.task_name}, '-', ${r.sched_time}::time, ${r.shift}, 'รอทำ', ${r.instruction}
+        WHERE NOT EXISTS (SELECT 1 FROM daily_tasks WHERE work_date = ${d}::date AND branch_name IS NOT DISTINCT FROM ${r.branch_name}
+          AND (resident_id = ${r.resident_id} OR resident_name = ${r.resident_name}) AND task_name = ${r.task_name} AND shift = ${r.shift})`));
+      if (q.length) await sql.transaction(q);
     }
     await audit(req, me, logs);
     return NextResponse.json({ ok: true, added });

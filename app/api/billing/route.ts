@@ -8,9 +8,11 @@ export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
 
 /**
- * รับชำระใบแจ้งหนี้ (รับได้หลายงวด) และหลักฐานการโอนเงิน (เก็บแยกจากรายการ เพราะรูปใหญ่) · ผู้มีสิทธิ์การเงินหรือสัญญา
+ * รับชำระใบแจ้งหนี้ (รับได้หลายงวด) และหลักฐานการโอนเงิน (เก็บแยกจากรายการ เพราะรูปใหญ่)
+ *  ดูประวัติรับชำระ: ผู้มีสิทธิ์การเงินหรือสัญญา · รับชำระ / แนบสลิป: ต้องมีสิทธิ์การเงิน (billing)
  *  GET  ?id=…                          รายการรับชำระทั้งหมดของใบนี้ (งวด วันที่ วิธี ยอด สลิป)
  *  GET  ?op=payments[&branch=]          การรับเงินทุกงวด (ส่งออก CSV กระทบยอดเงินสด/โอน) · ไม่ส่งรูปสลิป
+ *  GET  ?op=paid_days[&from=][&branch=] ยอดรับเงินรายวันต่อสาขา (รวมเป็นรายรับรายเดือนตามวันที่รับของแต่ละงวด)
  *  POST { op: "pay", id, cash, credit, transfer, date, slip?, note? }  รับชำระ 1 งวด · ยอดรวมต้องไม่เกินยอดคงเหลือ
  *                                       ครบยอด = ชำระแล้ว (เป็นใบเสร็จ) · ยังไม่ครบ = ชำระบางส่วน
  *  POST { id, slip }                   แนบ/เปลี่ยนรูปของใบที่รับชำระครั้งเดียว (slip = "" ลบรูป)
@@ -103,8 +105,29 @@ async function approveClose(req: NextRequest, b: Record<string, unknown>) {
   return NextResponse.json({ ok: true });
 }
 
+/**
+ * ยอดรับเงินจริงรายวันต่อสาขา (รวมจาก invoice_payments ตามวันที่รับของแต่ละงวด) · ไม่นับใบที่ยกเลิก
+ *  ใช้รวมเป็น "รับเดือนนี้" และรายรับรายเดือน (ไม่ใช่ยอดสะสมของใบไปลงเดือนที่รับงวดล่าสุด) · from = YYYY-MM-DD (ค่าเริ่มต้น 13 เดือนก่อน)
+ *  ผู้มีสิทธิ์การเงิน หรือภาพรวมและรายงาน · ระดับอื่นที่ไม่ใช่ผู้บริหารเห็นเฉพาะสาขาตัวเอง
+ */
+async function paidDays(req: NextRequest) {
+  const me = await currentUser(req);
+  if (!me) return unauthorized();
+  if (!can(me, "billing") && !can(me, "dashboard")) return forbidden();
+  const q = req.nextUrl.searchParams;
+  const br = me.role === "Global Admin" ? q.get("branch") || null : me.branch;
+  const fromQ = q.get("from") ?? "";
+  const from = /^\d{4}-\d{2}-\d{2}$/.test(fromQ) ? fromQ : new Date(Date.now() + 7 * 3600e3 - 400 * 864e5).toISOString().slice(0, 10);
+  const rows = await sql(`SELECT coalesce(i.branch_name, '') AS branch, p.pay_date::text AS date, sum(p.amount)::float AS amount
+      FROM invoice_payments p JOIN invoices i ON i.id = p.invoice_id
+      WHERE p.pay_date >= $1::date AND coalesce(i.status, '') <> 'ยกเลิก' ${br ? "AND i.branch_name = $2" : ""}
+      GROUP BY 1, 2 ORDER BY 2`, br ? [from, br] : [from]);
+  return NextResponse.json({ items: rows });
+}
+
 export async function GET(req: NextRequest) {
   if (req.nextUrl.searchParams.get("op") === "closes") return closes(req);
+  if (req.nextUrl.searchParams.get("op") === "paid_days") return paidDays(req);
   if (req.nextUrl.searchParams.get("op") === "payments") {
     const me = await currentUser(req);
     if (!me) return unauthorized();
@@ -134,6 +157,8 @@ export async function POST(req: NextRequest) {
   if (b.op === "close_approve") return approveClose(req, b);
   const o = await owned(req, String(b.id ?? ""));
   if (!o.inv) return o.res;
+  // รับชำระ / แนบหลักฐานการโอน = งานการเงิน: ต้องมีสิทธิ์ใบแจ้งหนี้และใบเสร็จ (สิทธิ์สัญญาอย่างเดียวดูได้แต่รับเงินไม่ได้)
+  if (!can(o.me, "billing")) return forbidden("บัญชีนี้ไม่มีสิทธิ์รับชำระเงิน (ต้องมีสิทธิ์ใบแจ้งหนี้และใบเสร็จ)");
   if (b.op === "pay") return pay(req, o.me, o.inv.id, b);
   const slip = typeof b.slip === "string" ? b.slip : "";
   if (slip && (!slip.startsWith("data:image/") || slip.length > 900_000)) return bad("รูปไม่ถูกต้องหรือมีขนาดใหญ่เกินไป");

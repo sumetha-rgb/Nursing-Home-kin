@@ -17,8 +17,11 @@ async function call<T>(url: string, body?: object): Promise<T> {
 }
 export const fetchMonth = (ym: string, branch?: string) => call<Month>(`/api/roster?op=month&ym=${ym}${branch ? `&branch=${encodeURIComponent(branch)}` : ""}`);
 export const fetchDay = (date: string, branch?: string) => call<{ attendance: Attendance[] }>(`/api/roster?op=day&date=${date}${branch ? `&branch=${encodeURIComponent(branch)}` : ""}`);
-export const fetchToday = () => call<{ now: { d: string; t: string }; shift: { date: string; shift: string } | null; attendance: { kind: string; time: string; late_min: number | null }[] }>("/api/roster?op=today");
+/** shift = เวรที่เช็คชื่อตอนนี้ผูกกับ · next = เวรของวันนี้ที่ยังไม่ถึงช่วงเช็คชื่อ */
+export const fetchToday = () => call<{ now: { d: string; t: string }; shift: { date: string; shift: string } | null; next?: { date: string; shift: string } | null; attendance: { kind: string; time: string; late_min: number | null }[] }>("/api/roster?op=today");
 export const assignShift = (date: string, shift: string, staffIds: string[], branch?: string) => call<{ ok: boolean; count: number }>("/api/roster", { op: "assign", date, shift, staffIds, branch });
+/** เพิ่ม (on) / เอาออกคนเดียวจากเวร · ไม่แตะคนอื่นในเวร */
+export const assignOne = (date: string, shift: string, staffId: string, on: boolean, branch?: string) => call<{ ok: boolean; changed: boolean; count: number }>("/api/roster", { op: "assign_one", date, shift, staffId, on, branch });
 export const checkIn = (kind: "in" | "out", photo: string) => call<{ ok: boolean; at: string; shift: string | null; late: number | null }>("/api/roster", { op: "checkin", kind, photo });
 
 const pad = (n: number) => String(n).padStart(2, "0");

@@ -5,6 +5,7 @@ import PhotoPicker from "@/components/PhotoPicker";
 import RosterCalendar from "@/components/roster/RosterCalendar";
 import { Modal } from "@/components/ui";
 import { useApp } from "@/lib/app";
+import { useAutoRefresh } from "@/lib/autoRefresh";
 import type { SessionUser } from "@/lib/roles";
 import { checkIn, dayTitle, fetchMonth, fetchToday, isoDate, Month, shortName, SHIFTS, stampPhoto, WEEKDAYS, ymOf } from "@/lib/roster";
 
@@ -33,6 +34,8 @@ export function CheckInCard({ user, onChange, compact = false }: { user: Session
 
   const load = useCallback(() => { fetchToday().then(setToday).catch(() => setToday(null)); }, []);
   useEffect(load, [load]);
+  // เวรที่เช็คชื่อผูกกับเปลี่ยนตามเวลา (60 นาทีก่อนเข้าเวร ถึง 3 ชม. หลังเลิกเวร): ดึงใหม่ทุกนาทีและเมื่อกลับมาที่แอป (ไม่ดึงระหว่างเปิดหน้าถ่ายรูป)
+  useAutoRefresh(() => { if (!kind) load(); });
 
   const cin = today?.attendance.find((a) => a.kind === "in");
   const cout = today?.attendance.find((a) => a.kind === "out");

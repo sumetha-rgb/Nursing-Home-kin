@@ -7,7 +7,7 @@ import { can } from "@/lib/perms";
 import { useBranchNames } from "@/lib/branches";
 import { money } from "@/lib/billing";
 import { useAutoRefresh } from "@/lib/autoRefresh";
-import { DataTable, Field, MetricGrid, Modal, PageHeader, Section, Select } from "../ui";
+import { DataTable, Field, Modal, PageHeader, Section, Select, StatFilter } from "../ui";
 
 /**
  * คลังเวชภัณฑ์ของสาขา (ผ้าอ้อม ถุงมือ สายให้อาหาร ฯลฯ)
@@ -41,6 +41,9 @@ export default function SupplyStock() {
 
   const multi = branchNames.length > 1;
   const shown = useMemo(() => (items ?? []).filter((x) => !branch || x.branch_name === branch), [items, branch]);
+  /** ตัวกรอง: "" ทั้งหมด · low เหลือน้อย · out หมดแล้ว */
+  const [sf, setSf] = useState("");
+  const list = shown.filter((x) => !sf || (sf === "low" ? x.stock > 0 && x.stock <= LOW : x.stock <= 0));
 
   const save = async () => {
     if (!form || busy) return;
@@ -62,23 +65,22 @@ export default function SupplyStock() {
 
   return (
     <>
-      <PageHeader title="คลังเวชภัณฑ์" sub="ผ้าอ้อม ถุงมือ สายให้อาหาร และของใช้ที่คิดเงินผู้ป่วย แยกตามสาขา · เบิกให้ผู้ป่วยที่ประวัติผู้รับบริการ แท็บเวชภัณฑ์"
+      <PageHeader title="คลังเวชภัณฑ์" sub="ของใช้ที่คิดเงินผู้ป่วย แยกตามสาขา"
         actions={<>
           {multi && <div className="min-w-44"><Select options={branchNames} placeholder="รวมทุกสาขา" value={branch} onChange={setBranch} /></div>}
           {manage && <button className="btn-primary" onClick={() => setForm({ branch: branch || (multi ? "" : branchNames[0] ?? ""), name: "", unit: "ชิ้น", price: "", stock: "", add: "" })}><Icon name="plus" className="h-4 w-4" /> เพิ่มเวชภัณฑ์</button>}
         </>} />
       {err && <p role="alert" className="mb-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{err}</p>}
-      <MetricGrid items={[
-        { label: "รายการเวชภัณฑ์", value: shown.length, unit: "รายการ", icon: "files", accent: true },
-        { label: "มีในคลัง", value: shown.filter((x) => x.stock > 0).length, unit: "รายการ", icon: "check" },
-        { label: "เหลือน้อย", value: shown.filter((x) => x.stock > 0 && x.stock <= LOW).length, unit: "รายการ", icon: "alert", note: `เหลือไม่เกิน ${LOW}` },
-        { label: "หมดแล้ว", value: shown.filter((x) => x.stock <= 0).length, unit: "รายการ", icon: "close" },
-      ]} />
       <Section title={branch ? `คงเหลือของสาขา${branch}` : multi ? "คงเหลือทุกสาขา" : "คงเหลือในคลัง"}>
+        <StatFilter label="กรองเวชภัณฑ์" value={sf} onChange={setSf} items={[
+          { k: "", t: "ทั้งหมด", n: shown.length, tone: "all" },
+          { k: "low", t: "เหลือน้อย", n: shown.filter((x) => x.stock > 0 && x.stock <= LOW).length, tone: "warn" },
+          { k: "out", t: "หมดแล้ว", n: shown.filter((x) => x.stock <= 0).length, tone: "bad" },
+        ]} />
         <DataTable columns={[...(multi && !branch ? ["สาขา"] : []), "รายการ", "หน่วย", "ราคา/หน่วย (บาท)", "คงเหลือ", "สถานะ"]}
-          rows={shown.map((x) => [...(multi && !branch ? [x.branch_name] : []), x.name, x.unit, money(x.price), `${x.stock} ${x.unit}`, x.stock <= 0 ? "หมด" : x.stock <= LOW ? "เหลือน้อย" : "ปกติ"])}
+          rows={list.map((x) => [...(multi && !branch ? [x.branch_name] : []), x.name, x.unit, money(x.price), `${x.stock} ${x.unit}`, x.stock <= 0 ? "หมด" : x.stock <= LOW ? "เหลือน้อย" : "ปกติ"])}
           empty={!items ? "กำลังโหลด…" : manage ? "ยังไม่มีเวชภัณฑ์ · กด เพิ่มเวชภัณฑ์ ที่มุมขวาบน" : "ยังไม่มีเวชภัณฑ์ในคลัง · แจ้งหัวหน้าพยาบาลหรือผู้จัดการให้เพิ่มรายการ"}
-          actions={manage ? [{ label: "เติมสต็อก / แก้ไข", onClick: (i) => { const x = shown[i]; setForm({ id: x.id, branch: x.branch_name, name: x.name, unit: x.unit, price: String(x.price), stock: String(x.stock), add: "" }); } }] : []} />
+          actions={manage ? [{ label: "เติมสต็อก / แก้ไข", onClick: (i) => { const x = list[i]; setForm({ id: x.id, branch: x.branch_name, name: x.name, unit: x.unit, price: String(x.price), stock: String(x.stock), add: "" }); } }] : []} />
       </Section>
 
       <Modal open={!!form} title={form?.id ? `เติมสต็อก / แก้ไข · ${form.name}` : "เพิ่มเวชภัณฑ์"} onClose={() => setForm(null)}

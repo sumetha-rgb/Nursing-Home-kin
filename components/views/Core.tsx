@@ -5,9 +5,9 @@ import { useBranchNames, withBranches } from "@/lib/branches";
 import Link from "next/link";
 import Icon from "../Icon";
 import { APPOINTMENTS, CONTRACTS, DAILY_LIST, RESIDENTS, BRANCH_NAMES } from "@/lib/mock";
-import { downloadCsv, useCrud, useRecords } from "@/lib/store";
-import { balanceOf, parseItems, lineNet, PAID, contractVat, DEFAULT_VAT, DRAFT, docDate, Invoice, isOpen, money, svcNet, todayIso, UNPAID, VOID } from "@/lib/billing";
-import { contractInvoice, contractMonthTotal, prepaidMonths, useBranchInfo } from "./Billing";
+import { downloadCsv, refreshData, useCrud, useRecords } from "@/lib/store";
+import { balanceOf, parseItems, lineNet, PAID, contractVat, DEFAULT_VAT, DRAFT, docDate, Invoice, invoiceBranch, isOpen, money, svcNet, todayIso, UNPAID, VOID } from "@/lib/billing";
+import { buildBilledIndex, contractBilledFor, contractInvoice, contractMonthTotal, isStartInvoice, prepaidMonths, useBranchInfo } from "./Billing";
 import ContractView from "./ContractView";
 import { ContractDoc, contractLines, contractRoomName, contractTotal, DcData, dcRefund, DischargeDoc, PrintModal, RenewDoc } from "../print/Docs";
 import { ServiceLine, ServiceLines } from "../ServicePicker";
@@ -32,7 +32,8 @@ import PhotoPicker from "../PhotoPicker";
 import { useSession } from "@/lib/session";
 import { can } from "@/lib/perms";
 import { findRoom, freeBed, RoomInfo, roomInfos, roomKey, roomProblem, staying, withRoom } from "@/lib/rooms";
-import { BlankForm, DataTable, Field, FieldDef, FormDialog, MenuButton, Modal, MetricGrid, PageHeader, PrintSignatures, Section, Select, Tabs } from "../ui";
+import { Avatar } from "../Avatar";
+import { BlankForm, DataTable, Field, FieldDef, FormDialog, MenuButton, Modal, MetricGrid, PageHeader, PrintSignatures, Section, Select, StatFilter, Tabs } from "../ui";
 
 /* ---------- ขั้นตอนการทำงาน ---------- */
 /** link ว่าง = ขั้นที่ไม่มีเมนูให้ไป (เช่น กระดิ่งแจ้งเตือนมุมขวาบน) */
@@ -166,6 +167,9 @@ const TODO_ACT: Record<string, string> = {
 /* ---------- ระบบสัญญา ---------- */
 const CONTRACT_STATUSES = ["ใช้งานอยู่", "รอชำระเงินมัดจำ", "สิ้นสุดสัญญา", "ยกเลิกสัญญา"];
 const CANCELLED = "ยกเลิกสัญญา";
+/** สัญญาที่ยังผูกกับผู้รับบริการ (ใช้งานอยู่ / รอชำระมัดจำ) */
+const LIVE_CONTRACT = CONTRACT_STATUSES.slice(0, 2);
+const isLive = (c: string[]) => LIVE_CONTRACT.includes(c[5]);
 /** พิมพ์ได้เฉพาะตัวเลข ไม่เกิน max หลัก */
 const digitsOnly = (max: number) => (e: React.FormEvent<HTMLInputElement>) => { const el = e.currentTarget; el.value = el.value.replace(/\D/g, "").slice(0, max); };
 /** จัดกลุ่มตัวเลขให้อ่านง่าย เช่น 1-1037-00123-45-6 / 081-234-5678 */
@@ -211,6 +215,8 @@ type IdPhotos = { employer: string; resident: string };
 
 function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, onClose, onSave }: { rooms: string[][]; residents: string[][]; contracts?: string[][]; initial?: string[]; fromQuote?: string; onClose: () => void; onSave: (r: string[], photos: IdPhotos) => void }) {
   const [photos, setPhotos] = useState<IdPhotos>({ employer: "", resident: "" });
+  /** ต่อสัญญา (initial = สัญญาเดิม) · เปิดจากใบเสนอราคา initial เป็นแค่ข้อมูลตั้งต้น ไม่ใช่การต่อสัญญา */
+  const renewing = !!initial && fromQuote === undefined;
   const iv = (i: number) => (initial?.[i] && initial[i] !== "-" ? initial[i] : "");
   // ช่องที่มีตัวช่วยกรอก (ปุ่มลัด / พิมพ์แล้วขึ้น / ดึงจากสัญญาเดิม)
   const [who, setWho] = useState(iv(2));
@@ -255,8 +261,8 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, on
   };
   const pickEmployer = (name: string) => { const c = latest(3, name); if (c) { fillEmployer(c); setPulledBoss(c[0]); } };
   // ชื่อที่พิมพ์ตรงกับลูกค้าเก่า: เสนอให้ดึงข้อมูลเดิม (ไม่ดึงเอง เพราะอาจเป็นคนละคนที่ชื่อซ้ำ)
-  const oldRes = !initial && who.trim() ? latest(2, who.trim().replace(/\s+/g, " ")) : undefined;
-  const oldBoss = !initial && boss.trim() ? latest(3, boss.trim().replace(/\s+/g, " ")) : undefined;
+  const oldRes = !renewing && who.trim() ? latest(2, who.trim().replace(/\s+/g, " ")) : undefined;
+  const oldBoss = !renewing && boss.trim() ? latest(3, boss.trim().replace(/\s+/g, " ")) : undefined;
   const PastBox = ({ c, pulled, kind, onPull }: { c?: string[]; pulled: string; kind: "res" | "boss"; onPull: () => void }) => !c ? null
     : pulled === c[0] ? <p role="status" className="mt-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">ดึงข้อมูลจากสัญญาเดิม {c[0]} แล้ว{kind === "res" ? " (เลขบัตร อายุ โรงพยาบาล ยาประจำ ประวัติแพ้)" : " (เลขบัตร โทรศัพท์ ที่อยู่ ความเกี่ยวข้อง)"} · ตรวจให้ตรงกับบัตรจริงอีกครั้ง</p>
     : <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
@@ -306,6 +312,16 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, on
   const options = row ? all.filter((r) => r.branch === row[1]) : [];
   const free = options.filter((r) => !r.closed).reduce((n, r) => n + r.free, 0);
   const existing = row ? residents.find((r) => norm(r[0]) === row[2] && r[3] === row[1] && staying(r[5] ?? "")) : undefined;
+  /**
+   * ชื่อนี้ตรงกับผู้รับบริการที่ย้ายออกไปแล้วในสาขาเดียวกัน: ให้เลือกเองว่าเป็นคนเดิมกลับมาพัก (ใช้ประวัติ HN เดิม) หรือคนละคน (ไม่รวมประวัติ)
+   *  คนละคน = ต้องเพิ่มข้อความต่อท้ายชื่อให้ไม่ซ้ำ (ระบบไม่ให้มีชื่อซ้ำในสาขาเดียวกัน) · ค่าเริ่มต้น = ยังไม่เลือก (ไม่รวมให้เอง)
+   */
+  const pastRes = row && !existing && !renewing ? residents.find((r) => norm(r[0]) === row[2] && r[3] === row[1] && !staying(r[5] ?? "")) : undefined;
+  const [samePerson, setSamePerson] = useState<"" | "same" | "new">("");
+  const [suffix, setSuffix] = useState("");
+  const newName = suffix.trim() ? `${row?.[2] ?? ""} (${norm(suffix).replace(/^\(|\)$/g, "")})` : "";
+  /** ชื่อผู้รับบริการที่จะบันทึกในสัญญา (คนละคน = ชื่อที่เพิ่มข้อความต่อท้ายแล้ว) */
+  const finalName = pastRes && samePerson === "new" ? newName : row?.[2] ?? "";
 
   /** แถวสัญญาจากค่าที่กรอกทุกขั้น (ห้องใส่ตอนบันทึก) */
   const buildRow = () => {
@@ -329,6 +345,10 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, on
     if (!foodA.trim()) return toast(`กรุณาระบุประวัติแพ้อาหาร หรือกด "${NO_ALLERGY}"`);
     const r = buildRow();
     if (!r[1]) return toast("กรุณาเลือกสาขา");
+    // เปิดสัญญาใหม่ (ไม่ใช่ต่อสัญญา): คนที่มีสัญญาใช้งานอยู่/รอชำระมัดจำในสาขานี้แล้ว ให้ใช้ "ต่อสัญญา" แทน
+    const live = !renewing ? contracts.find((c) => norm(c[2] ?? "") === r[2] && c[1] === r[1] && isLive(c)) : undefined;
+    if (live) return toast(`${r[2]} มีสัญญา ${live[0] || "ที่บันทึกไว้"} (${live[5]}) ในสาขา${r[1]}อยู่แล้ว · ถ้าเป็นคนเดิม ให้กด "ต่อสัญญา" ที่สัญญาเดิมแทน · ถ้าเป็นคนละคนที่ชื่อซ้ำ ให้เพิ่มชื่อเล่นหรือปีเกิดต่อท้ายชื่อ`);
+    if (r[2] !== row?.[2] || r[1] !== row?.[1]) { setSamePerson(""); setSuffix(""); }
     setRow(r);
     setStep(2);
     window.scrollTo(0, 0);
@@ -367,13 +387,20 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, on
   /** ขั้น 3: บันทึกสัญญา (มีห้อง / ยังไม่มีห้อง) */
   const finish = (withRoom: boolean) => {
     if (!row) return;
+    if (pastRes) {
+      if (!samePerson) { const m = `${row[2]} เคยเป็นผู้รับบริการของสาขา${row[1]}และย้ายออกไปแล้ว · กรุณาเลือกว่าเป็นคนเดิมกลับมาพัก หรือคนละคนที่ชื่อซ้ำ`; setWarn(m); return toast(m); }
+      if (samePerson === "new") {
+        if (!newName) { const m = "คนละคนที่ชื่อซ้ำ: กรุณาเพิ่มข้อความต่อท้ายชื่อ เช่น ชื่อเล่น หรือปีเกิด เพื่อแยกจากคนเดิม"; setWarn(m); return toast(m); }
+        if (residents.some((r) => norm(r[0]) === newName && r[3] === row[1])) { const m = `มีผู้รับบริการชื่อ "${newName}" ในสาขา${row[1]}แล้ว กรุณาใช้ข้อความต่อท้ายอื่น`; setWarn(m); return toast(m); }
+      }
+    }
     if (withRoom) {
       const r = findRoom(all, row[1], room);
       if (!r) return toast("กรุณาเลือกห้องพัก");
-      const problem = roomProblem(r, row[2]);
+      const problem = roomProblem(r, finalName);
       if (problem) { setWarn(problem); return toast(problem); }
     }
-    onSave(buildRow().map((x, i) => (i === 6 ? (withRoom ? room : NO_ROOM) : x)), photos);
+    onSave(buildRow().map((x, i) => (i === 6 ? (withRoom ? room : NO_ROOM) : i === 2 ? finalName : x)), photos);
   };
 
   // ค่าห้องที่เลือกในขั้นที่ 2 เทียบกับห้องที่เลือก (เตือนเท่านั้น)
@@ -404,27 +431,27 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, on
         <div className={step === 1 ? "space-y-8" : "hidden"}>
         <div className="grid gap-4 md:grid-cols-2">
           <Field label="สาขา (Branch)" required className="md:col-span-2"><select name="branch" defaultValue={d(1) ?? ""}><option value="">-- กรุณาเลือกสาขา --</option>{branchNames.map((b) => <option key={b}>{b}</option>)}</select></Field>
-          <Field label="ชื่อ นามสกุล ผู้จ้าง" required>{initial ? <input value={boss} onChange={(e) => setBoss(e.target.value)} required />
+          <Field label="ชื่อ นามสกุล ผู้จ้าง" required>{renewing ? <input value={boss} onChange={(e) => setBoss(e.target.value)} required />
             : <SuggestText value={boss} onChange={setBoss} options={[...new Set(contracts.map((c) => c[3]).filter((x) => x && x !== "-"))]} onPick={pickEmployer} label="ชื่อผู้ว่าจ้าง" placeholder="เช่น นายสมชาย ใจดี"
               renderSub={(n) => { const c = latest(3, n); return c ? `${c[0]} · ผู้รับบริการ ${c[2]}` : ""; }} />}
-            {!initial && <PastBox c={oldBoss} pulled={pulledBoss} kind="boss" onPull={() => oldBoss && pickEmployer(oldBoss[3])} />}</Field>
+            {!renewing && <PastBox c={oldBoss} pulled={pulledBoss} kind="boss" onPull={() => oldBoss && pickEmployer(oldBoss[3])} />}</Field>
           <Field label="เลขที่บัตรประชาชน"><DigitsInput kind="id" name="employer_id" defaultValue={d(8)} /></Field>
           <Field label="ที่อยู่" required className="md:col-span-2"><div className="space-y-2">
             <AddressFinder onPick={(t) => setAddr((a) => `${a.replace(/\s+(แขวง|ตำบล).*$/, "").trim()} ${t}`.trim())} />
             <textarea rows={2} required value={addr} onChange={(e) => setAddr(e.target.value)} aria-label="ที่อยู่" placeholder="บ้านเลขที่ ซอย ถนน" />
           </div></Field>
-          <Field label="รูปถ่ายบัตรประชาชนผู้ว่าจ้าง" className="md:col-span-2"><PhotoPicker value={photos.employer} onChange={(v) => setPhotos({ ...photos, employer: v })} label={initial ? "ไม่แนบใหม่ = ใช้รูปจากสัญญาเดิม" : "ถ่ายหรือเลือกรูป · ให้เห็นชื่อ เลขบัตร รูปหน้า"} /></Field>
+          <Field label="รูปถ่ายบัตรประชาชนผู้ว่าจ้าง" className="md:col-span-2"><PhotoPicker value={photos.employer} onChange={(v) => setPhotos({ ...photos, employer: v })} label={renewing ?"ไม่แนบใหม่ = ใช้รูปจากสัญญาเดิม" : "ถ่ายหรือเลือกรูป · ให้เห็นชื่อ เลขบัตร รูปหน้า"} /></Field>
           <Field label="โทรศัพท์" required><DigitsInput kind="phone" name="phone" required defaultValue={d(9)} /></Field>
           <Field label="เกี่ยวข้อง"><div className="space-y-2"><ChipChoice label="เกี่ยวข้อง" options={RELATIONS} value={RELATIONS.includes(relation) ? relation : ""} onChange={setRelation} />
             <input value={relation} onChange={(e) => setRelation(e.target.value)} placeholder="หรือพิมพ์เอง เช่น ลูกเขย" aria-label="เกี่ยวข้อง (พิมพ์เอง)" /></div></Field>
-          <Field label="ชื่อ นามสกุล ผู้รับบริการ" required>{initial ? <input value={who} readOnly required />
+          <Field label="ชื่อ นามสกุล ผู้รับบริการ" required>{renewing ? <input value={who} readOnly required />
             : <SuggestText value={who} onChange={setWho} options={[...new Set(contracts.map((c) => c[2]).filter((x) => x && x !== "-"))]} onPick={pickResident} label="ชื่อผู้รับบริการ" placeholder="เช่น นางสมศรี ใจดี"
               renderSub={(n) => { const c = latest(2, n); return c ? `เคยมีสัญญา ${c[0]} · ${c[1]} · ดึงเลขบัตร อายุ ประวัติแพ้ โรงพยาบาลให้` : ""; }} />}
-            {!initial && (oldRes ? <PastBox c={oldRes} pulled={pulledRes} kind="res" onPull={() => pickResident(oldRes[2])} /> : null)}</Field>
+            {!renewing && (oldRes ? <PastBox c={oldRes} pulled={pulledRes} kind="res" onPull={() => pickResident(oldRes[2])} /> : null)}</Field>
           <Field label="เลขที่บัตรประชาชนผู้รับบริการ"><DigitsInput kind="id" name="resident_id" defaultValue={d(12)} /></Field>
           <Field label="อายุ (ปี) ผู้รับบริการ"><input name="age" type="number" min={0} max={130} placeholder="เช่น 78" defaultValue={dn(13)} /></Field>
           <Field label="วันเริ่มสัญญา" required><input type="date" required value={start} onChange={(e) => setStart(e.target.value)} aria-label="วันเริ่มสัญญา" /></Field>
-          <Field label="รูปถ่ายบัตรประชาชนผู้รับบริการ" className="md:col-span-2"><PhotoPicker value={photos.resident} onChange={(v) => setPhotos({ ...photos, resident: v })} label={initial ? "ไม่แนบใหม่ = ใช้รูปจากสัญญาเดิม" : "ถ่ายหรือเลือกรูป · ให้เห็นชื่อ เลขบัตร รูปหน้า"} /></Field>
+          <Field label="รูปถ่ายบัตรประชาชนผู้รับบริการ" className="md:col-span-2"><PhotoPicker value={photos.resident} onChange={(v) => setPhotos({ ...photos, resident: v })} label={renewing ?"ไม่แนบใหม่ = ใช้รูปจากสัญญาเดิม" : "ถ่ายหรือเลือกรูป · ให้เห็นชื่อ เลขบัตร รูปหน้า"} /></Field>
           <Field label="เลขที่สัญญา"><input value={initial && fromQuote === undefined ? `ออกเลขใหม่อัตโนมัติ (สัญญาเดิม ${initial[0]})` : "ออกเลขอัตโนมัติ เช่น CT-2569-0001"} readOnly tabIndex={-1} className="field-locked" /></Field>
           <Field label="วันสิ้นสุดสัญญา"><input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} aria-label="วันสิ้นสุดสัญญา" />
             <div className="mt-2 flex flex-wrap gap-1.5">{[[1, "1 เดือน"], [3, "3 เดือน"], [6, "6 เดือน"], [12, "1 ปี"]].map(([n, t]) => <button key={t} type="button" disabled={!start} onClick={() => setEndDate(addMonthsIso(start, Number(n)))} className="rounded-full border border-cream-300 bg-white px-3 py-1 text-xs text-gold-700 hover:border-gold-300">+{t}</button>)}
@@ -451,7 +478,7 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, on
           </div>
           <p className="mt-3 rounded-xl bg-cream-50 px-4 py-2.5 text-sm text-gold-700">โรคประจำตัว ไม่ต้องกรอกที่นี่ · ระบบดึงจากข้อมูลผู้รับบริการ (เมนูผู้รับบริการ) มาพิมพ์ในสัญญาให้เอง</p>
           <div className="mt-4 grid gap-4 md:grid-cols-2">
-            <Field label="หมายเหตุ" className="md:col-span-2"><textarea name="note" rows={2} placeholder="เช่น แพ้ยาเพนิซิลลิน, ญาติมาเยี่ยมทุกวันเสาร์" defaultValue={initial ? `ต่อจากสัญญา ${initial[0]}` : undefined} /></Field>
+            <Field label="หมายเหตุ" className="md:col-span-2"><textarea name="note" rows={2} placeholder="เช่น แพ้ยาเพนิซิลลิน, ญาติมาเยี่ยมทุกวันเสาร์" defaultValue={renewing ? `ต่อจากสัญญา ${initial?.[0] ?? ""}` : d(20)} /></Field>
           </div>
         </div>
         </div>
@@ -537,6 +564,20 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, on
           <p><span className="text-gold-500">ผู้รับบริการ</span> <b className="font-medium text-gold-800">{row[2]}</b>{row[13] ? ` · ${row[13]} ปี` : ""} · <span className="text-gold-500">สาขา</span> {row[1]} · <span className="text-gold-500">ผู้ว่าจ้าง</span> {row[3]}{contractTotal(row) ? <> · <span className="text-gold-500">ยอดรวม</span> {money(contractTotal(row))} บาท/เดือน</> : ""}</p>
           {existing && <p className="mt-1 text-xs text-gold-500">มีชื่อนี้ในทะเบียนผู้รับบริการแล้ว ระบบจะอัปเดตห้องให้คนเดิม ไม่สร้างรายชื่อซ้ำ</p>}
         </div>
+        {pastRes && <div role="group" aria-label="เป็นคนเดิมหรือไม่" className="space-y-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+          <p><b>ชื่อนี้เคยเป็นผู้รับบริการของสาขา{row[1]}</b>{pastRes[6] ? ` (HN ${pastRes[6]})` : ""} และย้ายออกไปแล้ว · เลือกให้ถูกก่อนบันทึก ระบบจะไม่รวมประวัติให้เอง</p>
+          <div className="flex flex-wrap gap-2">
+            {([["same", "เป็นคนเดิม (กลับมาพักอีกครั้ง)"], ["new", "คนละคน (ชื่อซ้ำ)"]] as const).map(([k, t]) => (
+              <button key={k} type="button" aria-pressed={samePerson === k} onClick={() => { setSamePerson(k); setWarn(""); }}
+                className={`rounded-full px-3 py-1.5 text-xs font-medium ${samePerson === k ? "bg-gold-700 text-white" : "border border-cream-300 bg-white text-gold-700 hover:border-gold-300"}`}>{t}</button>
+            ))}
+          </div>
+          {samePerson === "same" && <p className="text-xs">ใช้ทะเบียนเดิม (HN ประวัติการรักษา โรคประจำตัว ยา) · สถานะเปลี่ยนเป็นเข้าพักอีกครั้ง</p>}
+          {samePerson === "new" && <Field label="ข้อความต่อท้ายชื่อ (ใช้แยกจากคนเดิม)" required>
+            <input value={suffix} onChange={(e) => setSuffix(e.target.value)} placeholder="เช่น ชื่อเล่น หรือปีเกิด 2485" aria-label="ข้อความต่อท้ายชื่อ" />
+            <p className="field-hint">{newName ? <>จะบันทึกเป็น <b>{newName}</b> · สร้างทะเบียนผู้รับบริการใหม่ (HN ใหม่) ไม่รวมกับคนเดิม</> : "ระบบไม่ให้มีชื่อซ้ำในสาขาเดียวกัน จึงต้องเพิ่มข้อความต่อท้าย"}</p>
+          </Field>}
+        </div>}
         {warn && <p role="alert" className="room-warn">{warn}</p>}
         {!options.length ? <div className="empty-state"><Icon name="bed" /><p>สาขา{row[1]}ยังไม่มีห้องในระบบ {can(user, "rooms.manage") ? "สร้างห้องที่เมนูห้องพักและเตียง หรือบันทึกสัญญาไปก่อนแล้วจัดห้องภายหลัง" : "แจ้งผู้จัดการสาขาให้สร้างห้อง หรือบันทึกสัญญาไปก่อนแล้วจัดห้องภายหลัง"}</p>
           {can(user, "rooms.manage") && <button type="button" className="mt-3 text-sm text-gold-700 underline-offset-4 hover:underline" onClick={() => go("rooms")}>ไปที่ห้องพักและเตียง (ข้อมูลที่กรอกจะไม่ถูกบันทึก)</button>}</div>
@@ -656,6 +697,13 @@ export function Contracts() {
     catch (e) { toast((e as Error).message); }
   };
   const resOf = (c: string[]) => { const j = resIndex(c[2], c[1]); return j >= 0 ? { row: res.rows[j], id: res.ids[j] } : null; };
+  /** สาขาของใบแจ้งหนี้ (หน้าจอไม่มีช่องสาขา): จากสัญญาของใบ หรือผู้รับบริการชื่อนั้น · แบบเดียวกับหน้าใบแจ้งหนี้และใบเสร็จ */
+  const invBranch = (x: Invoice) => invoiceBranch(x, rows, res.rows, user?.branch);
+  /** ใบค้างชำระของสัญญา c: ใบของสัญญานี้ + ใบที่ไม่ผูกสัญญาของคนนี้ในสาขาเดียวกัน (มี HN = เทียบ HN) · ไม่รวมคนชื่อซ้ำต่างสาขา */
+  const owingOf = (c: string[]) => {
+    const hn = resOf(c)?.row[6] ?? "";
+    return invoices.filter((x) => isOpen(x) && ((!!c[0] && x.contract === c[0]) || (x.who === c[2] && (!x.contract || !rows.some((k) => k[0] === x.contract && k[1] !== c[1])) && (x.hn && hn ? x.hn === hn : invBranch(x) === c[1]))));
+  };
 
   /**
    * สัญญาใหม่ / ต่อสัญญา: เพิ่มหรืออัปเดตผู้รับบริการพร้อมห้องก่อน (server ออก HN ให้) แล้วจึงบันทึกสัญญา
@@ -663,18 +711,26 @@ export function Contracts() {
    */
   const create = (r: string[], photos: IdPhotos) => {
     const oldId = renew !== null ? ids[renew] : undefined;
-    const status = r[5] === "รอชำระเงินมัดจำ" ? "มัดจำ (จองห้อง)" : "เข้าอยู่ (Active)";
+    // กันสัญญาซ้อน: เปิดสัญญาใหม่ให้คนที่มีสัญญาใช้งานอยู่/รอชำระมัดจำในสาขานี้แล้วไม่ได้ (ฟอร์มตรวจแล้ว ตรวจซ้ำกันข้อมูลเพิ่งโหลด)
+    const live = renew === null ? rows.find((c) => norm(c[2] ?? "") === norm(r[2]) && c[1] === r[1] && isLive(c)) : undefined;
+    if (live) return toast(`${r[2]} มีสัญญา ${live[0] || "ที่บันทึกไว้"} (${live[5]}) อยู่แล้ว · ใช้ "ต่อสัญญา" ที่สัญญาเดิมแทน`);
     const j = resIndex(r[2], r[1]);
+    const p0 = j >= 0 ? res.rows[j] : undefined;
+    // คนที่ยังพักอยู่ (เข้าอยู่ / แอดมิท รพ.) คงสถานะเดิม เช่น ต่อสัญญาระหว่างแอดมิทยังเป็นแอดมิท · คนใหม่/กลับมาพักใหม่ ตามสถานะสัญญา
+    const status = p0 && /^(เข้าอยู่|แอดมิท)/.test(p0[5] ?? "") ? p0[5] : r[5] === "รอชำระเงินมัดจำ" ? "มัดจำ (จองห้อง)" : "เข้าอยู่ (Active)";
+    // ต่อสัญญาแบบไม่เลือกห้อง แต่ยังพักห้องเดิม: ห้องในสัญญาใหม่ = ห้องปัจจุบัน (ใบแจ้งหนี้/เอกสารพิมพ์ห้องถูก)
+    if (r[6] === NO_ROOM && p0 && staying(p0[5] ?? "") && p0[2] && p0[2] !== NO_ROOM) r = r.map((x, k) => (k === 6 ? p0[2] : x));
     const info = r[6] === NO_ROOM ? undefined : findRoom(roomInfos(rooms.rows, res.rows), r[1], r[6]);
-    if (j >= 0) {
-      const p = res.rows[j];
+    if (p0) {
+      const p = p0;
       const bed = r[6] === NO_ROOM ? p[7] ?? "" : p[2] === r[6] && p[7] ? p[7] : freeBed(info, p[0]);
       res.update(j, [p[0], r[13] || p[1], r[6] === NO_ROOM ? p[2] : r[6], p[3], p[4], status, p[6] ?? "", bed]);
     } else res.add([r[2], r[13] || "-", r[6], r[1], "", status, "", freeBed(info)]);
     const id = add(r);
     if (photos.employer || photos.resident || oldId) uploadIdCards(id, { ...(photos.employer ? { employer: photos.employer } : {}), ...(photos.resident ? { resident: photos.resident } : {}), ...(oldId ? { copyFrom: oldId } : {}) });
     if (renew !== null) { const old = rows[renew]; update(renew, old.map((x, k) => (k === 5 ? "สิ้นสุดสัญญา" : x))); setDoc({ kind: "renew", before: old, after: r }); }
-    const inv = contractInvoice(r, j >= 0 ? res.rows[j][6] ?? "" : "");
+    // ใบเดิมของสาขาเดียวกัน: ต่อสัญญาที่เคยหักมัดจำห้อง (AD-01) ไปแล้ว ไม่หักซ้ำ
+    const inv = contractInvoice(r, j >= 0 ? res.rows[j][6] ?? "" : "", invoices.filter((x) => invBranch(x) === r[1]));
     if (inv) setInvoices([inv, ...invoices]);
     if (fromQuote) { const k = quotes.ids.indexOf(fromQuote.quoteId); if (k >= 0) quotes.update(k, quotes.rows[k].map((x, n) => (n === 12 ? `เปิดสัญญาแล้ว ${docDate(todayIso())}` : x))); setFromQuote(null); }
     setCreating(false); setRenew(null);
@@ -683,12 +739,14 @@ export function Contracts() {
 
   const ended = (c: string[]) => c[5] === CANCELLED || c[5] === "สิ้นสุดสัญญา";
   /** ปุ่มหลักของแถวสัญญา: deposit = ออกใบแจ้งหนี้ (รอชำระมัดจำ ยังไม่มีใบ) · month = ออกใบเดือนนี้ · print = พิมพ์สัญญา · none = ไม่มี */
-  const thisMonth = todayIso().slice(0, 7);
+  const thisMonth = todayIso().slice(0, 7); // todayIso = วันที่ตามเวลาไทย
+  const billed = useMemo(() => buildBilledIndex(invoices), [invoices]);
   const primaryOf = (c: string[]): "deposit" | "month" | "print" | "none" => {
     if (ended(c)) return "none";
     const bills = invoices.filter((x) => x.contract === c[0] && x.status !== VOID);
     if (can(user, "billing") && c[5] === "รอชำระเงินมัดจำ" && !bills.length) return "deposit";
-    if (can(user, "billing") && c[5] === "ใช้งานอยู่" && !bills.some((x) => x.date.startsWith(thisMonth))) return "month";
+    // เดือนนี้ยังไม่ได้เรียกเก็บ (ใบแรกเข้าที่ครอบคลุมเดือนนี้ หรือใบรายเดือนของเดือนนี้ นับว่าเก็บแล้ว · ดู contractBilledFor)
+    if (can(user, "billing") && c[5] === "ใช้งานอยู่" && !contractBilledFor(c, thisMonth, billed)) return "month";
     return "print";
   };
   /** ออกใบแจ้งหนี้ตามสัญญา: ไปหน้าใบแจ้งหนี้และใบเสร็จพร้อมรายการในสัญญา (แก้/เพิ่มได้ก่อนบันทึก) · มีใบค้างชำระอยู่แล้ว ถามก่อน */
@@ -697,6 +755,20 @@ export function Contracts() {
     const goBill = () => { billHandoff.set(ids[i]); go("billing"); };
     if (!open.length) return goBill();
     confirm({ title: "ออกใบแจ้งหนี้", okLabel: "ออกใบใหม่", message: `สัญญา ${c[0]} มีใบแจ้งหนี้ที่ยังชำระไม่ครบ ${open.length} ใบ (${open.map((x) => x.no ?? "").filter(Boolean).join(", ") || "กำลังออกเลข"}) ต้องการออกใบใหม่อีกใบหรือไม่ · ถ้าจะรับเงินใบเดิม ให้กด รับชำระ ที่หน้าใบแจ้งหนี้และใบเสร็จ`, onOk: goBill });
+  };
+
+  /**
+   * สัญญาที่เปิดจากใบเสนอราคาถูกยกเลิก: ล้าง "เปิดสัญญาแล้ว" ในใบเสนอราคา ให้กดเปิดสัญญาจากใบนั้นได้อีกครั้ง
+   *  หาใบจากหมายเหตุสัญญา "เปิดจากใบเสนอราคา QT-…" (ใส่ให้ตอนเปิดสัญญา) · ไม่มีเลขที่ = ใบที่เปิดสัญญาแล้วของชื่อนี้ ถ้ามีใบเดียว · คืนเลขที่ใบที่ล้าง
+   */
+  const reopenQuote = (c: string[]) => {
+    const no = String(c[20] ?? "").match(/เปิดจากใบเสนอราคา\s+(QT-[\w-]+)/)?.[1];
+    const opened = (q: string[]) => /^เปิดสัญญาแล้ว/.test(q[12] ?? "");
+    const hits = quotes.rows.map((q, k) => ({ q, k })).filter(({ q }) => opened(q) && (no ? q[6] === no : /เปิดจากใบเสนอราคา/.test(c[20] ?? "") && q[1] === c[2]));
+    if (hits.length !== 1) return "";
+    const { q, k } = hits[0];
+    quotes.update(k, q.map((x, n) => (n === 12 ? "-" : x)));
+    return q[6] || "ของ " + q[1];
   };
 
   /** ยกเลิกสัญญา (เช่น ลูกค้าเปลี่ยนใจ ทำสัญญาผิด): สัญญายังอยู่ในทะเบียน · คืนห้อง · ใบแจ้งหนี้ที่ยังไม่ชำระของสัญญานี้ถูกยกเลิกตาม */
@@ -712,9 +784,11 @@ export function Contracts() {
       onOk: () => {
         const note = [c[20], `ยกเลิก ${docDate(todayIso())} โดย ${user?.name ?? ""}`].filter((x) => x && x !== "-").join(" · ");
         update(i, c.map((x, k) => (k === 5 ? CANCELLED : k === 20 ? note : x)));
+        // ย้ายออก = server ปิดลิงก์ครอบครัวที่ยังใช้ได้ให้ด้วย (api/data residents)
         if (stay) setResident(j, NO_ROOM, "ย้ายออก (Inactive)");
         if (bills.length) setInvoices(invoices.map((x) => (bills.includes(x) ? { ...x, status: VOID } : x)));
-        toast(`ยกเลิกสัญญาแล้ว · ${c[0]} · ${c[2]}`);
+        const q = reopenQuote(c);
+        toast(`ยกเลิกสัญญาแล้ว · ${c[0]} · ${c[2]}${q ? ` · ใบเสนอราคา ${q} เปิดสัญญาใหม่ได้อีกครั้ง` : ""}`);
       },
     });
   };
@@ -747,9 +821,11 @@ export function Contracts() {
     const j = resIndex(c[2], c[1]);
     const note = [c[20], `D/C ${docDate(dc.date)} · ${dc.reason}`].filter((x) => x && x !== "-").join(" · ");
     update(dc.i, c.map((x, k) => (k === 5 ? "สิ้นสุดสัญญา" : k === 20 ? note : x)));
-    if (j >= 0) setResident(j, NO_ROOM, "ย้ายออก (Inactive)");
+    // ย้ายออกเมื่อไม่มีสัญญาอื่นที่ยังใช้งาน (เหมือนยกเลิกสัญญา) · server ปิดลิงก์ครอบครัวให้ตอนย้ายออก
+    const other = rows.some((x, k) => k !== dc.i && x[2] === c[2] && x[1] === c[1] && isLive(x));
+    if (j >= 0 && !other) setResident(j, NO_ROOM, "ย้ายออก (Inactive)");
     setDc(null);
-    toast(`D/C แล้ว · ${c[2]} · คืนห้อง${c[6] && c[6] !== NO_ROOM ? ` ${c[6]}` : ""}ให้ว่าง`);
+    toast(other ? `D/C แล้ว · ${c[0]} · ${c[2]} ยังมีสัญญาอื่นที่ใช้งานอยู่ จึงยังไม่ย้ายออก` : `D/C แล้ว · ${c[2]} · คืนห้อง${c[6] && c[6] !== NO_ROOM ? ` ${c[6]}` : ""}ให้ว่าง`);
     openDc(c, dc.date, dc.reason);
   };
 
@@ -760,7 +836,7 @@ export function Contracts() {
     const startIso = start.length === 3 ? `${Number(start[2]) - 543}-${start[1].padStart(2, "0")}-${start[0].padStart(2, "0")}` : "";
     const days = startIso ? Math.max(0, Math.round((new Date(date).getTime() - new Date(startIso).getTime()) / 864e5)) : undefined;
     const base: DcData = { contract: c, hn: r?.row[6], age: r?.row[1] && r.row[1] !== "-" ? r.row[1] : c[13], date, reason, days, chronic: r?.row[4], vitals: null, meds: [], nextAppt: null,
-      owing: invoices.filter((x) => x.who === c[2] && isOpen(x)).reduce((n, x) => n + balanceOf(x), 0), deposit: Number(String(c[19] ?? "").replace(/,/g, "")) || 0,
+      owing: owingOf(c).reduce((n, x) => n + balanceOf(x), 0), deposit: Number(String(c[19] ?? "").replace(/,/g, "")) || 0,
       depositPaid: depositPaidOf(c[0]), unbilled: unbilled?.sum ?? 0 };
     setDoc({ kind: "dc", d: base, branch: c[1] });
     if (!r?.id) return;
@@ -775,35 +851,54 @@ export function Contracts() {
     } catch { /* ข้อมูลประกอบโหลดไม่ได้ ยังพิมพ์ส่วนหลักได้ */ }
   };
 
-  /** แก้สัญญา: เปลี่ยนห้อง = ย้ายผู้รับบริการตาม · สิ้นสุดสัญญา = ถามว่าจะคืนห้องไหม */
+  /**
+   * แก้สัญญา: เปลี่ยนห้อง = ย้ายผู้รับบริการตาม
+   *  ผู้รับบริการและสาขากำหนดตอนเปิดสัญญา แก้ที่นี่ไม่ได้ (server ผูกสัญญากับผู้รับบริการจากชื่อ แก้ชื่อแล้วสัญญาจะหลุด)
+   *  สิ้นสุด / ยกเลิกสัญญา ต้องทำผ่านปุ่ม D/C กลับบ้าน หรือ ยกเลิกสัญญา (ย้ายออก คืนห้อง ยกเลิกใบค้าง ปิดลิงก์ครอบครัว)
+   *  รอชำระมัดจำ → ใช้งานอยู่ โดยใบแรกเข้ายังไม่ได้ชำระ = ถามยืนยันก่อน
+   */
   const edit = (i: number, v: string[]) => {
     v = v.map((x, k) => ([8, 9, 12].includes(k) ? (x ?? "").replace(/[\s-]/g, "") : x));
     const bad = idPhoneProblem(v);
     if (bad) return toast(bad);
     const before = rows[i];
+    v = v.map((x, k) => (k === 1 || k === 2 ? before[k] : x));
+    if (v[5] !== before[5] && (v[5] === CANCELLED || v[5] === "สิ้นสุดสัญญา")) return toast(v[5] === CANCELLED ? `ยกเลิกสัญญาใช้ปุ่ม "ยกเลิกสัญญา" ในเมนู ⋯ ของสัญญานี้ (ระบบคืนห้องและยกเลิกใบแจ้งหนี้ที่ยังไม่ชำระให้)` : `สิ้นสุดสัญญาใช้ปุ่ม "D/C กลับบ้าน" ในเมนู ⋯ ของสัญญานี้ (ระบบย้ายออก คืนห้อง และพิมพ์ใบจำหน่ายให้)`);
+    if (ended(before) && v[5] !== before[5]) return toast(`สัญญานี้${before[5]}แล้ว เปลี่ยนสถานะไม่ได้ · ถ้าจะกลับมาพักอีกครั้ง ให้เปิดสัญญาใหม่`);
+    const activating = v[5] === "ใช้งานอยู่" && before[5] === "รอชำระเงินมัดจำ";
+    const startPaid = !!before[0] && invoices.some((x) => x.contract === before[0] && isStartInvoice(x) && x.status === PAID);
+    if (activating && !startPaid) return confirm({
+      title: "เปลี่ยนเป็นใช้งานอยู่", okLabel: "ยืนยันเปลี่ยนสถานะ",
+      message: `ใบแจ้งหนี้แรกเข้าของสัญญา ${before[0] || ""} (มัดจำ / ค่าบริการล่วงหน้า) ยังไม่ได้รับชำระ${invoices.some((x) => x.contract === before[0] && x.status !== VOID && isStartInvoice(x)) ? "" : " หรือยังไม่ได้ออกใบ"} · ปกติเมื่อรับชำระใบแรกเข้าครบ ระบบจะถามเปลี่ยนเป็นใช้งานอยู่ให้เอง · ต้องการเปลี่ยนเป็นใช้งานอยู่และให้เข้าพักโดยยังไม่ได้รับเงินใช่หรือไม่`,
+      onOk: () => applyEdit(i, v),
+    });
+    applyEdit(i, v);
+  };
+  const applyEdit = (i: number, v: string[]) => {
+    const before = rows[i];
     const j = resIndex(v[2], v[1]);
     const roomChanged = norm(v[6] || NO_ROOM) !== norm(before[6] || NO_ROOM) && norm(v[6] || NO_ROOM) !== NO_ROOM;
+    let room = j >= 0 ? res.rows[j][2] : NO_ROOM;
     if (roomChanged) {
       const info = findRoom(roomInfos(rooms.rows, res.rows), v[1], v[6]);
       if (!info) return toast(`ไม่พบห้อง ${v[6]} ในสาขา${v[1]} สร้างห้องที่เมนูห้องพักและเตียงก่อน`);
       const problem = roomProblem(info, v[2]);
       if (problem) return toast(problem);
       v = v.map((x, k) => (k === 6 ? info.no : x));
-      if (j >= 0) setResident(j, info.no);
+      room = info.no;
     }
+    // ชำระมัดจำแล้ว (รอชำระ → ใช้งานอยู่): เปลี่ยนจากจองห้องเป็นเข้าพัก · ย้ายห้องและเปลี่ยนสถานะบันทึกครั้งเดียว
+    const checkIn = v[5] === "ใช้งานอยู่" && before[5] === "รอชำระเงินมัดจำ" && j >= 0 && res.rows[j][5].startsWith("มัดจำ");
+    if (j >= 0 && (roomChanged || checkIn)) setResident(j, room, checkIn ? "เข้าอยู่ (Active)" : undefined);
     update(i, v); setDlg(null);
     toast(roomChanged ? `ย้ายห้องแล้ว · ${v[2]} · ไปห้อง ${v[6]}` : `แก้ไขสัญญาแล้ว · ${v[0] || ""} ${v[2]}`.trim());
-    // ชำระมัดจำแล้ว (รอชำระ → ใช้งานอยู่): เปลี่ยนจากจองห้องเป็นเข้าพัก
-    if (v[5] === "ใช้งานอยู่" && before[5] === "รอชำระเงินมัดจำ" && j >= 0 && res.rows[j][5].startsWith("มัดจำ")) setResident(j, res.rows[j][2], "เข้าอยู่ (Active)");
-    if (v[5] === "สิ้นสุดสัญญา" && before[5] !== "สิ้นสุดสัญญา" && j >= 0 && staying(res.rows[j][5] ?? ""))
-      confirm({ title: "สิ้นสุดสัญญา", message: `ต้องการเปลี่ยนสถานะ ${v[2]} เป็นย้ายออก และคืนห้อง ${res.rows[j][2]} ให้ว่างด้วยหรือไม่`, okLabel: "ย้ายออกและคืนห้อง", onOk: () => { setResident(j, NO_ROOM, "ย้ายออก (Inactive)"); toast(`ย้ายออกและคืนห้องแล้ว · ${v[2]}`); } });
   };
 
   if (creating || renew !== null)
     return <ContractForm rooms={rooms.rows} residents={res.rows} contracts={rows} initial={renew !== null ? rows[renew] : fromQuote?.prefill} fromQuote={fromQuote ? fromQuote.quoteNo : undefined} onClose={() => { setCreating(false); setRenew(null); setFromQuote(null); }} onSave={create} />;
   const dcRow = dc ? rows[dc.i] : null;
   const dcRes = dcRow ? res.rows[resIndex(dcRow[2], dcRow[1])] : undefined;
-  const owing = dcRow ? invoices.filter((x) => x.who === dcRow[2] && isOpen(x)) : [];
+  const owing = dcRow ? owingOf(dcRow) : [];
   const unbilledN = unbilled ? unbilled.meds + unbilled.supplies + unbilled.courses + unbilled.sessions : 0;
   /** เงินประกันที่รับไว้จริงของสัญญา: บรรทัด "เงินประกัน" ในใบที่ชำระแล้ว */
   function depositPaidOf(no: string) {
@@ -812,6 +907,14 @@ export function Contracts() {
   const dcMoney = dcRow ? { owing: owing.reduce((n, x) => n + balanceOf(x), 0), depositPaid: depositPaidOf(dcRow[0]), unbilled: unbilled?.sum ?? 0 } : null;
   /** ออกใบสรุปค่าใช้จ่ายก่อนกลับบ้าน: ไปหน้าใบแจ้งหนี้และใบเสร็จ ดึงรายการที่ยังไม่เรียกเก็บเข้าใบให้ (กลับมากด D/C ต่อได้) */
   const billDc = () => { if (!dc) return; billHandoff.set(ids[dc.i], true); setDc(null); go("billing"); };
+  /**
+   * ช่องในกล่องแก้ไขสัญญา: สาขาและผู้รับบริการอ่านอย่างเดียว (กำหนดตอนเปิดสัญญา)
+   *  สถานะเลือกได้แค่ ใช้งานอยู่ / รอชำระมัดจำ · สิ้นสุด/ยกเลิกใช้ปุ่ม D/C หรือ ยกเลิกสัญญา · สัญญาที่จบแล้วเปลี่ยนสถานะไม่ได้
+   */
+  const editFields = (c?: string[]) => withBranches(CONTRACT_FIELDS, branchNames).map((f, k) =>
+    k === 1 || k === 2 ? { ...f, readOnly: true }
+    : k === 5 ? (c && ended(c) ? { ...f, readOnly: true } : { ...f, label: "สถานะ (สิ้นสุดใช้ปุ่ม D/C กลับบ้าน · ยกเลิกใช้ปุ่มยกเลิกสัญญา)", options: LIVE_CONTRACT })
+    : f);
   const shown = rows.map((r, i) => ({ r, i })).filter(({ r }) => filter.startsWith("ทั้งหมด") || r[5] === filter);
   /** ส่งออกทะเบียนสัญญาตามแท็บที่เลือก (ผู้จัดการขึ้นไป) · มีเลขบัตรประชาชนและที่อยู่ จึงบันทึกในบันทึกการใช้งานระบบทุกครั้ง */
   const boss = user?.role === "Branch Admin" || user?.role === "Global Admin";
@@ -842,7 +945,14 @@ export function Contracts() {
           <button className="btn-soft" onClick={() => setSample(true)}><Icon name="print" className="h-4 w-4" /> ตัวอย่าง สบส. (แบบฟอร์มเปล่า)</button>
         </>}
       />
-      <MetricGrid items={[{label:"สัญญาทั้งหมด",value:rows.length,unit:"สัญญา",accent:true,icon:"doc"},{label:"ใช้งานอยู่",value:rows.filter(r=>r[5]==="ใช้งานอยู่").length,unit:"สัญญา",icon:"check"},{label:"รอชำระมัดจำ",value:rows.filter(r=>r[5]==="รอชำระเงินมัดจำ").length,unit:"สัญญา",icon:"receipt"},{label:"สิ้นสุดสัญญา",value:rows.filter(r=>r[5]==="สิ้นสุดสัญญา").length,unit:"สัญญา",icon:"files",note:rows.some(r=>r[5]===CANCELLED)?`ยกเลิก ${rows.filter(r=>r[5]===CANCELLED).length} สัญญา`:undefined}]} /><Section title="ทะเบียนสัญญาบริการ" actions={<Tabs tabs={["ใช้งานอยู่", "รอชำระเงินมัดจำ", "สิ้นสุดสัญญา", CANCELLED, "ทั้งหมด"]} value={filter} onChange={setFilter} />}>
+      <Section title="ทะเบียนสัญญาบริการ">
+        <StatFilter label="กรองสัญญา" value={filter} onChange={setFilter} items={[
+          { k: "ทั้งหมด", t: "ทั้งหมด", n: rows.length, tone: "all" },
+          { k: "ใช้งานอยู่", t: "ใช้งานอยู่", n: rows.filter((r) => r[5] === "ใช้งานอยู่").length, tone: "good" },
+          { k: "รอชำระเงินมัดจำ", t: "รอชำระมัดจำ", n: rows.filter((r) => r[5] === "รอชำระเงินมัดจำ").length, tone: "warn" },
+          { k: "สิ้นสุดสัญญา", t: "สิ้นสุดแล้ว", n: rows.filter((r) => r[5] === "สิ้นสุดสัญญา").length, tone: "muted" },
+          ...(rows.some((r) => r[5] === CANCELLED) ? [{ k: CANCELLED, t: CANCELLED, n: rows.filter((r) => r[5] === CANCELLED).length, tone: "bad" as const }] : []),
+        ]} />
         <DataTable
           columns={CONTRACT_COLS}
           rows={shown.map(({ r }) => [r[0] || "กำลังออกเลข…", r[1], r[2], r[6] || NO_ROOM, r[3], contractMonthTotal(r) ? money(contractMonthTotal(r)) : "-", r[5]])}
@@ -870,7 +980,7 @@ export function Contracts() {
         onBill={dlg && can(user, "billing") && !ended(rows[dlg.i]) ? () => { const i = dlg.i; setDlg(null); billContract(i); } : undefined} />
       <FormDialog
         open={dlg?.mode === "edit"} mode="edit" title="แก้ไขสัญญา"
-        fields={withBranches(CONTRACT_FIELDS, branchNames)} value={dlg ? rows[dlg.i] : undefined} onClose={() => setDlg(null)}
+        fields={editFields(dlg ? rows[dlg.i] : undefined)} value={dlg ? rows[dlg.i] : undefined} onClose={() => setDlg(null)}
         onSave={(v) => { if (dlg) edit(dlg.i, v); }} saveLabel="บันทึกการแก้ไข"
       />
       <Modal open={!!cards} wide title={cards ? `รูปบัตรประชาชน · ${rows[cards.i]?.[2] ?? ""} (${rows[cards.i]?.[0] || "สัญญาใหม่"})` : ""} onClose={() => setCards(null)}
@@ -907,7 +1017,7 @@ export function Contracts() {
             <p className="mt-1 text-xs text-gold-500">ใบจำหน่ายจะพิมพ์ยอดนี้ให้ญาติเซ็นรับทราบ · ออกใบสรุปค่าใช้จ่ายก่อน ยอดคืนจะถูกต้องที่สุด</p>
           </div>}
           {owing.length > 0 && <p role="alert" className="room-warn">ยังมียอดค้างชำระ {money(owing.reduce((n, x) => n + balanceOf(x), 0))} บาท ({owing.length} ใบ) เรียกเก็บที่เมนูใบแจ้งหนี้และใบเสร็จก่อนหรือหลัง D/C ได้</p>}
-          <p className="text-xs text-gold-500">ระบบจะเปลี่ยนสัญญาเป็นสิ้นสุด เปลี่ยนผู้รับบริการเป็นย้ายออก คืนห้องให้ว่าง แล้วเปิดใบจำหน่ายให้พิมพ์</p>
+          <p className="text-xs text-gold-500">ระบบจะเปลี่ยนสัญญาเป็นสิ้นสุด เปลี่ยนผู้รับบริการเป็นย้ายออก คืนห้องให้ว่าง ปิดลิงก์ครอบครัว แล้วเปิดใบจำหน่ายให้พิมพ์</p>
         </div>}
       </Modal>
       <PrintModal open={!!doc} title={doc?.kind === "contract" ? "สัญญาจ้างดูแลผู้สูงอายุ หรือผู้มีภาวะพึ่งพิง" : doc?.kind === "renew" ? "บันทึกต่อท้ายสัญญา" : "ใบจำหน่ายผู้รับบริการ (D/C)"} onClose={() => setDoc(null)}
@@ -918,7 +1028,7 @@ export function Contracts() {
       </PrintModal>
       <Modal open={termsDlg !== null} wide title="เงื่อนไขอื่น ๆ เพิ่มเติม (ข้อ 5.4 ในสัญญา)" onClose={() => setTermsDlg(null)}
         footer={<><button className="btn-soft" onClick={() => setTermsDlg(null)}>ยกเลิก</button><button className="btn-primary" onClick={saveTerms}>บันทึกเงื่อนไขเพิ่มเติม</button></>}>
-        <p className="form-intro">ข้อความหลักของสัญญา (ระเบียบข้อ 1–5 หนังสือยินยอม มาตรการเข้าเยี่ยม) ใช้ตามแบบฟอร์มของ KIN · ช่องนี้สำหรับเงื่อนไขที่เพิ่มเอง พิมพ์บรรทัดละ 1 ข้อ ขึ้นในข้อ 5.4 ของสัญญาทุกฉบับ · ว่าง = เว้นเส้นให้เขียนด้วยมือ</p>
+        <p className="form-intro">เงื่อนไขเพิ่มเติม บรรทัดละ 1 ข้อ (ขึ้นในข้อ 5.4) · เว้นว่างได้</p>
         <textarea rows={12} value={termsDlg ?? ""} onChange={(e) => setTermsDlg(e.target.value)} aria-label="ข้อตกลงในสัญญา" />
       </Modal>
       <BlankForm open={sample} title="หนังสือสัญญาว่าจ้างบริการดูแลผู้สูงอายุ (แบบฟอร์มเปล่า)" onClose={() => setSample(false)}
@@ -941,6 +1051,9 @@ export function Residents() {
   const branchNames = useBranchNames();
   const { rows, ids, update, remove } = useCrud("residents", RESIDENTS);
   const { rows: roomRows } = useCrud("rooms", []);
+  const { rows: conRows } = useCrud("contracts", CONTRACTS);
+  /** สัญญาของผู้รับบริการคนนี้ (ชื่อ + สาขา) · live = ใช้งานอยู่ / รอชำระมัดจำ */
+  const contractsOf = (r: string[], live = false) => conRows.filter((c) => norm(c[2] ?? "") === norm(r[0]) && c[1] === r[3] && (!live || isLive(c)));
   const { confirm, toast, go } = useApp();
   const { user } = useSession();
   const [sample, setSample] = useState(false);
@@ -950,6 +1063,7 @@ export function Residents() {
   const [hub, setHub] = useState(false);
   const [roomF, setRoomF] = useState("");
   const [statusF, setStatusF] = useState("");
+  const canDelete = user?.role === "Global Admin" || user?.role === "Branch Admin";
   const norm = (x: string) => x.trim().replace(/\s+/g, " ");
   // ตัวกรองห้อง: ห้องที่สร้างไว้ (เรียงตามสาขา ชั้น เลขห้อง) + ห้องที่บันทึกไว้แต่ยังไม่ได้สร้าง + "ยังไม่มีห้อง"
   const NO_ROOM_F = "ยังไม่มีห้อง";
@@ -1003,7 +1117,7 @@ export function Residents() {
           render={(k, col, value) => {
             const r = shown[k]?.r;
             if (!r) return undefined;
-            if (col === 1) { const a = allergy[`${r[0]}|${r[3]}`]; return a ? <>{value} <span className="v-check" title={a}>{/แพ้ยา/.test(a) ? "แพ้ยา" : "แพ้อาหาร"}</span></> : undefined; }
+            if (col === 1) { const a = allergy[`${r[0]}|${r[3]}`]; return <span className="flex items-center gap-2.5"><Avatar kind="resident" id={ids[shown[k].i]} name={r[0]} size={32} /><span>{value}{a && <> <span className="v-check" title={a}>{/แพ้ยา/.test(a) ? "แพ้ยา" : "แพ้อาหาร"}</span></>}</span></span>; }
             if (col === 3 && noRoomOf(r)) return <span className="text-gold-500">ยังไม่มีห้อง</span>;
             return undefined;
           }}
@@ -1015,7 +1129,11 @@ export function Residents() {
             { label: "ประวัติ", more: true, onClick: (k) => setProfile(ids[shown[k].i]) },
             { label: "ลิงก์ครอบครัว", more: true, onClick: (k) => setFamily(ids[shown[k].i]) },
             { label: "แก้ไขข้อมูล", more: true, onClick: (k) => setDlg({ mode: "edit", i: shown[k].i }) },
-            { label: "ลบ…", danger: true, more: true, onClick: (k) => confirm({ title: "ลบข้อมูลผู้รับบริการ", message: `ต้องการลบ ${shown[k].r[0]} ใช่หรือไม่`, danger: true, okLabel: "ลบ", onOk: () => { const n = shown[k].r[0]; remove(shown[k].i); toast(`ลบผู้รับบริการแล้ว · ${n}`); } }) },
+            // ลบได้เฉพาะผู้จัดการสาขา/ผู้บริหาร และคนที่ไม่เคยมีสัญญา (เช่น บันทึกผิด) · คนที่มีสัญญาให้ D/C / ย้ายออกแทน (server ตรวจซ้ำ)
+            { label: "ลบ…", danger: true, more: true, hidden: (k) => !canDelete || contractsOf(shown[k].r).length > 0,
+              onClick: (k) => confirm({ title: "ลบข้อมูลผู้รับบริการ", danger: true, okLabel: "ลบถาวร",
+                message: `ต้องการลบ ${shown[k].r[0]} ออกจากทะเบียนใช่หรือไม่ · ข้อมูลแรกรับ บันทึกทางคลินิก งานประจำ ลิงก์และข่าวถึงครอบครัวของคนนี้จะถูกลบถาวร กู้คืนไม่ได้ · ถ้าไม่ได้พักแล้ว แนะนำให้แก้สถานะเป็น "ย้ายออก" แทน ประวัติจะยังอยู่ครบ`,
+                onOk: () => { const n = shown[k].r[0]; remove(shown[k].i); toast(`ลบผู้รับบริการแล้ว · ${n}`); } }) },
           ]}
         />
       </Section>
@@ -1026,6 +1144,14 @@ export function Residents() {
           if (!dlg) return;
           if (!norm(v[0])) return toast("กรุณากรอกชื่อ-นามสกุล");
           if (rows.some((r, j) => j !== dlg.i && norm(r[0]) === norm(v[0]) && r[3] === v[3])) return toast(`มีผู้รับบริการชื่อ "${norm(v[0])}" ในสาขา${v[3]}แล้ว กรุณาเพิ่มชื่อเล่นหรือเลขห้องต่อท้ายเพื่อแยกกัน`);
+          const live = contractsOf(rows[dlg.i], true);
+          // ย้ายสาขาไม่ได้ระหว่างมีสัญญา (สัญญา งานประจำ ลิงก์ครอบครัว ผูกกับสาขาเดิม) · server ตรวจซ้ำ
+          if (v[3] !== rows[dlg.i][3] && live.length) return toast(`${rows[dlg.i][0]} ยังมีสัญญา ${live[0][0] || ""} (${live[0][5]}) ที่สาขา${rows[dlg.i][3]} จึงย้ายสาขาไม่ได้ · ให้ D/C สิ้นสุดสัญญาที่สาขาเดิมก่อน แล้วเปิดสัญญาใหม่ที่สาขา${v[3]}`);
+          // ย้ายออกระหว่างมีสัญญา: ต้อง D/C หรือยกเลิกสัญญาก่อน (ระบบย้ายออก คืนห้อง และปิดลิงก์ครอบครัวให้เอง)
+          if (v[5].startsWith("ย้ายออก") && !rows[dlg.i][5].startsWith("ย้ายออก") && live.length) {
+            const msg = `${rows[dlg.i][0]} ยังมีสัญญา ${live[0][0] || ""} (${live[0][5]}) · ให้ "D/C กลับบ้าน" หรือ "ยกเลิกสัญญา" ที่เมนูสัญญาบริการก่อน ระบบจะเปลี่ยนเป็นย้ายออกและคืนห้องให้เอง`;
+            return can(user, "contracts") ? confirm({ title: "ยังมีสัญญาที่ใช้งานอยู่", message: msg, okLabel: "ไปที่สัญญาบริการ", onOk: () => { setDlg(null); go("contracts"); } }) : toast(`${msg} (แจ้งผู้ดูแลสัญญา)`);
+          }
           // ห้องที่สร้างไว้ในเมนูห้องพักและเตียง: เต็มหรือปิดปรับปรุงย้ายเข้าไม่ได้
           const problem = staying(v[5] ?? "") ? roomProblem(findRoom(roomInfos(roomRows, rows), v[3], v[2]), rows[dlg.i][0]) : "";
           if (problem) return toast(problem);
@@ -1033,7 +1159,8 @@ export function Residents() {
           const oldRow = rows[dlg.i];
           const roomNew = findRoom(roomInfos(roomRows, rows), v[3], v[2]);
           const bed = oldRow[2] === v[2] ? oldRow[7] ?? "" : freeBed(roomNew, oldRow[0]);
-          update(dlg.i, [norm(v[0]), v[1], v[2], v[3], v[4], v[5], oldRow[6] ?? "", bed]); setDlg(null); toast("บันทึกการแก้ไขแล้ว · ข้อมูลที่เกี่ยวข้องเปลี่ยนชื่อตามให้แล้ว");
+          // เปลี่ยนห้อง: server เปลี่ยนห้องในสัญญาที่ใช้งานอยู่ตาม แล้วดึงทะเบียนสัญญาใหม่
+          update(dlg.i, [norm(v[0]), v[1], v[2], v[3], v[4], v[5], oldRow[6] ?? "", bed]).then(() => refreshData("contracts")); setDlg(null); toast("บันทึกการแก้ไขแล้ว · ข้อมูลที่เกี่ยวข้องเปลี่ยนชื่อตามให้แล้ว");
         }} saveLabel="บันทึกการแก้ไข"
       />
       <ResidentProfile id={profile} onClose={() => setProfile(null)} />

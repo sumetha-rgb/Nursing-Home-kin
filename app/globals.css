@@ -1572,8 +1572,6 @@ button.room-card:hover:not(.is-full):not(.is-closed) { border-color:#c9a96a; box
 .ka-rank-bar { display:block; height:5px; margin-top:5px; border-radius:5px; background:#EDE5D6; overflow:hidden; }
 .ka-rank-bar i { display:block; height:100%; background:#b89560; border-radius:5px; }
 .ka-score { font-size:15px; color:#8B6E3E; flex:none; }
-.ka-praise { flex:none; min-height:36px; padding:0 12px; border-radius:999px; border:1px solid #E8D8B7; background:#fff; color:#8B6E3E; font-size:12.5px; font-weight:600; }
-.ka-praise.is-done { background:#8B6E3E; border-color:#8B6E3E; color:#fff; }
 /* ตารางเวร */
 .ka-next-shift { display:grid; gap:2px; border-radius:22px; padding:16px; color:#fff; background:linear-gradient(140deg,#8B6E3E,#a98654); box-shadow:0 12px 24px -16px rgba(80,55,15,.6); }
 .ka-next-shift small { font-size:12px; opacity:.85; }
@@ -2110,3 +2108,110 @@ button.room-card:hover:not(.is-full):not(.is-closed) { border-color:#c9a96a; box
 .ka-push-a button.is-go { background:#8b6e3e; border-color:#8b6e3e; color:#fff; font-weight:600; }
 .ka-push-a button:disabled { opacity:.6; }
 .ka-push-steps { margin:4px 0 0; padding-left:18px; font-size:13px; line-height:1.5; color:#6a5532; display:grid; gap:2px; list-style:decimal; }
+
+/* ---------- ปุ่มกรองที่มีตัวเลข (แทนแถวกล่องตัวเลข) ---------- */
+.stat-row { display:flex; flex-wrap:wrap; align-items:center; gap:8px 16px; margin-bottom:14px; }
+.stat-row .stat-filter { margin-bottom:0; }
+.stat-sum { margin-left:auto; font-size:13.5px; color:#5b4b31; }
+.stat-sum b { color:#2f2618; font-weight:600; font-variant-numeric:tabular-nums; }
+@media (max-width:640px) { .stat-sum { margin-left:0; } }
+
+/* ---------- บันทึกการใช้งานระบบ: เส้นเวลาแบ่งตามวัน ---------- */
+.al-day { font-size:12.5px; font-weight:600; color:#8a7457; letter-spacing:.03em; margin:0 0 6px 2px; }
+.al-list { border:1px solid var(--border); border-radius:14px; overflow:hidden; background:#fff; }
+.al-list li { border-top:1px solid #f1ebe0; }
+.al-list li:first-child { border-top:0; }
+.al-list li.is-alert { background:#fff6f4; box-shadow:inset 3px 0 0 #a3221b; }
+.al-list button { display:grid; grid-template-columns:52px 1fr auto; gap:12px; align-items:center; width:100%; text-align:left; padding:10px 14px; }
+.al-list button:hover { background:#fbf7ef; }
+.al-list li.is-alert button:hover { background:#fdeeea; }
+.al-list time { font-size:13px; color:#8a7457; font-variant-numeric:tabular-nums; }
+.al-what { display:grid; gap:2px; min-width:0; }
+.al-top { display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px; }
+.al-top b { font-size:14px; font-weight:600; color:#2f2618; }
+.al-top small, .al-what > small { font-size:12.5px; color:#8a7457; }
+.al-what > small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.al-go { color:#c9b48c; }
+@media (max-width:560px) { .al-list button { grid-template-columns:44px 1fr; } .al-go { display:none; } }
+.al-filters { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px; }
+.al-filters > * { flex:1 1 180px; min-width:0; }
+.al-filters > .table-search { flex:2 1 260px; }
+.al-filters select, .al-filters input, .al-filters .table-search { min-height:42px; height:42px; padding-top:0; padding-bottom:0; }
+.al-filters .table-search { height:auto; }
+.al-filters .table-search input { height:42px; min-height:42px; }
+.al-filters .table-search svg { top:12px; }
+.al-date { display:flex; gap:6px; }
+.al-date input { flex:1; min-width:0; }
+
+/* ---------- รูปโปรไฟล์ ---------- */
+.avatar { display:inline-grid; place-items:center; flex:none; border-radius:50%; overflow:hidden; background:linear-gradient(135deg,#F4EBD7,#E8D8B7); color:#8B6E3E; font-weight:600; line-height:1; }
+.avatar img { width:100%; height:100%; object-fit:cover; display:block; }
+.avatar-edit { display:flex; align-items:center; gap:14px; }
+.avatar-edit-pic { position:relative; border-radius:50%; flex:none; }
+.avatar-edit-pic:focus-visible { outline:2px solid #8b6e3e; outline-offset:3px; }
+.avatar-edit-cam { position:absolute; right:-2px; bottom:-2px; width:30px; height:30px; border-radius:50%; display:grid; place-items:center; background:#8b6e3e; color:#fff; border:2px solid #fff; }
+.avatar-edit-a { display:flex; flex-direction:column; align-items:flex-start; gap:4px; }
+.avatar-edit-a button { font-size:14px; font-weight:600; color:#8b6e3e; padding:4px 0; }
+.avatar-edit-a button.is-del { font-weight:400; color:#a3221b; font-size:13px; }
+.avatar-edit-a button:disabled { opacity:.6; }
+
+/* ---------- KinApp: ปุ่มชื่อ · ป้ายแนะนำ · หน้าฉัน · รายชื่อกดได้ ---------- */
+.ka-me { display:inline-flex; align-items:center; gap:6px; max-width:44vw; padding:3px 10px 3px 3px; border:1px solid #e3d3b2; border-radius:999px; background:#fff; font-size:14px; font-weight:600; color:#4a3a1f; }
+.ka-me span:not(.avatar) { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ka-me svg { color:#a58e65; flex:none; }
+.ka-me.is-on { border-color:#8b6e3e; background:#f6eedd; }
+.ka-coach { position:absolute; right:12px; top:calc(100% + 8px); z-index:40; width:min(300px, calc(100vw - 24px)); background:#2f2618; color:#fff; border-radius:14px; padding:12px 14px; box-shadow:0 14px 30px -12px rgba(0,0,0,.45); }
+.ka-coach::before { content:""; position:absolute; top:-6px; right:34px; width:12px; height:12px; background:#2f2618; transform:rotate(45deg); }
+.ka-coach p { font-size:13.5px; line-height:1.5; }
+.ka-coach b { color:#f3d9a4; }
+.ka-coach button { margin-top:8px; font-size:13.5px; font-weight:600; color:#2f2618; background:#f3d9a4; border-radius:10px; padding:6px 14px; }
+.ka-me-card { padding:16px; border:1px solid #ece2cf; border-radius:20px; background:#fff; }
+.ka-me-name { display:grid; line-height:1.3; margin-bottom:2px; }
+.ka-me-name b { font-size:17px; color:#2f2618; }
+.ka-me-name small { font-size:12.5px; color:#8a7457; font-weight:400; }
+.ka-set { border:1px solid #ece2cf; border-radius:18px; background:#fff; overflow:hidden; }
+.ka-set li + li { border-top:1px solid #f1ebe0; }
+.ka-set button { display:flex; align-items:center; gap:12px; width:100%; min-height:54px; padding:8px 16px; text-align:left; color:#8b6e3e; }
+.ka-set button:active { background:#faf6ee; }
+.ka-set button > span:not(.ka-set-aa) { flex:1; min-width:0; display:grid; line-height:1.3; }
+.ka-set b { font-size:15px; font-weight:500; color:#2f2618; }
+.ka-set small { font-size:12.5px; color:#8a7457; }
+.ka-set em { font-style:normal; font-size:12.5px; font-weight:600; border-radius:999px; padding:2px 10px; background:#f1ebe0; color:#786443; }
+.ka-set em.is-on { background:#e6f3ec; color:#1f6b45; }
+.ka-set-aa { width:20px; text-align:center; font-weight:700; font-size:15px; }
+.ka-set-go { color:#c9b48c; }
+.ka-set .is-out b, .ka-set .is-out { color:#a3221b; }
+.ka-row-main { border-radius:14px; transition:background .12s; }
+.ka-row-main:active { background:#faf6ee; }
+.ka-row-go { margin-left:auto; color:#c9b48c; flex:none; }
+
+/* ---------- หน้าเข้าสู่ระบบ KinApp: ปุ่มไอคอนติดตั้งแอป ---------- */
+.auth-install-btn { position:relative; display:inline-flex; align-items:center; gap:7px; height:42px; margin-left:auto; margin-right:12px; padding:0 16px 0 13px; border-radius:999px; border:1px solid #8b6e3e; background:#8b6e3e; color:#fff; font-size:14px; font-weight:600; box-shadow:0 8px 18px -10px rgba(90,60,20,.6); white-space:nowrap; }
+.auth-install-btn:hover { background:#7a5f33; }
+.auth-install-btn:focus-visible { outline:2px solid #8b6e3e; outline-offset:3px; }
+.auth-install-btn i { position:absolute; top:-3px; right:-3px; width:12px; height:12px; border-radius:50%; background:#c0392b; border:2px solid #fff; }
+@media (prefers-reduced-motion:no-preference) { .auth-install-btn i { animation:install-ping 2s ease-out infinite; } @keyframes install-ping { 0% { box-shadow:0 0 0 0 rgba(192,57,43,.5); } 70% { box-shadow:0 0 0 8px rgba(192,57,43,0); } 100% { box-shadow:0 0 0 0 rgba(192,57,43,0); } } }
+.install-note { font-size:12.5px; line-height:1.6; color:#8a7457; padding:10px 12px; border-radius:12px; background:#f7f3ea; }
+.install-why { padding:12px 14px; border-radius:14px; background:#fbf6ec; }
+.install-why ul { margin-top:6px; display:grid; gap:2px; padding-left:18px; list-style:disc; }
+.install-steps { display:grid; gap:6px; padding-left:20px; list-style:decimal; }
+.topbar-photo { padding:0; overflow:hidden; cursor:pointer; background:#eee2c9; }
+.topbar-photo .avatar { width:100% !important; height:100% !important; font-size:12px !important; }
+.topbar-photo:focus-visible { outline:2px solid #8b6e3e; outline-offset:2px; }
+
+/* ---------- KinApp: การ์ดผู้รับบริการ (กดทั้งใบเพื่อดูข้อมูล) ---------- */
+.ka-res-list { display:grid; gap:10px; }
+.ka-res { border:1px solid #ece2cf; border-radius:18px; background:#fff; box-shadow:0 6px 16px -14px rgba(60,40,10,.5); overflow:hidden; }
+.ka-res-main { display:flex; align-items:center; gap:12px; width:100%; padding:12px 14px 10px; text-align:left; transition:background .12s; }
+.ka-res-main:active { background:#faf6ee; }
+.ka-res-main:focus-visible { outline:2px solid #8b6e3e; outline-offset:-2px; border-radius:18px; }
+.ka-res-main .ka-t { flex:1; min-width:0; }
+.ka-res-go { display:inline-flex; align-items:center; gap:2px; flex:none; align-self:flex-start; margin-top:2px; font-size:13px; font-weight:600; color:#8b6e3e; }
+.ka-res-foot { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 14px 10px 72px; border-top:1px dashed #efe6d4; }
+.ka-res-st { display:inline-flex; align-items:center; gap:6px; font-size:12.5px; color:#8a5a12; }
+.ka-res-st i { width:8px; height:8px; border-radius:50%; background:#d08a1c; }
+.ka-res-st.is-done { color:#1f6b45; }
+.ka-res-st.is-done i { background:#3f8a63; }
+.ka-res-vital { display:inline-flex; align-items:center; gap:6px; min-height:34px; padding:0 12px; border-radius:11px; border:1px solid #e3d3b2; background:#fffaf0; font-size:13px; font-weight:600; color:#8b6e3e; }
+.ka-res-vital:active { background:#f6eedd; }
+@media (max-width:360px) { .ka-res-foot { padding-left:14px; } }

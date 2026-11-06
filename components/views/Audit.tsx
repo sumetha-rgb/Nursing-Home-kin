@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import Icon from "@/components/Icon";
-import { DataTable, MetricGrid, Modal, PageHeader, Section, Select, Tabs } from "@/components/ui";
+import { Modal, PageHeader, Section, Select, StatFilter } from "@/components/ui";
 import { ACTION_GROUPS, ACTION_LABEL, AREA_LABEL, areaLabel, displayValue, FIELD_LABEL, normValue } from "@/lib/auditLabels";
 import { ROLE_INFO, Role } from "@/lib/roles";
 
@@ -81,61 +81,66 @@ export function AuditLog() {
 
   const global = data?.scope.role === "Global Admin";
   const s = data?.stats;
-  const columns = global
-    ? ["วันเวลา", "ผู้ทำรายการ", "สาขาของข้อมูล", "ส่วนของระบบ", "การกระทำ", "รายการ", "สิ่งที่เปลี่ยน"]
-    : ["วันเวลา", "ผู้ทำรายการ", "ส่วนของระบบ", "การกระทำ", "รายการ", "สิ่งที่เปลี่ยน"];
-  const rows = items.map((l) => {
-    const who = `${l.actor_name ?? "-"}${l.actor_role ? ` (${roleTh(l.actor_role)})` : ""}`;
-    const base = [when(l.at), who];
-    const rest = [areaLabel(l.area), ACTION_LABEL[l.action] ?? l.action, l.summary ?? "-", changes(l)];
-    return global ? [...base, l.branch_name ?? "ส่วนกลาง", ...rest] : [...base, ...rest];
-  });
+  // เส้นเวลาแบ่งตามวัน (เวลาไทย) · ลบ / เข้าสู่ระบบไม่สำเร็จ = แถบแดง (เรื่องที่ต้องตรวจ)
+  const dayOf = (at: string) => new Date(at).toLocaleDateString("en-CA", { timeZone: "Asia/Bangkok" });
+  const timeOf = (at: string) => new Date(at).toLocaleTimeString("th-TH", { timeZone: "Asia/Bangkok", hour: "2-digit", minute: "2-digit" });
+  const dayLabel = (d: string) => {
+    const t = today(), y = new Date(Date.now() - 864e5).toLocaleDateString("en-CA", { timeZone: "Asia/Bangkok" });
+    if (d === t) return "วันนี้";
+    if (d === y) return "เมื่อวาน";
+    return new Date(`${d}T12:00:00`).toLocaleDateString("th-TH", { weekday: "short", day: "numeric", month: "short", year: "2-digit" });
+  };
+  const ALERT = ["login_failed", "delete", "clear"];
+  const toneOf = (a: string) => (ALERT.includes(a) ? "status-danger" : a === "create" || a === "register" || a === "approve" ? "status-success" : ["update", "replace", "permissions", "reset_password", "view_idcard", "export"].includes(a) ? "status-warning" : "status-neutral");
+  const days = [...new Set(items.map((l) => dayOf(l.at)))];
 
   return (
     <>
       <PageHeader
         title="บันทึกการใช้งานระบบ"
-        sub={global
-          ? "ทุกการเพิ่ม แก้ไข ลบข้อมูล การจัดการบัญชี และการเข้าสู่ระบบ ของทุกสาขา"
-          : `ทุกการเพิ่ม แก้ไข ลบข้อมูล และการเข้าสู่ระบบ เฉพาะสาขา${data?.scope.branch ?? ""}`}
+        sub={global ? "ใครทำอะไร เมื่อไร · ทุกสาขา" : `ใครทำอะไร เมื่อไร · สาขา${data?.scope.branch ?? ""}`}
         actions={<button className="btn-soft" onClick={() => load()} disabled={busy}><Icon name="refresh" className="h-4 w-4" /> รีเฟรช</button>}
       />
 
-      {!global && data && (
-        <div className="mb-5 flex items-start gap-3 rounded-xl border border-cream-300 bg-white px-4 py-3 text-sm text-gold-700">
-          <Icon name="lock" className="mt-0.5 h-4 w-4 shrink-0" />
-          <span>คุณเห็นเฉพาะประวัติของสาขา <b>{data.scope.branch}</b> ส่วนประวัติของสาขาอื่นและข้อมูลส่วนกลางดูได้เฉพาะผู้บริหารองค์กร</span>
-        </div>
-      )}
-
-      {s && <MetricGrid items={global ? [
-        { label: "รายการวันนี้ (ทุกสาขา)", value: s.total, unit: "รายการ", icon: "table", accent: true },
-        { label: "การแก้ไขข้อมูล", value: s.changes, unit: "ครั้ง", icon: "doc", note: `ลบ ${s.deletes} ครั้ง` },
-        { label: "เข้าสู่ระบบ", value: s.logins, unit: "ครั้ง", icon: "user" },
-        { label: "เข้าสู่ระบบไม่สำเร็จ", value: s.failed, unit: "ครั้ง", icon: "alert", note: s.failed >= 5 ? "ควรตรวจสอบ" : "ปกติ" },
-      ] : [
-        { label: "รายการวันนี้ของสาขา", value: s.total, unit: "รายการ", icon: "table", accent: true },
-        { label: "การแก้ไขข้อมูล", value: s.changes, unit: "ครั้ง", icon: "doc" },
-        { label: "การลบข้อมูล", value: s.deletes, unit: "ครั้ง", icon: "alert" },
-        { label: "เข้าสู่ระบบ", value: s.logins, unit: "ครั้ง", icon: "user", note: s.failed ? `ไม่สำเร็จ ${s.failed} ครั้ง` : undefined },
-      ]} />}
-
-      <Section
-        title="รายการล่าสุด"
-        sub="กดดูเพื่อเปิดค่าก่อนและหลังแก้ไข"
-        actions={<Tabs tabs={[ALL, ...Object.keys(ACTION_GROUPS)]} value={group} onChange={setGroup} />}
-      >
-        <div className={`mb-4 grid gap-3 ${global ? "sm:grid-cols-2 lg:grid-cols-4" : "sm:grid-cols-3"}`}>
-          <div className="table-search max-w-none"><Icon name="search" /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="ค้นหาชื่อผู้ทำรายการ หรือรายการ" aria-label="ค้นหาประวัติ" /></div>
+      <Section>
+        <StatFilter label="กรองรายการ" value={group} onChange={setGroup} items={[
+          { k: ALL, t: ALL, tone: "all" },
+          { k: "ต้องตรวจ", t: "ต้องตรวจ", tone: "bad" },
+          ...Object.keys(ACTION_GROUPS).filter((g) => g !== "ต้องตรวจ").map((g) => ({ k: g, t: g, tone: "muted" as const })),
+        ]} summary={s ? <>วันนี้ <b>{s.total}</b> รายการ{s.failed ? <> · เข้าระบบไม่สำเร็จ <b className="!text-red-700">{s.failed}</b></> : null}{s.deletes ? <> · ลบ <b className="!text-red-700">{s.deletes}</b></> : null}</> : undefined} />
+        <div className="al-filters">
+          <div className="table-search max-w-none"><Icon name="search" /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="ค้นหาชื่อ หรือรายการ" aria-label="ค้นหาชื่อผู้ทำรายการ หรือรายการ" /></div>
           <select value={area} onChange={(e) => setArea(e.target.value)} aria-label="ส่วนของระบบ">{AREAS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
-          {global && <Select aria-label="สาขา" placeholder="ทุกสาขา" options={data?.branches ?? []} value={branch} onChange={setBranch} />}
-          <div className="flex gap-2">
+          {global && <div><Select aria-label="สาขา" placeholder="ทุกสาขา" options={data?.branches ?? []} value={branch} onChange={setBranch} /></div>}
+          <div className="al-date">
             <input type="date" value={date} onChange={(e) => setDate(e.target.value)} aria-label="วันที่" />
-            {date ? <button className="btn-soft shrink-0" onClick={() => setDate("")}>ทุกวัน</button> : <button className="btn-soft shrink-0" onClick={() => setDate(today())}>วันนี้</button>}
+            {date && <button className="btn-soft shrink-0" onClick={() => setDate("")}>ทุกวัน</button>}
           </div>
         </div>
         {error && <p role="alert" className="mb-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
-        <DataTable search={false} columns={columns} rows={rows} badgeCols={[global ? 4 : 3]} empty={busy ? "กำลังโหลด…" : "ยังไม่มีประวัติตามเงื่อนไขนี้"} actions={[{ label: "รายละเอียด", onClick: (i) => setOpen(items[i]) }]} />
+        {!items.length ? <p className="empty-state">{busy ? "กำลังโหลด…" : "ยังไม่มีประวัติตามเงื่อนไขนี้"}</p>
+          : <div className="space-y-4">{days.map((d) => (
+            <div key={d}>
+              <p className="al-day">{dayLabel(d)}</p>
+              <ul className="al-list">
+                {items.filter((l) => dayOf(l.at) === d).map((l) => {
+                  const ch = changes(l);
+                  return (
+                    <li key={l.id} className={ALERT.includes(l.action) ? "is-alert" : ""}>
+                      <button type="button" onClick={() => setOpen(l)} aria-label={`ดูรายละเอียด ${ACTION_LABEL[l.action] ?? l.action} ${l.summary ?? ""}`}>
+                        <time>{timeOf(l.at)}</time>
+                        <span className="al-what">
+                          <span className="al-top"><span className={`status-badge ${toneOf(l.action)}`}>{ACTION_LABEL[l.action] ?? l.action}</span><b>{l.actor_name ?? "-"}</b><small>{roleTh(l.actor_role)}{global && l.branch_name ? ` · ${l.branch_name}` : ""}</small></span>
+                          <small>{areaLabel(l.area)}{l.summary ? ` · ${l.summary}` : ""}{ch !== "-" ? ` · ${ch}` : ""}</small>
+                        </span>
+                        <Icon name="chevron" className="al-go h-4 w-4 -rotate-90" />
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ))}</div>}
         {data?.more && <div className="mt-4 text-center"><button className="btn-soft" disabled={busy} onClick={() => load(items[items.length - 1]?.id)}>{busy ? "กำลังโหลด…" : "โหลดรายการก่อนหน้า"}</button></div>}
       </Section>
 

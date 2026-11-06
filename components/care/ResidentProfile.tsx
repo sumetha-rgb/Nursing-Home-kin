@@ -1,6 +1,8 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import Icon from "@/components/Icon";
+import { AvatarEdit } from "@/components/Avatar";
+import { useApp } from "@/lib/app";
 import { DataTable, Field, Modal, StatusBadge } from "@/components/ui";
 import ClinicalPanel, { ClinicalTab, useClinic } from "./Clinical";
 import { PrintModal, ProfileDoc, ReferralDoc } from "@/components/print/Docs";
@@ -69,6 +71,7 @@ export default function ResidentProfile({ id, onClose }: { id: string | null; on
   const [p, setP] = useState<Profile | null>(null);
   const [err, setErr] = useState("");
   const [tab, setTab] = useState(TABS[0]);
+  const { toast } = useApp();
   const { c, reload } = useClinic(id);
   const { user } = useSession();
   const branchInfo = useBranchInfo();
@@ -95,7 +98,8 @@ export default function ResidentProfile({ id, onClose }: { id: string | null; on
   const r = p?.resident;
   const openAlerts = (p?.alerts ?? []).filter((a) => a.status === "open");
   const activeMeds = (p?.meds ?? []).filter((m) => !m.on_hold && (m.status ?? "ปกติ") === "ปกติ");
-  const today = new Date().toISOString().slice(0, 10);
+  // วันนี้ตามเวลาไทย (UTC+7) · toISOString ตรง ๆ เป็นเวลา UTC ทำให้ 00:00–06:59 ยังเป็นเมื่อวาน
+  const today = new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10);
   const nextAppt = (p?.appts ?? []).filter((a) => String(a.date ?? "") >= today).sort((a, b) => String(a.date).localeCompare(String(b.date)))[0];
   // ข้อมูลสำคัญสำหรับการดูแลจากสัญญา · แพ้ยา/แพ้อาหาร ขึ้นแถบแดงทุกแท็บ
   const ci = p?.careInfo ?? null;
@@ -112,12 +116,11 @@ export default function ResidentProfile({ id, onClose }: { id: string | null; on
       {p && r && (
         <div className="space-y-5">
           <div className="profile-head">
-            <span className="profile-avatar">{r.full_name.replace(/^คุณ/, "").charAt(0)}</span>
-            <div className="min-w-0 flex-1">
-              <p className="text-lg font-semibold text-gold-900">{r.full_name}</p>
-              <p className="text-sm text-gold-600">อายุ {r.age ?? "-"} ปี · ห้อง {r.room ?? "-"} · สาขา{r.branch_name ?? "-"}</p>
-              <p className="mt-1 text-sm text-gold-700">โรคประจำตัว: {str(r.chronic_diseases)}</p>
-            </div>
+            <AvatarEdit kind="resident" id={id!} name={r.full_name} size={72} onDone={(m) => toast(m)} title={<span className="min-w-0">
+              <span className="block text-lg font-semibold text-gold-900">{r.full_name}</span>
+              <span className="block text-sm text-gold-600">อายุ {r.age ?? "-"} ปี · ห้อง {r.room ?? "-"} · สาขา{r.branch_name ?? "-"}</span>
+              <span className="mt-1 block text-sm text-gold-700">โรคประจำตัว: {str(r.chronic_diseases)}</span>
+            </span>} />
             {r.status && <StatusBadge value={r.status} />}
           </div>
           {allergy.length > 0 && <p role="alert" className="care-allergy"><Icon name="alert" className="h-5 w-5 shrink-0" /><span><b>ระวัง · {allergy.join(" · ")}</b><small>ข้อมูลจากสัญญา · ตรวจก่อนให้ยาและอาหารทุกครั้ง</small></span></p>}

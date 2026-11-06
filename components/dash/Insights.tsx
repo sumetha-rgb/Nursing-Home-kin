@@ -263,12 +263,13 @@ export function TeamTab({ d, t, vs }: { d: Insights; t: Targets; vs: string }) {
         { key: "late", label: "มาสาย", value: `${tm.cur.late} ครั้ง`, delta: deltaOf(tm.cur.late, tm.prev.late, false, " ครั้ง"), note: `รวม ${tm.cur.lateMin} นาที` },
         { key: "absent", label: "ขาดงาน (ไม่เช็คชื่อ)", value: `${tm.cur.absent} ครั้ง`, delta: deltaOf(tm.cur.absent, tm.prev.absent, false, " ครั้ง") },
       ]} vs={vs} />
-      <Section title="คนเข้าเวรต่อผู้รับบริการ รายกะ" sub={`เกณฑ์ผู้รับบริการไม่เกิน ${t.ratio} คนต่อพยาบาล 1 คน · แดง = ไม่มีคน · ส้ม = เกินเกณฑ์ · 14 วันล่าสุดของช่วงที่เลือก`}>
+      <Section title="คนเข้าเวรต่อผู้รับบริการ รายกะ" sub={`เกณฑ์ไม่เกิน ${t.ratio} คนต่อพยาบาล 1 คน · 14 วันล่าสุด`}>
         {!days.length ? <p className="rounded-xl bg-cream-50 px-4 py-6 text-center text-sm text-gold-600">ไม่มีข้อมูลเวรในช่วงนี้</p> : (
-          <div className="overflow-x-auto"><table className="data-table w-full min-w-[480px]"><thead><tr><th>วันที่</th><th>เวรเช้า</th><th>เวรดึก</th></tr></thead><tbody>
+          <><div className="overflow-x-auto"><table className="data-table w-full min-w-[480px]"><thead><tr><th>วันที่</th><th>เวรเช้า</th><th>เวรดึก</th></tr></thead><tbody>
             {days.map((day) => <tr key={day}><td>{dayTh(day)}</td>{["เช้า", "ดึก"].map((sh) => { const s = tm.cur.shifts.find((x) => x.day === day && x.shift === sh); const st = s?.staff ?? 0; const tone = toneOf(st);
               return <td key={sh}><span className={`status-badge ${tone === "bad" ? "status-danger" : tone === "warn" ? "status-warning" : "status-success"}`}>{st ? `${st} คน · 1 : ${ratio(st)}` : "ไม่มีคน"}</span></td>; })}</tr>)}
           </tbody></table></div>
+          <p className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gold-600"><span><span className="status-badge status-success">เขียว</span> ตามเกณฑ์</span><span><span className="status-badge status-warning">ส้ม</span> เกินเกณฑ์</span><span><span className="status-badge status-danger">แดง</span> ไม่มีคน</span></p></>
         )}
       </Section>
     </div>
@@ -297,7 +298,7 @@ export function FlowTab({ d, vs }: { d: Insights; vs: string }) {
 export function OccupancyTrend({ d, t }: { d: Insights; t: Targets }) {
   const o = d.occupancy, cap = o.capacity;
   return (
-    <Section title="อัตราเข้าพัก 12 เดือน" sub={`คำนวณย้อนหลังจากสัญญาที่ใช้งานอยู่ ณ สิ้นเดือน เทียบเตียงที่เปิดใช้ตอนนี้ ${cap} เตียง · เดือนนี้นับจากคนที่มีห้องแล้ว · เส้นประ = เป้า`}>
+    <Section title="อัตราเข้าพัก 12 เดือน" sub={`เทียบเตียงที่เปิดใช้ ${cap} เตียง · เส้นประ = เป้า`}>
       {cap ? <MiniChart type="line" aria="อัตราเข้าพัก 12 เดือน" max={100} target={t.occupancy} fmt={(v) => `${Math.round(v)}%`} labels={o.monthly.map((m) => monTh(m.month))}
         series={[{ name: "อัตราเข้าพัก", color: GOLD, data: o.monthly.map((m) => Math.min(100, Math.round((m.people / cap) * 100))) }]} />
         : <p className="rounded-xl bg-cream-50 px-4 py-6 text-center text-sm text-gold-600">ยังไม่มีห้องที่เปิดใช้งาน</p>}

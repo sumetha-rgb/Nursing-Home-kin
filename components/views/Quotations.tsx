@@ -91,11 +91,12 @@ export function Quotations() {
           rows={shown.map(({ r }) => [r[6] || "กำลังออกเลข…", has(r[7]) ? longDate(r[7], true) : "-", r[1], has(r[9]) ? r[9] : "-", r[0], money(numOf(r[4])),
             has(r[12]) ? "เปิดสัญญาแล้ว" : expired(r) ? "หมดอายุ" : "รอตัดสินใจ"])}
           empty="ยังไม่มีใบเสนอราคา · กด สร้างใบเสนอราคา"
+          onRow={(n) => setPrint(shown[n].i)} rowLabel="กดเพื่อดูและพิมพ์ใบเสนอราคา"
           actions={[
-            { label: "พิมพ์", onClick: (n) => setPrint(shown[n].i) },
-            { label: "เปิดสัญญา", hidden: (n) => has(shown[n].r[12]), onClick: (n) => toContract(shown[n].i) },
-            { label: "แก้ไข", onClick: (n) => open(shown[n].i) },
-            { label: "ลบ", danger: true, onClick: (n) => confirm({ title: "ลบใบเสนอราคา", message: `ต้องการลบใบเสนอราคา ${shown[n].r[6] || ""} ของ ${shown[n].r[1]} ใช่หรือไม่`, danger: true, okLabel: "ลบ",
+            { label: "เปิดสัญญา", tone: "primary", hidden: (n) => has(shown[n].r[12]), onClick: (n) => toContract(shown[n].i) },
+            { label: "ดู / พิมพ์", more: true, onClick: (n) => setPrint(shown[n].i) },
+            { label: "แก้ไข", more: true, onClick: (n) => open(shown[n].i) },
+            { label: "ลบ", danger: true, more: true, onClick: (n) => confirm({ title: "ลบใบเสนอราคา", message: `ต้องการลบใบเสนอราคา ${shown[n].r[6] || ""} ของ ${shown[n].r[1]} ใช่หรือไม่`, danger: true, okLabel: "ลบ",
               onOk: () => { const x = shown[n].r; remove(shown[n].i); toast(`ลบใบเสนอราคาแล้ว · ${x[6] || ""} ${x[1]}`.trim()); } }) },
           ]} />
       </Section>

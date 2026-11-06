@@ -23,7 +23,7 @@ import { useSession } from "@/lib/session";
 import { staying } from "@/lib/rooms";
 import { apptIso, apptKey, apptTh, nowTh } from "@/lib/appointments";
 import { evaluateVitals, implausible, Level, LEVEL_TH, levelOf, parseVitals, Vitals } from "@/lib/vitals";
-import { BlankForm, DataTable, Field, FieldDef, FormDialog, MenuButton, Modal, MetricGrid, PageHeader, Section, Select, Tabs, Tile } from "../ui";
+import { BlankForm, DataTable, Field, FieldDef, FormDialog, MenuButton, Modal, PageHeader, Section, Select, Tabs } from "../ui";
 import SalesByCategory from "../dash/SalesByCategory";
 import KpiCharts, { CountKpi, PctKpi } from "../dash/KpiCharts";
 
@@ -356,12 +356,6 @@ export function Appointments() {
     <div>
       <PageHeader title="ตารางนัดหมาย" sub="นัดแพทย์และธุระของผู้รับบริการ"
         actions={<button className="btn-primary" onClick={() => setDlg({ mode: "add", i: -1 })}><Icon name="plus" className="h-4 w-4" /> เพิ่มนัดหมาย</button>} />
-      <MetricGrid items={[
-        { label: "นัดวันนี้", value: all.filter((x) => x.k.startsWith(today)).length, unit: "นัด", icon: "calendar", accent: true },
-        { label: "7 วันข้างหน้า", value: all.filter((x) => x.k >= now && x.k.slice(0, 10) <= week).length, unit: "นัด", icon: "check" },
-        { label: "นัดที่ยังไม่ถึง", value: all.filter((x) => x.k >= now).length, unit: "นัด", icon: "history" },
-        { label: "ผู้รับบริการที่มีนัด", value: new Set(all.filter((x) => x.k >= now).map((x) => x.r[2])).size, unit: "คน", icon: "user" },
-      ]} />
       <Section title="นัดหมายของผู้รับบริการ" actions={<button className="btn-soft" disabled={!shown.length} onClick={() => {
         downloadCsv(`นัดหมาย-${tab ? APPT_FILTERS.find((f) => f.k === tab)?.t : "ทั้งหมด"}-${today}`, ["วันที่", "เวลา", "ผู้รับบริการ", "HN · ห้อง", "รายการ", "ผู้ดูแล", "การเตรียมตัว", "สถานะ"],
           shown.map(({ r, k }) => [r[0], (r[1] ?? "").slice(0, 5), r[2], who(r[2]), r[3], r[4], r[5] && r[5] !== "-" ? r[5] : "", statusOf(k).t]));
@@ -376,14 +370,19 @@ export function Appointments() {
         </div>
         {!active.length && <p className="mb-4 rounded-xl bg-cream-50 px-4 py-3 text-sm text-gold-600">ยังไม่มีผู้รับบริการในทะเบียน เพิ่มผู้รับบริการ (หรือเปิดสัญญา) ก่อนจึงจะลงนัดหมายได้</p>}
         <DataTable
-          columns={["วันที่", "เวลา", "ผู้รับบริการ", "HN · ห้อง", "รายการ", "ผู้ดูแล", "สถานะ"]}
-          rows={shown.map(({ r, k }) => [r[0], (r[1] ?? "").slice(0, 5), r[2], who(r[2]), r[3], r[4], statusOf(k).t])}
-          render={(i, col) => { if (col !== 6) return undefined; const s = statusOf(shown[i].k); return <span className={`status-badge ${s.c}`}>{s.t}</span>; }}
+          columns={["วันที่", "เวลา", "ผู้รับบริการ", "รายการ", "ผู้ดูแล", "สถานะ"]}
+          rows={shown.map(({ r, k }) => [r[0], (r[1] ?? "").slice(0, 5), r[2], r[3], r[4], statusOf(k).t])}
+          render={(i, col) => {
+            if (col === 2) return <span className="block leading-tight"><b className="font-semibold">{shown[i].r[2]}</b><small className="block text-xs text-gold-500">{who(shown[i].r[2])}</small></span>;
+            if (col !== 5) return undefined;
+            const s = statusOf(shown[i].k); return <span className={`status-badge ${s.c}`}>{s.t}</span>;
+          }}
+          onRow={(k) => setDlg({ mode: "edit", i: shown[k].i })} rowLabel="กดเพื่อแก้ไขนัดหมาย"
           empty={tab ? `ไม่มีนัดหมายที่${APPT_FILTERS.find((f) => f.k === tab)?.t}` : "ยังไม่มีนัดหมาย · กด \"เพิ่มนัดหมาย\""}
           actions={[
-            { label: "ใบนัด", onClick: (k) => setSlip(shown[k].i) },
-            { label: "แก้ไข", onClick: (k) => setDlg({ mode: "edit", i: shown[k].i }) },
-            { label: "ลบ", danger: true, onClick: (k) => confirm({ title: "ลบนัดหมาย", message: `ต้องการลบนัดหมาย "${shown[k].r[3]}" ของ ${shown[k].r[2]} ใช่หรือไม่`, danger: true, okLabel: "ลบ", onOk: () => { const r = shown[k].r; const undo = remove(shown[k].i); toast({ type: "del", title: "ลบนัดหมายแล้ว", detail: `${r[2]} · ${r[0]} ${(r[1] ?? "").slice(0, 5)} ${r[3]}`, action: { label: "เลิกทำ", run: () => { undo(); toast(`กู้คืนนัดหมายแล้ว · ${r[2]}`); } } }); } }) },
+            { label: "ใบนัด", tone: "primary", onClick: (k) => setSlip(shown[k].i) },
+            { label: "แก้ไขนัด", more: true, onClick: (k) => setDlg({ mode: "edit", i: shown[k].i }) },
+            { label: "ลบนัด", danger: true, more: true, onClick: (k) => confirm({ title: "ลบนัดหมาย", message: `ต้องการลบนัดหมาย "${shown[k].r[3]}" ของ ${shown[k].r[2]} ใช่หรือไม่`, danger: true, okLabel: "ลบ", onOk: () => { const r = shown[k].r; const undo = remove(shown[k].i); toast({ type: "del", title: "ลบนัดหมายแล้ว", detail: `${r[2]} · ${r[0]} ${(r[1] ?? "").slice(0, 5)} ${r[3]}`, action: { label: "เลิกทำ", run: () => { undo(); toast(`กู้คืนนัดหมายแล้ว · ${r[2]}`); } } }); } }) },
           ]}
         />
       </Section>

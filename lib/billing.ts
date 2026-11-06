@@ -1,4 +1,5 @@
 /** ใบแจ้งหนี้ / ใบเสร็จรับเงิน (ชุดข้อมูล "invoices") ใช้ได้ทั้งหน้าเว็บและ server */
+import { lineCode, roomByPrice } from "./priceList";
 
 /**
  * discount = ส่วนลดเป็นบาท · pct = ส่วนลดเป็น % ของยอดบรรทัด (ใช้ได้ทั้งสองอย่างพร้อมกัน)
@@ -70,6 +71,62 @@ export function vatOf(all: BillItem[]) {
   });
   return { rates, base: r2(rates.reduce((n, x) => n + x.base, 0)), vat: r2(rates.reduce((n, x) => n + x.vat, 0)), exempt: r2(items.filter((i) => !i.vat).reduce((n, i) => n + lineNet(i), 0)) };
 }
+
+/* ---------- ค่าบริการต่อเดือนตามสัญญา (ใช้ร่วมกัน: หน้าใบแจ้งหนี้ ทะเบียนสัญญา เอกสารพิมพ์สัญญา) ---------- */
+const numOf = (v?: string | null) => Number(String(v ?? "").replace(/,/g, "")) || 0;
+const filled = (v?: string | null) => (!v || v === "-" ? "" : v);
+/** room = ชื่อห้องที่ตั้งเองเมื่อกำหนดค่าห้องเอง (เก็บใน items_json ไม่ใช่รายการค่าบริการ) */
+export type ContractLine = { desc: string; qty: number; unit: string; price: number; discount?: number; pct?: number; room?: boolean; code?: string };
+const rawLines = (r: string[]): ContractLine[] | null => { try { const x = JSON.parse(r[23] || "[]"); if (Array.isArray(x)) return x; } catch { /* สัญญาเก่า */ } return null; };
+/** รายการค่าบริการของสัญญา · สัญญาเก่าที่ยังไม่มีรายการ: แปลงจากค่าบริการเพิ่มเติมรายเดือนเดิม */
+export function contractLines(r: string[]): ContractLine[] {
+  const x = rawLines(r);
+  if (x) return x.filter((l) => !l.room);
+  const extra = numOf(r[16]);
+  return extra ? [{ desc: filled(r[15]) ? `ค่าบริการเพิ่มเติม (${r[15]})` : "ค่าบริการเพิ่มเติม", qty: 1, unit: "เดือน", price: extra }] : [];
+}
+/** ชื่อห้องที่ตั้งเอง (ค่าห้องกำหนดเอง) */
+export const contractRoomName = (r: string[]) => rawLines(r)?.find((l) => l.room)?.desc?.trim() ?? "";
+/** บรรทัดค่าห้อง (คิด VAT ค่าห้อง) */
+export const isRoomLine = (d: string) => /ห้อง|room/i.test(d);
+
+/**
+ * ค่าบริการต่อเดือนตามสัญญา (แจกแจงรายการ)
+ *  มีรายการค่าห้องในสัญญา = ค่าห้องรวมค่าดูแลแล้ว ไม่ใส่ราคาโปรแกรมซ้ำ · ไม่มี = ราคาโปรแกรม + รายการอื่น
+ *  VAT ค่าห้อง (contractVat) บวกเพิ่มที่ราคาโปรแกรม/ค่าห้อง และบรรทัดที่เป็นค่าห้อง
+ */
+export function contractMonthLines(r: string[]): BillItem[] {
+  const no = r[6] && r[6] !== "-" ? r[6] : "";
+  const items = contractLines(r).filter((x) => x.price > 0);
+  const hasRoom = items.some((x) => isRoomLine(x.desc));
+  const rate = contractVat(r);
+  const fee = numOf(r[4]), kind = roomByPrice(fee), own = contractRoomName(r);
+  // ชื่อห้องที่ตั้งเอง (ค่าห้องกำหนดเอง) > ประเภทห้องจากราคาในใบราคา > ชื่อโปรแกรม
+  const feeDesc = own ? (/^ห้อง/.test(own) ? `ค่า${own}` : `ค่าห้อง ${own}`) : kind ? `ค่า${kind.name}${kind.promo ? " ราคาโปรโมชัน" : ""}` : r[21] && r[21] !== "-" ? r[21] : "ค่าบริการรายเดือน";
+  return [
+    ...(!hasRoom && fee ? [{ desc: `${feeDesc}${no ? ` · ห้อง ${no}` : ""}`, qty: 1, price: fee, discount: 0, vat: rate, code: lineCode({ desc: feeDesc, price: fee }) }] : []),
+    ...items.map((x) => {
+      const room = isRoomLine(x.desc);
+      return { desc: no && room && !x.desc.includes(no) ? `${x.desc} · ห้อง ${no}` : x.desc, qty: x.qty, price: x.price, discount: Number(x.discount) || 0, pct: Number(x.pct) || 0, vat: room ? rate : 0, ...(lineCode(x) ? { code: lineCode(x) } : {}) };
+    }),
+  ];
+}
+/**
+ * ยอดต่อเดือนของสัญญา (จาก contractMonthLines · ตรงกับใบแจ้งหนี้และ "ต่อเดือน (รวม VAT)" ในทะเบียนสัญญา)
+ *  feeIn = คิดราคาโปรแกรมเป็นบรรทัดค่าห้อง (สัญญาไม่มีรายการค่าห้อง) · base = ก่อน VAT · vat = ภาษี · total = รวม VAT
+ */
+export function contractMonthSum(r: string[]) {
+  const items = contractMonthLines(r);
+  const feeIn = !contractLines(r).some((x) => x.price > 0 && isRoomLine(x.desc));
+  return { feeIn, rate: contractVat(r), base: r2(items.reduce((n, i) => n + lineNet(i), 0)), vat: vatOf(items).vat, total: totals(items).net };
+}
+
+/**
+ * สาขาของใบแจ้งหนี้ (ใบไม่มีช่องสาขาฝั่งหน้าจอ): สาขาของสัญญาของใบ → สาขาของผู้รับบริการชื่อนั้น → สาขาของผู้ใช้
+ *  contracts / residents = แถวของ useCrud("contracts") / useCrud("residents")
+ */
+export const invoiceBranch = (inv: Invoice, contracts: string[][], residents: string[][], userBranch?: string | null) =>
+  (inv.contract ? contracts.find((c) => c[0] === inv.contract)?.[1] : undefined) ?? residents.find((r) => r[0] === inv.who)?.[3] ?? userBranch ?? "";
 
 export const money = (n: number | undefined) => (n ?? 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 /** 2026-10-28 → 28-10-2569 (รูปแบบวันที่ในใบเสร็จ) */

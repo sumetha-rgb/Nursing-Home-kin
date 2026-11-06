@@ -5,7 +5,7 @@ import FamilyLinkDialog from "../care/FamilyLinkDialog";
 import { useApp } from "@/lib/app";
 import { useBranchNames } from "@/lib/branches";
 import { StaffReview, StaffScore } from "@/lib/reviews";
-import { DataTable, MetricGrid, Modal, PageHeader, Section, Select } from "../ui";
+import { DataTable, Modal, PageHeader, Section, Select } from "../ui";
 
 /** ดาวเต็มเท่าที่ได้จริง (4.5 = 4 ดวง) ตัวเลขเฉลี่ยแสดงแยกไว้แล้ว */
 const stars = (n: number) => { const k = Math.floor(n + 1e-9); return `${"★".repeat(k)}${"☆".repeat(5 - k)}`; };
@@ -41,15 +41,10 @@ export function StaffReviews() {
   return (
     <>
       <PageHeader title="รีวิวพนักงานจากครอบครัว"
-        sub={`ญาติให้ดาวและคำชมพนักงานที่ดูแลผ่านลิงก์ของผู้รับบริการแต่ละคน · คะแนนเฉลี่ยย้อนหลัง ${data?.days ?? 90} วันใช้เป็น KPI ของพนักงาน`}
+        sub={`ญาติให้ดาวผ่านลิงก์ครอบครัว · ใช้เป็น KPI ย้อนหลัง ${data?.days ?? 90} วัน`}
         actions={<button className="btn-primary" onClick={() => setLinkOpen(true)}><Icon name="qr" className="h-4 w-4" /> ลิงก์ครอบครัว (สมุดภาพ + รีวิว)</button>} />
       {branches.length > 1 && <div className="mb-4 max-w-xs"><Select aria-label="เลือกสาขา" options={branches} placeholder="ทุกสาขา" value={branch} onChange={setBranch} /></div>}
-      <MetricGrid items={[
-        { label: "คะแนนเฉลี่ยของทีม", value: avg, unit: "/ 5", icon: "trophy", accent: true },
-        { label: "จำนวนรีวิว", value: total, unit: "รีวิว", icon: "chat" },
-        { label: "พนักงานที่ได้รับรีวิว", value: scores.length, unit: "คน", icon: "user" },
-        { label: "รีวิว 5 ดาว", value: scores.reduce((a, s) => a + s.five, 0), unit: "รีวิว", icon: "heart" },
-      ]} />
+      <p className="stat-sum !ml-0 mb-2">คะแนนเฉลี่ยของทีม <b>{avg}</b> / 5 · <b>{total}</b> รีวิว · 5 ดาว <b>{scores.reduce((a, s) => a + s.five, 0)}</b> · ได้รับรีวิว <b>{scores.length}</b> คน</p>
       {error && <p role="alert" className="form-error my-3"><Icon name="alert" className="h-4 w-4 shrink-0" />{error}</p>}
       <div className="mt-6 space-y-6">
         <Section title="คะแนนรายพนักงาน (KPI)" sub="เรียงตามคะแนนเฉลี่ย กด &quot;ดูรีวิว&quot; เพื่ออ่านคำชมของแต่ละคน">

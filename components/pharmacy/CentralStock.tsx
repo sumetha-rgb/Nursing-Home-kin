@@ -8,7 +8,7 @@ import { money } from "@/lib/billing";
 import { MEALS } from "@/lib/pharmacy";
 import { refreshData } from "@/lib/store";
 import { useAutoRefresh } from "@/lib/autoRefresh";
-import { DataTable, Field, MetricGrid, Modal, PageHeader, Section, Select } from "../ui";
+import { DataTable, Field, Modal, PageHeader, Section, Select, StatFilter } from "../ui";
 import { SearchSelect } from "../SearchSelect";
 
 /**
@@ -67,6 +67,9 @@ export default function CentralStock() {
     if (busy) return; setBusy(true);
     try { await call("/api/pharmstock", body); toast(ok); done(); load(); } catch (e) { toast((e as Error).message); } finally { setBusy(false); }
   };
+  /** ตัวกรอง: "" ทั้งหมด · low ใกล้หมด · near ใกล้หมดอายุ · out หมดแล้ว */
+  const [sf, setSf] = useState("");
+  const view = rows.filter((x) => !sf || (sf === "low" ? x.low : sf === "near" ? x.near : !x.qty));
   const openHist = (drug: SDrug) => {
     setHist({ drug, moves: null });
     call<{ moves: Move[] }>(`/api/pharmstock?op=moves&drug=${encodeURIComponent(drug.id)}${branch ? `&branch=${encodeURIComponent(branch)}` : ""}`).then((r) => setHist({ drug, moves: r.moves })).catch((e) => { setHist(null); toast((e as Error).message); });
@@ -75,29 +78,31 @@ export default function CentralStock() {
 
   return (
     <>
-      <PageHeader title="คลังยากลางของศูนย์" sub="ยาที่ศูนย์ซื้อเอง แยกตามสาขา · เบิกให้ผู้ป่วยแล้วแคชเชียร์ดึงเข้าใบแจ้งหนี้ได้ · ยาของผู้ป่วยที่ญาตินำมาอยู่ที่เมนูยาของผู้ป่วย"
+      <PageHeader title="คลังยากลางของศูนย์" sub="ยาที่ศูนย์ซื้อ · เบิกแล้วดึงเข้าใบแจ้งหนี้ได้"
         actions={<>
           {branchNames.length > 1 && <div className="min-w-44"><Select options={branchNames} placeholder="รวมทุกสาขา" value={branch} onChange={setBranch} /></div>}
           {data?.manager && <button className="btn-primary" onClick={() => setItem({ name: "", unit: "เม็ด", form: "", price: "", min: "10", note: "" })}><Icon name="plus" className="h-4 w-4" /> เพิ่มรายการยา</button>}
         </>} />
       {err && <p role="alert" className="mb-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{err}</p>}
-      <MetricGrid items={[
-        { label: "รายการยา", value: rows.length, unit: "รายการ", icon: "pill", accent: true },
-        { label: "มีในคลัง", value: rows.filter((x) => x.qty > 0).length, unit: "รายการ", icon: "check" },
-        { label: "ใกล้หมด", value: rows.filter((x) => x.low).length, unit: "รายการ", icon: "alert", note: "เหลือไม่เกินจุดสั่งซื้อ" },
-        { label: "ใกล้หมดอายุ", value: rows.filter((x) => x.near).length, unit: "รายการ", icon: "history", note: `ภายใน ${NEAR} วัน` },
-      ]} />
       <Section title={global ? "คงเหลือรวมทุกสาขา" : `คงเหลือของสาขา${data?.branch ?? branch}`}>
+        <StatFilter label="กรองรายการยา" value={sf} onChange={setSf} items={[
+          { k: "", t: "ทั้งหมด", n: rows.length, tone: "all" },
+          { k: "low", t: "ใกล้หมด", n: rows.filter((x) => x.low).length, tone: "warn" },
+          { k: "near", t: `หมดอายุใน ${NEAR} วัน`, n: rows.filter((x) => x.near).length, tone: "bad" },
+          { k: "out", t: "หมดแล้ว", n: rows.filter((x) => !x.qty).length, tone: "muted" },
+        ]} />
         <DataTable columns={["ชื่อยา", "คงเหลือ", "จุดสั่งซื้อ", "หมดอายุใกล้สุด", "ราคาขาย/หน่วย", "สถานะ"]}
-          rows={rows.map((x) => [x.d.name, `${fmt(x.qty)} ${x.d.unit}`, `${x.d.min_qty} ${x.d.unit}`, x.exp ? `${thDate(x.exp)}${(daysTo(x.exp) ?? 999) <= NEAR ? ` (อีก ${daysTo(x.exp)} วัน)` : ""}` : "-",
+          rows={view.map((x) => [x.d.name, `${fmt(x.qty)} ${x.d.unit}`, `${x.d.min_qty} ${x.d.unit}`, x.exp ? `${thDate(x.exp)}${(daysTo(x.exp) ?? 999) <= NEAR ? ` (อีก ${daysTo(x.exp)} วัน)` : ""}` : "-",
             x.d.price === null ? "ยังไม่ตั้งราคา" : money(x.d.price), !x.qty ? "หมด" : x.near ? "ใกล้หมดอายุ" : x.low ? "ใกล้หมด" : "ปกติ"])}
           empty={!data ? "กำลังโหลด…" : data.manager ? "ยังไม่มีรายการยา · กด เพิ่มรายการยา ที่มุมขวาบน" : "ยังไม่มีรายการยาในคลังกลาง · หัวหน้าพยาบาลหรือผู้จัดการสาขาเป็นผู้เพิ่มรายการและรับยาเข้า"}
+          onRow={(i) => openHist(view[i].d)} rowLabel="กดเพื่อดูประวัติการเคลื่อนไหวของยานี้"
           actions={[
-            { label: "เบิกให้ผู้ป่วย", hidden: (i) => !rows[i].qty, onClick: (i) => { if (!needBranch()) setIssue({ drug: rows[i].d, resident: "", qty: "1", note: "", basket: false, dose: "1", meals: ["เช้า"] }); } },
-            { label: "รับเข้า", hidden: () => !data?.manager, onClick: (i) => { if (!needBranch()) setRecv({ drug: rows[i].d, qty: "", lot: "", expiry: "", cost: "" }); } },
-            { label: "ปรับ / ตรวจนับ", hidden: (i) => !data?.manager || !rows[i].lots.length, onClick: (i) => { if (!needBranch()) setAdj({ drug: rows[i].d, lot: rows[i].lots[0], qty: String(rows[i].lots[0].qty), reason: data?.reasons[0] ?? "", note: "" }); } },
-            { label: "ประวัติ", onClick: (i) => openHist(rows[i].d) },
-            { label: "แก้ไข", hidden: () => !data?.manager, onClick: (i) => { const d = rows[i].d; setItem({ id: d.id, name: d.name, unit: d.unit, form: d.form ?? "", price: d.price === null ? "" : String(d.price), min: String(d.min_qty), note: d.note ?? "" }); } },
+            { label: "เบิกให้ผู้ป่วย", tone: "primary", hidden: (i) => !view[i].qty, onClick: (i) => { if (!needBranch()) setIssue({ drug: view[i].d, resident: "", qty: "1", note: "", basket: false, dose: "1", meals: ["เช้า"] }); } },
+            { label: "รับเข้า", tone: "primary", hidden: (i) => !data?.manager || view[i].qty > 0, onClick: (i) => { if (!needBranch()) setRecv({ drug: view[i].d, qty: "", lot: "", expiry: "", cost: "" }); } },
+            { label: "รับเข้า", more: true, hidden: (i) => !data?.manager || !view[i].qty, onClick: (i) => { if (!needBranch()) setRecv({ drug: view[i].d, qty: "", lot: "", expiry: "", cost: "" }); } },
+            { label: "ปรับ / ตรวจนับ", more: true, hidden: (i) => !data?.manager || !view[i].lots.length, onClick: (i) => { if (!needBranch()) setAdj({ drug: view[i].d, lot: view[i].lots[0], qty: String(view[i].lots[0].qty), reason: data?.reasons[0] ?? "", note: "" }); } },
+            { label: "ประวัติการเคลื่อนไหว", more: true, onClick: (i) => openHist(view[i].d) },
+            { label: "แก้ไขรายการยา", more: true, hidden: () => !data?.manager, onClick: (i) => { const d = view[i].d; setItem({ id: d.id, name: d.name, unit: d.unit, form: d.form ?? "", price: d.price === null ? "" : String(d.price), min: String(d.min_qty), note: d.note ?? "" }); } },
           ]} />
       </Section>
 
