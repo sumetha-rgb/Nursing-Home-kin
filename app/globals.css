@@ -2109,3 +2109,4 @@ button.room-card:hover:not(.is-full):not(.is-closed) { border-color:#c9a96a; box
 .ka-push-a button { min-height:40px; padding:0 14px; border-radius:12px; font-size:14px; color:#6a5532; border:1px solid #e3d3b2; background:#fff; }
 .ka-push-a button.is-go { background:#8b6e3e; border-color:#8b6e3e; color:#fff; font-weight:600; }
 .ka-push-a button:disabled { opacity:.6; }
+.ka-push-steps { margin:4px 0 0; padding-left:18px; font-size:13px; line-height:1.5; color:#6a5532; display:grid; gap:2px; list-style:decimal; }

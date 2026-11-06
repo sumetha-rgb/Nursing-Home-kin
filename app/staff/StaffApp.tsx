@@ -75,8 +75,16 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   const pwa = usePwa();
   // แจ้งเตือนบนโทรศัพท์: การ์ดชวนเปิดบนหน้างาน (ซ่อนได้) + เมนูโปรไฟล์
   const push = usePush();
-  const [pushHide, setPushHide] = useState(() => { try { return localStorage.getItem("kin-push-hide") === "1"; } catch { return false; } });
-  const hidePush = () => { setPushHide(true); try { localStorage.setItem("kin-push-hide", "1"); } catch { /* ไม่เป็นไร */ } };
+  // ติดตั้งแอปก่อน (หัวแจ้งเตือนเป็นชื่อและโลโก้ KinApp แทน Chrome) แล้วค่อยเปิดแจ้งเตือน · "ไว้ทีหลัง" จำไว้ในเครื่อง
+  const [hidden, setHidden] = useState<string[]>([]);
+  useEffect(() => { try { setHidden(["kin-push-hide", "kin-install-hide"].filter((k) => localStorage.getItem(k) === "1")); } catch { /* ไม่เป็นไร */ } }, []);
+  const hideCard = (k: string) => { setHidden((h) => [...h, k]); try { localStorage.setItem(k, "1"); } catch { /* ไม่เป็นไร */ } };
+  const needInstall = !pwa.installed && (pwa.canInstall || pwa.iosHint);
+  const pushCard: "install" | "enable" | "denied" | null =
+    push.state === "loading" || (push.state === "none" && !pwa.iosHint) ? null
+    : needInstall && !hidden.includes("kin-install-hide") ? "install"
+    : hidden.includes("kin-push-hide") ? null
+    : push.state === "off" ? "enable" : push.state === "denied" ? "denied" : null;
   const [tab, setTab] = useState<Tab>("tasks");
   // งานวันนี้ = งานที่ผู้จัดการมอบหมายในหน้า "ตรวจงานประจำวัน" ของวันนี้ · ส่งงานแล้วสถานะกลับไปให้ผู้จัดการตรวจ
   const { rows: drows, ids: dids, update: updDaily } = useCrud(`daily-${iso()}`, []);
@@ -365,17 +373,30 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
               );
             })}
 
-            {!pushHide && (push.state === "off" || push.state === "ios" || push.state === "denied") && (
+            {pushCard === "install" && (
+              <section className="ka-push" aria-label="ติดตั้ง KinApp">
+                <Icon name="download" className="h-5 w-5 shrink-0" />
+                <div>
+                  <b>{push.state === "on" ? "ติดตั้ง KinApp ให้แจ้งเตือนเป็นชื่อ KinApp" : "ติดตั้ง KinApp ก่อนรับแจ้งเตือน"}</b>
+                  {pwa.iosHint
+                    ? <ol className="ka-push-steps"><li>กดปุ่มแชร์ของ Safari (สี่เหลี่ยมมีลูกศรขึ้น)</li><li>เลือก "เพิ่มไปยังหน้าจอโฮม"</li><li>เปิด KinApp จากไอคอนบนหน้าจอโฮม แล้วกดเปิดการแจ้งเตือน</li></ol>
+                    : <p>{push.state === "on" ? "ตอนนี้แจ้งเตือนขึ้นเป็น Chrome · ติดตั้งแล้วจะขึ้นเป็นชื่อและโลโก้ KinApp" : "แจ้งเตือนจะขึ้นเป็นชื่อและโลโก้ KinApp และเปิดแอปได้จากหน้าจอโทรศัพท์"}</p>}
+                  <div className="ka-push-a">
+                    {pwa.canInstall && <button type="button" className="is-go" onClick={async () => { if (await pwa.install()) toast(push.state === "on" ? "ติดตั้ง KinApp แล้ว · แจ้งเตือนครั้งต่อไปจะขึ้นเป็น KinApp" : "ติดตั้ง KinApp แล้ว · เปิดจากไอคอนบนหน้าจอโทรศัพท์ แล้วกดเปิดการแจ้งเตือน"); }}>ติดตั้ง KinApp</button>}
+                    <button type="button" onClick={() => hideCard("kin-install-hide")}>ไว้ทีหลัง</button>
+                  </div>
+                </div>
+              </section>
+            )}
+            {(pushCard === "enable" || pushCard === "denied") && (
               <section className="ka-push" aria-label="เปิดการแจ้งเตือน">
                 <Icon name="bell" className="h-5 w-5 shrink-0" />
                 <div>
                   <b>รับแจ้งเตือนบนโทรศัพท์</b>
-                  <p>{push.state === "off" ? "เด้งเตือนทันทีเมื่อหัวหน้าตามงาน แม้ไม่ได้เปิดแอปอยู่"
-                    : push.state === "ios" ? "iPhone: กดปุ่มแชร์ของ Safari → \"เพิ่มไปยังหน้าจอโฮม\" แล้วเปิด KinApp จากไอคอน จึงเปิดแจ้งเตือนได้"
-                    : "เคยกดไม่อนุญาตไว้ · เปิดได้ที่ตั้งค่าของเครื่อง → การแจ้งเตือน"}</p>
+                  <p>{pushCard === "enable" ? "เด้งเตือนทันทีเมื่อหัวหน้าตามงาน แม้ล็อกจออยู่" : "เคยกดไม่อนุญาตไว้ · เปิดได้ที่ตั้งค่าของเครื่อง → การแจ้งเตือน → KinApp"}</p>
                   <div className="ka-push-a">
-                    {push.state === "off" && <button type="button" className="is-go" disabled={push.busy} onClick={async () => toast(await push.enable())}>{push.busy ? "กำลังเปิด…" : "เปิดการแจ้งเตือน"}</button>}
-                    <button type="button" onClick={hidePush}>ไว้ทีหลัง</button>
+                    {pushCard === "enable" && <button type="button" className="is-go" disabled={push.busy} onClick={async () => toast(await push.enable())}>{push.busy ? "กำลังเปิด…" : "เปิดการแจ้งเตือน"}</button>}
+                    <button type="button" onClick={() => hideCard("kin-push-hide")}>ไว้ทีหลัง</button>
                   </div>
                 </div>
               </section>

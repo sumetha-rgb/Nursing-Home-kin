@@ -5,7 +5,7 @@
  *  push : แจ้งเตือนบนโทรศัพท์ (หัวหน้าตามงาน ฯลฯ) · กดแจ้งเตือน = เปิด KinApp
  *  localhost : ไม่ cache อะไรเลย (ตอนพัฒนาไฟล์เปลี่ยนตลอด) แต่ยังรับแจ้งเตือนได้
  * เปลี่ยน VERSION เมื่อแก้ไฟล์นี้ เพื่อล้าง cache เก่า */
-const VERSION = "kinapp-v2";
+const VERSION = "kinapp-v3";
 const DEV = ["localhost", "127.0.0.1"].includes(self.location.hostname);
 const SHELL = ["/staff", "/pharmacy", "/kinapp.webmanifest", "/icons/kinapp-192.png", "/logo-mark.png"];
 
@@ -40,6 +40,7 @@ self.addEventListener("push", (e) => {
   e.waitUntil(self.registration.showNotification(d.title || "KinApp", {
     body: d.body || "",
     icon: "/icons/kinapp-192.png",
+    badge: "/icons/kinapp-badge-96.png", // ไอคอนเล็กบนแถบสถานะ Android (ขาวโปร่งใส · ไม่ใส่ = ขึ้นโลโก้ Chrome)
     tag: d.tag || undefined,
     renotify: !!d.tag,
     data: { url: d.url || "/staff" },
