@@ -2252,3 +2252,33 @@ button.room-card:hover:not(.is-full):not(.is-closed) { border-color:#c9a96a; box
 .choice-card.is-on .choice-card-dot { border-color:#8b6e3e; background:radial-gradient(circle, #8b6e3e 0 4px, #fff 5px); }
 /* ข้อความผิดใต้ช่อง (แทน toast) */
 .field-error { margin-top:6px; font-size:12.5px; font-weight:500; line-height:1.5; color:#a3261a; }
+
+/* ---------- ตารางบนมือถือ: การ์ดกระชับ (หัวการ์ด + สถานะ + ช่องอื่น 2 คอลัมน์) ---------- */
+.mobile-data-row.mdr { display:grid; gap:10px; padding:14px 16px; }
+.mdr .mdr-head { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
+.mdr .mdr-head dd { margin:0; }
+.mdr .mdr-title { font-size:15.5px; font-weight:600; color:#2f2618; min-width:0; overflow-wrap:anywhere; }
+.mdr .mdr-status { flex:none; }
+.mdr .mdr-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px 14px; }
+.mdr .mdr-grid > div { display:grid; gap:1px; min-width:0; padding:0; border:0; }
+.mdr .mdr-grid dt { font-size:11.5px; color:#a58e65; }
+.mdr .mdr-grid dd { margin:0; font-size:13.5px; color:#4a3a1f; overflow-wrap:anywhere; text-align:left; }
+.mdr .mdr-acts { display:flex; justify-content:flex-end; gap:8px; padding-top:10px; border-top:1px solid #f1ebe0; }
+.mdr > .mdr-head, .mdr > .mdr-grid { padding:0; }
+.mdr .mdr-grid dt { max-width:none; }
+
+/* ---------- บันทึกสัญญาณชีพ: อ่านค่าจากรูปหน้าจอเครื่องวัด ---------- */
+.vitals-ai { display:grid; gap:8px; }
+.vitals-ai-note { font-size:13px; line-height:1.5; color:#6a5532; background:#fbf3df; border-radius:12px; padding:8px 12px; }
+.vitals-ai-note b { color:#8a5a12; }
+input.is-ai { background:#fbf3df; border-color:#d9b46a; box-shadow:0 0 0 1px #d9b46a inset; }
+.vitals-ai { padding:12px; border-radius:16px; background:#fbf3df; border:1px solid #e9d3a3; }
+.vitals-ai-h { font-size:13.5px; font-weight:700; color:#5b4423; }
+.vitals-ai-btns { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.vitals-ai-go, .vitals-ai-pick { display:inline-flex; align-items:center; justify-content:center; gap:8px; min-height:46px; border-radius:13px; font-size:15px; font-weight:700; transition:background .12s; }
+.vitals-ai-go { background:#8b6e3e; color:#fff; border:1px solid #8b6e3e; box-shadow:0 6px 14px -8px rgba(90,60,20,.7); }
+.vitals-ai-go:hover:not(:disabled) { background:#7a5f33; }
+.vitals-ai-pick { background:#fff; color:#7a5f33; border:1.5px solid #8b6e3e; }
+.vitals-ai-pick:hover:not(:disabled) { background:#fffaf0; }
+.vitals-ai-go:disabled, .vitals-ai-pick:disabled { opacity:.6; }
+.vitals-ai-go:focus-visible, .vitals-ai-pick:focus-visible { outline:2px solid #8b6e3e; outline-offset:2px; }

@@ -317,8 +317,11 @@ function contractRoomQueries(s: Spec, items: Item[], prev: Prev) {
     const v = values(s, it.data);
     const room = roomOf(v[ri]);
     if (room === roomOf(p.rec.room)) continue;
-    q.push(sql(`UPDATE contracts SET room = $1, updated_at = now() WHERE status IN ('ใช้งานอยู่', 'รอชำระเงินมัดจำ') AND coalesce(room, '') <> $1
-      AND (resident_id = $2 OR (resident_id IS NULL AND resident_name = $3 AND branch_name IS NOT DISTINCT FROM $4))`, [room, it.id, normName(v[ni]), v[bi] ?? null]));
+    // คืนห้องเดิมของสัญญาที่เปลี่ยน เพื่อเขียนลงบันทึกการใช้งานระบบ
+    q.push(sql(`WITH old AS (SELECT id, room FROM contracts WHERE status IN ('ใช้งานอยู่', 'รอชำระเงินมัดจำ') AND coalesce(room, '') <> $1
+        AND (resident_id = $2 OR (resident_id IS NULL AND resident_name = $3 AND branch_name IS NOT DISTINCT FROM $4)) FOR UPDATE)
+      UPDATE contracts c SET room = $1, updated_at = now() FROM old WHERE c.id = old.id
+      RETURNING c.id, c.contract_no, c.resident_name, c.branch_name, old.room AS before, c.room AS after`, [room, it.id, normName(v[ni]), v[bi] ?? null]));
   }
   return q;
 }
@@ -514,6 +517,7 @@ export async function POST(req: NextRequest, { params }: { params: { key: string
         const changedBranch = changed.map((it) => prev.get(it.id)!.branch ?? (branchOf(s, it.data) as string | null));
         const freshRids = await residentIds(s, fresh, freshBranch);
         const changedRids = await residentIds(s, changed, changedBranch, await currentResidentIds(s, changed.map((x) => x.id)));
+        const roomQs = key === "residents" ? contractRoomQueries(s, changed, prev) : [];
         const queries = [
           // จองการส่งงานก่อน (ต้องอยู่ก่อนคำสั่งบันทึกแถวเดียวกัน) · จองไม่ได้ = ทั้งชุดยกเลิก
           ...(guarded?.claims ?? []),
@@ -521,7 +525,7 @@ export async function POST(req: NextRequest, { params }: { params: { key: string
           ...updateQueries(s, changed, { resident_id: changedRids }),
           ...(invGuard?.release ?? []),
           ...(key === "residents" ? residentSyncQueries(s, body.items, prev) : []),
-          ...(key === "residents" ? contractRoomQueries(s, changed, prev) : []),
+          ...roomQs,
           ...alertQueries(key, s, me, [
             ...fresh.map((it, i) => ({ id: it.id, rec: asRec(s, values(s, it.data)), branch: freshBranch[i], residentId: freshRids?.[i] ?? null })),
             ...changed
@@ -530,7 +534,18 @@ export async function POST(req: NextRequest, { params }: { params: { key: string
           ]),
         ];
         try {
-          if (queries.length) await sql.transaction(queries);
+          if (queries.length) {
+            const res = (await sql.transaction(queries)) as unknown as Record<string, unknown>[][];
+            // ห้องในสัญญาที่ระบบเปลี่ยนตามการย้ายห้องของผู้รับบริการ → บันทึกการใช้งานระบบ
+            if (roomQs.length) {
+              const at0 = queries.indexOf(roomQs[0]);
+              for (const r of res.slice(at0, at0 + roomQs.length).flat()) {
+                logs.push({ area: "contracts", action: "update", recordId: String(r.id), branch: (r.branch_name as string) ?? null,
+                  summary: `ห้องในสัญญาเปลี่ยนตามการย้ายห้อง · ${r.contract_no ?? ""} ${r.resident_name ?? ""} · ${r.before ?? "-"} → ${r.after ?? "-"}`.replace(/\s+/g, " "),
+                  before: { room: r.before ?? "-" }, after: { room: r.after ?? "-" } });
+              }
+            }
+          }
         } catch (e) {
           if (guarded?.claimIds?.length && claimLost(e)) return await claimConflict(guarded.claimIds);
           throw e;

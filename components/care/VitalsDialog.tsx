@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Icon from "@/components/Icon";
 import { Field, Modal } from "@/components/ui";
 import { ResidentPicker } from "../SearchSelect";
@@ -19,6 +19,24 @@ const FIELDS: { k: keyof typeof BLANK; label: string; ph: string; mode?: "decima
   { k: "height", label: "ส่วนสูง (ซม.)", ph: "เช่น 155" },
 ];
 
+/** อ่านค่าจากรูปเปิดใช้หรือยัง (ถามเซิร์ฟเวอร์ครั้งเดียวต่อการเปิดหน้า) */
+let aiReady: Promise<boolean> | null = null;
+const aiEnabled = () => (aiReady ??= fetch("/api/vitals/read", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).then((d) => !!d?.enabled).catch(() => false));
+/** ย่อรูปให้ด้านยาวไม่เกิน 1280px (ตัวเลขบนจอยังอ่านชัด แต่ส่งเร็ว) */
+const shrink = (file: File) => new Promise<string>((resolve, reject) => {
+  const url = URL.createObjectURL(file), img = new Image();
+  img.onload = () => {
+    const k = Math.min(1, 1280 / Math.max(img.naturalWidth, img.naturalHeight));
+    const c = document.createElement("canvas");
+    c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k);
+    c.getContext("2d")?.drawImage(img, 0, 0, c.width, c.height);
+    URL.revokeObjectURL(url); resolve(c.toDataURL("image/jpeg", 0.85));
+  };
+  img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("เปิดรูปนี้ไม่ได้")); };
+  img.src = url;
+});
+type AiRead = { readable: boolean; device: string; bp_sys: number | null; bp_dia: number | null; pulse: number | null; spo2: number | null; temp_c: number | null; glucose_mg_dl: number | null; weight_kg: number | null; note: string };
+
 /**
  * บันทึกสัญญาณชีพ ใช้ทั้ง KinApp และระบบจัดการ
  * ประเมินค่าทันทีขณะกรอก · บันทึกแล้ว server สร้างแจ้งเตือนให้พยาบาลเองถ้าค่าเกินเกณฑ์
@@ -33,7 +51,32 @@ export default function VitalsDialog({ open, residents, resident, recorder, onCl
   const [f, setF] = useState(BLANK);
   // ค่าที่เป็นไปไม่ได้: กดบันทึกครั้งแรกขึ้นเตือนให้ตรวจ กดอีกครั้งจึงบันทึก
   const [doubt, setDoubt] = useState(false);
-  useEffect(() => { if (open) { setWho(resident ?? ""); setF(BLANK); setDoubt(false); } }, [open, resident]);
+  useEffect(() => { if (open) { setWho(resident ?? ""); setF(BLANK); setDoubt(false); setAi(null); } }, [open, resident]);
+  // ถ่ายรูปหน้าจอเครื่องวัด → ระบบอ่านตัวเลขมากรอกให้ · พยาบาลต้องตรวจกับหน้าจอเครื่องก่อนบันทึกเอง
+  const [aiOn, setAiOn] = useState(false);
+  const [reading, setReading] = useState(false);
+  const [ai, setAi] = useState<{ keys: string[]; note: string } | null>(null);
+  const cam = useRef<HTMLInputElement>(null);
+  const pick = useRef<HTMLInputElement>(null);
+  useEffect(() => { if (open) aiEnabled().then(setAiOn); }, [open]);
+  const readPhoto = async (file: File) => {
+    setReading(true); setAi(null);
+    try {
+      const r = await fetch("/api/vitals/read", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ image: await shrink(file) }) });
+      const d = (await r.json().catch(() => ({}))) as Partial<AiRead> & { error?: string };
+      if (!r.ok) { toast(d.error || "อ่านค่าไม่สำเร็จ · กรอกค่าเองแทน"); return; }
+      const n = (v: number | null | undefined, dp = 0) => (typeof v === "number" && Number.isFinite(v) ? (dp ? v.toFixed(dp) : String(Math.round(v))) : "");
+      const got: Partial<typeof BLANK> = {
+        bp: d.bp_sys && d.bp_dia ? `${n(d.bp_sys)}/${n(d.bp_dia)}` : "", pr: n(d.pulse), o2: n(d.spo2),
+        bt: n(d.temp_c, 1), dtx: n(d.glucose_mg_dl), weight: n(d.weight_kg, d.weight_kg && d.weight_kg % 1 ? 1 : 0),
+      };
+      const keys = Object.entries(got).filter(([, v]) => v).map(([k]) => k);
+      if (!d.readable || !keys.length) { toast(d.note || "อ่านตัวเลขจากรูปไม่ได้ · ถ่ายใหม่ให้หน้าจอชัด หรือกรอกเอง"); return; }
+      setF((cur) => ({ ...cur, ...Object.fromEntries(keys.map((k) => [k, got[k as keyof typeof got]])) }));
+      setDoubt(false); setAi({ keys, note: d.note ?? "" });
+    } catch (e) { toast((e as Error).message || "อ่านค่าไม่สำเร็จ"); }
+    finally { setReading(false); }
+  };
   const parsed = useMemo(() => parseVitals(vitalText(f), f.o2, f.dtx), [f]);
   const flags = useMemo(() => evaluateVitals(parsed), [parsed]);
   const odd = implausible(parsed);
@@ -58,10 +101,21 @@ export default function VitalsDialog({ open, residents, resident, recorder, onCl
       footer={<><button className="btn-soft" onClick={onClose}>ยกเลิก</button><button className={level === "critical" ? "btn-danger" : "btn-primary"} onClick={save}>{doubt && odd.length ? "ยืนยันค่าที่กรอก" : level === "normal" ? "บันทึก" : "บันทึกและแจ้งพยาบาล"}</button></>}>
       <div className="space-y-4">
         <Field label="ผู้รับบริการ" required><ResidentPicker names={residents} value={who} onChange={setWho} /></Field>
+        {aiOn && <div className="vitals-ai">
+          <p className="vitals-ai-h">{reading ? "กำลังอ่านค่าจากรูป…" : "อ่านค่าจากรูปหน้าจอเครื่องวัด · กรอกให้อัตโนมัติ"}</p>
+          {/* ถ่ายรูป = เปิดกล้องหลังทันที (มือถือ) · เลือกรูป = รูปที่ถ่ายไว้แล้วในเครื่อง */}
+          <div className="vitals-ai-btns">
+            <button type="button" className="vitals-ai-go" disabled={reading} onClick={() => cam.current?.click()}><Icon name="camera" className="h-5 w-5" /> ถ่ายรูป</button>
+            <button type="button" className="vitals-ai-pick" disabled={reading} onClick={() => pick.current?.click()}><Icon name="download" className="h-5 w-5 rotate-180" /> เลือกรูปในเครื่อง</button>
+          </div>
+          <input ref={cam} type="file" accept="image/*" capture="environment" hidden onChange={(e) => { const file = e.target.files?.[0]; e.target.value = ""; if (file) readPhoto(file); }} />
+          <input ref={pick} type="file" accept="image/*" hidden onChange={(e) => { const file = e.target.files?.[0]; e.target.value = ""; if (file) readPhoto(file); }} />
+          {ai && <p className="vitals-ai-note" role="status">อ่านจากรูปแล้ว {ai.keys.length} ช่อง (ไฮไลต์สีทอง) · <b>ตรวจตัวเลขกับหน้าจอเครื่องก่อนบันทึก</b>{ai.note ? ` · ${ai.note}` : ""}</p>}
+        </div>}
         <div className="grid grid-cols-2 gap-3">
           {FIELDS.map((x) => (
             <Field key={x.k} label={x.label}>
-              <input inputMode={x.mode ?? "decimal"} value={f[x.k]} placeholder={x.ph} onChange={(e) => { setF({ ...f, [x.k]: e.target.value }); setDoubt(false); }} />
+              <input inputMode={x.mode ?? "decimal"} className={ai?.keys.includes(x.k) ? "is-ai" : undefined} value={f[x.k]} placeholder={x.ph} onChange={(e) => { setF({ ...f, [x.k]: e.target.value }); setDoubt(false); if (ai) setAi({ ...ai, keys: ai.keys.filter((k) => k !== x.k) }); }} />
             </Field>
           ))}
         </div>
