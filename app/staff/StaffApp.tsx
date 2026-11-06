@@ -26,6 +26,7 @@ import VitalsDialog from "@/components/care/VitalsDialog";
 import FamilyLinkDialog from "@/components/care/FamilyLinkDialog";
 import PhotoPicker from "@/components/PhotoPicker";
 import { OfflineBar, usePwa } from "@/components/Pwa";
+import { usePush } from "@/lib/usePush";
 import { CheckInCard, StaffRoster } from "@/components/roster/StaffRoster";
 import { fetchToday, shortName, SHIFTS, stampPhoto } from "@/lib/roster";
 import type { StaffReview } from "@/lib/reviews";
@@ -72,6 +73,10 @@ function PhotoInput({ label, file, onFile }: { label: string; file: string; onFi
 function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   const { toast } = useApp();
   const pwa = usePwa();
+  // แจ้งเตือนบนโทรศัพท์: การ์ดชวนเปิดบนหน้างาน (ซ่อนได้) + เมนูโปรไฟล์
+  const push = usePush();
+  const [pushHide, setPushHide] = useState(() => { try { return localStorage.getItem("kin-push-hide") === "1"; } catch { return false; } });
+  const hidePush = () => { setPushHide(true); try { localStorage.setItem("kin-push-hide", "1"); } catch { /* ไม่เป็นไร */ } };
   const [tab, setTab] = useState<Tab>("tasks");
   // งานวันนี้ = งานที่ผู้จัดการมอบหมายในหน้า "ตรวจงานประจำวัน" ของวันนี้ · ส่งงานแล้วสถานะกลับไปให้ผู้จัดการตรวจ
   const { rows: drows, ids: dids, update: updDaily } = useCrud(`daily-${iso()}`, []);
@@ -309,6 +314,12 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
                   if (pwa.canInstall) { if (await pwa.install()) toast("ติดตั้ง KinApp แล้ว · เปิดได้จากหน้าจอโทรศัพท์"); }
                   else toast(pwa.iosHint ? "กดปุ่มแชร์ของ Safari แล้วเลือก \"เพิ่มไปยังหน้าจอโฮม\"" : "เปิดเมนูของเบราว์เซอร์ (⋮) แล้วเลือก \"ติดตั้งแอป\" หรือ \"เพิ่มลงในหน้าจอหลัก\"");
                 }}><Icon name="download" className="h-4 w-4" /> ติดตั้ง KinApp บนเครื่อง</button>}
+                {push.state !== "loading" && push.state !== "none" && <button className="flex w-full items-center gap-2 px-4 py-3 text-sm hover:bg-cream-100" disabled={push.busy} onClick={async () => {
+                  setMenu(false);
+                  if (push.state === "on") toast(await push.disable());
+                  else if (push.state === "off") toast(await push.enable());
+                  else toast(push.state === "ios" ? "iPhone: กดปุ่มแชร์ของ Safari → \"เพิ่มไปยังหน้าจอโฮม\" แล้วเปิด KinApp จากไอคอน จึงเปิดแจ้งเตือนได้" : "เคยกดไม่อนุญาตไว้ · เปิดได้ที่ตั้งค่าของเครื่อง → การแจ้งเตือน → KinApp");
+                }}><Icon name="bell" className="h-4 w-4" /> {push.state === "on" ? "ปิดแจ้งเตือนในเครื่องนี้" : "เปิดแจ้งเตือนในเครื่องนี้"}</button>}
                 <button className="flex w-full items-center gap-2 px-4 py-3 text-sm hover:bg-cream-100" onClick={() => open("manual")}><Icon name="book" className="h-4 w-4" /> คู่มือผู้ใช้งาน</button>
                 <button className="flex w-full items-center gap-2 px-4 py-3 text-sm hover:bg-cream-100" onClick={() => open("pwd")}><Icon name="lock" className="h-4 w-4" /> เปลี่ยนรหัสผ่าน</button>
                 <button className="flex w-full items-center gap-2 px-4 py-3 text-sm text-red-600 hover:bg-red-50" onClick={onLogout}><Icon name="logout" className="h-4 w-4" /> ออกจากระบบ</button>
@@ -353,6 +364,22 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
                 </section>
               );
             })}
+
+            {!pushHide && (push.state === "off" || push.state === "ios" || push.state === "denied") && (
+              <section className="ka-push" aria-label="เปิดการแจ้งเตือน">
+                <Icon name="bell" className="h-5 w-5 shrink-0" />
+                <div>
+                  <b>รับแจ้งเตือนบนโทรศัพท์</b>
+                  <p>{push.state === "off" ? "เด้งเตือนทันทีเมื่อหัวหน้าตามงาน แม้ไม่ได้เปิดแอปอยู่"
+                    : push.state === "ios" ? "iPhone: กดปุ่มแชร์ของ Safari → \"เพิ่มไปยังหน้าจอโฮม\" แล้วเปิด KinApp จากไอคอน จึงเปิดแจ้งเตือนได้"
+                    : "เคยกดไม่อนุญาตไว้ · เปิดได้ที่ตั้งค่าของเครื่อง → การแจ้งเตือน"}</p>
+                  <div className="ka-push-a">
+                    {push.state === "off" && <button type="button" className="is-go" disabled={push.busy} onClick={async () => toast(await push.enable())}>{push.busy ? "กำลังเปิด…" : "เปิดการแจ้งเตือน"}</button>}
+                    <button type="button" onClick={hidePush}>ไว้ทีหลัง</button>
+                  </div>
+                </div>
+              </section>
+            )}
 
             <CheckInCard user={user} compact />
 

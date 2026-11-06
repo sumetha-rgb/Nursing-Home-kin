@@ -2100,3 +2100,12 @@ button.room-card:hover:not(.is-full):not(.is-closed) { border-color:#c9a96a; box
 .row-action.is-primary { background:#8b6e3e; border-color:#8b6e3e; color:#fff; }
 .row-action.is-primary:hover { background:#7a5f33; }
 .rw-h { font-size:12.5px; font-weight:600; color:#8a7457; letter-spacing:.02em; }
+
+/* ---------- KinApp: ชวนเปิดแจ้งเตือนบนโทรศัพท์ ---------- */
+.ka-push { display:flex; gap:12px; align-items:flex-start; padding:14px 16px; border:1px solid #e6d8bd; border-radius:18px; background:#fffaf0; color:#8b6e3e; }
+.ka-push b { display:block; font-size:15px; color:#2f2618; }
+.ka-push p { margin-top:2px; font-size:13px; line-height:1.45; color:#6a5532; }
+.ka-push-a { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
+.ka-push-a button { min-height:40px; padding:0 14px; border-radius:12px; font-size:14px; color:#6a5532; border:1px solid #e3d3b2; background:#fff; }
+.ka-push-a button.is-go { background:#8b6e3e; border-color:#8b6e3e; color:#fff; font-weight:600; }
+.ka-push-a button:disabled { opacity:.6; }

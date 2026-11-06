@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { pushTo, staffIds } from "@/lib/push";
 import { NextRequest, NextResponse } from "next/server";
 import { sql } from "@/lib/db";
 import { currentUser, forbidden, unauthorized } from "@/lib/auth";
@@ -158,7 +159,7 @@ export async function POST(req: NextRequest) {
     }
     if (b.op === "nudge") {
       if (!can(me, "tasks")) return forbidden("บัญชีนี้ไม่มีสิทธิ์ตามงาน");
-      const [t] = (await sql`SELECT id, work_date::text AS date, branch_name, task_name, resident_name, assignee, status FROM daily_tasks WHERE id = ${String(b.taskId ?? "")}`) as Record<string, string>[];
+      const [t] = (await sql`SELECT id, work_date::text AS date, branch_name, task_name, resident_name, assignee, status, to_char(scheduled_time, 'HH24:MI') AS time FROM daily_tasks WHERE id = ${String(b.taskId ?? "")}`) as Record<string, string>[];
       if (!t) return bad("ไม่พบงาน", 404);
       if (scoped(me) && t.branch_name !== me.branch) return forbidden();
       if (t.status === "เสร็จแล้ว" || t.status === "ตรวจแล้ว") return bad("งานนี้ส่งแล้ว");
@@ -166,7 +167,15 @@ export async function POST(req: NextRequest) {
       const target = t.assignee && t.assignee !== "-" && !/ใครก็ได้|ทุกคน/.test(t.assignee) ? t.assignee : null;
       await sql`INSERT INTO task_nudges (id, task_id, work_date, branch_name, task_name, resident_name, target, message, sent_by)
         VALUES (${randomUUID()}, ${t.id}, ${t.date}::date, ${t.branch_name}, ${t.task_name}, ${t.resident_name}, ${target}, ${text(b.message, 200) || null}, ${me.name})`;
-      return NextResponse.json({ ok: true, target });
+      // เด้งบนโทรศัพท์ของผู้รับผิดชอบ (หรือพยาบาลทุกคนในสาขา) ที่เปิดการแจ้งเตือนไว้ · ส่งไม่ได้ก็ไม่เป็นไร แถบแดงใน KinApp ยังขึ้นตามปกติ
+      const msg = text(b.message, 80);
+      const phones = await pushTo(await staffIds(t.branch_name, target), {
+        title: `หัวหน้าตามงาน · ${me.name}`,
+        body: `${t.task_name}${t.resident_name && t.resident_name !== "-" ? ` · ${t.resident_name}` : ""}${t.time ? ` · ${t.time} น.` : ""}${msg ? `
+"${msg}"` : ""}`,
+        url: "/staff", tag: `nudge-${t.id}`,
+      });
+      return NextResponse.json({ ok: true, target, phones });
     }
     if (b.op === "nudge_reply") {
       const reason = text(b.reason, 120);

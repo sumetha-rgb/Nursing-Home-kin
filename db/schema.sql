@@ -1042,3 +1042,18 @@ CREATE TABLE IF NOT EXISTS task_nudges (
 );
 CREATE INDEX IF NOT EXISTS task_nudges_day ON task_nudges (branch_name, work_date);
 CREATE INDEX IF NOT EXISTS task_nudges_task ON task_nudges (task_id, sent_at DESC);
+
+-- ---------------------------------------------------------------- แจ้งเตือนบนโทรศัพท์ (Web Push)
+-- โทรศัพท์แต่ละเครื่องที่พนักงานกด "เปิดการแจ้งเตือน" ใน KinApp · ส่งไม่สำเร็จเพราะเครื่องยกเลิกแล้ว (404/410) = ลบแถวนั้นเอง
+CREATE TABLE IF NOT EXISTS push_subs (
+  id          text PRIMARY KEY,
+  user_id     text NOT NULL REFERENCES staff_users(id) ON DELETE CASCADE,
+  endpoint    text NOT NULL UNIQUE,
+  p256dh      text NOT NULL,
+  auth        text NOT NULL,
+  device      text,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  last_ok_at  timestamptz
+);
+COMMENT ON TABLE push_subs IS 'เครื่องที่รับแจ้งเตือนของพนักงาน (Web Push)';
+CREATE INDEX IF NOT EXISTS push_subs_user ON push_subs (user_id);
