@@ -39,6 +39,10 @@ export default function BillDoc({ inv, branch, format, copy, slips = [], payment
   const sale = items.filter((i) => !i.credit), credits = items.filter((i) => i.credit), credit = creditOf(items);
   const grand = Math.round((inv.net + credit) * 100) / 100;
   const legal = branch.legal || COMPANY.th;
+  // ผู้ขายในใบกำกับภาษี: ออกในนามสำนักงานใหญ่ของบริษัท = พิมพ์ที่อยู่จดทะเบียน (ตามทะเบียนสรรพากร)
+  // สาขาที่ให้บริการจริงอยู่คนละที่ → แสดงชื่อสาขา ที่อยู่ และเบอร์สาขาอีกบรรทัด ให้ลูกค้ารู้ว่ารับบริการที่ไหน
+  const sellerAddr = branch.office === "สำนักงานใหญ่" && legal === COMPANY.th ? COMPANY.address : branch.address;
+  const atSite = branch.address !== sellerAddr;
   const m = payment ?? { cash: inv.cash, credit: inv.credit, transfer: inv.transfer };
   const methods = [["เงินสด", "Cash", m.cash], ["บัตรเครดิต", "Credit", m.credit], ["โอนเงิน", "Transfer", m.transfer]] as const;
   const date = docDate(payment ? payment.date : full ? inv.paidDate || inv.date : inv.date);
@@ -90,7 +94,8 @@ export default function BillDoc({ inv, branch, format, copy, slips = [], payment
         <div className="bill-head2">
           <div className="flex gap-4">
             <Logo />
-            <div className="bill-company"><b>{legal}{branch.office ? ` (${branch.office})` : ""}</b><span>{branch.address}</span><span>โทร {branch.phone}</span>{branch.taxId && <span>เลขประจำตัวผู้เสียภาษี {taxIdText(branch.taxId)}</span>}</div>
+            <div className="bill-company"><b>{legal}{branch.office ? ` (${branch.office})` : ""}</b><span>{sellerAddr}</span>{!atSite && <span>โทร {branch.phone}</span>}{branch.taxId && <span>เลขประจำตัวผู้เสียภาษี {taxIdText(branch.taxId)}</span>}
+              {atSite && <span className="bill-site">สถานที่ให้บริการ: สาขา{branch.name}{branch.address ? ` · ${branch.address}` : ""}{branch.phone ? ` · โทร ${branch.phone}` : ""}</span>}</div>
           </div>
           <dl className="bill-meta">
             <dt>วันที่ / Date :</dt><dd>{date}</dd>

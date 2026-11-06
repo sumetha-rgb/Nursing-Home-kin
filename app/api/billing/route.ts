@@ -48,7 +48,7 @@ async function closes(req: NextRequest) {
     const rows = await sql(`SELECT c.id, c.branch_name AS branch, c.close_date::text AS date, c.payments, c.system_cash::float AS cash, c.system_transfer::float AS transfer, c.system_credit::float AS credit,
         c.counted_cash::float AS counted, coalesce(c.note, '') AS note, c.closed_by AS "closedBy", to_char(c.closed_at AT TIME ZONE 'Asia/Bangkok', 'DD/MM HH24:MI') AS "closedAt",
         c.approved_by AS "approvedBy", to_char(c.approved_at AT TIME ZONE 'Asia/Bangkok', 'DD/MM HH24:MI') AS "approvedAt"
-      FROM cash_closes c WHERE c.close_date >= (now() AT TIME ZONE 'Asia/Bangkok')::date - 60 ${br ? "AND c.branch_name = $1" : ""} ORDER BY c.close_date DESC, c.branch_name`, br ? [br] : []);
+      FROM cash_closes c WHERE c.close_date >= (now() AT TIME ZONE 'Asia/Bangkok')::date - 93 ${br ? "AND c.branch_name = $1" : ""} ORDER BY c.close_date DESC, c.branch_name`, br ? [br] : []);
     return NextResponse.json({ items: rows, canApprove: me.role === "Branch Admin" || me.role === "Global Admin" });
   } catch (e) {
     if (noTable(e)) return NextResponse.json({ items: [], missing: NO_TABLE, canApprove: false });

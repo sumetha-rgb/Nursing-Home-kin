@@ -1,6 +1,7 @@
 "use client";
 import { ReactNode, useEffect, useRef } from "react";
 import Icon from "../Icon";
+import { Avatar } from "../Avatar";
 import { Modal } from "../ui";
 import { bahtText, contractLines, contractMonthSum, contractRoomName, money, svcDiscount, svcNet } from "@/lib/billing";
 // ย้ายไปไว้ที่ lib/billing (ใช้ร่วมกับหน้าใบแจ้งหนี้) · ส่งต่อให้ไฟล์ที่ import จากที่นี่
@@ -402,18 +403,79 @@ export function QuoteDoc({ no, date, validDays, payer, resident, age, chronic, l
 }
 
 /* ---------- ใบนัดหมาย (ครึ่ง A4) ---------- */
-export function ApptSlip({ resident, hn, date, time, purpose, caregiver, prep, branch, by }: { resident: string; hn?: string; date: string; time: string; purpose: string; caregiver?: string; prep?: string; branch?: DocBranch; by?: string }) {
+const DOW = ["อาทิตย์", "จันทร์", "อังคาร", "พุธ", "พฤหัสบดี", "ศุกร์", "เสาร์"];
+/** ของที่ควรนำไปเมื่อพาไปโรงพยาบาล (ข้อความคงที่ทุกใบ) */
+const APPT_BRING = ["บัตรประชาชนผู้รับบริการ", "บัตรสิทธิการรักษา / บัตรประกัน", "ใบนัดเดิมหรือสมุดนัด", "รายการยาที่ใช้อยู่"];
+/** ปฏิทินเล็กของเดือน (สัปดาห์เริ่มวันอาทิตย์) · วงวันนัด */
+function MiniMonth({ y, m, d }: { y: number; m: number; d: number }) {
+  const first = new Date(Date.UTC(y, m - 1, 1)).getUTCDay(), days = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const cells: (number | null)[] = [...Array(first).fill(null), ...Array.from({ length: days }, (_, i) => i + 1)];
+  while (cells.length % 7) cells.push(null);
+  const weeks = Array.from({ length: cells.length / 7 }, (_, w) => cells.slice(w * 7, w * 7 + 7));
   return (
-    <Paper half>
-      <DocHead branch={branch} brandOnly />
-      <DocTitle title="ใบนัดหมาย" sub="แจ้งญาติ / ติดหน้าห้องผู้รับบริการ" />
-      <KV items={[
-        ["ผู้รับบริการ", `${resident}${hn ? ` · HN ${hn}` : ""}`, true],
-        ["วันเวลานัด", <b key="d" className="doc-big">{longDate(date)} · {time} น.</b>, true],
-        ["รายการ", purpose, true], ["ผู้พาไป", val(caregiver), true], ["เตรียมตัว", val(prep), true],
-      ]} />
-      <DocFoot left={by ? `บันทึกโดย ${by}` : "ใบนัดหมาย"} />
-    </Paper>
+    <div className="ap-mini" aria-label={`ปฏิทินเดือน${MONTHS[m - 1]} ${y + 543}`}>
+      <p>{MONTHS[m - 1]} {y + 543}</p>
+      <table><thead><tr>{["อา", "จ", "อ", "พ", "พฤ", "ศ", "ส"].map((x) => <th key={x}>{x}</th>)}</tr></thead>
+        <tbody>{weeks.map((w, i) => <tr key={i}>{w.map((x, j) => <td key={j} className={x === d ? "on" : ""}>{x === d ? <b>{x}</b> : x ?? ""}</td>)}</tr>)}</tbody></table>
+    </div>
+  );
+}
+/**
+ * ใบนัดหมาย 2 ส่วนในแผ่นเดียว: ส่วนบนติดหน้าห้อง · ส่วนล่างฉีกให้ญาติหรือผู้พาไป
+ *  การเตรียมตัว: แสดงเป็นข้อให้ติ๊กเมื่อกรอกไว้ (แยกข้อด้วย · หรือขึ้นบรรทัดใหม่) · ไม่ได้กรอก = ไม่แสดงกล่องนี้
+ *  nth = นัดที่เท่าไรของผู้รับบริการคนนี้ในเดือนนั้น
+ */
+export function ApptSlip({ resident, residentId, hn, room, bed, nth, date, time, purpose, caregiver, prep, branch, by }: {
+  resident: string; residentId?: string; hn?: string; room?: string; bed?: string; nth?: number; date: string; time: string; purpose: string; caregiver?: string; prep?: string; branch?: DocBranch; by?: string;
+}) {
+  const iso = date.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  const y = iso ? +iso[1] : 0, m = iso ? +iso[2] : 0, d = iso ? +iso[3] : 0;
+  const dow = iso ? DOW[new Date(Date.UTC(y, m - 1, d)).getUTCDay()] : "";
+  const steps = blank(prep).split(/\r?\n|·|•/).map((x) => x.trim()).filter(Boolean);
+  const where = [blank(room) && `ห้อง ${room}`, blank(bed) && `เตียง ${bed}`].filter(Boolean).join(" · ");
+  const phone = branch?.phone || COMPANY.phone;
+  return (
+    <article className="doc-paper is-half ap">
+      <header className="ap-band">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/logo-mark.png" alt="KIN" />
+        <div className="ap-co"><b>{COMPANY.brand}</b><span>{branch?.name ? `สาขา${branch.name}` : ""}{branch?.address ? ` · ${branch.address}` : ""}</span></div>
+        <div className="ap-kind"><b>ใบนัดหมาย</b><small>APPOINTMENT</small></div>
+      </header>
+      <div className="ap-body">
+        <div className="ap-person">
+          <Avatar kind="resident" id={residentId} name={resident} size={50} className="ap-ava" />
+          <div className="ap-nm"><b>{resident}</b>{hn && <span>HN {hn}</span>}</div>
+          <div className="ap-chips">{where && <span className="dark">{where}</span>}{!!nth && m > 0 && <span>นัดที่ {nth} ของเดือน {SHORT[m - 1]}</span>}</div>
+        </div>
+        <div className="ap-when">
+          <div className="ap-big">
+            <div className="ap-d"><small>{dow ? `วัน${dow}` : ""}</small><b>{d || "-"}</b><span>{m ? `${SHORT[m - 1]} ${y + 543}` : ""}</span></div>
+            <div className="ap-t"><span className="ap-lbl">เวลานัด</span><span className="ap-tm">{time || "-"} <small>น.</small></span><span className="ap-full">{dow ? `วัน${dow}ที่ ` : ""}{longDate(date)}</span></div>
+          </div>
+          {iso && <MiniMonth y={y} m={m} d={d} />}
+        </div>
+        <div className="ap-what">
+          <div><p className="ap-lbl">นัดเพื่อ</p><p className="ap-h">{val(purpose)}</p></div>
+          <div><p className="ap-lbl">ผู้พาไป</p><p className="ap-v">{val(caregiver)}</p></div>
+        </div>
+        <div className={`ap-lists${steps.length ? "" : " one"}`}>
+          {steps.length > 0 && <div className="ap-list is-prep"><p className="ap-lbl">การเตรียมตัว</p><ul>{steps.map((x, i) => <li key={i}>{x}</li>)}</ul></div>}
+          <div className="ap-list"><p className="ap-lbl">ถ้าต้องไปโรงพยาบาล นำไปด้วย</p><ul>{APPT_BRING.map((x) => <li key={x}>{x}</li>)}</ul></div>
+        </div>
+        <div className="ap-contact"><span className="ap-ic" aria-hidden="true">☎</span>
+          <div><b>เลื่อนนัดหรือสอบถาม</b>ติดต่อ{branch?.name ? `สาขา${branch.name}` : COMPANY.brand}</div>
+          <span className="ap-ph">{phone}</span>
+        </div>
+        <p className="ap-meta"><span>{by ? `พิมพ์โดย ${by}` : "ใบนัดหมาย"}</span><span>พิมพ์เมื่อ {nowTh()}</span></p>
+      </div>
+      <div className="ap-cut"><span>✂ ฉีกส่วนนี้ให้ญาติหรือผู้พาไป</span></div>
+      <div className="ap-stub">
+        <div className="ap-sd"><small>{dow}</small><b>{d || "-"}</b><small>{m ? `${SHORT[m - 1]} ${String(y + 543).slice(2)}` : ""}</small></div>
+        <div className="ap-sm"><span className="ap-lbl">นัดของ {resident}</span><b>{val(purpose)}</b><span>{blank(caregiver) ? `ผู้พาไป ${caregiver} · ` : ""}โทรสาขา {phone}</span></div>
+        <div className="ap-st"><b>{time || "-"}</b><small>น.</small></div>
+      </div>
+    </article>
   );
 }
 

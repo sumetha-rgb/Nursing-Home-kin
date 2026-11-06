@@ -18,8 +18,9 @@ import { exportInvoiceLines, exportPayments, usePaidDays } from "@/lib/billingEx
 import { DataTable, Field, MenuButton, Modal, PageHeader, Section, StatFilter, StatusBadge, Tabs } from "../ui";
 import { ResidentPicker } from "../SearchSelect";
 import { lineCode, pickName, rateCode, rateText, searchPrices } from "@/lib/priceList";
+import { ServicePicker } from "../ServicePicker";
 import { usePriceList } from "@/lib/usePrices";
-import { saveTaxInfo, useTaxInfo } from "@/lib/taxInfo";
+import { refreshTaxInfo, saveTaxInfo, useTaxInfo } from "@/lib/taxInfo";
 
 const blankItem = (): BillItem => ({ desc: "", qty: 1, price: 0, discount: 0, pct: 0 });
 
@@ -200,6 +201,9 @@ export function Billing() {
   const [amt, setAmt] = useState({ cash: "", credit: "", transfer: "", date: todayIso() });
   const [slip, setSlip] = useState("");
   const [view, setView] = useState<Invoice | null>(null);
+  // เปิดเอกสารทุกครั้ง โหลดข้อมูลผู้เสียภาษีล่าสุด (ค่าที่เพิ่งตั้งจากเครื่องอื่นขึ้นทันทีโดยไม่ต้องรีเฟรชหน้า)
+  const viewId = view?.id;
+  useEffect(() => { if (viewId) refreshTaxInfo(); }, [viewId]);
   const [format, setFormat] = useState<DocFormat>("customer");
   const [copy, setCopy] = useState(false);
   /** ตั้งข้อมูลผู้ขายในใบกำกับภาษีของสาขา (ผู้จัดการสาขา / ผู้บริหาร) */
@@ -362,7 +366,7 @@ export function Billing() {
       toast(`ยกเลิกเอกสารแล้ว · ${x.no ?? ""} · ${x.who}`);
     } catch (e) { toast((e as Error).message); refreshData("invoices"); }
   };
-  const openPay = (x: Invoice) => { setPay(x); setSlip(""); setAmt({ cash: "", credit: "", transfer: String(balanceOf(x)), date: todayIso() }); };
+  const openPay = (x: Invoice) => { setPay(x); setSlip(""); setAmt({ cash: "", credit: "", transfer: "", date: todayIso() }); };
   const left = pay ? balanceOf(pay) : 0;
   const now = num(amt.cash) + num(amt.credit) + num(amt.transfer);
   const savePay = async () => {
@@ -474,6 +478,11 @@ export function Billing() {
           <div className="bill-items">
             <div className="mb-2 flex items-center justify-between"><h3 className="font-medium text-gold-800">รายการ</h3><button type="button" className="row-action" onClick={() => setLines([...lines, blankItem()])}>+ เพิ่มรายการ</button>
               <button type="button" className="row-action" title="เช่น มัดจำห้องที่รับตอนจอง · หักหลังรวม VAT" onClick={() => setLines([...lines.filter((l) => l.desc.trim()), { desc: "หัก มัดจำที่ชำระไว้แล้ว", qty: 1, price: 0, discount: 0, credit: true }])}>+ หักเงินที่รับไว้แล้ว</button></div>
+            {/* ค้นหรือกดหมวดแบบเดียวกับหน้าเปิดสัญญา · กดราคาแล้วเพิ่มเป็นบรรทัดใหม่ (แทนบรรทัดว่าง) · ค่าห้องติ๊ก VAT ให้เอง */}
+            <div className="mb-3"><ServicePicker onPick={(x) => {
+              const item: BillItem = { desc: x.desc, qty: x.qty, price: x.price, discount: 0, code: x.code, vat: isRoomLine(x.desc) ? vatRate : 0 };
+              setLines([...lines.filter((l) => !l.credit && l.desc.trim()), item, ...lines.filter((l) => l.credit)]);
+            }} /></div>
             <div className="space-y-3">{lines.map((l, i) => {
               const set = (p: Partial<BillItem>) => setLines(lines.map((x, j) => (j === i ? { ...x, ...p } : x)));
               // บรรทัดหักเงินที่รับไว้แล้ว: หักหลังรวม VAT · ไม่มีส่วนลด/VAT
@@ -490,7 +499,9 @@ export function Billing() {
                 <Field label="ส่วนลด (บาท)"><input type="number" min={0} value={l.discount} onChange={(e) => set({ discount: num(e.target.value) })} /></Field>
                 <Field label="ส่วนลด (%)"><input type="number" min={0} max={100} step="0.5" value={l.pct ?? 0} onChange={(e) => set({ pct: Math.min(100, num(e.target.value)) })} /></Field>
                 <label className="bill-vat" title="บวกภาษีมูลค่าเพิ่มจากยอดหลังส่วนลด (ค่าห้อง)"><input type="checkbox" checked={!!l.vat} onChange={(e) => set({ vat: e.target.checked ? vatRate : 0 })} /> VAT {l.vat || vatRate}%</label>
-                <button type="button" className="row-action danger" disabled={lines.length === 1} onClick={() => setLines(lines.filter((_, j) => j !== i))}>ลบ</button>
+                {/* เหลือบรรทัดเดียว = ล้างช่องให้ว่าง (ใบต้องมีอย่างน้อย 1 บรรทัด) */}
+                <button type="button" className="row-action danger" title={lines.filter((x) => !x.credit).length === 1 ? "ล้างรายการนี้ให้ว่าง" : "ลบรายการนี้"}
+                  onClick={() => setLines(lines.filter((x) => !x.credit).length === 1 ? lines.map((x, j) => (j === i ? blankItem() : x)) : lines.filter((_, j) => j !== i))}>ลบ</button>
                 {(lineDiscount(l) > 0 || !!l.vat) && <p className="bill-line-sum">ยอด {money(lineAmount(l))}{lineDiscount(l) > 0 ? <> · ลด {money(lineDiscount(l))}{l.pct ? ` (รวม ${l.pct}%)` : ""}</> : null}{l.vat ? <> · ก่อน VAT {money(lineNet(l))} · VAT {l.vat}% {money(Math.round(lineNet(l) * l.vat) / 100)}</> : null} · <b>สุทธิ {money(Math.round(lineNet(l) * (100 + (l.vat ?? 0))) / 100)}</b>{lineDiscount(l) > lineAmount(l) ? <span className="text-red-700"> · ส่วนลดเกินยอด</span> : null}</p>}
               </div>;
             })}</div>
@@ -534,6 +545,13 @@ export function Billing() {
             <p className="mt-1">ยอดสุทธิ {money(pay.net)} · ชำระแล้ว {money(pay.paid ?? 0)} · <b className="text-gold-800">คงเหลือ {money(left)} บาท</b></p>
           </div>
           <p className="text-xs text-gold-600">กรอกยอดที่ลูกค้าจ่ายในครั้งนี้ แยกตามวิธีชำระ · จ่ายไม่ครบได้ (ระบบเก็บเป็น "ชำระบางส่วน" และกลับมารับเพิ่มได้ภายหลัง)</p>
+          {/* ช่องรับเงินเริ่มว่างทุกช่อง (เดิมเติมยอดลงช่องโอนให้เอง ทำให้รับเงินสดแล้วบันทึกผิดช่องทาง) · กดปุ่มลัดเพื่อรับเต็มยอดด้วยวิธีเดียว */}
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <span className="text-gold-600">รับเต็มยอด {money(left)} บาท เป็น:</span>
+            {([["cash", "เงินสด"], ["transfer", "โอนเงิน"], ["credit", "บัตรเครดิต"]] as const).map(([k, t]) => (
+              <button key={k} type="button" className="row-action" onClick={() => setAmt({ ...amt, cash: "", credit: "", transfer: "", [k]: String(left) })}>{t}</button>
+            ))}
+          </div>
           <div className="grid gap-3 sm:grid-cols-3">
             <Field label="เงินสด"><input type="number" min={0} value={amt.cash} onChange={(e) => setAmt({ ...amt, cash: e.target.value })} /></Field>
             <Field label="บัตรเครดิต"><input type="number" min={0} value={amt.credit} onChange={(e) => setAmt({ ...amt, credit: e.target.value })} /></Field>

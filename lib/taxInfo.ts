@@ -27,6 +27,9 @@ export function useTaxInfo() {
   return m;
 }
 
+/** โหลดค่าล่าสุดจากเซิร์ฟเวอร์ใหม่ (เรียกตอนเปิดเอกสาร ไม่ให้ใช้ค่าค้างตั้งแต่เปิดหน้าเว็บ เมื่อมีคนแก้จากเครื่องอื่น) */
+export function refreshTaxInfo() { loading = null; return load(); }
+
 /** เลขผู้เสียภาษีแสดงแบบ 0-1055-12345-67-8 */
 export const taxIdText = (v: string) => { const d = v.replace(/\D/g, ""); return d.length === 13 ? `${d[0]}-${d.slice(1, 5)}-${d.slice(5, 10)}-${d.slice(10, 12)}-${d[12]}` : v; };
 

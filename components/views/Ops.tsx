@@ -299,7 +299,7 @@ const apptFields = (names: string[], nurses: string[]): FieldDef[] => [
   { label: "ผู้รับบริการ", options: names, required: true, pick: "resident" },
   { label: "รายการ", required: true, placeholder: "เช่น พบแพทย์อายุรกรรม รพ.ศิริราช, ทำกายภาพ, ตรวจเลือด" },
   { label: "ผู้ดูแล / ผู้พาไป", suggest: nurses, placeholder: "พิมพ์ค้นหาชื่อพยาบาล หรือพิมพ์เอง เช่น ญาติพาไปเอง" },
-  { label: "การเตรียมตัว", placeholder: "เช่น งดน้ำและอาหารหลังเที่ยงคืน นำสมุดยาไปด้วย (พิมพ์ในใบนัด)" },
+  { label: "การเตรียมตัว", placeholder: "กรอกเฉพาะเมื่อโรงพยาบาลหรือแพทย์สั่ง เช่น งดน้ำและอาหารหลังเที่ยงคืน · นำผลเลือดเดิมไป (คั่นข้อด้วย ·)" },
 ];
 /** ตัวกรองนัดหมาย · สีเดียวกับป้ายในตาราง (วันนี้ = ส้ม · กำลังจะมาถึง = เทา · ผ่านแล้ว = เขียว) */
 type ApptPhase = "today" | "soon" | "past";
@@ -391,8 +391,14 @@ export function Appointments() {
         fields={apptFields(names, nurses)} value={formValue} onClose={() => setDlg(null)} onSave={save}
       />
       <PrintModal open={slip !== null && !!rows[slip]} title="ใบนัดหมาย" onClose={() => setSlip(null)}>
-        {slip !== null && rows[slip] && <ApptSlip resident={rows[slip][2]} hn={residentOf(rows[slip][2])?.[6]} date={apptIso(rows[slip][0])} time={(rows[slip][1] ?? "").slice(0, 5)}
-          purpose={rows[slip][3]} caregiver={rows[slip][4]} prep={rows[slip][5]} branch={branchInfo(residentOf(rows[slip][2])?.[3] ?? user?.branch ?? "")} by={user?.name} />}
+        {slip !== null && rows[slip] && (() => {
+          const a = rows[slip], ri = res.rows.findIndex((r) => r[0] === a[2]), r = res.rows[ri];
+          // นัดที่เท่าไรของคนนี้ในเดือนเดียวกัน (นับตามวันเวลานัด)
+          const key = apptKey(a), month = apptIso(a[0]).slice(0, 7);
+          const nth = rows.filter((x) => x[2] === a[2] && apptIso(x[0]).slice(0, 7) === month && apptKey(x) <= key).length;
+          return <ApptSlip resident={a[2]} residentId={ri >= 0 ? res.ids[ri] : undefined} hn={r?.[6]} room={r?.[2]} bed={r?.[7]} nth={nth} date={apptIso(a[0])} time={(a[1] ?? "").slice(0, 5)}
+            purpose={a[3]} caregiver={a[4]} prep={a[5]} branch={branchInfo(r?.[3] ?? user?.branch ?? "")} by={user?.name} />;
+        })()}
       </PrintModal>
     </div>
   );

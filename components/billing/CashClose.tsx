@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import CsvIcon from "@/components/CsvIcon";
 import Icon from "../Icon";
-import { DataTable, Field, Modal, Section } from "../ui";
+import { DataTable, Field, MenuButton, Modal, Section } from "../ui";
 import { docDate, money, todayIso } from "@/lib/billing";
 import { useApp } from "@/lib/app";
 import { useBranchNames } from "@/lib/branches";
@@ -123,19 +123,37 @@ export default function CashClose({ open, onClose, isGlobal }: { open: boolean; 
   };
   const diffOf = (c: Close) => r2(c.counted - c.cash);
   const diffText = (v: number) => (v === 0 ? "ตรงยอด" : `${v > 0 ? "เกิน" : "ขาด"} ${money(Math.abs(v))}`);
-  /** ประวัติการปิดยอด 60 วัน: ให้ฝ่ายบัญชีกระทบยอดเงินสดกับเงินฝากธนาคาร */
-  const exportCsv = () => {
-    const rows = closes.filter(inBranch);
-    if (!rows.length) return toast("ยังไม่มีการปิดยอดให้ส่งออก");
-    downloadCsv(`ปิดยอดรายวัน-${isGlobal ? branch || "ทุกสาขา" : rows[0].branch}-${todayIso()}`,
+  /**
+   * ส่งออกประวัติการปิดยอดตามช่วง ให้ฝ่ายบัญชีกระทบยอดเงินสดกับเงินฝากธนาคาร
+   *  วันนี้ · สัปดาห์นี้ (จันทร์–วันนี้) · เดือนนี้ · เดือนที่แล้ว · ทั้งหมดที่มี (ย้อนหลัง 3 เดือน)
+   */
+  const ranges = (() => {
+    const t = todayIso(), d = new Date(`${t}T00:00:00Z`);
+    const monday = new Date(d.getTime() - ((d.getUTCDay() + 6) % 7) * 864e5).toISOString().slice(0, 10);
+    const m1 = `${t.slice(0, 7)}-01`;
+    const pm = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - 1, 1)).toISOString().slice(0, 10);
+    const pmEnd = new Date(Date.parse(`${m1}T00:00:00Z`) - 864e5).toISOString().slice(0, 10);
+    return [
+      { key: "วันนี้", from: t, to: t, label: docDate(t) },
+      { key: "สัปดาห์นี้", from: monday, to: t, label: `${docDate(monday)} ถึง ${docDate(t)}` },
+      { key: "เดือนนี้", from: m1, to: t, label: `${docDate(m1)} ถึง ${docDate(t)}` },
+      { key: "เดือนที่แล้ว", from: pm, to: pmEnd, label: `${docDate(pm)} ถึง ${docDate(pmEnd)}` },
+      { key: "ทั้งหมดที่มี", from: "", to: t, label: "ย้อนหลัง 3 เดือน" },
+    ];
+  })();
+  const exportCsv = (rg: (typeof ranges)[number]) => {
+    const rows = closes.filter(inBranch).filter((c) => (!rg.from || c.date >= rg.from) && c.date <= rg.to);
+    if (!rows.length) return toast(`ไม่มีการปิดยอดช่วง${rg.key} (${rg.label})`);
+    const name = isGlobal ? branch || "ทุกสาขา" : rows[0].branch;
+    downloadCsv(`ปิดยอดรายวัน-${name}-${rg.from ? (rg.from === rg.to ? rg.from : `${rg.from}-ถึง-${rg.to}`) : `ถึง-${rg.to}`}`,
       ["วันที่", "สาขา", "รายการรับชำระ", "เงินสดในระบบ", "เงินโอน", "บัตรเครดิต", "รวมรับ", "เงินสดที่นับได้", "ส่วนต่างเงินสด", "หมายเหตุ", "ปิดยอดโดย", "เวลาปิดยอด", "ตรวจรับรองโดย", "เวลาตรวจรับรอง"],
       rows.map((c) => [docDate(c.date), c.branch, String(c.payments), money(c.cash), money(c.transfer), money(c.credit), money(c.cash + c.transfer + c.credit), money(c.counted), money(diffOf(c)), c.note, c.closedBy, c.closedAt, c.approvedBy ?? "", c.approvedAt ?? ""]));
-    toast(`ส่งออกการปิดยอดแล้ว ${rows.length} วัน`);
+    toast(`ส่งออกการปิดยอด${rg.key}แล้ว ${rows.length} วัน`);
   };
 
   return (
     <Modal open={open} wide title="ปิดยอดเงินรายวัน" onClose={onClose}
-      footer={<><button className="btn-soft mr-auto" onClick={exportCsv}><CsvIcon /> ส่งออก CSV</button><button className="btn-soft" onClick={onClose}>ปิดหน้าต่าง</button></>}>
+      footer={<><div className="mr-auto"><MenuButton label="ส่งออก CSV" icon={<CsvIcon />} items={ranges.map((rg) => ({ label: rg.key, hint: rg.label, onClick: () => exportCsv(rg) }))} /></div><button className="btn-soft" onClick={onClose}>ปิดหน้าต่าง</button></>}>
       <div className="space-y-5">
         {missing && <p role="alert" className="form-error"><Icon name="alert" className="h-4 w-4 shrink-0" />{missing}</p>}
         <div className="grid gap-3 sm:grid-cols-2">
@@ -194,7 +212,7 @@ export default function CashClose({ open, onClose, isGlobal }: { open: boolean; 
         )}
 
         {closes.length > 0 && <div>
-          <p className="label">ประวัติการปิดยอด (60 วัน)</p>
+          <p className="label">ประวัติการปิดยอด (3 เดือน)</p>
           <DataTable search={false} columns={["วันที่", ...(isGlobal ? ["สาขา"] : []), "รายการ", "เงินสดในระบบ", "นับได้", "ส่วนต่าง", "ปิดโดย", "ตรวจรับรอง"]}
             rows={closes.filter(inBranch).map((c) => [docDate(c.date), ...(isGlobal ? [c.branch] : []), String(c.payments), money(c.cash), money(c.counted), diffText(diffOf(c)), c.closedBy, c.approvedBy ? `ตรวจแล้ว · ${c.approvedBy}` : "รอตรวจ"])}
             render={(k, col, v) => {
