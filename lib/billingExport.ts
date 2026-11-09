@@ -1,7 +1,7 @@
 "use client";
 // ส่งออกข้อมูลการเงินเป็น CSV สำหรับฝ่ายบัญชี (หน้าใบแจ้งหนี้และใบเสร็จ และแท็บการเงินในภาพรวมและรายงาน)
 import { useEffect, useState } from "react";
-import { docDate, Invoice, lineAmount, lineDiscount, lineNet, lineSign, money, parseItems, BillItem } from "./billing";
+import { BILL_GROUPS, docDate, groupOf, Invoice, lineAmount, lineDiscount, lineNet, lineSign, money, parseItems, BillItem } from "./billing";
 import { downloadCsv } from "./store";
 import { lineCode } from "./priceList";
 
@@ -47,6 +47,18 @@ export const itemName = (desc: string) => desc.replace(/\s*\([^()]*\d{1,2}\/\d{1
 /** หมวดที่ไม่นับเป็นยอดขาย: เงินประกันคืนเมื่อกลับบ้าน · บรรทัดหักเงินเป็นการหักยอด ไม่ใช่การขาย */
 export const NOT_SALES = ["เงินประกัน", "หักเงินที่รับไว้แล้ว"];
 
+/**
+ * รหัสหมวดของบรรทัด: ตามหน้าราคา (RM ห้องพัก · NS งานพยาบาล · CR ดูแลและบุคลากร · EQ อุปกรณ์ · PT กายภาพ · OT อื่น ๆ)
+ *  ไม่มีรหัสสินค้า: MD ยา · SP เวชภัณฑ์ · DP เงินประกัน/มัดจำ · AD หักเงินที่รับไว้แล้ว · OT อื่น ๆ
+ */
+export function catCode(i: BillItem) {
+  const c = lineCode(i).match(/^([A-Z]{2})-/)?.[1];
+  if (c) return c;
+  const d = i.desc.trim();
+  return i.credit ? "AD" : /^ยา:/.test(d) ? "MD" : /^เวชภัณฑ์:/.test(d) ? "SP" : /^เงินประกัน|มัดจำ/.test(d) ? "DP" : "OT";
+}
+/** หมวดที่แสดงในใบเสร็จ (หน้าแรก) */
+const receiptGroup = (i: BillItem) => { if (i.credit) return "หักเงินที่รับไว้แล้ว"; const g = groupOf(i); return g === "dep" ? "เงินประกัน / มัดจำ" : BILL_GROUPS.find(([k]) => k === g)?.[1] ?? ""; };
 /** ทุกบรรทัดของทุกใบ: เห็นว่าแต่ละใบเป็นค่าห้อง คอร์ส ยา หรือเวชภัณฑ์เท่าไร · บรรทัดหักเงินที่รับไว้แล้วเป็นยอดติดลบ */
 export function exportInvoiceLines(list: Invoice[], branchOf: (x: Invoice) => string, name: string) {
   const r2 = (n: number) => Math.round(n * 100) / 100;
@@ -54,13 +66,13 @@ export function exportInvoiceLines(list: Invoice[], branchOf: (x: Invoice) => st
     parseItems(x.items).map((i, k) => {
       if (i.credit) {
         const amt = lineAmount(i);
-        return [x.no ?? "", docDate(x.date), branchOf(x), x.who, x.hn || "", x.kind, x.status, String(k + 1), "", i.desc, itemCategory(i), String(i.qty), money(i.price), money(-amt), "0.00", money(-amt), "0", "0.00", money(-amt)];
+        return [x.no ?? "", docDate(x.date), branchOf(x), x.who, x.hn || "", x.kind, x.status, String(k + 1), "", i.desc, catCode(i), receiptGroup(i), itemCategory(i), String(i.qty), money(i.price), money(-amt), "0.00", money(-amt), "0", "0.00", money(-amt)];
       }
       // ใบลดหนี้: ยอดทุกช่องเป็นลบ
       const sg = lineSign(x), base = lineNet(i), vat = r2((base * (i.vat ?? 0)) / 100);
-      return [x.no ?? "", docDate(x.date), branchOf(x), x.who, x.hn || "", x.kind, x.status, String(k + 1), lineCode(i), i.desc, itemCategory(i), String(i.qty), money(i.price), money(sg * lineAmount(i)), money(sg * lineDiscount(i)), money(sg * base), String(i.vat ?? 0), money(sg * vat), money(sg * (base + vat))];
+      return [x.no ?? "", docDate(x.date), branchOf(x), x.who, x.hn || "", x.kind, x.status, String(k + 1), lineCode(i), i.desc, catCode(i), receiptGroup(i), itemCategory(i), String(i.qty), money(i.price), money(sg * lineAmount(i)), money(sg * lineDiscount(i)), money(sg * base), String(i.vat ?? 0), money(sg * vat), money(sg * (base + vat))];
     }));
-  downloadCsv(name, ["เลขที่เอกสาร", "วันที่", "สาขา", "ผู้รับบริการ", "HN", "ประเภทใบ", "สถานะใบ", "บรรทัด", "รหัสสินค้า", "รายการ", "หมวด", "จำนวน", "ราคาต่อหน่วย", "ยอดก่อนส่วนลด", "ส่วนลด", "ก่อน VAT", "VAT (%)", "VAT", "สุทธิ"], rows);
+  downloadCsv(name, ["เลขที่เอกสาร", "วันที่", "สาขา", "ผู้รับบริการ", "HN", "ประเภทใบ", "สถานะใบ", "บรรทัด", "รหัสสินค้า", "รายการ", "รหัสหมวด", "หมวดในใบเสร็จ", "หมวด", "จำนวน", "ราคาต่อหน่วย", "ยอดก่อนส่วนลด", "ส่วนลด", "ก่อน VAT", "VAT (%)", "VAT", "สุทธิ"], rows);
   return rows.length;
 }
 

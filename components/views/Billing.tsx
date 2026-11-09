@@ -13,6 +13,7 @@ import { can } from "@/lib/perms";
 import { staying } from "@/lib/rooms";
 import { billHandoff, cashHandoff, invoiceHandoff } from "@/lib/handoff";
 import StatusExport from "../billing/StatusExport";
+import { invoiceDocsCsv } from "@/lib/exportsCsv";
 import Receivables from "../billing/Receivables";
 import CashClose from "../billing/CashClose";
 import { exportInvoiceLines, exportPayments, usePaidDays } from "@/lib/billingExport";
@@ -530,8 +531,8 @@ export function Billing() {
         actions={<>
           <MenuButton label="ส่งออก CSV" icon={<CsvIcon />} items={[
             { label: "ค้างชำระ / ชำระครบ ตามช่วงวัน", hint: "เลือกวันนี้ สัปดาห์ เดือน", onClick: () => setExp(true) },
-            { label: "เอกสารทั้งหมด", hint: "1 แถวต่อใบ ตามแท็บที่เลือก", onClick: () => downloadCsv("การเงิน", ["เลขที่เอกสาร", "วันที่", "HN", "ผู้รับบริการ", "ประเภท", "ยอดสุทธิ", "ชำระแล้ว", "คงเหลือ", "สถานะ"], rows) },
-            { label: "รายการในใบ", hint: "แยกค่าห้อง คอร์ส ยา", onClick: () => { const n = exportInvoiceLines(list, (x) => invoiceBranch(x, con.rows, res.rows), "การเงิน-รายการในใบ"); toast(`ส่งออกรายการในใบแล้ว ${n} บรรทัด`); } },
+            { label: "เอกสารทั้งหมด", hint: "1 แถวต่อใบ ตามแท็บที่เลือก · แยกค่าห้อง VAT", onClick: () => { const n = invoiceDocsCsv(shown, invBranch, `การเงิน-${tab}`); toast(`ส่งออกเอกสารแล้ว ${n} ใบ`); } },
+            { label: "รายการในใบ", hint: "แยกค่าห้อง คอร์ส ยา", onClick: () => { const n = exportInvoiceLines(list, invBranch, "การเงิน-รายการในใบ"); toast(`ส่งออกรายการในใบแล้ว ${n} บรรทัด`); } },
             { label: "การรับเงิน", hint: "แยกเงินสด โอน บัตร", onClick: () => exportPayments("", "การเงิน-การรับเงินรายงวด").then((n) => toast(`ส่งออกการรับเงินแล้ว ${n} งวด`)).catch((e) => toast((e as Error).message)) },
           ]} />
           <button className="btn-soft" title="ดูหน้าตาใบเสร็จของแต่ละห้อง (ไม่บันทึกในระบบ)" onClick={() => setSampleOpen(true)}><Icon name="receipt" className="h-4 w-4" /> ตัวอย่างใบเสร็จ</button>

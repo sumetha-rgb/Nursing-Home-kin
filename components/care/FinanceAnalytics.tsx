@@ -14,6 +14,7 @@ import { useBranchInfo } from "../views/Billing";
 import Receivables from "../billing/Receivables";
 import { CashCloseStatus } from "../billing/CashClose";
 import StatusExport from "../billing/StatusExport";
+import { invoiceDocsCsv } from "@/lib/exportsCsv";
 
 const TH_MON = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
 const monthKey = (d = new Date(Date.now() + 7 * 3600e3)) => d.toISOString().slice(0, 7);
@@ -128,9 +129,8 @@ export default function FinanceAnalytics({ branch, compact, onTiles, month, prev
   const months12 = months;
   const exportMonths = () => downloadCsv(`การเงิน-รายเดือน${branch ? `-${branch}` : ""}`, ["เดือน", "ออกใบ (ใบ)", "ยอดออกใบ (บาท)", "ส่วนลด (บาท)", "รับชำระ (บาท)"],
     months12.map((m) => { const b = billedIn(m); return [monLabel(m), String(b.length), money(b.reduce((n, x) => n + x.net, 0)), money(b.reduce((n, x) => n + (x.discount || 0), 0)), money(paidIn(m))]; }));
-  const exportDocs = () => downloadCsv(`การเงิน-เอกสาร${branch ? `-${branch}` : ""}`, ["เลขที่เอกสาร", "วันที่", "สาขา", "ผู้รับบริการ", "HN", "ผู้ชำระ", "ประเภท", "สัญญา", "ยอดก่อนส่วนลด", "ส่วนลด", "ยอดสุทธิ", "ชำระแล้ว", "คงเหลือ", "วันที่รับชำระ", "สถานะ"],
-    [...all].filter((x) => !branch || branchOf(x) === branch).sort((a, b) => b.date.localeCompare(a.date))
-      .map((x) => [x.no ?? "", docDate(x.date), branchOf(x), x.who, x.hn || "", x.payer, x.kind, x.contract || "", money(x.total), money(x.discount), money(x.net), money(x.paid ?? 0), x.status === VOID ? "0.00" : money(balanceOf(x)), x.paidDate ? docDate(x.paidDate) : "", x.status]));
+  /** เอกสารทั้งหมด 1 แถวต่อใบ · แยกค่าห้อง (รวม VAT) / ค่าบริการทางการแพทย์ / มี VAT / VAT / ไม่มี VAT / ยอดสุทธิ */
+  const exportDocs = () => invoiceDocsCsv(all.filter((x) => !branch || branchOf(x) === branch), branchOf, `การเงิน-เอกสาร${branch ? `-${branch}` : ""}`);
 
   const byKind = BILL_KINDS.map((k) => ({ label: k, value: billedNow.filter((x) => x.kind === k).reduce((n, x) => n + x.net, 0), n: billedNow.filter((x) => x.kind === k).length }))
     .filter((r) => r.value > 0).sort((a, b) => b.value - a.value).map((r) => ({ label: r.label, value: r.value, note: `${r.n} ใบ` }));
