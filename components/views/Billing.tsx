@@ -4,20 +4,21 @@ import CsvIcon from "@/components/CsvIcon";
 import Icon from "../Icon";
 import PhotoPicker from "../PhotoPicker";
 import BillDoc, { Branch, DocFormat } from "../billing/BillDoc";
-import { balanceOf, BILL_KINDS, creditOf, grandOf, BillItem, docDate, Invoice, isOpen, lineAmount, lineDiscount, money, PAID, PARTIAL, parseItems, Payment, todayIso, totals, UNPAID, DEFAULT_VAT, contractVat, DRAFT, lineNet, vatOf, VOID, contractMonthLines, invoiceBranch, isRoomLine, isCN, CN_KIND, CN_REFUND, validTaxId } from "@/lib/billing";
+import { balanceOf, baseOfIncl, BILL_KINDS, contractLines, contractMeta, inclOf, isStayContract, creditOf, installmentsOf, splitInstallments, grandOf, BillItem, docDate, Invoice, isOpen, lineAmount, lineDiscount, money, PAID, PARTIAL, parseItems, Payment, todayIso, totals, UNPAID, DEFAULT_VAT, contractVat, DRAFT, lineNet, vatOf, VOID, contractMonthLines, invoiceBranch, isRoomLine, isCN, CN_KIND, CN_REFUND, validTaxId } from "@/lib/billing";
 import { CONTRACTS, RESIDENTS } from "@/lib/mock";
 import { newId, useCrud, useRecords, downloadCsv, refreshData } from "@/lib/store";
 import { useApp } from "@/lib/app";
 import { useSession } from "@/lib/session";
 import { can } from "@/lib/perms";
 import { staying } from "@/lib/rooms";
-import { billHandoff, cashHandoff } from "@/lib/handoff";
+import { billHandoff, cashHandoff, invoiceHandoff } from "@/lib/handoff";
+import StatusExport from "../billing/StatusExport";
 import Receivables from "../billing/Receivables";
 import CashClose from "../billing/CashClose";
 import { exportInvoiceLines, exportPayments, usePaidDays } from "@/lib/billingExport";
 import { DataTable, Field, MenuButton, Modal, PageHeader, Section, StatFilter, StatusBadge, Tabs } from "../ui";
 import { ResidentPicker } from "../SearchSelect";
-import { lineCode, pickName, rateCode, rateText, searchPrices } from "@/lib/priceList";
+import { lineCode, pickName, rateCode, rateText, rooms as priceRooms, searchPrices } from "@/lib/priceList";
 import { ServicePicker } from "../ServicePicker";
 import { usePriceList } from "@/lib/usePrices";
 import { refreshTaxInfo, saveTaxInfo, useTaxInfo } from "@/lib/taxInfo";
@@ -70,9 +71,20 @@ const overdue = (x: Invoice) => {
  */
 export function contractStartLines(r: string[], prior: Invoice[] = []): BillItem[] {
   const prepaid = val(r[18]), deposit = val(r[19]), dep = roomDepositDue(r, prior);
-  const months = prepaidMonths(r);
-  // ล่วงหน้าหลายเดือน: คูณจำนวนในแต่ละบรรทัด (VAT คิดตามยอดจริง)
-  const service = contractMonthLines(r).map((l) => (months > 1 ? { ...l, qty: l.qty * months, desc: `${l.desc} (ล่วงหน้า ${months} เดือน)` } : l));
+  const months = prepaidMonths(r), pct = months > 1 ? Math.min(100, Math.max(0, Math.floor(contractMeta(r).prepaidPct ?? 0))) : 0;
+  // ล่วงหน้าหลายเดือน: คูณจำนวนในแต่ละบรรทัด (VAT คิดตามยอดจริง) · ส่วนลดชำระล่วงหน้า (%) เฉพาะบรรทัดค่าห้อง
+  const isRoomFee = (l: BillItem) => !!l.vat || isRoomLine(l.desc) || /^RM-/.test(lineCode(l));
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  const service = contractMonthLines(r).map((l) => {
+    if (months <= 1) return l;
+    const desc = `${l.desc} (ล่วงหน้า ${months} เดือน)`, off = pct && isRoomFee(l) ? pct : 0;
+    if (!l.vat && !off) return { ...l, qty: l.qty * months, desc };
+    // บรรทัดที่มี VAT / มีส่วนลด: คิดจากราคารวม VAT ต่อเดือน × จำนวนเดือน (− ส่วนลด %) แล้วถอด VAT กลับ
+    //  ยอดรวม VAT ตรงกับราคาที่ตกลง (เช่น 40,000 × 3 − 10% = 108,000.00) ไม่มีเศษสตางค์จากการปัด VAT ทีละเดือน
+    const rate = l.vat ?? 0, full = r2(inclOf(lineNet(l), rate) * months), gross = baseOfIncl(full, rate);
+    const net = off ? baseOfIncl(r2((full * (100 - off)) / 100), rate) : gross;
+    return { ...l, qty: 1, price: gross, discount: r2(gross - net), pct: 0, desc: off ? `${desc} · ส่วนลดชำระล่วงหน้า ${off}%` : desc };
+  });
   if (!service.length && prepaid) service.push({ desc: "ชำระค่าบริการล่วงหน้า", qty: 1, price: prepaid, discount: 0 });
   return [
     ...service,
@@ -96,10 +108,23 @@ export function roomDepositDue(r: string[], prior: Invoice[] = []) {
 
 /** ใบแรกเข้าของสัญญา (ออกจาก contractStartLines): ประเภทมัดจำ/แรกเข้า หรือมีเงินประกัน ค่าบริการล่วงหน้า หักมัดจำห้องตอนจอง */
 export function isStartInvoice(x: Invoice, items?: BillItem[]) {
+  const its = items ?? parseItems(x.items);
+  // ใบมัดจำห้องตอนจอง (มีแต่บรรทัดมัดจำห้อง DP-02) ไม่ใช่ใบแรกเข้า: ยังไม่ได้เรียกเก็บค่าบริการเดือนแรก · ชำระแล้วยังไม่เริ่มสัญญา
+  if (isBookingInvoice(its)) return false;
   if (x.kind === BILL_KINDS[0]) return true;
   if (x.kind === BILL_KINDS[5]) return false;
-  return (items ?? parseItems(x.items)).some((i) => { const d = i.desc.trim(); return (!i.credit && lineCode(i) === "DP-01") || d === ROOM_DEP_DESC || /\(ล่วงหน้า \d+ เดือน\)$|^ชำระค่าบริการล่วงหน้า/.test(d); });
+  return its.some((i) => { const d = i.desc.trim(); return (!i.credit && lineCode(i) === "DP-01") || d === ROOM_DEP_DESC || /\(ล่วงหน้า \d+ เดือน\)$|^ชำระค่าบริการล่วงหน้า/.test(d); });
 }
+/** ใบมัดจำค่าห้องตอนจอง: ทุกบรรทัดเป็นมัดจำห้องพัก (DP-02) */
+export const isBookingInvoice = (items: BillItem[]) => { const sale = items.filter((i) => !i.credit && i.desc.trim()); return sale.length > 0 && sale.every((i) => lineCode(i) === "DP-02"); };
+/** ยอดมัดจำห้องที่รับชำระแล้วของสัญญา (ใบมัดจำตอนจองที่ชำระครบ) · ใช้หักในใบแรกเข้าตอนเปิดสัญญาเต็ม */
+export function bookingPaid(c: string[], invoices: Invoice[]) {
+  return invoices.filter((x) => x.status === PAID && (c[0] ? x.contract === c[0] : x.who === c[2]) && isBookingInvoice(parseItems(x.items)))
+    .reduce((n, x) => n + x.net, 0);
+}
+/** ใบมัดจำห้องล่าสุดของสัญญา (ไม่นับใบที่ยกเลิก) */
+export const bookingInvoiceOf = (c: string[], invoices: Invoice[]) =>
+  invoices.filter((x) => x.status !== VOID && (c[0] ? x.contract === c[0] : x.who === c[2]) && isBookingInvoice(parseItems(x.items))).sort((a, b) => b.date.localeCompare(a.date))[0];
 const baseDesc = (d: string) => d.replace(/\s*\(ล่วงหน้า \d+ เดือน\)$/, "").trim();
 /**
  * ใบนี้มีบรรทัดค่าห้อง / ค่าบริการรายเดือนตามสัญญาหรือไม่ (ดูจากบรรทัด ไม่ดูประเภทใบ เพราะประเภทใบแก้ได้)
@@ -189,8 +214,9 @@ export function prepaidMonths(r: string[]) {
 
 /** หมายเหตุใบแจ้งหนี้แรกเข้า: มัดจำห้องที่หักแล้ว และยอดชำระล่วงหน้าที่ตกลงในสัญญา */
 export function contractStartNote(r: string[], prior: Invoice[] = []): string {
-  const prepaid = val(r[18]), dep = roomDepositDue(r, prior), months = prepaidMonths(r);
-  return [prepaid && contractMonthLines(r).length ? `ชำระค่าบริการล่วงหน้า ${months} เดือน` : "", dep ? `หักมัดจำห้องพักที่ชำระตอนจอง ${money(dep)} บาท` : ""].filter(Boolean).join(" · ");
+  const prepaid = val(r[18]), dep = roomDepositDue(r, prior), months = prepaidMonths(r), m = contractMeta(r);
+  const pct = months > 1 ? Math.floor(m.prepaidPct ?? 0) : 0, n = Math.floor(m.installments ?? 1);
+  return [prepaid && contractMonthLines(r).length ? `ชำระค่าบริการล่วงหน้า ${months} เดือน${pct ? ` ลดค่าห้อง ${pct}%` : ""}` : "", dep ? `หักมัดจำห้องพักที่ชำระตอนจอง ${money(dep)} บาท` : "", n > 1 ? `แบ่งชำระ ${n} งวด` : ""].filter(Boolean).join(" · ");
 }
 
 /** ข้อมูลหัวกระดาษของสาขา จากหน้า "ข้อมูลสาขา" (แถว: รหัส, ชื่อ, นิติบุคคล, โทร, ที่อยู่, ...) */
@@ -224,6 +250,22 @@ export function Billing() {
   const [refund, setRefund] = useState<{ x: Invoice; method: string; busy?: boolean } | null>(null);
   const [slip, setSlip] = useState("");
   const [view, setView] = useState<Invoice | null>(null);
+  /**
+   * ตัวอย่างใบเสร็จที่ชำระแล้ว ห้องละ 1 ใบ จากราคาห้องในใบราคา (ค่าห้องรวม VAT + ค่าบริการทางการแพทย์)
+   *  สร้างในหน้าจอเท่านั้น ไม่บันทึกลงระบบ (ไม่เข้ายอดรับเงิน ปิดยอด หรือรายงาน) · เลขที่เอกสารขึ้นต้นด้วย "ตัวอย่าง"
+   */
+  const [sampleOpen, setSampleOpen] = useState(false);
+  const [sampleOf, setSampleOf] = useState<{ room: string; period: string } | null>(null);
+  const openSample = (k: number) => {
+    const x = priceRooms()[k]; if (!x) return;
+    const part = x.part.เดือน, base = baseOfIncl(part, DEFAULT_VAT), med = Math.round((x.promo - part) * 100) / 100, t = todayIso();
+    const items: BillItem[] = [{ desc: `ค่า${x.name}`, qty: 1, price: base, discount: 0, vat: DEFAULT_VAT, code: `${x.code}-MP` }, ...(med > 0 ? [{ desc: "ค่าบริการทางการแพทย์", qty: 1, price: med, discount: 0, code: "RM-MD" }] : [])];
+    const end = new Date(Date.UTC(Number(t.slice(0, 4)), Number(t.slice(5, 7)) - 1 + 1, Number(t.slice(8, 10)) - 1)).toISOString().slice(0, 10);
+    setSampleOf({ room: "ตัวอย่าง", period: `${docDate(t)} - ${docDate(end)}` });
+    setSampleOpen(false); setFormat("customer"); setCopy(false); setWhich(0);
+    setView({ id: `sample-${k}`, no: `ตัวอย่าง-${x.code}`, date: t, who: "คุณตัวอย่าง ผู้รับบริการ", hn: "-", payer: "คุณตัวอย่าง ผู้ชำระ", address: "-", kind: BILL_KINDS[1], contract: "",
+      items: JSON.stringify(items), ...totals(items), net: x.promo, status: PAID, paid: x.promo, cash: x.promo, credit: 0, transfer: 0, paidDate: t, cashier: user?.name ?? "", note: "ใบตัวอย่าง ไม่ได้บันทึกในระบบ" });
+  };
   // เปิดเอกสารทุกครั้ง โหลดข้อมูลผู้เสียภาษีล่าสุด (ค่าที่เพิ่งตั้งจากเครื่องอื่นขึ้นทันทีโดยไม่ต้องรีเฟรชหน้า)
   const viewId = view?.id;
   useEffect(() => { if (viewId) refreshTaxInfo(); }, [viewId]);
@@ -237,6 +279,15 @@ export function Billing() {
   const [busy, setBusy] = useState(false);
   // ปิดยอดรายวัน (มาจากการ์ดหน้าแรก = เปิดให้ทันที)
   const [cashOpen, setCashOpen] = useState(() => cashHandoff.take());
+  // เปิดดู/พิมพ์เอกสารที่ส่งมาจากหน้าอื่น (เช่น ใบเสร็จที่รับชำระตอนเปิดสัญญา) · รอรายการโหลดก่อน
+  const [viewFor, setViewFor] = useState(() => invoiceHandoff.take());
+  useEffect(() => {
+    if (!viewFor) return;
+    const x = list.find((y) => y.id === viewFor);
+    if (x) { setViewFor(null); setFormat("customer"); setCopy(false); setView(x); }
+  }, [viewFor, list]); // eslint-disable-line react-hooks/exhaustive-deps
+  /** ส่งออก CSV แยกค้างชำระ / ชำระครบ ตามช่วงวัน (components/billing/StatusExport) */
+  const [exp, setExp] = useState(false);
 
   const shown = list.filter((x) => tab === "ทั้งหมด" || (tab === CN_KIND ? isCN(x) : tab === UNPAID ? isOpen(x) : x.status === tab));
   const month = todayIso().slice(0, 7);
@@ -249,7 +300,7 @@ export function Billing() {
   const people = res.rows.filter((r) => staying(r[5] ?? ""));
   /** ครบรอบบิล: สัญญาใช้งานอยู่ ที่เดือนนี้ยังไม่ได้เรียกเก็บ (ไม่นับเดือนที่ชำระล่วงหน้าไว้แล้วในใบแรกเข้า) */
   const billed = useMemo(() => buildBilledIndex(list), [list]);
-  const due = con.rows.map((c, i) => ({ c, id: con.ids[i] })).filter(({ c }) => c[5] === "ใช้งานอยู่" && !contractBilledFor(c, month, billed));
+  const due = con.rows.map((c, i) => ({ c, id: con.ids[i] })).filter(({ c }) => c[5] === "ใช้งานอยู่" && !isStayContract(c) && !contractBilledFor(c, month, billed));
   const makeDue = () => confirm({
     title: "สร้างใบค่าบริการเดือนนี้", okLabel: `สร้าง ${due.length} ใบ`,
     message: `สร้างใบแจ้งหนี้ค่าบริการรายเดือนตามสัญญา ${due.length} ใบ เป็นสถานะ "${DRAFT}" · ตรวจรายการแต่ละใบ (เช่น ค่ายา เวชภัณฑ์เพิ่ม) แล้วกด ยืนยันยอด ก่อนรับชำระ`,
@@ -449,17 +500,41 @@ export function Billing() {
   }, [view?.id, view?.paid]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const rows = useMemo(() => shown.map((x) => [x.no ?? "กำลังออกเลข…", docDate(x.status === PAID ? x.paidDate || x.date : x.date), x.hn || "-", x.who, x.kind, money(x.net), money(x.paid ?? 0), money(balanceOf(x)), overdue(x), x.status]), [shown]);
-  const branchOfInv = (x: Invoice) => residentOf(x.who)?.[3] ?? user?.branch ?? "";
+  /**
+   * หน้า 2 ของใบ: ห้องจากสัญญา · ช่วงเวลาที่เรียกเก็บ
+   *  ใบแรกเข้า = วันเริ่มสัญญา ถึงวันก่อนครบจำนวนเดือนที่ชำระล่วงหน้า (พักรายวัน/สัปดาห์ = ตามจำนวนวัน) · ใบรายเดือน = วันที่ 1 ถึงสิ้นเดือนของใบ
+   */
+  const billDetail = (x: Invoice) => {
+    const c = x.contract ? con.rows.find((r) => r[0] === x.contract) : undefined;
+    const room = c?.[6] && c[6] !== "-" ? c[6] : res.rows.find((r) => r[0] === x.who)?.[2] ?? "";
+    const th = (d: Date) => docDate(d.toISOString().slice(0, 10));
+    let period = "";
+    const st = c ? contractStartIso(c) : "";
+    if (c && st && isStartInvoice(x)) {
+      const stayL = contractLines(c).find((l) => l.stay);
+      const s = new Date(`${st}T00:00:00Z`);
+      const end = stayL ? new Date(s.getTime() + ((stayL.n ?? 1) * (stayL.stay === "สัปดาห์" ? 7 : 1) - 1) * 864e5)
+        : new Date(Date.UTC(s.getUTCFullYear(), s.getUTCMonth() + prepaidMonths(c), s.getUTCDate() - 1));
+      period = `${th(s)} - ${th(end)}`;
+    } else if (x.kind === BILL_KINDS[1]) {
+      const [y, m] = x.date.slice(0, 7).split("-").map(Number);
+      period = `${th(new Date(Date.UTC(y, m - 1, 1)))} - ${th(new Date(Date.UTC(y, m, 0)))}`;
+    }
+    return { room: room && room !== "-" ? room : "", period };
+  };
+  const branchOfInv = (x: Invoice) => invBranch(x) || residentOf(x.who)?.[3] || user?.branch || "";
 
   return (
     <>
       <PageHeader title="ใบแจ้งหนี้และใบเสร็จ" sub="ใบแจ้งหนี้ · รับชำระ · ใบเสร็จ"
         actions={<>
           <MenuButton label="ส่งออก CSV" icon={<CsvIcon />} items={[
-            { label: "เอกสารทั้งหมด", hint: "1 แถวต่อใบ", onClick: () => downloadCsv("การเงิน", ["เลขที่เอกสาร", "วันที่", "HN", "ผู้รับบริการ", "ประเภท", "ยอดสุทธิ", "ชำระแล้ว", "คงเหลือ", "สถานะ"], rows) },
+            { label: "ค้างชำระ / ชำระครบ ตามช่วงวัน", hint: "เลือกวันนี้ สัปดาห์ เดือน", onClick: () => setExp(true) },
+            { label: "เอกสารทั้งหมด", hint: "1 แถวต่อใบ ตามแท็บที่เลือก", onClick: () => downloadCsv("การเงิน", ["เลขที่เอกสาร", "วันที่", "HN", "ผู้รับบริการ", "ประเภท", "ยอดสุทธิ", "ชำระแล้ว", "คงเหลือ", "สถานะ"], rows) },
             { label: "รายการในใบ", hint: "แยกค่าห้อง คอร์ส ยา", onClick: () => { const n = exportInvoiceLines(list, (x) => invoiceBranch(x, con.rows, res.rows), "การเงิน-รายการในใบ"); toast(`ส่งออกรายการในใบแล้ว ${n} บรรทัด`); } },
             { label: "การรับเงิน", hint: "แยกเงินสด โอน บัตร", onClick: () => exportPayments("", "การเงิน-การรับเงินรายงวด").then((n) => toast(`ส่งออกการรับเงินแล้ว ${n} งวด`)).catch((e) => toast((e as Error).message)) },
           ]} />
+          <button className="btn-soft" title="ดูหน้าตาใบเสร็จของแต่ละห้อง (ไม่บันทึกในระบบ)" onClick={() => setSampleOpen(true)}><Icon name="receipt" className="h-4 w-4" /> ตัวอย่างใบเสร็จ</button>
           <button className="btn-soft" title="นับเงินสดสิ้นวันเทียบกับยอดรับชำระในระบบ" onClick={() => setCashOpen(true)}><Icon name="check" className="h-4 w-4" /> ปิดยอดรายวัน</button>
           <button className="btn-soft" onClick={() => setCourse({ who: "", name: "กายภาพบำบัด (ครั้งละ 45 นาที)", total: "10", price: "", busy: false })}><Icon name="plus" className="h-4 w-4" /> ขายคอร์สกายภาพ</button>
           <button className="btn-primary" onClick={startNew}><Icon name="plus" className="h-4 w-4" /> ออกใบแจ้งหนี้</button>
@@ -493,6 +568,20 @@ export function Billing() {
             ...(admin ? [{ label: "ยกเลิกใบนี้…", danger: true, more: true, hidden: (k: number) => isCN(shown[k]) || shown[k].status === VOID || shown[k].status === PAID || shown[k].status === PARTIAL, onClick: (k: number) => { const x = shown[k]; if (x.status === VOID) return; if (x.status === PAID || x.status === PARTIAL) return toast("เอกสารที่รับชำระแล้วยกเลิกไม่ได้"); confirm({ title: "ยกเลิกเอกสาร", message: `ต้องการยกเลิก ${x.no ?? ""} (${money(x.net)} บาท) ใช่หรือไม่ เอกสารยังเก็บไว้ในระบบพร้อมสถานะยกเลิก`, danger: true, okLabel: "ยกเลิกเอกสาร", onOk: () => voidInv(x) }); } }] : []),
           ]} />
       </Section>
+
+      <Modal open={sampleOpen} title="ตัวอย่างใบเสร็จ (ชำระแล้ว)" onClose={() => setSampleOpen(false)}
+        footer={<button className="btn-soft" onClick={() => setSampleOpen(false)}>ปิด</button>}>
+        <p className="form-intro">เลือกห้องเพื่อดูใบเสร็จตัวอย่างค่าบริการ 1 เดือน · สร้างในหน้าจอเท่านั้น ไม่บันทึกในระบบ ไม่เข้ายอดรับเงินหรือรายงาน</p>
+        <div className="grid gap-2">
+          {priceRooms().map((x, k) => (
+            <button key={x.code} type="button" className="room-opt" onClick={() => openSample(k)}>
+              <span className="room-opt-name"><b>{x.name.replace(/\s*\(.*\)\s*$/, "")}</b><small>{x.name.match(/\(([^)]+)\)/)?.[1] ?? ""}</small></span>
+              <span className="room-opt-price"><b>{x.promo.toLocaleString()}</b><small>ห้อง {x.part.เดือน.toLocaleString()} + แพทย์ {(x.promo - x.part.เดือน).toLocaleString()}</small></span>
+            </button>
+          ))}
+        </div>
+      </Modal>
+      <StatusExport open={exp} onClose={() => setExp(false)} list={list} branchOf={invBranch} />
 
       <Receivables list={list} branchOf={invBranch} branchInfo={branchInfo} by={user?.name} />
       <CashClose open={cashOpen} onClose={() => setCashOpen(false)} isGlobal={user?.role === "Global Admin"} />
@@ -650,6 +739,22 @@ export function Billing() {
           </div>
           <p className="text-xs text-gold-600">กรอกยอดที่ลูกค้าจ่ายในครั้งนี้ แยกตามวิธีชำระ · จ่ายไม่ครบได้ (ระบบเก็บเป็น "ชำระบางส่วน" และกลับมารับเพิ่มได้ภายหลัง)</p>
           {/* ช่องรับเงินเริ่มว่างทุกช่อง (เดิมเติมยอดลงช่องโอนให้เอง ทำให้รับเงินสดแล้วบันทึกผิดช่องทาง) · กดปุ่มลัดเพื่อรับเต็มยอดด้วยวิธีเดียว */}
+          {/* ใบที่ตกลงแบ่งชำระ: บอกงวดถัดไปและยอดของงวด กดใส่ยอดงวดนี้ได้ทันที */}
+          {(() => {
+            const n = installmentsOf(pay.note);
+            if (n < 2) return null;
+            const parts = splitInstallments(pay.net, n);
+            let k = 0, acc = 0;
+            while (k < n - 1 && acc + parts[k] <= (pay.paid ?? 0) + 0.005) acc += parts[k++];
+            const due = Math.min(left, Math.round((acc + parts[k] - (pay.paid ?? 0)) * 100) / 100);
+            return <div className="rounded-xl border border-cream-300 bg-white px-4 py-3 text-sm text-gold-700">
+              <p>ตกลงแบ่งชำระ {n} งวด · งวดละ {money(parts[0])} บาท{parts[n - 1] !== parts[0] ? ` (งวดสุดท้าย ${money(parts[n - 1])})` : ""}</p>
+              <div className="mt-2 flex flex-wrap items-center gap-2"><b className="text-gold-900">งวดที่ {k + 1}/{n} · {money(due)} บาท</b>
+                {([["cash", "เงินสด"], ["transfer", "โอนเงิน"], ["credit", "บัตรเครดิต"]] as const).map(([key, t]) => (
+                  <button key={key} type="button" className="row-action" onClick={() => setAmt({ ...amt, cash: "", credit: "", transfer: "", [key]: String(due) })}>{t}</button>
+                ))}</div>
+            </div>;
+          })()}
           <div className="flex flex-wrap items-center gap-2 text-sm">
             <span className="text-gold-600">รับเต็มยอด {money(left)} บาท เป็น:</span>
             {([["cash", "เงินสด"], ["transfer", "โอนเงิน"], ["credit", "บัตรเครดิต"]] as const).map(([k, t]) => (
@@ -717,7 +822,7 @@ export function Billing() {
               </ul>
             </div>
           )}
-          <BillDoc inv={view} branch={branchInfo(branchOfInv(view))} format={format} copy={copy} printedBy={user?.name ?? ""} pays={pays}
+          <BillDoc inv={view} branch={branchInfo(branchOfInv(view))} format={format} copy={copy} printedBy={user?.name ?? ""} pays={pays} detail={view.id.startsWith("sample-") && sampleOf ? sampleOf : billDetail(view)}
             payment={which > 0 ? pays[which - 1] : undefined}
             slips={format === "finance" ? (which > 0 ? (pays[which - 1]?.slip ? [pays[which - 1]] : []) : pays.filter((p) => p.slip)) : []} />
         </>}

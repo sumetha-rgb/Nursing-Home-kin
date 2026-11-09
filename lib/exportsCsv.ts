@@ -3,17 +3,30 @@
  * ตัวสร้างไฟล์ CSV ที่ใช้ร่วมกันระหว่างปุ่มส่งออกในแต่ละหน้า และหน้า "ส่งออกข้อมูล" (components/views/Exports)
  *  ทุกฟังก์ชันรับข้อมูลที่กรองช่วงวันที่/สาขาแล้ว · คืนจำนวนแถวที่ส่งออก
  */
-import { balanceOf, docDate, Invoice, isOpen, lineSign, money, parseItems, signedNet, todayIso, VOID } from "./billing";
+import { balanceOf, BILL_GROUPS, creditOf, docDate, groupOf, inclNet, Invoice, isOpen, lineSign, money, parseItems, signedNet, todayIso, vatOf, VOID } from "./billing";
 import { lineTotal } from "./billingExport";
 import { classify, DP_NAME, SALE_CATS, saleLines } from "./salesCategory";
 import { lineCode, PriceItem } from "./priceList";
 import { downloadCsv } from "./store";
 
 /* ---------- เอกสารการเงิน 1 แถวต่อใบ ---------- */
+/**
+ * 1 แถวต่อใบ · แยกยอดตามหมวดในใบ (รวม VAT): ค่าบริการห้องพัก / ค่าบริการทางการแพทย์ / สินค้าและบริการอื่น / บริการเสริม / เงินประกัน-มัดจำ
+ *  แจกแจงภาษี: มูลค่าที่มี VAT (ก่อน VAT) · VAT · มูลค่าที่ไม่มี VAT · รวมทั้งสิ้น (รวม VAT) · หักเงินที่รับไว้แล้ว · ยอดสุทธิ · ใบลดหนี้เป็นยอดลบ
+ */
 export function invoiceDocsCsv(list: Invoice[], branchOf: (x: Invoice) => string, name: string) {
-  const rows = [...list].sort((a, b) => b.date.localeCompare(a.date))
-    .map((x) => [x.no ?? "", docDate(x.date), branchOf(x), x.who, x.hn || "", x.payer, x.ref ? `${x.kind} (อ้างอิง ${x.ref})` : x.kind, x.contract || "", money(lineSign(x) * x.total), money(x.discount), money(signedNet(x)), money(x.paid ?? 0), x.status === VOID ? "0.00" : money(balanceOf(x)), x.paidDate ? docDate(x.paidDate) : "", x.status]);
-  downloadCsv(name, ["เลขที่เอกสาร", "วันที่", "สาขา", "ผู้รับบริการ", "HN", "ผู้ชำระ", "ประเภท", "สัญญา", "ยอดก่อนส่วนลด", "ส่วนลด", "ยอดสุทธิ", "ชำระแล้ว", "คงเหลือ", "วันที่รับชำระ", "สถานะ"], rows);
+  const rows = [...list].sort((a, b) => b.date.localeCompare(a.date)).map((x) => {
+    const sg = lineSign(x), items = parseItems(x.items), sale = items.filter((i) => !i.credit), t = vatOf(sale);
+    const grp = (k: string) => money(sg * sale.filter((i) => groupOf(i) === k).reduce((n, i) => n + inclNet(i), 0));
+    return [x.no ?? "", docDate(x.date), branchOf(x), x.who, x.hn || "", x.payer, x.ref ? `${x.kind} (อ้างอิง ${x.ref})` : x.kind, x.contract || "",
+      ...BILL_GROUPS.map(([k]) => grp(k)), grp("dep"),
+      money(sg * t.base), money(sg * t.vat), money(sg * t.exempt), money(sg * (t.base + t.vat + t.exempt)), money(sg * creditOf(items)), money(x.discount),
+      money(signedNet(x)), money(x.paid ?? 0), x.status === VOID ? "0.00" : money(balanceOf(x)), x.paidDate ? docDate(x.paidDate) : "", x.status];
+  });
+  downloadCsv(name, ["เลขที่เอกสาร", "วันที่", "สาขา", "ผู้รับบริการ", "HN", "ผู้ชำระ", "ประเภท", "สัญญา",
+    ...BILL_GROUPS.map(([k, th]) => (k === "room" ? `${th} (รวม VAT)` : th)), "เงินประกัน / มัดจำ",
+    "มูลค่าที่มี VAT (ก่อน VAT)", "VAT 7%", "มูลค่าที่ไม่มี VAT", "รวมทั้งสิ้น (รวม VAT)", "หักเงินที่รับไว้แล้ว", "ส่วนลด (ก่อน VAT)",
+    "ยอดสุทธิ", "ชำระแล้ว", "คงเหลือ", "วันที่รับชำระ", "สถานะ"], rows);
   return rows.length;
 }
 

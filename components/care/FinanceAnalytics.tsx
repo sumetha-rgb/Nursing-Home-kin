@@ -13,6 +13,7 @@ import { useSession } from "@/lib/session";
 import { useBranchInfo } from "../views/Billing";
 import Receivables from "../billing/Receivables";
 import { CashCloseStatus } from "../billing/CashClose";
+import StatusExport from "../billing/StatusExport";
 
 const TH_MON = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
 const monthKey = (d = new Date(Date.now() + 7 * 3600e3)) => d.toISOString().slice(0, 7);
@@ -82,6 +83,8 @@ export default function FinanceAnalytics({ branch, compact, onTiles, month, prev
   const branchInfo = useBranchInfo();
   // ใบแจ้งหนี้ไม่มีสาขาฝั่งหน้าจอ: ดูจากสัญญา หรือผู้รับบริการ หรือสาขาของผู้ใช้ (เหมือนหน้าใบแจ้งหนี้และใบเสร็จ)
   const branchOf = (x: Invoice) => invoiceBranch(x, con.rows, res.rows, user?.branch);
+  /** ส่งออก CSV แยกค้างชำระ / ชำระครบ ตามช่วงวัน */
+  const [exp, setExp] = useState(false);
   const list = (branch ? all.filter((x) => branchOf(x) === branch) : all).filter((x) => x.status !== VOID);
   // เดือนที่เลือกจากตัวเลือกช่วงเวลา (ค่าเริ่มต้น = เดือนนี้) · กราฟ 12 เดือนจบที่เดือนนั้น
   const now = month ?? monthKey();
@@ -135,7 +138,9 @@ export default function FinanceAnalytics({ branch, compact, onTiles, month, prev
     <div className="space-y-6">
       <div className="flex flex-wrap justify-end gap-2">
         <button className="btn-soft" onClick={exportMonths}><CsvIcon /> ส่งออกสรุปรายเดือน (12 เดือน)</button>
+        <button className="btn-soft" onClick={() => setExp(true)}><CsvIcon /> ส่งออกค้างชำระ / ชำระครบ</button>
         <button className="btn-soft" onClick={exportDocs}><CsvIcon /> ส่งออกเอกสารทั้งหมด</button>
+        <StatusExport open={exp} onClose={() => setExp(false)} list={all.filter((x) => !branch || branchOf(x) === branch)} branchOf={branchOf} scope={branch} />
         <button className="btn-soft" onClick={() => { const n = exportInvoiceLines(all.filter((x) => !branch || branchOf(x) === branch), branchOf, `การเงิน-รายการในใบ${branch ? `-${branch}` : ""}`); toast(`ส่งออกรายการในใบแล้ว ${n} บรรทัด`); }}><CsvIcon /> ส่งออกรายการในใบ (แยกหมวด)</button>
         <button className="btn-soft" onClick={() => exportPayments(branch, `การเงิน-การรับเงินรายงวด${branch ? `-${branch}` : ""}`).then((n) => toast(`ส่งออกการรับเงินแล้ว ${n} งวด`)).catch((e) => toast((e as Error).message))}><CsvIcon /> ส่งออกการรับเงินรายงวด</button>
       </div>

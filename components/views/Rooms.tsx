@@ -16,6 +16,7 @@ import { TH_MONTHS } from "@/lib/appointments";
 import { refreshData, useCrud } from "@/lib/store";
 import { todayIso } from "@/lib/billing";
 import { useApp } from "@/lib/app";
+import { contractHandoff } from "@/lib/handoff";
 import { useSession } from "@/lib/session";
 import { can } from "@/lib/perms";
 import { findRoom, freeBed, RoomInfo, roomInfos, roomKey, roomLabel, roomProblem, ROOM_STATUSES, staying, withRoom } from "@/lib/rooms";
@@ -36,7 +37,9 @@ export function Rooms() {
   const branchNames = useBranchNames();
   const rooms = useCrud("rooms", []);
   const res = useCrud("residents", RESIDENTS);
-  const { confirm, toast } = useApp();
+  const { confirm, toast, go } = useApp();
+  /** จองห้องไว้ (รอชำระมัดจำ): ไปเปิดสัญญาให้ครบที่หน้าสัญญาบริการ (ฟอร์มเหมือนเปิดสัญญาใหม่ ดึงข้อมูลที่จองไว้มาให้) */
+  const openContract = (c: string[]) => { const k = con.rows.indexOf(c); if (k < 0) return; contractHandoff.set(con.ids[k]); go("contracts"); };
   const [branch, setBranch] = useState("");
   const [dlg, setDlg] = useState<Dlg>(null);
   /** ปิดรับห้อง: เลือกเหตุผลก่อน */
@@ -80,6 +83,11 @@ export function Rooms() {
   const today = todayIso();
   const ENDED = ["สิ้นสุดสัญญา", "ยกเลิกสัญญา"];
   const contractOf = (name: string, b: string) => con.rows.find((c) => c[2] === name && c[1] === b && !ENDED.includes(c[5]));
+  /** สัญญาที่จองห้องไว้ (รอชำระมัดจำ) ของคนนี้ · มี = แสดงปุ่ม "เปิดสัญญา" ทุกที่ที่เห็นชื่อ (คนจองที่เลือกห้องแล้วไม่อยู่ในรายการรอจัดห้อง) */
+  const reservedOf = (name: string, b: string) => {
+    const p = res.rows.find((x) => x[0] === name && x[3] === b), c = can(user, "contracts") && (p?.[5] ?? "").startsWith("มัดจำ") ? contractOf(name, b) : undefined;
+    return c?.[5] === "รอชำระเงินมัดจำ" ? c : undefined;
+  };
   /** รายการรอจัดห้อง พร้อมข้อมูลจากสัญญา */
   const waiting = noRoom.map(({ r, i }) => {
     const c = contractOf(r[0], r[3]);
@@ -174,7 +182,7 @@ export function Rooms() {
 
   const card = (r: RoomInfo, pick?: () => void) => (
     <RoomCard key={r.i} room={r} onClick={pick} selected={!pick && sel === r.i}
-      people={!pick && r.people.length > 0 && <div className="room-people">{r.beds.filter((b) => b.who).map((b) => <span key={b.label}><i className="not-italic text-gold-500">{b.label}</i> {b.who}{move && <button type="button" aria-label={`ย้าย ${b.who} ออกจากห้อง`} onClick={() => moveOut(b.who!, r)}>✕</button>}</span>)}</div>}>
+      people={!pick && r.people.length > 0 && <div className="room-people">{r.beds.filter((b) => b.who).map((b) => <span key={b.label}><i className="not-italic text-gold-500">{b.label}</i> {b.who}{(() => { const c = reservedOf(b.who!, r.branch); return c ? <button type="button" className="room-people-open" onClick={() => openContract(c)}>เปิดสัญญา</button> : null; })()}{move && <button type="button" aria-label={`ย้าย ${b.who} ออกจากห้อง`} onClick={() => moveOut(b.who!, r)}>✕</button>}</span>)}</div>}>
       {(admin || move) && !pick && <div className="mt-1 flex flex-wrap items-center gap-2 border-t border-cream-200 pt-2">
         {admin && roomSwitch(r)}
         {move && !r.full && !r.closed && <button type="button" className="row-action" onClick={() => { setWho(""); setAssign({ room: r, bed: freeBed(r) }); }}>+ เพิ่มผู้รับบริการเข้าห้อง</button>}
@@ -199,6 +207,7 @@ export function Rooms() {
     <div className="mt-3">{selected.beds.map((b) => (
       <div key={b.label} className={`bed-row ${b.who ? "is-taken" : "is-free"}`}>
         <b>{b.label}</b>{b.who ? <button type="button" className="bed-who" onClick={() => openPerson(selected.i, b.label, b.who!)}>{b.who}</button> : <span>เตียงว่าง</span>}
+        {b.who && (() => { const c = reservedOf(b.who!, selected.branch); return c ? <button type="button" className="row-action is-primary" onClick={() => openContract(c)}>เปิดสัญญา</button> : null; })()}
         {b.who && move && <button type="button" className="row-action danger" onClick={() => moveOut(b.who!, selected)}>ย้ายออก</button>}
         {!b.who && move && !selected.closed && <button type="button" className="row-action" onClick={() => { setWho(""); setAssign({ room: selected, bed: b.label }); }}>+ เพิ่มผู้ป่วยเข้าเตียง</button>}
       </div>))}</div>
@@ -243,7 +252,9 @@ export function Rooms() {
                 {when && <span className={`rw-when ${when.bad ? "is-bad" : ""}`}>{when.t}</span>}
                 <div className="rw-act">
                   {admin && kept && <button type="button" className="row-action" onClick={() => setDlg({ mode: "add", preset: [kept, r[3]] })}>สร้างห้อง {kept}</button>}
-                  {move && <button type="button" className={kept && admin ? "row-action" : "row-action is-primary"} onClick={() => setPlace(i)}>{kept ? "จัดห้องอื่น" : "จัดห้อง"}</button>}
+                  {reserved && c && can(user, "contracts") && (r[5] ?? "").startsWith("มัดจำ") && <button type="button" className="row-action is-primary" onClick={() => openContract(c)}>เปิดสัญญา</button>}
+                  {/* จองไว้ (รอชำระมัดจำ): ใช้ปุ่มเปิดสัญญาอย่างเดียว เลือกห้องในขั้นที่ 3 ของฟอร์มเปิดสัญญา */}
+                  {move && !(reserved && c && can(user, "contracts") && (r[5] ?? "").startsWith("มัดจำ")) && <button type="button" className={kept && admin ? "row-action" : "row-action is-primary"} onClick={() => setPlace(i)}>{kept ? "จัดห้องอื่น" : "จัดห้อง"}</button>}
                 </div>
               </li>
             );
@@ -292,7 +303,10 @@ export function Rooms() {
               <div><dt>ยาที่ใช้อยู่</dt><dd>{meds.length ? `${meds.length} รายการ: ${meds.slice(0, 4).map((m) => String(m.drug_name)).join(", ")}${meds.length > 4 ? " …" : ""}` : prof || profErr ? "-" : "กำลังโหลด…"}</dd></div>
               <div><dt>นัดหมายถัดไป</dt><dd>{next ? `${thDate(next.date, false)} ${String(next.time ?? "").slice(0, 5)} · ${next.purpose}` : prof || profErr ? "ไม่มี" : "กำลังโหลด…"}</dd></div>
             </dl> : <p className="rounded-xl bg-cream-50 px-4 py-3 text-sm text-gold-600">บัญชีนี้ไม่มีสิทธิ์ดูข้อมูลสุขภาพของผู้ป่วย (ต้องมีเมนูผู้รับบริการหรือบันทึกสุขภาพ)</p>}
-            {move && room && <button type="button" className="row-action danger" onClick={() => { setPerson(null); moveOut(r[0], room); }}>ย้ายออกจากห้อง</button>}
+            <div className="flex flex-wrap gap-2">
+              {(() => { const c = reservedOf(r[0], r[3]); return c ? <button type="button" className="row-action is-primary" onClick={() => { setPerson(null); openContract(c); }}>เปิดสัญญา (จองไว้ · รอชำระมัดจำ)</button> : null; })()}
+              {move && room && <button type="button" className="row-action danger" onClick={() => { setPerson(null); moveOut(r[0], room); }}>ย้ายออกจากห้อง</button>}
+            </div>
           </div>;
         })()}
       </Modal>

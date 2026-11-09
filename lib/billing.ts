@@ -11,6 +11,19 @@ export type BillItem = { desc: string; qty: number; price: number; discount: num
 export const DEFAULT_VAT = 7;
 /** อัตรา VAT ค่าห้องของสัญญา (คอลัมน์ room_vat) บวกเพิ่มจากค่าห้อง · ว่าง (สัญญาเก่า) = อัตราเริ่มต้น · 0 = ไม่คิด VAT */
 export const contractVat = (r: string[]) => { const v = r[30]; return v === undefined || v === "" || v === "-" ? DEFAULT_VAT : Math.max(0, Number(v) || 0); };
+/**
+ * ราคารวม VAT → ราคาก่อน VAT (ค่าห้องรายเดือนในใบราคาเป็นราคารวม VAT แล้ว · สัญญาเก็บค่าห้องก่อน VAT)
+ *  ปัดสตางค์ให้ ก่อน VAT + VAT (ปัดสตางค์แบบใบแจ้งหนี้) = ราคาเดิมพอดี · rate 0 = ไม่มี VAT คืนราคาเดิม
+ */
+export function baseOfIncl(price: number, rate: number) {
+  if (!(rate > 0) || !(price > 0)) return price;
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  const b0 = r2((price * 100) / (100 + rate));
+  for (const d of [0, 0.01, -0.01, 0.02, -0.02]) { const b = r2(b0 + d); if (r2(b + Math.round(b * rate) / 100) === price) return b; }
+  return b0;
+}
+/** ราคาก่อน VAT → ราคารวม VAT (ปัดสตางค์แบบใบแจ้งหนี้) */
+export const inclOf = (base: number, rate: number) => (rate > 0 ? Math.round((base + Math.round(base * rate) / 100) * 100) / 100 : base);
 export type Invoice = {
   id: string; no?: string; date: string; who: string; hn: string; payer: string; address: string;
   kind: string; contract: string; items: string; total: number; discount: number; net: number;
@@ -95,17 +108,65 @@ export function vatOf(all: BillItem[]) {
 const numOf = (v?: string | null) => Number(String(v ?? "").replace(/,/g, "")) || 0;
 const filled = (v?: string | null) => (!v || v === "-" ? "" : v);
 /** room = ชื่อห้องที่ตั้งเองเมื่อกำหนดค่าห้องเอง (เก็บใน items_json ไม่ใช่รายการค่าบริการ) */
-export type ContractLine = { desc: string; qty: number; unit: string; price: number; discount?: number; pct?: number; room?: boolean; code?: string };
+export type ContractLine = { desc: string; qty: number; unit: string; price: number; discount?: number; pct?: number; room?: boolean; code?: string; meta?: ContractMeta;
+  /** ค่าห้องคิดรายวัน/รายสัปดาห์ (พักระยะสั้น): n = จำนวนวัน/สัปดาห์ · rate = ราคาต่อหน่วยรวม VAT · price = ยอดก่อน VAT ทั้งช่วง (qty 1) */
+  stay?: "วัน" | "สัปดาห์"; n?: number; rate?: number;
+  /** ส่วนหนึ่งของราคาห้อง (ค่าบริการทางการแพทย์ ไม่มี VAT) ระบบใส่ให้จากค่าห้องที่เลือก ไม่ใช่รายการที่กรอกเอง · part = ส่วนค่าห้อง (มี VAT) ต่อหน่วย */
+  pkg?: boolean; part?: number };
+/**
+ * ข้อตกลงการชำระของสัญญา (เก็บเป็นบรรทัด meta ใน items_json ไม่ใช่รายการค่าบริการ)
+ *  prepaidPct = ส่วนลดค่าห้อง (%) เมื่อชำระล่วงหน้าตั้งแต่ 2 เดือน · ใช้กับใบแรกเข้าเท่านั้น
+ *  installments = แบ่งชำระใบแรกเข้ากี่งวด (1 = จ่ายครั้งเดียว)
+ */
+export type ContractMeta = { prepaidPct?: number; installments?: number };
 const rawLines = (r: string[]): ContractLine[] | null => { try { const x = JSON.parse(r[23] || "[]"); if (Array.isArray(x)) return x; } catch { /* สัญญาเก่า */ } return null; };
 /** รายการค่าบริการของสัญญา · สัญญาเก่าที่ยังไม่มีรายการ: แปลงจากค่าบริการเพิ่มเติมรายเดือนเดิม */
 export function contractLines(r: string[]): ContractLine[] {
   const x = rawLines(r);
-  if (x) return x.filter((l) => !l.room);
+  if (x) return x.filter((l) => !l.room && !l.meta);
   const extra = numOf(r[16]);
   return extra ? [{ desc: filled(r[15]) ? `ค่าบริการเพิ่มเติม (${r[15]})` : "ค่าบริการเพิ่มเติม", qty: 1, unit: "เดือน", price: extra }] : [];
 }
 /** ชื่อห้องที่ตั้งเอง (ค่าห้องกำหนดเอง) */
 export const contractRoomName = (r: string[]) => rawLines(r)?.find((l) => l.room)?.desc?.trim() ?? "";
+/** ข้อตกลงการชำระของสัญญา (ส่วนลดค่าห้องชำระล่วงหน้า · จำนวนงวด) */
+/** สัญญาแบบเดิม: ค่าห้องในสัญญาบวก VAT เพิ่ม และยังไม่แยกค่าบริการทางการแพทย์ */
+export const isOldRoomPricing = (r: string[]) => numOf(r[4]) > 0 && contractVat(r) > 0 && !rawLines(r)?.some((l) => l.pkg || l.stay);
+/**
+ * ปรับสัญญาแบบเดิมเป็นแบบใหม่: ค่าห้องเดิมถือเป็นราคารวม VAT แล้ว (ไม่บวก VAT เพิ่ม)
+ *  แยกเป็นค่าห้อง (มี VAT · ไม่เกิน part เช่น 15,000) + ค่าบริการทางการแพทย์ (ส่วนที่เหลือ ไม่มี VAT) · คืนแถวสัญญาใหม่
+ */
+export function splitOldRoom(r: string[], part: number) {
+  const total = numOf(r[4]), rate = contractVat(r), p = Math.min(part, total), med = Math.round((total - p) * 100) / 100;
+  const lines = rawLines(r) ?? [];
+  const next = [...(med > 0 ? [{ desc: "ค่าบริการทางการแพทย์", qty: 1, unit: "เดือน", price: med, code: "RM-MD", pkg: true }] : []), ...lines];
+  return { row: r.map((x, k) => (k === 4 ? String(baseOfIncl(p, rate)) : k === 23 ? JSON.stringify(next) : x)), total, part: p, med, rate };
+}
+/**
+ * ปรับบรรทัดค่าห้อง (มี VAT) ในใบที่ยังไม่ชำระแบบเดียวกัน: ยอดเดิมของบรรทัด (หลังส่วนลด) = ราคารวม VAT
+ *  แยกเป็นค่าห้อง (part × จำนวนเดือนในบรรทัด) + ค่าบริการทางการแพทย์ · บรรทัดอื่นไม่เปลี่ยน
+ */
+export function splitOldRoomLines(items: BillItem[], part: number) {
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  return items.flatMap((l) => {
+    if (l.credit || !l.vat || !isRoomLine(l.desc) || /^ค่าบริการทางการแพทย์/.test(l.desc)) return [l];
+    const months = Number(l.desc.match(/\(ล่วงหน้า (\d+) เดือน\)/)?.[1] ?? 1) || 1;
+    const total = r2(l.qty * l.price - (l.discount ?? 0) - (l.pct ? (l.qty * l.price * l.pct) / 100 : 0));
+    const p = Math.min(total, part * months), med = r2(total - p);
+    const room = { ...l, qty: 1, price: baseOfIncl(p, l.vat), discount: 0, pct: 0 };
+    return med > 0 ? [room, { desc: `ค่าบริการทางการแพทย์${months > 1 ? ` (ล่วงหน้า ${months} เดือน)` : ""}`, qty: 1, price: med, discount: 0, code: "RM-MD" }] : [room];
+  });
+}
+/** สัญญาพักระยะสั้น (ค่าห้องรายวัน/รายสัปดาห์): ไม่สร้างใบค่าบริการรายเดือนให้อัตโนมัติ */
+export const isStayContract = (r: string[]) => !!rawLines(r)?.some((l) => l.stay);
+export const contractMeta = (r: string[]): ContractMeta => rawLines(r)?.find((l) => l.meta)?.meta ?? {};
+/** แบ่งยอดเป็น n งวด: งวดละเท่ากัน (ปัดสตางค์) งวดสุดท้ายรับเศษ */
+export function splitInstallments(total: number, n: number) {
+  const k = Math.max(1, Math.floor(n)), per = Math.floor((total / k) * 100) / 100;
+  return Array.from({ length: k }, (_, i) => (i < k - 1 ? per : Math.round((total - per * (k - 1)) * 100) / 100));
+}
+/** หมายเหตุใบแจ้งหนี้ที่แบ่งชำระ: "แบ่งชำระ 3 งวด" · อ่านกลับด้วย installmentsOf */
+export const installmentsOf = (note?: string) => Number(String(note ?? "").match(/แบ่งชำระ (\d+) งวด/)?.[1] ?? 0) || 0;
 /** บรรทัดค่าห้อง (คิด VAT ค่าห้อง) */
 export const isRoomLine = (d: string) => /ห้อง|room/i.test(d);
 
@@ -177,3 +238,22 @@ export function bahtText(amount: number) {
   if (!baht && !st) return "ศูนย์บาทถ้วน";
   return (baht ? readInt(baht) + "บาท" : "") + (st ? readInt(st) + "สตางค์" : "ถ้วน");
 }
+
+/**
+ * หมวดในใบแจ้งหนี้ (หน้าแรกแสดงยอดตามหมวด · หน้า 2 แจกแจงรายการ)
+ *  room = ค่าห้อง (มี VAT) · med = ค่าบริการทางการแพทย์ (ส่วนแยกจากราคาห้อง + งานพยาบาล + แพทย์/บุคลากร)
+ *  goods = ยา เวชภัณฑ์ อุปกรณ์ อื่น ๆ · extra = กายภาพ แพ็กเกจ คอร์ส · dep = เงินประกัน / มัดจำ (แสดงเป็นบรรทัดของตัวเอง)
+ */
+export type BillGrp = "room" | "med" | "goods" | "extra" | "dep";
+export const BILL_GROUPS: [Exclude<BillGrp, "dep">, string, string][] = [["room", "ค่าบริการห้องพัก", "ROOM CHARGE"], ["med", "ค่าบริการทางการแพทย์", "MEDICAL SERVICES"],
+  ["goods", "ค่าสินค้าและบริการอื่น ๆ", "GOODS & OTHER SERVICES"], ["extra", "ค่าบริการเสริม", "ADDITIONAL SERVICES"]];
+export function groupOf(i: BillItem): BillGrp {
+  const d = i.desc.trim(), code = lineCode(i);
+  if (code === "DP-01" || code === "DP-02" || /^เงินประกัน|^มัดจำห้อง/.test(d)) return "dep";
+  if (code === "RM-MD" || /^(NS|CR)-/.test(code) || /^ค่าบริการทางการแพทย์/.test(d)) return "med";
+  if (/^RM-/.test(code) || isRoomLine(d) || /^ค่าบริการรายเดือน|^ชำระค่าบริการล่วงหน้า/.test(d)) return "room";
+  if (/^PT-/.test(code) || /คอร์ส|กายภาพ|แพ็กเกจ/.test(d)) return "extra";
+  return "goods";
+}
+/** ยอดบรรทัดรวม VAT (หลังส่วนลด) */
+export const inclNet = (i: BillItem) => (i.vat ? Math.round(lineNet(i) * (100 + i.vat)) / 100 : lineNet(i));

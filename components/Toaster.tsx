@@ -6,7 +6,7 @@ import { isWarning } from "@/lib/notice";
  * แจ้งเตือนการทำรายการ (บันทึก แก้ไข ลบ ทำไม่ได้ รอส่ง)
  *  - สีตามการกระทำ · หัวข้อ = การกระทำ บรรทัดรอง = รายการนั้น (ข้อความแบบเดิม "หัวข้อ · รายละเอียด" แยกให้เอง)
  *  - ข้อความเดิมซ้ำภายใน 3 วินาที รวมเป็นอันเดียวพร้อมตัวนับ · แสดงพร้อมกันไม่เกิน 3 อัน
- *  - ปิดเอง 4 วินาที (ลบ 6 วินาที ให้กดเลิกทำทัน) · ชี้เมาส์/แตะค้าง แถบเวลาหยุด · คำเตือนไม่ปิดเอง
+ *  - ปิดเอง 4 วินาที (ลบ / คำเตือน 6 วินาที) · ชี้เมาส์/แตะค้าง แถบเวลาหยุด · กำลังทำงาน/ออฟไลน์ไม่ปิดเอง
  */
 export type ToastType = "ok" | "edit" | "del" | "warn" | "busy" | "off";
 export type ToastAction = { label: string; run: () => void };
@@ -34,7 +34,8 @@ const PATH: Record<ToastType, JSX.Element> = {
   busy: <path d="M12 3a9 9 0 1 0 9 9" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" />,
   off: <path d="M4 9a12 12 0 0 1 16 0M7.5 12.5a7 7 0 0 1 9 0M11 16a2 2 0 0 1 2 0M3 3l18 18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />,
 };
-const defaultMs = (t: ToastType) => (t === "del" ? 6000 : t === "warn" || t === "busy" || t === "off" ? 0 : 4000);
+/** ปิดเอง: ทั่วไป 4 วินาที · ลบ / คำเตือน 6 วินาที (อ่านทัน กดเลิกทำทัน) · กำลังทำงาน / ออฟไลน์ ค้างไว้จนสถานะเปลี่ยน */
+const defaultMs = (t: ToastType) => (t === "del" || t === "warn" ? 6000 : t === "busy" || t === "off" ? 0 : 4000);
 
 export function useToaster() {
   const [items, setItems] = useState<Item[]>([]);
@@ -66,16 +67,23 @@ export function Toaster({ items, dismiss }: { items: Item[]; dismiss: (id: numbe
 }
 
 function Toast({ t, dismiss }: { t: Item; dismiss: (id: number) => void }) {
-  // ปิดเองเมื่อแถบเวลาหมด (แถบหยุดเมื่อชี้เมาส์/แตะค้าง ผ่าน CSS)
-  const ref = useRef<HTMLSpanElement>(null);
+  /**
+   * ปิดเองด้วยตัวจับเวลา (ไม่พึ่ง animationend ของแถบเวลา: เครื่องที่ปิดภาพเคลื่อนไหว / prefers-reduced-motion
+   *  หรือแท็บที่ถูกพักไว้ จะไม่มี animationend ทำให้แจ้งเตือนค้างไม่หาย) · ชี้เมาส์ / โฟกัส / แตะค้าง = หยุดนับ แล้วนับต่อจากเวลาที่เหลือ
+   */
+  const [paused, setPaused] = useState(false);
+  const left = useRef(t.ms);
+  useEffect(() => { left.current = t.ms; }, [t.bar, t.ms]); // ข้อความซ้ำรวมเป็นอันเดียว = เริ่มนับใหม่
   useEffect(() => {
-    const el = ref.current; if (!el) return;
-    const end = () => dismiss(t.id);
-    el.addEventListener("animationend", end);
-    return () => el.removeEventListener("animationend", end);
-  }, [t.id, t.bar, dismiss]);
+    if (!t.ms || t.out || paused) return;
+    const started = Date.now();
+    const id = setTimeout(() => dismiss(t.id), Math.max(0, left.current));
+    return () => { clearTimeout(id); left.current = Math.max(0, left.current - (Date.now() - started)); };
+  }, [t.id, t.bar, t.ms, t.out, paused, dismiss]);
+  const hold = { onMouseEnter: () => setPaused(true), onMouseLeave: () => setPaused(false), onFocusCapture: () => setPaused(true), onBlurCapture: () => setPaused(false),
+    onPointerDown: () => setPaused(true), onPointerUp: () => setPaused(false), onPointerCancel: () => setPaused(false) };
   return (
-    <div className={`kin-toast is-${t.type}${t.out ? " is-out" : ""}`} role={t.type === "warn" || t.type === "off" ? "alert" : "status"}>
+    <div {...hold} className={`kin-toast is-${t.type}${t.out ? " is-out" : ""}`} role={t.type === "warn" || t.type === "off" ? "alert" : "status"}>
       <span className="kin-toast-icon"><svg viewBox="0 0 24 24" aria-hidden="true">{PATH[t.type]}</svg></span>
       <div className="kin-toast-body">
         <p className="kin-toast-title">{t.title}{t.n > 1 && <span className="kin-toast-count">×{t.n}</span>}</p>
@@ -85,7 +93,7 @@ function Toast({ t, dismiss }: { t: Item; dismiss: (id: number) => void }) {
       <button type="button" className="kin-toast-close" aria-label="ปิดการแจ้งเตือน" onClick={() => dismiss(t.id)}>
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" /></svg>
       </button>
-      {t.ms > 0 && <span key={t.bar} ref={ref} className="kin-toast-bar" style={{ animationDuration: `${t.ms}ms` }} />}
+      {t.ms > 0 && <span key={t.bar} className="kin-toast-bar" style={{ animationDuration: `${t.ms}ms`, animationPlayState: paused ? "paused" : undefined }} />}
     </div>
   );
 }

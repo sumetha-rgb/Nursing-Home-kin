@@ -5,7 +5,7 @@ import CsvIcon from "../CsvIcon";
 import { Field, Modal, PageHeader, Tabs } from "../ui";
 import { useApp } from "@/lib/app";
 import { downloadCsv } from "@/lib/store";
-import { CAT_IDS, CATS, CatId, CODE_RE, codeProblem, PriceItem, Rate, RATE_UNITS, rateCode, RateUnit, setPrices, suggestCode } from "@/lib/priceList";
+import { CAT_IDS, CATS, CatId, CODE_RE, codeProblem, PriceItem, Rate, RATE_UNITS, rateCode, RateUnit, ROOM_PART, roomPartOf, setPrices, suggestCode } from "@/lib/priceList";
 
 /**
  * ใบราคาและรหัส: ราคากลางทุกสาขา · ผู้จัดการสาขาและผู้บริหารเพิ่ม แก้ราคา แก้รหัส ปิดใช้ และนำเข้า/ส่งออก CSV
@@ -13,7 +13,7 @@ import { CAT_IDS, CATS, CatId, CODE_RE, codeProblem, PriceItem, Rate, RATE_UNITS
  */
 type Item = PriceItem & { id: string };
 type Hist = { at: string; action: string; detail: string; reason: string; by: string; code: string };
-type FRate = { unit: RateUnit; price: string; label: string; from?: number };
+type FRate = { unit: RateUnit; price: string; label: string; from?: number; room?: string };
 type Form = { id?: string; cat: CatId; sub: string; code: string; name: string; rates: FRate[] };
 type Status = "all" | "on" | "off" | "next";
 
@@ -47,6 +47,8 @@ function changesOf(old: Item | undefined, f: Form, when: string) {
     kept.add(r.from!);
     if (rateName(was) !== rateName({ unit: r.unit, label })) out.push(`หน่วย ${rateName(was)} → ${rateName({ unit: r.unit, label })}`);
     if (r.price !== "" && price !== was.price) out.push(`ราคา${rateName({ unit: r.unit, label })} ${money(was.price)} → ${money(price)}${when ? ` มีผล ${thDate(when)}` : ""}`);
+    const room = r.room === undefined || r.room === "" ? null : Number(r.room);
+    if (f.cat === "RM" && (was.room ?? null) !== room) out.push(`ค่าห้อง (มี VAT) ของราคา${rateName({ unit: r.unit, label })} ${was.room !== undefined ? money(was.room) : "ค่าเริ่มต้น"} → ${room !== null ? money(room) : "ค่าเริ่มต้น"}`);
   });
   old.rates.forEach((r, i) => { if (!kept.has(i)) out.push(`ลบราคา ${money(r.price)}/${rateName(r)}`); });
   return out;
@@ -179,7 +181,7 @@ export function PriceList() {
                         <div className="pl-rates">
                           {x.rates.map((r, i) => (
                             <span key={i} title={rateCode(x, i)}>
-                              {money(r.price)}<i>/{rateName(r)}</i>
+                              {money(r.price)}<i>/{rateName(r)}</i>{x.cat === "RM" && <i className="pl-part"> · ห้อง {money(roomPartOf(r))}</i>}
                               {r.next && <em>→ {money(r.next.price)} · {thDate(r.next.from)}</em>}
                             </span>
                           ))}
@@ -213,7 +215,7 @@ function EditDialog({ item, tab: tab0, items, canEdit, onClose, onToggle, onSave
   const { toast } = useApp();
   const isNew = !item;
   const first: Form = item
-    ? { id: item.id, cat: item.cat, sub: item.sub, code: item.code, name: item.name, rates: item.rates.map((r, i) => ({ unit: r.unit, price: String(r.price), label: r.label ?? "", from: i })) }
+    ? { id: item.id, cat: item.cat, sub: item.sub, code: item.code, name: item.name, rates: item.rates.map((r, i) => ({ unit: r.unit, price: String(r.price), label: r.label ?? "", from: i, room: r.room !== undefined ? String(r.room) : "" })) }
     : { cat: "NS", sub: CATS.NS.subs[0][0], code: suggestCode(items, "NS", CATS.NS.subs[0][0]), name: "", rates: [{ unit: "ครั้ง", price: "", label: "" }] };
   const [f, setF] = useState<Form>(first);
   const [tab, setTab] = useState(tab0);
@@ -250,7 +252,7 @@ function EditDialog({ item, tab: tab0, items, canEdit, onClose, onToggle, onSave
     setBusy(true);
     try {
       await post({ op: "save", id: f.id, cat: f.cat, sub: f.sub, code, name: f.name, reason, when: dated,
-        rates: f.rates.map((r) => ({ unit: r.unit, price: Number(r.price), label: r.label.trim(), from: r.from })) });
+        rates: f.rates.map((r) => ({ unit: r.unit, price: Number(r.price), label: r.label.trim(), from: r.from, ...(f.cat === "RM" && r.room !== undefined && r.room !== "" ? { room: Number(r.room) } : {}) })) });
       onSaved(isNew ? `เพิ่ม ${code} แล้ว` : dated ? `ตั้งราคาใหม่ ${code} แล้ว · มีผล ${thDate(dated)}` : `บันทึก ${code} แล้ว`);
     } catch (e) { toast((e as Error).message); }
     finally { setBusy(false); }
@@ -320,6 +322,11 @@ function EditDialog({ item, tab: tab0, items, canEdit, onClose, onToggle, onSave
                   <div>
                     <input type="number" min={0} inputMode="decimal" value={r.price} onChange={(e) => setRate(i, { price: e.target.value })} className={`text-right tabular-nums ${diff ? "pl-changed" : ""}`} aria-label="ราคา" />
                     {diff && <small className="pl-was">เดิม {money(was!.price)}</small>}
+                    {/* ห้องพัก: แยกส่วนค่าห้อง (มี VAT) ที่เหลือเป็นค่าบริการทางการแพทย์ (ไม่มี VAT) */}
+                    {f.cat === "RM" && <label className="pl-room">ค่าห้อง (มี VAT)
+                      <input type="number" min={0} inputMode="decimal" value={r.room ?? ""} placeholder={String(Math.min(Number(r.price) || 0, ROOM_PART[r.unit] ?? (Number(r.price) || 0)))} onChange={(e) => setRate(i, { room: e.target.value })} aria-label={`ค่าห้อง (มี VAT) ของราคา${r.unit}`} />
+                      {Number(r.price) > 0 && <small>ค่าบริการทางการแพทย์ {money(Math.max(0, (Number(r.price) || 0) - Math.min(Number(r.price) || 0, r.room !== undefined && r.room !== "" ? Number(r.room) : ROOM_PART[r.unit] ?? (Number(r.price) || 0))))}</small>}
+                    </label>}
                     {was?.next && !diff && <small className="pl-was is-next">ราคาใหม่ {money(was.next.price)} มีผล {thDate(was.next.from)} · <button type="button" onClick={() => cancelNext(r.from!)}>ยกเลิก</button></small>}
                   </div>
                   <button type="button" className="row-action danger" disabled={f.rates.length < 2} onClick={() => set({ rates: f.rates.filter((_, j) => j !== i) })}>ลบ</button>

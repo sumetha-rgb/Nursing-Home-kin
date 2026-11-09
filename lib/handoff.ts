@@ -33,3 +33,17 @@ export const billHandoff = {
   set: (contractId: string, dc = false, date?: string) => { bill = { id: contractId, dc, date }; },
   take: () => { const h = bill; bill = null; return h; },
 };
+
+/** หน้าห้องพัก → สัญญาบริการ: เปิดฟอร์มเปิดสัญญา (กรอกให้ครบ) ของสัญญาที่จองห้องไว้ (เก็บ id ของสัญญา) */
+let completeId: string | null = null;
+export const contractHandoff = {
+  set: (contractId: string) => { completeId = contractId; },
+  take: () => { const h = completeId; completeId = null; return h; },
+};
+
+/** หน้าอื่น → การเงิน: เปิดดู/พิมพ์เอกสารใบนี้ทันที (เช่น ใบเสร็จที่เพิ่งรับชำระตอนเปิดสัญญา) */
+let viewInv: string | null = null;
+export const invoiceHandoff = {
+  set: (invoiceId: string) => { viewInv = invoiceId; },
+  take: () => { const h = viewInv; viewInv = null; return h; },
+};

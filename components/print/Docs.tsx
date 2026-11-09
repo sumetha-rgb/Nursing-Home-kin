@@ -373,6 +373,64 @@ export function DischargeDoc({ d, branch, by }: { d: DcData; branch?: DocBranch;
   );
 }
 
+/* ---------- เอกสารการมัดจำค่าห้องพัก (ตามแบบฟอร์มกระดาษของศูนย์) ---------- */
+/** ใบมัดจำ: ยอด วันที่ และยอดที่รับแยกช่องทาง (ติ๊กช่องทางชำระ) */
+export type DepositInv = { date: string; net: number; status: string; paidDate?: string; cash?: number; credit?: number; transfer?: number; cashier?: string; no?: string };
+const Ck = ({ on, children }: { on?: boolean; children: ReactNode }) => <span className="dep-ck"><i aria-hidden="true">{on ? "☑" : "☐"}</i>{children}</span>;
+export function DepositDoc({ r, inv, branch, by }: { r: string[]; inv?: DepositInv; branch?: DocBranch; by?: string }) {
+  const amt = inv?.net ?? numOf(r[27]);
+  const paid = inv?.status === "ชำระแล้ว";
+  const when = paid ? inv?.paidDate || inv?.date : inv?.date;
+  const room = blank(r[6]);
+  const addr = blank(r[10]);
+  const signer = (paid && inv?.cashier) || by || "";
+  return (
+    <Paper>
+      <header className="dep-head">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img className="doc-logo" src="/logo-mark.png" alt="KIN Rehabilitation & Homecare" />
+        <div>
+          <b>คินรีแฮพ แอนด์ โฮมแคร์ การดูแลผู้สูงอายุ หรือผู้มีภาวะพึ่งพิง</b>
+          <span>{branch?.legal || COMPANY.legal}</span>
+          <span>{branch?.address || COMPANY.address}</span>
+        </div>
+      </header>
+      <h2 className="dep-title">เอกสารการมัดจำค่าห้องพัก และเงื่อนไขการมัดจำ</h2>
+      <div className="dep-at">
+        <p>จัดทำที่ คินรีแฮพ แอนด์ โฮมแคร์{branch?.name ? ` สาขา${branch.name}` : ""}</p>
+        <p>วันเดือนปีที่ : <Fill v={longDate(when || r[7]).replace(" พ.ศ.", "")} w="11em" /></p>
+        {inv?.no && <p className="doc-note">อ้างอิงใบแจ้งหนี้ {inv.no}{blank(r[0]) ? ` · สัญญา ${r[0]}` : ""}</p>}
+      </div>
+      <div className="dep-lines">
+        <p><span className="dep-k">ข้าพเจ้า :</span> <Fill v={blank(r[3]) ? khun(r[3]) : ""} w="22em" /> <span className="dep-k">อายุ :</span> <Fill w="3em" /> ปี</p>
+        <p><span className="dep-k">วันเดือนปีเกิด :</span> <Fill w="8em" /> <span className="dep-k">เลขบัตรประชาชน :</span> <Fill v={idFmt(r[8]) === "-" ? "" : idFmt(r[8])} w="10em" /> <span className="dep-k">เบอร์ติดต่อ :</span> <Fill v={telFmt(r[9]) === "-" ? "" : telFmt(r[9])} w="7em" /></p>
+        <p><span className="dep-k">มีความสัมพันธ์เกี่ยวข้องเป็น :</span> <Fill v={r[11]} w="7em" />{addr ? <> <span className="dep-k">ที่อยู่ :</span> <Fill v={addr} w="18em" /></> : <> <span className="dep-k">ที่อยู่เลขที่ :</span> <Fill w="5em" /> <span className="dep-k">หมู่ที่ :</span> <Fill w="3em" /> <span className="dep-k">ตรอก/ซอย :</span> <Fill w="8em" /></>}</p>
+        {!addr && <p><span className="dep-k">ถนน :</span> <Fill w="9em" /> <span className="dep-k">ตำบล/แขวง :</span> <Fill w="9em" /> <span className="dep-k">อำเภอ/เขต :</span> <Fill w="9em" /></p>}
+        {!addr && <p><span className="dep-k">จังหวัด :</span> <Fill w="12em" /></p>}
+      </div>
+      <p className="dep-lead">โดยมีรายละเอียดดังต่อไปนี้</p>
+      <ol className="dep-items">
+        <li><span>ชื่อ - นามสกุลผู้เข้าพัก :</span> <Fill v={blank(r[2]) ? khun(r[2]) : ""} w="20em" /> <span>อายุ :</span> <Fill v={r[13]} w="3em" /> ปี</li>
+        <li><span>วันที่จะเข้าพัก :</span> <Fill v={blank(r[7]) ? longDate(r[7]).replace(" พ.ศ.", "") : ""} w="12em" /></li>
+        <li><span>ผู้รับบริการได้มัดจำค่าห้องพักในวันที่ :</span> <Fill v={when ? longDate(when).replace(" พ.ศ.", "") : ""} w="10em" /> <span>จำนวน :</span>{" "}
+          <Ck on={amt === 3000}>3,000 บาท</Ck> <Ck on={amt === 5000}>5,000 บาท</Ck>{amt > 0 && amt !== 3000 && amt !== 5000 && <Ck on>{money(amt).replace(/\.00$/, "")} บาท</Ck>}</li>
+        <li><span>ผู้รับบริการมัดจำค่าห้องพักผ่านช่องทาง :</span>{" "}
+          <Ck on={(inv?.transfer ?? 0) > 0}>โอนเข้าบัญชีธนาคารของบริษัทฯ</Ck> <Ck on={(inv?.cash ?? 0) > 0}>เงินสด</Ck> <Ck on={(inv?.credit ?? 0) > 0}>บัตรเครดิต</Ck></li>
+        <li><span>ผู้รับบริการประสงค์ :</span> <Ck on={!!room}>เลือกห้องพักเลขที่ <Fill v={room} w="4em" /></Ck> <Ck on={!room}>ไม่เลือกห้องพัก</Ck>
+          <span className="dep-note"> *กรณีเลือกห้องพักจะต้องเข้าใช้บริการภายใน 15 วัน หลังจากวันที่มัดจำมาแล้ว หากผู้รับบริการไม่สามารถเข้าพักได้ ทางบริษัทฯ จะจัดหาห้องพักอื่นแทนให้</span></li>
+        <li>การวางมัดจำจะต้องเข้าพักภายใน 20 วัน หลังจากมัดจำมาแล้ว หากผู้รับบริการไม่ได้เข้าพัก ทางบริษัทฯ ขอยกเลิกการมัดจำดังกล่าว และการวางมัดจำจะไม่มีการคืนเงินทุกกรณี</li>
+      </ol>
+      <div className="dep-sign">
+        <span className="line" />
+        <b>( {signer || "...................................."} )</b>
+        <small>ผู้รับเงิน หรือผู้แทนบริษัท</small>
+        <p>วันที่ : <Fill v={when ? longDate(when).replace(" พ.ศ.", "") : ""} w="10em" /></p>
+      </div>
+      <DocFoot left={`มัดจำค่าห้องพัก · ${val(r[2])}`} by={by} />
+    </Paper>
+  );
+}
+
 /* ---------- ใบเสนอราคา ---------- */
 export type QuoteItem = { desc: string; qty: number; unit: string; price: number; discount?: number; pct?: number; code?: string };
 export function QuoteDoc({ no, date, validDays, payer, resident, age, chronic, level, items, note, branch, by }: {

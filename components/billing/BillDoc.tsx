@@ -1,6 +1,6 @@
 "use client";
 import { ReactNode, useEffect, useRef } from "react";
-import { bahtText, creditOf, docDate, Invoice, isCN, lineAmount, lineDiscount, money, PAID, PARTIAL, parseItems, Payment, vatOf } from "@/lib/billing";
+import { bahtText, BillItem, creditOf, docDate, Invoice, isCN, lineAmount, lineDiscount, money, PAID, PARTIAL, parseItems, Payment, vatOf } from "@/lib/billing";
 import { COMPANY } from "../ui";
 import { taxIdText } from "@/lib/taxInfo";
 import { lineCode } from "@/lib/priceList";
@@ -12,6 +12,11 @@ export type DocFormat = "customer" | "finance";
 
 const box = (on: boolean) => (on ? "☑" : "☐");
 
+import { BILL_GROUPS as GROUPS, BillGrp as Grp, groupOf } from "@/lib/billing";
+export { groupOf };
+/** ข้อมูลประกอบหน้ารายละเอียด: ห้อง และช่วงเวลาที่เรียกเก็บ (จากสัญญา) */
+export type BillDetail = { room?: string; period?: string };
+
 function Logo() {
   return <div className="bill-logo"><img src="/logo-mark.png" alt="" /><span>KIN<small>REHABILITATION &amp; HOMECARE</small></span></div>;
 }
@@ -21,8 +26,8 @@ function Logo() {
  *  customer : ใบเสร็จ/ใบแจ้งหนี้ให้ผู้ชำระ (หัวกระดาษกลาง + ช่องลงชื่อผู้จ่ายเงิน/ผู้รับชำระ) แนบหลักฐานการโอนหน้าถัดไป
  *  finance  : ส่วนที่ 2 สำหรับฝ่ายการเงิน/บัญชี (กรอบเดียว + ส่วนลดรายบรรทัด + ตราประทับ)
  */
-export default function BillDoc({ inv, branch, format, copy, slips = [], payment, printedBy, pays = [] }: {
-  inv: Invoice; branch: Branch; format: DocFormat; copy: boolean; slips?: Payment[]; payment?: Payment; printedBy: string; pays?: Payment[];
+export default function BillDoc({ inv, branch, format, copy, slips = [], payment, printedBy, pays = [], detail }: {
+  inv: Invoice; branch: Branch; format: DocFormat; copy: boolean; slips?: Payment[]; payment?: Payment; printedBy: string; pays?: Payment[]; detail?: BillDetail;
 }) {
   /*
    * payment = ใบเสร็จของงวดนั้น · ไม่มี = เอกสารรวมของทั้งใบ
@@ -96,14 +101,27 @@ export default function BillDoc({ inv, branch, format, copy, slips = [], payment
     </div>)}
   </>;
 
-  // ทั้งสองแบบใช้กรอบเดียวกัน · สำหรับผู้ชำระ: ซ่อนคอลัมน์ส่วนลด/VAT ที่ไม่มี แสดงยอดสะสม/คงเหลือของการชำระเป็นงวด และหมายเหตุ
+  // ทั้งสองแบบใช้กรอบเดียวกัน · สำหรับผู้ชำระ: ซ่อนคอลัมน์ส่วนลดที่ไม่มี (VAT แจกแจงที่แถวสรุปด้านล่างเท่านั้น) แสดงยอดสะสม/คงเหลือของการชำระเป็นงวด และหมายเหตุ
   const cust = format === "customer";
-  const anyDisc = sale.some((i) => lineDiscount(i) > 0), anyVat = sale.some((i) => i.vat);
-  const colDisc = !cust || anyDisc, colVat = !payment && (!cust || anyVat);
+  const anyDisc = sale.some((i) => lineDiscount(i) > 0);
+  // ไม่มีคอลัมน์ VAT ในรายการ: แจกแจง VAT เฉพาะแถวสรุปด้านล่าง (มูลค่าก่อน VAT / VAT / ไม่มี VAT)
+  const colDisc = !cust || anyDisc;
   // รหัสจากหน้าราคา: เฉพาะใบฝ่ายการเงิน (คอลัมน์ "รหัส") · ใบที่ให้ผู้ชำระไม่แสดงรหัส
   const colCode = !cust;
-  const cols = [["ลำดับ", "NO."], ...(colCode ? [["รหัส", "CODE"]] : []), ["รายการ", "DESCRIPTION"], ...(colDisc ? [["จำนวนเงิน", "AMOUNT"], ["ส่วนลด", "DISCOUNT"]] : []), ...(colVat ? [["VAT", ""]] : []), [colDisc ? "คงเหลือ" : "จำนวนเงิน", colDisc ? "NET AMOUNT" : "AMOUNT"]];
+  const cols = [["ลำดับ", "NO."], ...(colCode ? [["รหัส", "CODE"]] : []), ["รายการ", "DESCRIPTION"], ...(colDisc ? [["จำนวนเงิน", "AMOUNT"], ["ส่วนลด", "DISCOUNT"]] : []), [colDisc ? "คงเหลือ" : "จำนวนเงิน", colDisc ? "NET AMOUNT" : "AMOUNT"]];
   const lead = colCode ? 2 : 1, blank = cols.length - lead - 1;
+  /** หน้าแรกของใบสำหรับผู้ชำระ: ยอดตามหมวด (เงินประกัน / มัดจำ แยกบรรทัดของตัวเอง) · ใบลดหนี้แสดงรายการเหมือนเดิม */
+  const byGrp = (g: Grp) => sale.filter((i) => groupOf(i) === g);
+  /** ฉบับผู้ชำระแสดงยอดรวม VAT ในรายการ (เช่น ค่าห้อง 15,000 ไม่ใช่ 14,018.69) · แจกแจงก่อน VAT / VAT ที่แถวสรุปด้านล่าง */
+  const inc = (i: BillItem, n: number) => (i.vat ? Math.round(n * (100 + i.vat)) / 100 : n);
+  const groups = cn || !sale.length ? null : [
+    ...GROUPS.map(([key, th, en]) => ({ key, th, en, items: byGrp(key) })).filter((g) => g.items.length).map((g) => ({
+      key: g.key, th: g.th, en: g.en, amount: g.items.reduce((n, i) => n + inc(i, lineAmount(i)), 0), discount: g.items.reduce((n, i) => n + inc(i, lineDiscount(i)), 0),
+    })),
+    ...byGrp("dep").map((i, k) => ({ key: `dep${k}`, th: i.desc, en: "", amount: lineAmount(i), discount: lineDiscount(i) })),
+  ];
+  /** หน้า 2 รายละเอียดค่าบริการ: เฉพาะใบสำหรับผู้ชำระ (ไม่ใช่ใบลดหนี้) */
+  const showDetail = cust && !cn && sale.length > 0;
   /** แถวสรุปใต้รายการ: ข้อความอยู่ช่องรายการ ยอดอยู่ช่องขวาสุด */
   const sumRow = (key: string, label: ReactNode, v: ReactNode) => <tr key={key} className="bill-vat-row">{Array.from({ length: lead }, (_, k) => <td key={`l${k}`} />)}<td className="bill-desc">{label}</td>{Array.from({ length: blank - 1 }, (_, k) => <td key={k} />)}<td>{v}</td></tr>;
   return (
@@ -132,10 +150,13 @@ export default function BillDoc({ inv, branch, format, copy, slips = [], payment
         <table className="bill-table bill-table2">
           <thead><tr>{cols.map(([th, en]) => <th key={th}>{th}{en && <><br />{en}</>}</th>)}</tr></thead>
           <tbody>
-            {sale.map((i, k) => <tr key={k}>
+            {cust && groups ? groups.map((g, k) => <tr key={g.key}>
+              <td>{k + 1}</td><td className="bill-desc"><b className="font-semibold">{g.th}</b></td>
+              {colDisc && <><td>{money(g.amount)}</td><td>{g.discount ? money(g.discount) : "-"}</td></>}
+              <td>{money(g.amount - g.discount)}</td>
+            </tr>) : sale.map((i, k) => <tr key={k}>
               <td>{k + 1}</td>{colCode && <td className="bill-code-col">{lineCode(i)}</td>}<td className="bill-desc">{i.desc}{i.qty !== 1 ? ` · ${i.qty} หน่วย` : ""}</td>
               {colDisc && <><td>{money(lineAmount(i))}</td><td>{lineDiscount(i) ? money(lineDiscount(i)) : "-"}{i.pct ? <small> ({i.pct}%{i.discount ? ` + ${money(i.discount)}` : ""})</small> : null}</td></>}
-              {colVat && <td className="bill-vat-col">{i.vat ? `${i.vat}%` : "-"}</td>}
               <td>{money(lineAmount(i) - lineDiscount(i))}</td>
             </tr>)}
             <tr className="bill-filler">{cols.map(([th], c) => <td key={th} className={c === lead ? "bill-desc" : colCode && c === 1 ? "bill-code-col" : undefined} />)}</tr>
@@ -162,11 +183,12 @@ export default function BillDoc({ inv, branch, format, copy, slips = [], payment
               {sumRow("owe", <b>{owe > 0 ? "คงเหลือที่ต้องชำระ / BALANCE DUE" : "คงเหลือ / BALANCE"}</b>, <b>{money(owe)}</b>)}
             </>}
           </tbody>
+          {/* ยอดเป็นตัวอักษร: อยู่ในตารางเดียวกัน เส้นแบ่งตรงกับคอลัมน์จำนวนเงินพอดี */}
+          <tfoot><tr className="bill-words">
+            <td colSpan={cols.length - 1}><small>จำนวนเงิน / TOTAL AMOUNT IN LETTERS</small><b>{bahtText(payment ? thisAmt : inv.net)}</b></td>
+            <td className="bill-words-total"><small>{cn ? "มูลค่าที่ลดลงรวม / CREDIT AMOUNT" : payment ? "ชำระครั้งนี้ / THIS PAYMENT" : paid && full ? "รับชำระแล้ว / PAID" : "รวมทั้งสิ้น / TOTAL"}</small><b>{money(payment ? thisAmt : inv.net)}</b>{showBal && <small>สะสม {money(paidTo)} · คงเหลือ {money(owe)}</small>}</td>
+          </tr></tfoot>
         </table>
-        <div className="bill-sum2">
-          <div><small>จำนวนเงิน / TOTAL AMOUNT IN LETTERS</small><b>{bahtText(payment ? thisAmt : inv.net)}</b></div>
-          <div><small>{cn ? "มูลค่าที่ลดลงรวม / CREDIT AMOUNT" : payment ? "ชำระครั้งนี้ / THIS PAYMENT" : paid && full ? "รับชำระแล้ว / PAID" : "รวมทั้งสิ้น / TOTAL"}</small><b>{money(payment ? thisAmt : inv.net)}</b>{showBal && <small>สะสม {money(paidTo)} · คงเหลือ {money(owe)}</small>}</div>
-        </div>
         {full && !singleFull && hasVat && cust && <p className="bill-note2"><span>ใบกำกับภาษี :</span> ออกแยกตามงวดที่รับเงิน เลขที่ {real.map((_, k) => `${inv.no}-${k + 1}`).join(", ")}</p>}
         {!cn && <div className="bill-pay2">
           <span>วิธีการชำระ :</span>
@@ -180,6 +202,56 @@ export default function BillDoc({ inv, branch, format, copy, slips = [], payment
         </div>
       </div>
       </div>
+      {showDetail && <div className="bill-page bill-detail">
+        <div className="bd-head">
+          <dl>
+            <dt>ห้องพัก</dt><dd>{detail?.room || "-"}</dd>
+            <dt>รหัสลูกค้า</dt><dd>{inv.hn || "-"}</dd>
+            <dt>ชื่อ - สกุล</dt><dd>{inv.who || "-"}</dd>
+          </dl>
+          <dl>
+            <dt>วันที่</dt><dd>{date}</dd>
+            <dt>เลขที่เอกสาร</dt><dd>{docNo}</dd>
+            <dt>ยอดสุทธิ</dt><dd><b>{money(inv.net)}</b> บาท</dd>
+          </dl>
+        </div>
+        <h3 className="bd-title">รายละเอียดค่าบริการ <small>SERVICE DETAILS · หน้า 2</small></h3>
+        {GROUPS.filter(([key]) => byGrp(key).length).map(([key, th, en], gi) => {
+          const its = byGrp(key);
+          const net = its.reduce((n, i) => n + inc(i, lineAmount(i) - lineDiscount(i)), 0);
+          return (
+            <section key={key} className="bd-sec">
+              <header><b><span>{gi + 1}</span>{th}</b><span>รวม{th} <b>{money(net)}</b></span></header>
+              <table>
+                <thead><tr><th>รายการ</th><th>จำนวน</th><th>ราคา/หน่วย</th><th>ส่วนลด</th><th>จำนวนเงิน</th></tr></thead>
+                <tbody>{its.map((i, k) => <tr key={k}>
+                  <td>{i.desc}{i.vat ? <small className="bd-vat"> · รวม VAT {i.vat}%</small> : null}</td>
+                  <td>{i.qty}</td><td>{money(inc(i, i.price))}</td><td>{lineDiscount(i) ? money(inc(i, lineDiscount(i))) : "-"}</td><td>{money(inc(i, lineAmount(i) - lineDiscount(i)))}</td>
+                </tr>)}</tbody>
+              </table>
+              {key === "room" && detail?.period && <p className="bd-note"><b>ช่วงเวลา:</b> {detail.period}</p>}
+            </section>
+          );
+        })}
+        {byGrp("dep").length > 0 && <section className="bd-sec">
+          <header><b><span>{GROUPS.filter(([k]) => byGrp(k).length).length + 1}</span>เงินประกัน / มัดจำ</b><span>รวม <b>{money(byGrp("dep").reduce((n, i) => n + lineAmount(i) - lineDiscount(i), 0))}</b></span></header>
+          <table><tbody>{byGrp("dep").map((i, k) => <tr key={k}><td>{i.desc}</td><td>{money(lineAmount(i) - lineDiscount(i))}</td></tr>)}</tbody></table>
+        </section>}
+        <div className="bd-total">
+          {tax.vat > 0 && <>
+            <p><span>มูลค่าที่เสียภาษี (ก่อน VAT)</span><span>{money(tax.base)}</span></p>
+            {tax.rates.map((x) => <p key={x.rate}><span>ภาษีมูลค่าเพิ่ม {x.rate}%</span><span>{money(x.vat)}</span></p>)}
+            {tax.exempt > 0 && <p><span>มูลค่าที่ไม่มีภาษีมูลค่าเพิ่ม</span><span>{money(tax.exempt)}</span></p>}
+          </>}
+          <p><span>รวมทั้งสิ้น</span><b>{money(grand)}</b></p>
+          {credits.map((c, k) => <p key={k}><span>{c.desc}</span><b>-{money(c.qty * c.price)}</b></p>)}
+          <p className="is-due"><span>ยอดที่ต้องชำระ</span><b>{money(inv.net)} บาท</b></p>
+        </div>
+        <div className="bd-warn">
+          <p>*** โปรดตรวจสอบข้อมูลความถูกต้องของเอกสารก่อนชำระค่าบริการ ***</p>
+          <p>หากมีการเปลี่ยนแปลงหรือแก้ไขข้อมูล รบกวนแจ้งทางการเงินไม่เกิน 2 วันหลังจากมีการแจ้งค่าบริการ</p>
+        </div>
+      </div>}
       {attach}
     </div>
   );

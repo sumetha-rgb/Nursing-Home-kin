@@ -92,7 +92,7 @@ export async function GET(req: NextRequest) {
 }
 
 /** ราคาที่ส่งมาจากหน้าเว็บ · from = ลำดับราคาเดิม (ไม่มี = ราคาที่เพิ่มใหม่) */
-type InRate = { unit: RateUnit; price: number; label?: string; from?: number };
+type InRate = { unit: RateUnit; price: number; label?: string; from?: number; room?: number };
 function readRates(v: unknown): InRate[] | string {
   if (!Array.isArray(v) || !v.length) return "ต้องมีราคาอย่างน้อย 1 ราคา";
   if (v.length > 8) return "ราคาต่อรายการได้ไม่เกิน 8 ราคา";
@@ -102,7 +102,9 @@ function readRates(v: unknown): InRate[] | string {
     if (!RATE_UNITS.includes(unit)) return "หน่วยราคาไม่ถูกต้อง";
     if (r?.price === "" || r?.price === null || !Number.isFinite(price) || price < 0 || price > 10_000_000) return `ราคา${unit}ไม่ถูกต้อง`;
     const label = typeof r.label === "string" ? r.label.trim().slice(0, 40) : "";
-    out.push({ unit, price: Math.round(price * 100) / 100, ...(label ? { label } : {}), ...(Number.isInteger(r.from) ? { from: r.from as number } : {}) });
+    const room = r?.room === "" || r?.room === null || r?.room === undefined ? NaN : Number(r.room);
+    if (Number.isFinite(room) && (room < 0 || room > price)) return `ค่าห้องของราคา${unit}ต้องไม่ติดลบและไม่เกินราคา`;
+    out.push({ unit, price: Math.round(price * 100) / 100, ...(label ? { label } : {}), ...(Number.isInteger(r.from) ? { from: r.from as number } : {}), ...(Number.isFinite(room) ? { room: Math.round(room * 100) / 100 } : {}) });
   }
   return out;
 }
@@ -142,10 +144,11 @@ async function save(me: SessionUser, b: Record<string, unknown>) {
   const kept = new Set<number>();
   const next: Rate[] = rates.map((r) => {
     const was = r.from !== undefined ? old.rates[r.from] : undefined;
-    if (!was) { changes.push(`เพิ่มราคา ${money(r.price)}/${rateName(r)}`); return { unit: r.unit, price: r.price, ...(r.label ? { label: r.label } : {}) }; }
+    if (!was) { changes.push(`เพิ่มราคา ${money(r.price)}/${rateName(r)}`); return { unit: r.unit, price: r.price, ...(r.label ? { label: r.label } : {}), ...(r.room !== undefined ? { room: r.room } : {}) }; }
     kept.add(r.from!);
     if (rateName(was) !== rateName(r)) changes.push(`หน่วย ${rateName(was)} → ${rateName(r)}`);
-    const base = { unit: r.unit, ...(r.label ? { label: r.label } : {}) };
+    if ((was.room ?? null) !== (r.room ?? null)) changes.push(`ค่าห้อง (มี VAT) ของราคา${rateName(r)} ${was.room !== undefined ? money(was.room) : "ค่าเริ่มต้น"} → ${r.room !== undefined ? money(r.room) : "ค่าเริ่มต้น"}`);
+    const base = { unit: r.unit, ...(r.label ? { label: r.label } : {}), ...(r.room !== undefined ? { room: r.room } : {}) };
     if (r.price === was.price) return { ...base, price: was.price, ...(was.next ? { next: was.next } : {}) };
     if (when) { changes.push(`ราคา${rateName(r)} ${money(was.price)} → ${money(r.price)} มีผล ${thDate(when)}`); return { ...base, price: was.price, next: { price: r.price, from: when } }; }
     changes.push(`ราคา${rateName(r)} ${money(was.price)} → ${money(r.price)}`);

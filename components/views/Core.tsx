@@ -5,22 +5,22 @@ import { useBranchNames, withBranches } from "@/lib/branches";
 import Link from "next/link";
 import Icon from "../Icon";
 import { APPOINTMENTS, CONTRACTS, DAILY_LIST, RESIDENTS, BRANCH_NAMES } from "@/lib/mock";
-import { downloadCsv, refreshData, useCrud, useRecords } from "@/lib/store";
-import { balanceOf, parseItems, lineNet, PAID, contractVat, DEFAULT_VAT, DRAFT, docDate, Invoice, invoiceBranch, isOpen, money, svcNet, todayIso, UNPAID, VOID } from "@/lib/billing";
-import { buildBilledIndex, contractBilledFor, contractInvoice, contractMonthTotal, isStartInvoice, prepaidMonths, useBranchInfo } from "./Billing";
+import { downloadCsv, newId, refreshData, useCrud, useRecords } from "@/lib/store";
+import { balanceOf, baseOfIncl, BILL_KINDS, BillItem, contractMeta, ContractLine, isOldRoomPricing, isStayContract, splitOldRoom, splitOldRoomLines, installmentsOf, splitInstallments, parseItems, lineNet, PAID, contractVat, DEFAULT_VAT, DRAFT, docDate, inclOf, Invoice, invoiceBranch, isOpen, lineAmount, money, svcNet, todayIso, totals, UNPAID, vatOf, VOID } from "@/lib/billing";
+import { bookingInvoiceOf, bookingPaid, buildBilledIndex, contractBilledFor, contractMonthTotal, contractStartLines, contractStartNote, isStartInvoice, prepaidMonths, useBranchInfo } from "./Billing";
 import ContractView from "./ContractView";
 import { contractsCsv } from "../billing/contractsCsv";
 import ContractSummary from "../care/ContractSummary";
-import { ContractDoc, contractLines, contractRoomName, contractTotal, DcData, dcRefund, DischargeDoc, PrintModal, RenewDoc } from "../print/Docs";
+import { ContractDoc, contractLines, contractRoomName, DcData, dcRefund, DepositDoc, DischargeDoc, PrintModal, RenewDoc } from "../print/Docs";
 import { ServiceLine, ServiceLines } from "../ServicePicker";
 import { AddressFinder, ChipChoice, SuggestText, TagInput } from "../ContractInputs";
 import { addMonthsIso, ALLERGY_DRUGS, COMMON_MEDS, FOOD_ALLERGENS, HEALTH_RIGHTS, HOSP_LATER, isNoAllergy, NO_ALLERGY, RELATIONS } from "@/lib/medicalLists";
 import { PROGRAMS } from "@/lib/contractText";
-import { rooms as priceRooms } from "@/lib/priceList";
+import { ROOM_PART, roomByPrice, rooms as priceRooms } from "@/lib/priceList";
 import { usePriceList } from "@/lib/usePrices";
 import { clinic, fetchDocSettings } from "@/lib/clinic";
 import { fetchProfile } from "@/lib/care";
-import { billHandoff, handoff, QuoteHandoff } from "@/lib/handoff";
+import { billHandoff, contractHandoff, handoff, invoiceHandoff, QuoteHandoff } from "@/lib/handoff";
 import { buildTodos, HomeData, runTodo, TodoItem } from "../dash/Todo";
 import { apptIso, TH_MONTHS, upcomingAppts } from "@/lib/appointments";
 import { useApp } from "@/lib/app";
@@ -214,6 +214,25 @@ const NO_ROOM = "-";
  */
 /** รูปบัตรประชาชนที่แนบในฟอร์ม ("" = ไม่ได้แนบ) */
 type IdPhotos = { employer: string; resident: string };
+/**
+ * ขั้นที่ 4 ของฟอร์ม: ใบแจ้งหนี้ที่ออกให้คนนี้พร้อมการบันทึกสัญญา
+ *  unpaid = ค้างชำระ (รับเงินทีหลัง) · pay = รับชำระเต็มจำนวนเลย (เป็นใบเสร็จ) · draft = รอการเงินตรวจยอด · none = ไม่ออกใบ
+ */
+type BillChoice = { mode: "unpaid" | "pay" | "draft" | "none"; items: BillItem[]; note: string; booking: boolean; pay?: PayNow };
+type PayNow = { method: string; slip: string; date: string };
+const PAY_METHODS = ["เงินสด", "โอนเงิน", "บัตรเครดิต"];
+/** ยอดมัดจำค่าห้องที่ใช้บ่อย (ตามเอกสารการมัดจำ) */
+const BOOKING_AMOUNTS = [3000, 5000];
+const WAIT_DEPOSIT = "รอชำระเงินมัดจำ";
+/** สัญญาที่จองห้องด้วยมัดจำค่าห้อง ยังไม่ได้กรอกค่าบริการ (รอกด "เปิดสัญญา" ให้ครบ) */
+const isBookingRow = (c: string[]) => c[5] === WAIT_DEPOSIT && !contractMonthTotal(c);
+/** วันที่ในสัญญา (วว/ดด/ปปปป พ.ศ. หรือ YYYY-MM-DD) → YYYY-MM-DD · ไม่มี = "" */
+const isoDate = (v?: string) => {
+  const t = String(v ?? "").trim(), iso = t.match(/^(\d{4})-(\d{2})-(\d{2})/), th = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (iso) return `${Number(iso[1]) > 2400 ? Number(iso[1]) - 543 : iso[1]}-${iso[2]}-${iso[3]}`;
+  if (th) return `${Number(th[3]) > 2400 ? Number(th[3]) - 543 : th[3]}-${th[2].padStart(2, "0")}-${th[1].padStart(2, "0")}`;
+  return "";
+};
 
 /** ปุ่มเล็กในกล่องแจ้งปัญหา */
 const CALLOUT_PRIMARY = "btn-primary !min-h-0 !py-2 !text-sm";
@@ -237,23 +256,37 @@ function FormCallout({ tone = "block", title, children, actions, focus }: { tone
   );
 }
 
-function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, onClose, onSave, onRenew, onView }: {
+function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, completing = false, paidDeposit = 0, bookedDeposit = 0, canPay = false, billPreview, onClose, onSave, onRenew, onView }: {
   rooms: string[][]; residents: string[][]; contracts?: string[][]; initial?: string[]; fromQuote?: string; onClose: () => void;
+  /** เปิดสัญญาเต็มจากสัญญาที่จองห้องไว้ (initial = สัญญาที่จอง · บันทึกทับแถวเดิม เลขที่สัญญาเดิม) */
+  completing?: boolean;
+  /** มัดจำห้องที่รับชำระแล้วตอนจอง (หักในใบแรกเข้า) · bookedDeposit = ยอดมัดจำที่จองไว้ */
+  paidDeposit?: number; bookedDeposit?: number;
+  /** รับชำระในขั้นที่ 4 ได้ (มีสิทธิ์การเงิน) */
+  canPay?: boolean;
+  /** ใบแรกเข้าของแถวสัญญา r · has = เลขที่ใบแรกเข้าที่ออกไว้แล้ว (ไม่ต้องออกซ้ำ) */
+  billPreview: (r: string[]) => { items: BillItem[]; note: string; has: string };
   /** คืนสัญญาเดิมที่ยังใช้งานอยู่ = บันทึกไม่ได้ (สัญญาซ้อน) ฟอร์มแสดงกล่องแจ้งพร้อมปุ่มต่อสัญญา */
-  onSave: (r: string[], photos: IdPhotos) => string[] | void;
+  onSave: (r: string[], photos: IdPhotos, bill: BillChoice) => string[] | void;
   /** ปิดฟอร์มแล้วต่อสัญญา / ดูสัญญาเดิม (ใช้เมื่อชื่อนี้มีสัญญาใช้งานอยู่แล้ว) */
   onRenew?: (c: string[]) => void; onView?: (c: string[]) => void;
 }) {
   const [photos, setPhotos] = useState<IdPhotos>({ employer: "", resident: "" });
   /** ต่อสัญญา (initial = สัญญาเดิม) · เปิดจากใบเสนอราคา initial เป็นแค่ข้อมูลตั้งต้น ไม่ใช่การต่อสัญญา */
-  const renewing = !!initial && fromQuote === undefined;
+  const renewing = !!initial && fromQuote === undefined && !completing;
+  /** ชื่อผู้รับบริการผูกกับทะเบียนแล้ว (ต่อสัญญา / เปิดสัญญาที่จองไว้) แก้ชื่อไม่ได้ */
+  const lockNames = renewing || completing;
+  /** มัดจำค่าห้อง (จองห้องไว้ก่อน): กรอกแค่สาขา ผู้ว่าจ้าง ผู้รับบริการ เลือกห้อง แล้วออกใบแจ้งหนี้มัดจำ · ข้อมูลอื่นกรอกตอนเปิดสัญญา */
+  const [booking, setBooking] = useState(false);
+  const [depAmt, setDepAmt] = useState(String(BOOKING_AMOUNTS[0]));
+  const hide = booking ? "hidden" : "";
   const iv = (i: number) => (initial?.[i] && initial[i] !== "-" ? initial[i] : "");
   // ช่องที่มีตัวช่วยกรอก (ปุ่มลัด / พิมพ์แล้วขึ้น / ดึงจากสัญญาเดิม)
   const [who, setWho] = useState(iv(2));
   const [boss, setBoss] = useState(iv(3));
   const [relation, setRelation] = useState(iv(11));
   const [addr, setAddr] = useState(iv(10));
-  const [start, setStart] = useState(todayIso());
+  const [start, setStart] = useState(() => (completing && isoDate(initial?.[7])) || todayIso());
   const [endDate, setEndDate] = useState(iv(22).slice(0, 10));
   const hosp0 = iv(24).match(/^(.*?)\s*\(([^)]+)\)\s*$/);
   const [hosp, setHosp] = useState(hosp0 && HEALTH_RIGHTS.includes(hosp0[2]) ? hosp0[1] : iv(24));
@@ -264,6 +297,9 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, on
   const [foodA, setFoodA] = useState(iv(26));
   // ชำระล่วงหน้าเลือกเป็นจำนวนเดือน · ระบบคำนวณยอด (ค่าบริการต่อเดือนรวม VAT × จำนวนเดือน) เก็บในช่องยอดล่วงหน้าของสัญญา
   const [months, setMonths] = useState(0);
+  // ชำระล่วงหน้าตั้งแต่ 2 เดือน: ส่วนลดค่าห้อง (%) จำนวนเต็ม · แบ่งชำระใบแรกเข้าเป็นงวด (เปิดสัญญาจากที่จองไว้ = ดึงที่ตั้งไว้)
+  const [roomPct, setRoomPct] = useState(() => (completing && initial ? String(contractMeta(initial).prepaidPct || "") : ""));
+  const [parts, setParts] = useState(() => (completing && initial ? Math.max(1, contractMeta(initial).installments ?? 1) : 1));
   const [deposit, setDeposit] = useState("");
   const formRef = useRef<HTMLFormElement>(null);
   const [pulledRes, setPulledRes] = useState("");
@@ -300,34 +336,58 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, on
         <button type="button" className="btn-soft !min-h-0 !py-1.5 !text-xs" onClick={onPull}>ดึงข้อมูลจากสัญญาเดิม</button>
       </div>;
   // รายการค่าบริการจากใบราคา (ต่อสัญญา / เปิดจากใบเสนอราคา = ดึงรายการเดิมมาให้)
-  const [items, setItems] = useState<ServiceLine[]>(() => (initial ? contractLines(initial) : []));
-  const [fee, setFee] = useState(() => initial?.[4] && initial[4] !== "-" ? initial[4].replace(/,/g, "") : "");
+  const [items, setItems] = useState<ServiceLine[]>(() => (initial ? contractLines(initial).filter((l) => !l.stay && !l.pkg) : []));
+  /** ส่วนค่าบริการทางการแพทย์ของราคาห้อง (สัญญาเดิม) */
+  const pkg0 = initial ? (contractLines(initial).find((l) => l.pkg) as ContractLine | undefined) : undefined;
+  /** ค่าห้องคิด รายวัน / รายสัปดาห์ / รายเดือน · รายวัน-สัปดาห์ = พักระยะสั้น กรอกจำนวนวัน/สัปดาห์ */
+  const stay0 = initial ? contractLines(initial).find((l) => l.stay) as ContractLine | undefined : undefined;
+  const [stay, setStay] = useState<"วัน" | "สัปดาห์" | "เดือน">(stay0?.stay ?? "เดือน");
+  const [stayN, setStayN] = useState(stay0?.n ? String(stay0.n) : "7");
+  // ค่าห้องที่กรอก/เลือก = ราคารายเดือนรวม VAT แล้ว (ใบราคา) · สัญญาเก็บค่าห้องก่อน VAT ระบบคำนวณกลับให้ (ไม่บวก VAT ซ้ำ)
+  const baseIn = Number(String(initial?.[4] ?? "").replace(/,/g, "")) || 0;
+  // ราคาห้องทั้งหมดต่อหน่วย (รวม VAT) = ส่วนค่าห้อง + ค่าบริการทางการแพทย์ · roomPart = ส่วนค่าห้อง (มี VAT) ต่อหน่วย
+  const part0 = stay0?.part ?? (baseIn ? inclOf(baseIn, initial ? contractVat(initial) : DEFAULT_VAT) : 0);
+  const [fee, setFee] = useState(() => (stay0?.rate ? String(stay0.rate) : baseIn ? String(Math.round((part0 + (pkg0?.price ?? 0)) * 100) / 100) : ""));
+  const [roomPart, setRoomPart] = useState(() => (part0 ? String(part0) : ""));
   // ห้องพักในใบราคา (ราคาปัจจุบัน)
   usePriceList();
   const ROOMS = priceRooms();
-  // ช่องค่าห้อง: ตรงกับราคาในใบราคา = เลือกห้องนั้นไว้ · ราคาอื่น = กำหนดเอง
-  const pickOf = (f: number) => { if (!f) return ""; const i = ROOMS.findIndex((x) => x.month === f || x.promo === f); return i < 0 ? "custom" : `${i}:${ROOMS[i].month === f ? "m" : "p"}`; };
+  /** ราคารายเดือนของห้อง = ราคาโปรโมชันในใบราคา (รวม VAT แล้ว) · ไม่มีโปรโมชันใช้ราคาปกติ */
+  const monthOf = (x: { month: number; promo: number }) => x.promo || x.month;
+  // ช่องค่าห้อง: ตรงกับราคารายเดือนในใบราคา = เลือกห้องนั้นไว้ (เก็บลำดับห้อง) · ราคาอื่น = กำหนดเอง
+  /** ราคาต่อหน่วยของห้องตามที่เลือก รายวัน / รายสัปดาห์ / รายเดือน (รวม VAT) */
+  const unitOf = (x: { day: number; week: number; month: number; promo: number }, u: string) => (u === "วัน" ? x.day : u === "สัปดาห์" ? x.week : monthOf(x));
+  const pickOf = (f: number) => { if (!f) return ""; const i = ROOMS.findIndex((x) => unitOf(x, stay0?.stay ?? "เดือน") === f); return i < 0 ? "custom" : String(i); };
   const [feePick, setFeePick] = useState(() => pickOf(Number(fee) || 0));
-  // ชื่อห้องเมื่อกำหนดราคาเอง (ใช้ตั้งชื่อบรรทัดค่าห้องในใบแจ้งหนี้และสัญญา)
-  const [roomName, setRoomName] = useState(() => (initial ? contractRoomName(initial) : ""));
+  // ชื่อห้องของค่าห้อง (ใช้ตั้งชื่อบรรทัดค่าห้องในใบแจ้งหนี้และสัญญา) · สัญญาเดิมที่ไม่ได้ตั้งชื่อ = ประเภทห้องจากราคาเดิม
+  const [roomName, setRoomName] = useState(() => (initial ? contractRoomName(initial) || roomByPrice(baseIn)?.name || "" : ""));
   // VAT ค่าห้อง (%) บวกเพิ่มในใบแจ้งหนี้ · ต่อสัญญาใช้อัตราเดิม
   const [roomVat, setRoomVat] = useState(() => (initial ? String(contractVat(initial)) : String(DEFAULT_VAT)));
   // ค่าห้องที่กรอก: รวม VAT แล้ว หรือบวก VAT เพิ่ม · VAT คิดเฉพาะค่าห้อง ไม่รวมรายการบริการเพิ่มเติม
   // ติ๊ก "คิด VAT" (ค่าเริ่มต้น) · ไม่ติ๊ก = ค่าห้องไม่มี VAT (เก็บอัตรา 0)
   const [vatOn, setVatOn] = useState(() => (initial ? contractVat(initial) > 0 : true));
-  const feeN = Number(fee) || 0, rateN = vatOn ? Number(roomVat) || 0 : 0;
-  const vatAmt = Math.round(feeN * rateN) / 100;
-  /** ค่าห้องที่ต้องจ่ายจริงต่อเดือน (รวม VAT) */
-  const roomPay = feeN + vatAmt;
-  const [roomDep, setRoomDep] = useState(() => initial?.[27] && initial[27] !== "-" ? initial[27].replace(/,/g, "") : "");
-  const sum = (Number(fee) || 0) + items.reduce((n, x) => n + svcNet(x), 0);
-  const monthly = Math.round((sum - feeN + roomPay) * 100) / 100;
+  const rateN = vatOn ? Number(roomVat) || 0 : 0;
+  /** ค่าห้องที่ต้องจ่ายจริงต่อเดือน (รวม VAT · ที่กรอก) และก่อน VAT (เก็บในสัญญา) */
+  /** จำนวนวัน/สัปดาห์ที่พัก (รายเดือน = 1) · ค่าห้องทั้งช่วง = ราคาต่อหน่วย × จำนวน */
+  const nStay = stay === "เดือน" ? 1 : Math.max(0, Math.floor(Number(stayN) || 0));
+  /** ราคาห้องทั้งช่วง (รวม VAT) · ส่วนค่าห้อง (มี VAT) · ค่าบริการทางการแพทย์ (ส่วนที่เหลือ ไม่มี VAT) · ค่าห้องก่อน VAT */
+  const unitPart = Math.min(Number(fee) || 0, roomPart === "" ? Number(fee) || 0 : Number(roomPart) || 0);
+  const roomPay = Math.round((Number(fee) || 0) * nStay * 100) / 100, partPay = Math.round(unitPart * nStay * 100) / 100;
+  const medPay = Math.round((roomPay - partPay) * 100) / 100, feeN = baseOfIncl(partPay, rateN);
+  const vatAmt = Math.round((partPay - feeN) * 100) / 100;
+  // หักมัดจำห้อง: เปิดสัญญาจากที่จองไว้ = ยอดมัดจำที่รับชำระแล้วเท่านั้น
+  const [roomDep, setRoomDep] = useState(() => completing ? (paidDeposit ? String(paidDeposit) : "") : initial?.[27] && initial[27] !== "-" ? initial[27].replace(/,/g, "") : "");
+  const sum = feeN + medPay + items.reduce((n, x) => n + svcNet(x), 0);
+  const monthly = Math.round((sum - feeN + partPay) * 100) / 100;
   const prepaid = months > 0 && monthly > 0 ? String(Math.round(monthly * months * 100) / 100) : "";
-  const firstBill = (months || 1) * monthly + (Number(deposit) || 0) - (Number(roomDep) || 0);
+  const pctN = months > 1 ? Math.min(100, Math.max(0, Math.floor(Number(roomPct) || 0))) : 0;
+  /** ส่วนลดค่าห้องชำระล่วงหน้า (รวม VAT · ประมาณ ยอดจริงคิดตามบรรทัดในขั้นที่ 4) */
+  const roomOff = Math.round(roomPay * months * pctN) / 100;
+  const firstBill = (months || 1) * monthly - roomOff + (Number(deposit) || 0) - (Number(roomDep) || 0);
   const branchNames = useBranchNames();
   const { go, toast } = useApp();
   const { user } = useSession();
-  const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
   /** ห้องที่กด "ราคาถูกแล้ว" (ไม่เตือนค่าห้องไม่ตรงซ้ำ) */
   const [priceOk, setPriceOk] = useState("");
   const [row, setRow] = useState<string[] | null>(null);
@@ -344,6 +404,7 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, on
   const [saveLive, setSaveLive] = useState<string[] | null>(null);
   const [, rerender] = useState(0);
   const step3Ref = useRef<HTMLDivElement>(null);
+  const step4Ref = useRef<HTMLDivElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const norm = (x: string) => x.trim().replace(/\s+/g, " ");
   /** ค่าเริ่มต้นจากสัญญาเดิม (ต่อสัญญา) */
@@ -369,25 +430,38 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, on
   const buildRow = () => {
     const f = new FormData(formRef.current ?? undefined);
     const g = (k: string) => String(f.get(k) ?? "").trim();
-    const lines = items.filter((x) => x.desc.trim());
+    // มัดจำค่าห้อง: ยังไม่มีค่าบริการ โปรแกรม ล่วงหน้า เงินประกัน · ยอดมัดจำเก็บในช่องหักมัดจำห้อง (หักตอนเปิดสัญญาเต็ม)
+    const lines: ServiceLine[] = booking ? [] : items.filter((x) => x.desc.trim());
+    const fee4 = !booking && feeN && stay === "เดือน" ? String(feeN) : "-";
+    if (!booking && stay !== "เดือน" && feeN > 0) {
+      const name = roomName.trim() || "ห้องพัก";
+      // จำนวน = จำนวนวัน/สัปดาห์ · ราคาต่อหน่วยก่อน VAT ไม่ปัดเศษ (ยอดรวม × VAT ตรงกับราคารวม VAT พอดี) · ใบแจ้งหนี้แสดง 500 × 5 วัน
+      lines.unshift({ desc: `ค่า${name.replace(/^ค่า/, "")} ราย${stay}`, qty: nStay, unit: stay, price: feeN / nStay, stay, n: nStay, rate: Number(fee) || 0, part: unitPart } as ServiceLine);
+    }
+    // ส่วนที่เหลือของราคาห้อง = ค่าบริการทางการแพทย์ (ไม่มี VAT) · ชื่อห้ามมีคำว่า "ห้อง" (ระบบจะนับเป็นค่าห้องและคิด VAT)
+    if (!booking && medPay > 0) lines.splice(stay === "เดือน" ? 0 : 1, 0, (stay === "เดือน"
+      ? { desc: "ค่าบริการทางการแพทย์", qty: 1, unit: stay, price: medPay, code: "RM-MD", pkg: true }
+      : { desc: `ค่าบริการทางการแพทย์ ราย${stay}`, qty: nStay, unit: stay, price: Math.round((medPay / nStay) * 100) / 100, code: "RM-MD", pkg: true }) as unknown as ServiceLine);
     return [
-      "", g("branch"), norm(who), norm(boss), fee || "-", g("status") || CONTRACT_STATUSES[0],
+      completing ? initial?.[0] ?? "" : "", g("branch"), norm(who), norm(boss), fee4, booking ? WAIT_DEPOSIT : g("status") || CONTRACT_STATUSES[0],
       NO_ROOM, start, g("employer_id"), g("phone"), addr.trim(), relation.trim(),
       g("resident_id"), g("age"), initial?.[14] ?? "", lines.map((x) => x.desc).join(", "), lines.length ? String(lines.reduce((n, x) => n + svcNet(x), 0)) : "", initial?.[17] ?? "",
-      prepaid, deposit, g("note"),
-      g("program"), endDate, JSON.stringify([...lines, ...(feePick === "custom" && roomName.trim() ? [{ desc: roomName.trim(), qty: 1, unit: "เดือน", price: 0, room: true }] : [])]), [hosp.trim(), right ? `(${right})` : ""].filter(Boolean).join(" "), drugA.trim(), foodA.trim(), roomDep, meds.trim(), hospAlt.trim(),
+      booking ? "" : prepaid, booking ? "" : deposit, g("note"),
+      booking ? "" : g("program"), booking ? "" : endDate, JSON.stringify([...lines, ...(fee4 !== "-" && roomName.trim() ? [{ desc: roomName.trim(), qty: 1, unit: "เดือน", price: 0, room: true }] : []),
+        ...(!booking && (pctN > 0 || parts > 1) ? [{ desc: "", qty: 0, unit: "", price: 0, meta: { ...(pctN > 0 ? { prepaidPct: pctN } : {}), ...(parts > 1 ? { installments: parts } : {}) } }] : [])]), [hosp.trim(), right ? `(${right})` : ""].filter(Boolean).join(" "), drugA.trim(), foodA.trim(), booking ? String(Number(depAmt) || 0) : roomDep, meds.trim(), hospAlt.trim(),
       String(rateN),
     ];
   };
 
   /** เปิดสัญญาใหม่ (ไม่ใช่ต่อสัญญา): สัญญาใช้งานอยู่/รอชำระมัดจำของชื่อนี้ในสาขานี้ · มี = ต้องใช้ "ต่อสัญญา" แทน */
-  const liveOf = (name: string, branch: string) => (!renewing ? contracts.find((c) => norm(c[2] ?? "") === name && c[1] === branch && isLive(c)) : undefined);
+  const liveOf = (name: string, branch: string) => (!renewing ? contracts.find((c) => c !== initial && !(completing && c[0] && c[0] === initial?.[0]) && norm(c[2] ?? "") === name && c[1] === branch && isLive(c)) : undefined);
   const curBranch = () => String((formRef.current?.elements.namedItem("branch") as HTMLSelectElement | null)?.value ?? "").trim();
   /** ขั้น 1: ปัญหาแรกที่ต้องแก้ก่อนไปกรอกค่าใช้จ่าย (ลำดับเดิม) · ชื่อผู้จ้าง/ผู้รับบริการเป็นช่องบังคับ (*) ตรวจด้วยกันที่นี่ */
   const check1 = (): FormProblem | null => {
-    if (endDate && endDate < start) return { msg: "วันสิ้นสุดสัญญาต้องไม่ก่อนวันเริ่มสัญญา", field: "วันสิ้นสุดสัญญา" };
-    if (!drugA.trim()) return { msg: `กรุณาระบุประวัติแพ้ยา หรือกด "${NO_ALLERGY}"`, field: "ประวัติแพ้ยา" };
-    if (!foodA.trim()) return { msg: `กรุณาระบุประวัติแพ้อาหาร หรือกด "${NO_ALLERGY}"`, field: "ประวัติแพ้อาหาร" };
+    if (!booking && endDate && endDate < start) return { msg: "วันสิ้นสุดสัญญาต้องไม่ก่อนวันเริ่มสัญญา", field: "วันสิ้นสุดสัญญา" };
+    if (booking) { /* มัดจำค่าห้อง: ประวัติแพ้ยา/อาหารกรอกตอนเปิดสัญญา */ }
+    else if (!drugA.trim()) return { msg: `กรุณาระบุประวัติแพ้ยา หรือกด "${NO_ALLERGY}"`, field: "ประวัติแพ้ยา" };
+    else if (!foodA.trim()) return { msg: `กรุณาระบุประวัติแพ้อาหาร หรือกด "${NO_ALLERGY}"`, field: "ประวัติแพ้อาหาร" };
     const branch = curBranch();
     if (!branch) return { msg: "กรุณาเลือกสาขา", field: "สาขา (Branch)" };
     if (!norm(boss)) return { msg: "กรุณากรอกชื่อ นามสกุล ผู้จ้าง", field: renewing ? "ชื่อ นามสกุล ผู้จ้าง" : "ชื่อผู้ว่าจ้าง" };
@@ -397,9 +471,9 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, on
   };
   /** ขั้น 2: รายการค่าบริการ */
   const check2 = (): FormProblem | null =>
-    items.some((x) => x.desc.trim() && (!(x.qty > 0) || x.price < 0)) ? { msg: "กรุณาตรวจจำนวนและราคาของรายการค่าบริการ · จำนวนต้องมากกว่า 0 และราคาต้องไม่ติดลบ" } : null;
+    !booking && items.some((x) => x.desc.trim() && (!(x.qty > 0) || x.price < 0)) ? { msg: "กรุณาตรวจจำนวนและราคาของรายการค่าบริการ · จำนวนต้องมากกว่า 0 และราคาต้องไม่ติดลบ" } : null;
   /** ไปขั้นอื่น: ล้างกล่องแจ้งปัญหาของขั้นเดิม */
-  const goStep = (s: 1 | 2 | 3) => { setStep(s); setTried(0); setInvalid(null); setSaveLive(null); window.scrollTo(0, 0); };
+  const goStep = (s: 1 | 2 | 3 | 4) => { setStep(s); setTried(0); setInvalid(null); setSaveLive(null); window.scrollTo(0, 0); };
   /** เลื่อนไปและโฟกัสช่องที่ต้องแก้ (หาจาก aria-label) */
   const focusField = (f: string | HTMLElement) => {
     const sel = typeof f === "string" ? `[aria-label="${f}"]` : "";
@@ -421,6 +495,8 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, on
     const r = buildRow();
     if (r[2] !== row?.[2] || r[1] !== row?.[1]) { setSamePerson(""); setSuffix(""); }
     setRow(r);
+    // มัดจำค่าห้องไม่มีขั้นค่าใช้จ่าย ไปเลือกห้องเลย
+    if (booking) return toRooms();
     goStep(2);
   };
 
@@ -441,15 +517,15 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, on
    * ค่าห้องจากห้องที่เลือก (ประเภทห้องต้องตรงหมวดในใบราคาก่อน เช่น ห้องเดี่ยวไม่เลือกราคาห้องคู่แม้ราคาเท่ากัน)
    *  ค่าห้องที่ตั้งไว้ตรงราคาในหมวด > ชื่อห้องตรงใบราคา (ราคาปกติ) > ค่าห้องที่ตั้งไว้ (กำหนดเอง)
    */
-  const roomPrice = (r: RoomInfo): { fee: number; pick: string } | null => {
+  const roomPrice = (r: RoomInfo): { fee: number; pick: string; name?: string } | null => {
     const rate = Number(String(r.rate ?? "").replace(/,/g, "")) || 0;
     const cat = (n: string) => (/คู่|twin/i.test(n) ? "คู่" : /รวม|shared/i.test(n) ? "รวม" : /เดี่ยว|deluxe|superior|suite/i.test(n) ? "เดี่ยว" : "");
     const tc = cat(r.type), t = r.type.toLowerCase();
     const named = ROOMS.findIndex((x) => { const en = x.name.match(/\(([^)]+?)(?: Room)?\)/)?.[1]; return !!en && t.includes(en.toLowerCase()); });
     const byRate = ROOMS.findIndex((x, i) => (named < 0 ? !tc || cat(x.name) === tc : i === named) && (x.month === rate || x.promo === rate));
-    if (rate && byRate >= 0) return { fee: rate, pick: `${byRate}:${ROOMS[byRate].month === rate ? "m" : "p"}` };
-    const i = named >= 0 ? named : tc === "คู่" || tc === "รวม" ? ROOMS.findIndex((x) => cat(x.name) === tc) : -1;
-    if (i >= 0) return { fee: ROOMS[i].month, pick: `${i}:m` };
+    // ค่าห้องที่เสนอ = ราคารายเดือน (รวม VAT) ของประเภทห้องนั้นในใบราคา
+    const i = rate && byRate >= 0 ? byRate : named >= 0 ? named : tc === "คู่" || tc === "รวม" ? ROOMS.findIndex((x) => cat(x.name) === tc) : -1;
+    if (i >= 0) return { fee: monthOf(ROOMS[i]), pick: String(i), name: ROOMS[i].name };
     return rate ? { fee: rate, pick: "custom" } : null;
   };
 
@@ -464,20 +540,47 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, on
   /** ห้องที่เลือกใช้ได้หรือไม่ (ห้องอาจเต็ม/ปิดหลังจากเลือก เพราะข้อมูลโหลดใหม่) */
   const roomIssue = () => { if (!row) return ""; const r = findRoom(all, row[1], room); return r ? roomProblem(r, finalName) : "กรุณาเลือกห้องพัก"; };
 
-  /** ขั้น 3: บันทึกสัญญา (มีห้อง / ยังไม่มีห้อง) */
+  /** ห้องที่เลือกในขั้นที่ 3 (NO_ROOM = ยังไม่เลือก) · ขั้นที่ 4 ออกใบแจ้งหนี้ */
+  const [chosen, setChosen] = useState(NO_ROOM);
+  const [billMode, setBillMode] = useState<BillChoice["mode"]>("unpaid");
+  const [payBy, setPayBy] = useState<PayNow>({ method: PAY_METHODS[0], slip: "", date: todayIso() });
+  /** แถวสัญญาที่จะบันทึก (ห้องจากขั้นที่ 3 · ชื่อหลังเพิ่มข้อความต่อท้าย) */
+  const finalRow = () => buildRow().map((x, i) => (i === 6 ? chosen : i === 2 ? finalName : x));
+  /** ใบมัดจำค่าห้อง: บรรทัดเดียว (DP-02 ไม่มี VAT) */
+  const bookingBill = (r: string[]): { items: BillItem[]; note: string; has: string } => {
+    const amt = Number(depAmt) || 0;
+    return { items: amt > 0 ? [{ desc: `มัดจำห้องพัก${r[6] !== NO_ROOM ? ` ห้อง ${r[6]}` : ""}`, qty: 1, price: amt, discount: 0, code: "DP-02" }] : [], note: `มัดจำค่าห้องพัก${start ? ` · วันที่จะเข้าพัก ${docDate(start)}` : ""}`, has: "" };
+  };
+  const billOf = (r: string[]) => (booking ? bookingBill(r) : billPreview(r));
+  /** ขั้น 3 → 4: ตรวจชื่อและห้องแล้วไปหน้าใบแจ้งหนี้ */
   const finish = (withRoom: boolean) => {
-    if (!row) return;
+    // มัดจำค่าห้อง = จองห้อง ต้องเลือกห้องทุกครั้ง
+    if (!row || (booking && !withRoom)) return;
     setTriedRoom(withRoom);
     if (!withRoom) setPickIssue(null);
     if (nameIssue || liveOf(finalName, row[1]) || (withRoom && roomIssue())) { setTried((n) => n + 1); return; }
-    const clash = onSave(buildRow().map((x, i) => (i === 6 ? (withRoom ? room : NO_ROOM) : i === 2 ? finalName : x)), photos);
+    const next = withRoom ? room : NO_ROOM;
+    setChosen(next);
+    const b = billOf(buildRow().map((x, i) => (i === 6 ? next : x)));
+    setBillMode(b.has ? "none" : booking && canPay ? "pay" : "unpaid");
+    goStep(4);
+  };
+  /** ขั้น 4: ปัญหาที่ทำให้บันทึกไม่ได้ */
+  const check4 = () => booking && billMode !== "none" && !(Number(depAmt) > 0) ? "กรุณาระบุยอดมัดจำค่าห้อง"
+    : billMode === "pay" && payBy.method === "โอนเงิน" && !payBy.slip ? "กรุณาแนบหลักฐานการโอนเงิน" : "";
+  /** ขั้น 4: บันทึกสัญญา / การจอง พร้อมออกใบแจ้งหนี้ */
+  const save = () => {
+    if (check4()) { setTried((n) => n + 1); return; }
+    const r = finalRow(), b = billOf(r);
+    const mode = b.items.length ? billMode : "none";
+    const clash = onSave(r, photos, { mode, items: b.items, note: b.note, booking, pay: mode === "pay" ? payBy : undefined });
     if (clash) { setSaveLive(clash); setTried((n) => n + 1); }
   };
 
   // กดถัดไป/บันทึกไม่ผ่าน: เลื่อนไปและย้ายโฟกัสไปที่กล่องแจ้งปัญหากล่องแรกของขั้นนั้น (โปรแกรมอ่านหน้าจออ่านให้ทันที)
   useEffect(() => {
     if (!tried) return;
-    const box = (step === 3 ? step3Ref.current : formRef.current)?.querySelector<HTMLElement>("[data-form-callout]");
+    const box = (step === 3 ? step3Ref.current : step === 4 ? step4Ref.current : formRef.current)?.querySelector<HTMLElement>("[data-form-callout]");
     box?.scrollIntoView({ block: "center", behavior: "smooth" }); box?.focus({ preventScroll: true });
   }, [tried, step]);
   // กดห้องที่เลือกไม่ได้: โฟกัสกล่องแจ้งใต้ผังห้อง
@@ -490,10 +593,10 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, on
   // ค่าห้องที่เลือกในขั้นที่ 2 เทียบกับห้องที่เลือก (เตือนเท่านั้น)
   const picked = row && room ? findRoom(all, row[1], room) : undefined;
   const suggest = picked ? roomPrice(picked) : null;
-  const mismatch = picked && suggest && suggest.fee !== (Number(fee) || 0) && priceOk !== picked.no ? suggest : null;
-  const applyRoomPrice = (x: { fee: number; pick: string }) => {
-    setFee(String(x.fee)); setFeePick(x.pick);
-    if (row) setRow(row.map((v, k) => (k === 4 ? String(x.fee) : v)));
+  const mismatch = !booking && stay === "เดือน" && picked && suggest && suggest.fee !== (Number(fee) || 0) && priceOk !== picked.no ? suggest : null;
+  const applyRoomPrice = (x: { fee: number; pick: string; name?: string }) => {
+    setFee(String(x.fee)); setFeePick(x.pick); if (x.name) setRoomName(x.name);
+    if (row) setRow(row.map((v, k) => (k === 4 ? String(baseOfIncl(x.fee, rateN)) : v)));
     toast(`เปลี่ยนค่าห้องเป็น ${money(x.fee)} บาท/เดือนแล้ว`);
   };
 
@@ -506,21 +609,21 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, on
   const freeIdx = row ? options.findIndex((r) => !roomProblem(r, row[2])) : -1;
   const focusFreeRoom = () => { const el = gridRef.current?.children[freeIdx] as HTMLElement | undefined; el?.scrollIntoView({ block: "center", behavior: "smooth" }); el?.focus({ preventScroll: true }); };
   const roomMsg = pickIssue?.msg || (tried && triedRoom ? roomIssue() : "");
-  const live3 = step === 3 && tried && row ? liveOf(finalName, row[1]) ?? saveLive ?? undefined : undefined;
+  const live3 = (step === 3 || step === 4) && tried && row ? liveOf(finalName, row[1]) ?? saveLive ?? undefined : undefined;
   /** ปัญหาของขั้น 1-2 ที่แสดงเหนือปุ่ม (ช่องที่เบราว์เซอร์ตรวจไม่ผ่านก่อน) */
   const stepProblem: FormProblem | null = invalid ? { msg: invalid.msg, el: invalid.el, field: invalid.field || undefined }
     : !tried ? null : step === 1 ? check1() : step === 2 ? check2() : null;
   const backToName = () => { goStep(1); setTimeout(() => focusField("ชื่อผู้รับบริการ"), 50); };
   /** ชื่อนี้มีสัญญาใช้งานอยู่แล้ว: ทางออก = ต่อสัญญาฉบับเดิม / ดูสัญญาเดิม / แก้ชื่อ (คนละคนที่ชื่อซ้ำ) */
   const liveBox = (live: string[]) => {
-    const suffixHere = step === 3 && !!pastRes && samePerson === "new";
+    const suffixHere = step >= 3 && !!pastRes && samePerson === "new";
     return (
       <FormCallout focus="step" title={`${live[2]} มีสัญญา ${live[0] || "ที่บันทึกไว้"} (${live[5]}) ในสาขา${live[1]}อยู่แล้ว`}
         actions={<>
           {onRenew && <button type="button" className={CALLOUT_PRIMARY} onClick={() => onRenew(live)}>ต่อสัญญาฉบับเดิม</button>}
           {onView && <button type="button" className={CALLOUT_SOFT} onClick={() => onView(live)}>ดูสัญญาเดิม</button>}
-          <button type="button" className={CALLOUT_SOFT} onClick={() => (suffixHere ? focusField("ข้อความต่อท้ายชื่อ") : step === 3 ? backToName() : focusField("ชื่อผู้รับบริการ"))}>
-            {suffixHere ? "แก้ข้อความต่อท้ายชื่อ" : step === 3 ? "ย้อนกลับไปแก้ชื่อ" : "แก้ชื่อผู้รับบริการ"}</button>
+          <button type="button" className={CALLOUT_SOFT} onClick={() => (suffixHere ? (step === 4 ? goStep(3) : focusField("ข้อความต่อท้ายชื่อ")) : step >= 3 ? backToName() : focusField("ชื่อผู้รับบริการ"))}>
+            {suffixHere ? "แก้ข้อความต่อท้ายชื่อ" : step >= 3 ? "ย้อนกลับไปแก้ชื่อ" : "แก้ชื่อผู้รับบริการ"}</button>
         </>}>
         <p>ถ้าเป็นคนเดิม ให้ต่อสัญญาฉบับเดิมแทนการเปิดสัญญาใหม่ · ถ้าเป็นคนละคนที่ชื่อซ้ำ ให้เพิ่มชื่อเล่นหรือปีเกิดต่อท้ายชื่อ</p>
         {(onRenew || onView) && <p className="form-callout-note">กดต่อสัญญาหรือดูสัญญาเดิม ฟอร์มนี้จะปิด ข้อมูลที่กรอกไว้จะไม่ถูกบันทึก</p>}
@@ -533,50 +636,61 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, on
   );
 
   return (
-    <Section title={fromQuote !== undefined ? `เปิดสัญญาใหม่ · จากใบเสนอราคา ${fromQuote}` : initial ? `ต่อสัญญา · ${initial[2]} (สัญญาเดิม ${initial[0]})` : "เปิดสัญญาใหม่"}>
+    <Section title={completing && initial ? `เปิดสัญญา · ${initial[2]} (จองห้องไว้ ${initial[0] || ""})`.replace(" )", ")").replace(" ()", "") : booking ? "มัดจำค่าห้อง (จองห้องไว้ก่อน)" : fromQuote !== undefined ? `เปิดสัญญาใหม่ · จากใบเสนอราคา ${fromQuote}` : initial ? `ต่อสัญญา · ${initial[2]} (สัญญาเดิม ${initial[0]})` : "เปิดสัญญาใหม่"}>
       <div className="contract-steps" aria-label="ขั้นตอน">
-        <span className={step === 1 ? "is-active" : ""}><b>1</b>รายละเอียดสัญญา</span>
-        <span className={step === 2 ? "is-active" : ""}><b>2</b>ค่าใช้จ่าย</span>
-        <span className={step === 3 ? "is-active" : ""}><b>3</b>เลือกห้องพัก</span>
+        {(booking ? [[1, "ข้อมูลการจอง"], [3, "เลือกห้อง / เตียง"], [4, "ใบแจ้งหนี้มัดจำ"]] as const : [[1, "รายละเอียดสัญญา"], [2, "ค่าใช้จ่าย"], [3, "เลือกห้องพัก"], [4, "ใบแจ้งหนี้"]] as const)
+          .map(([s, t], k) => <span key={s} className={step === s ? "is-active" : ""} aria-current={step === s ? "step" : undefined}><b>{k + 1}</b>{t}</span>)}
       </div>
 
-      <form ref={formRef} className={`space-y-8 ${step === 3 ? "hidden" : ""}`} onSubmit={(e) => { e.preventDefault(); if (step === 1) toCosts(); else toRooms(); }}
+      <form ref={formRef} className={`space-y-8 ${step >= 3 ? "hidden" : ""}`} onSubmit={(e) => { e.preventDefault(); if (step === 1) toCosts(); else toRooms(); }}
         onInvalidCapture={onInvalid} onChangeCapture={() => { if (invalid?.el.validity.valid) setInvalid(null); if (tried) rerender((n) => n + 1); }}>
         <div className={step === 1 ? "space-y-8" : "hidden"}>
+        {!renewing && !completing && <label className={`booking-toggle ${booking ? "is-on" : ""}`}>
+          <input type="checkbox" checked={booking} onChange={(e) => { setBooking(e.target.checked); setStart(e.target.checked ? "" : start || todayIso()); setTried(0); setInvalid(null); }} />
+          <span><b>มัดจำค่าห้อง (จองห้องไว้ก่อน)</b>
+            <small>กรอกแค่สาขา ผู้ว่าจ้าง ผู้รับบริการ แล้วเลือกห้อง/เตียงที่จะจอง · ระบบออกใบแจ้งหนี้มัดจำให้ · ข้อมูลอื่นกรอกตอนกด &quot;เปิดสัญญา&quot; ทีหลัง</small></span>
+        </label>}
         <div className="grid gap-4 md:grid-cols-2">
           <Field label="สาขา (Branch)" required className="md:col-span-2"><select name="branch" defaultValue={d(1) ?? ""}><option value="">-- กรุณาเลือกสาขา --</option>{branchNames.map((b) => <option key={b}>{b}</option>)}</select></Field>
-          <Field label="ชื่อ นามสกุล ผู้จ้าง" required>{renewing ? <input value={boss} onChange={(e) => setBoss(e.target.value)} required />
+          {booking && <h3 className="booking-group md:col-span-2">ผู้ว่าจ้าง (ผู้วางมัดจำ)</h3>}
+          <Field label="ชื่อ นามสกุล ผู้จ้าง" required>{lockNames ? <input value={boss} onChange={(e) => setBoss(e.target.value)} required />
             : <SuggestText value={boss} onChange={setBoss} options={[...new Set(contracts.map((c) => c[3]).filter((x) => x && x !== "-"))]} onPick={pickEmployer} label="ชื่อผู้ว่าจ้าง" placeholder="เช่น นายสมชาย ใจดี"
               renderSub={(n) => { const c = latest(3, n); return c ? `${c[0]} · ผู้รับบริการ ${c[2]}` : ""; }} />}
-            {!renewing && <PastBox c={oldBoss} pulled={pulledBoss} kind="boss" onPull={() => oldBoss && pickEmployer(oldBoss[3])} />}</Field>
-          <Field label="เลขที่บัตรประชาชน"><DigitsInput kind="id" name="employer_id" defaultValue={d(8)} /></Field>
-          <Field label="ที่อยู่" required className="md:col-span-2"><div className="space-y-2">
+            {!lockNames && <PastBox c={oldBoss} pulled={pulledBoss} kind="boss" onPull={() => oldBoss && pickEmployer(oldBoss[3])} />}</Field>
+          <Field label="เลขที่บัตรประชาชน" className={hide}><DigitsInput kind="id" name="employer_id" defaultValue={d(8)} /></Field>
+          <Field label="ที่อยู่ (ไม่บังคับ)" className={`md:col-span-2 ${hide}`}><div className="space-y-2">
             <AddressFinder onPick={(t) => setAddr((a) => `${a.replace(/\s+(แขวง|ตำบล).*$/, "").trim()} ${t}`.trim())} />
-            <textarea rows={2} required value={addr} onChange={(e) => setAddr(e.target.value)} aria-label="ที่อยู่" placeholder="บ้านเลขที่ ซอย ถนน" />
+            <textarea rows={2} value={addr} onChange={(e) => setAddr(e.target.value)} aria-label="ที่อยู่" placeholder="บ้านเลขที่ ซอย ถนน" />
           </div></Field>
-          <Field label="รูปถ่ายบัตรประชาชนผู้ว่าจ้าง" className="md:col-span-2"><PhotoPicker value={photos.employer} onChange={(v) => setPhotos({ ...photos, employer: v })} label={renewing ?"ไม่แนบใหม่ = ใช้รูปจากสัญญาเดิม" : "ถ่ายหรือเลือกรูป · ให้เห็นชื่อ เลขบัตร รูปหน้า"} /></Field>
-          <Field label="โทรศัพท์" required><DigitsInput kind="phone" name="phone" required defaultValue={d(9)} /></Field>
-          <Field label="เกี่ยวข้อง"><div className="space-y-2"><ChipChoice label="เกี่ยวข้อง" options={RELATIONS} value={RELATIONS.includes(relation) ? relation : ""} onChange={setRelation} />
+          <Field label="รูปถ่ายบัตรประชาชนผู้ว่าจ้าง (ไม่บังคับ · แนบทีหลังได้)" className={`md:col-span-2 ${hide}`}><PhotoPicker value={photos.employer} onChange={(v) => setPhotos({ ...photos, employer: v })} label={renewing ?"ไม่แนบใหม่ = ใช้รูปจากสัญญาเดิม" : "ถ่ายหรือเลือกรูป · ให้เห็นชื่อ เลขบัตร รูปหน้า"} /></Field>
+          <Field label="โทรศัพท์" required={!booking}><DigitsInput kind="phone" name="phone" required={!booking} defaultValue={d(9)} /></Field>
+          <Field label="เกี่ยวข้อง" className={booking ? "md:col-span-2" : ""}><div className={booking ? "booking-relation" : "space-y-2"}><ChipChoice label="เกี่ยวข้อง" options={RELATIONS} value={RELATIONS.includes(relation) ? relation : ""} onChange={setRelation} />
             <input value={relation} onChange={(e) => setRelation(e.target.value)} placeholder="หรือพิมพ์เอง เช่น ลูกเขย" aria-label="เกี่ยวข้อง (พิมพ์เอง)" /></div></Field>
-          <Field label="ชื่อ นามสกุล ผู้รับบริการ" required>{renewing ? <input value={who} readOnly required />
+          {booking && <h3 className="booking-group md:col-span-2">ผู้รับบริการ (ผู้เข้าพัก)</h3>}
+          <Field label="ชื่อ นามสกุล ผู้รับบริการ" required className={booking ? "md:col-span-2" : ""}>{lockNames ? <input value={who} readOnly required />
             : <SuggestText value={who} onChange={setWho} options={[...new Set(contracts.map((c) => c[2]).filter((x) => x && x !== "-"))]} onPick={pickResident} label="ชื่อผู้รับบริการ" placeholder="เช่น นางสมศรี ใจดี"
               renderSub={(n) => { const c = latest(2, n); return c ? `เคยมีสัญญา ${c[0]} · ${c[1]} · ดึงเลขบัตร อายุ ประวัติแพ้ โรงพยาบาลให้` : ""; }} />}
-            {!renewing && (oldRes ? <PastBox c={oldRes} pulled={pulledRes} kind="res" onPull={() => pickResident(oldRes[2])} /> : null)}</Field>
-          <Field label="เลขที่บัตรประชาชนผู้รับบริการ"><DigitsInput kind="id" name="resident_id" defaultValue={d(12)} /></Field>
+            {!lockNames && (oldRes ? <PastBox c={oldRes} pulled={pulledRes} kind="res" onPull={() => pickResident(oldRes[2])} /> : null)}</Field>
+          <Field label="เลขที่บัตรประชาชนผู้รับบริการ" className={hide}><DigitsInput kind="id" name="resident_id" defaultValue={d(12)} /></Field>
           <Field label="อายุ (ปี) ผู้รับบริการ"><input name="age" type="number" min={0} max={130} placeholder="เช่น 78" defaultValue={dn(13)} /></Field>
-          <Field label="วันเริ่มสัญญา" required><input type="date" required value={start} onChange={(e) => setStart(e.target.value)} aria-label="วันเริ่มสัญญา" /></Field>
-          <Field label="รูปถ่ายบัตรประชาชนผู้รับบริการ" className="md:col-span-2"><PhotoPicker value={photos.resident} onChange={(v) => setPhotos({ ...photos, resident: v })} label={renewing ?"ไม่แนบใหม่ = ใช้รูปจากสัญญาเดิม" : "ถ่ายหรือเลือกรูป · ให้เห็นชื่อ เลขบัตร รูปหน้า"} /></Field>
-          <Field label="เลขที่สัญญา"><input value={initial && fromQuote === undefined ? `ออกเลขใหม่อัตโนมัติ (สัญญาเดิม ${initial[0]})` : "ออกเลขอัตโนมัติ เช่น CT-2569-0001"} readOnly tabIndex={-1} className="field-locked" /></Field>
-          <Field label="วันสิ้นสุดสัญญา"><input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} aria-label="วันสิ้นสุดสัญญา" />
+          <Field label={booking ? "วันที่จะเข้าพัก (ใส่ทีหลังได้)" : "วันเริ่มสัญญา"} required={!booking}><input type="date" required={!booking} value={start} onChange={(e) => setStart(e.target.value)} aria-label="วันเริ่มสัญญา" />
+            {booking && <div className="mt-2 flex flex-wrap items-center gap-2">
+              {start ? <button type="button" onClick={() => setStart("")} className="rounded-full px-3 py-1 text-xs text-gold-500 underline-offset-2 hover:underline">ล้างวันที่ (ยังไม่กำหนด)</button>
+                : <button type="button" onClick={() => setStart(todayIso())} className="rounded-full border border-cream-300 bg-white px-3 py-1 text-xs text-gold-700 hover:border-gold-300">ใส่วันนี้</button>}
+              <p className="field-hint !mt-0">ว่าง = ยังไม่กำหนด · สัญญายังไม่เริ่มจนกว่าจะกด &quot;เปิดสัญญา&quot; และใส่วันเริ่มสัญญา</p>
+            </div>}</Field>
+          <Field label="รูปถ่ายบัตรประชาชนผู้รับบริการ (ไม่บังคับ · แนบทีหลังได้)" className={`md:col-span-2 ${hide}`}><PhotoPicker value={photos.resident} onChange={(v) => setPhotos({ ...photos, resident: v })} label={renewing ?"ไม่แนบใหม่ = ใช้รูปจากสัญญาเดิม" : "ถ่ายหรือเลือกรูป · ให้เห็นชื่อ เลขบัตร รูปหน้า"} /></Field>
+          <Field label="เลขที่สัญญา" className={hide}><input value={completing ? initial?.[0] || "ออกเลขอัตโนมัติ" : initial && fromQuote === undefined ? `ออกเลขใหม่อัตโนมัติ (สัญญาเดิม ${initial[0]})` : "ออกเลขอัตโนมัติ เช่น CT-2569-0001"} readOnly tabIndex={-1} className="field-locked" /></Field>
+          <Field label="วันสิ้นสุดสัญญา" className={hide}><input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} aria-label="วันสิ้นสุดสัญญา" />
             <div className="mt-2 flex flex-wrap gap-1.5">{[[1, "1 เดือน"], [3, "3 เดือน"], [6, "6 เดือน"], [12, "1 ปี"]].map(([n, t]) => <button key={t} type="button" disabled={!start} onClick={() => setEndDate(addMonthsIso(start, Number(n)))} className="rounded-full border border-cream-300 bg-white px-3 py-1 text-xs text-gold-700 hover:border-gold-300">+{t}</button>)}
               {endDate && <button type="button" onClick={() => setEndDate("")} className="rounded-full px-3 py-1 text-xs text-gold-500 underline-offset-2 hover:underline">ไม่กำหนดวันสิ้นสุด</button>}</div>
             <p className="field-hint">ว่าง = มีผลต่อเนื่องจนกว่าจะจำหน่าย</p></Field>
-          <Field label="สถานะสัญญา" required><select name="status" defaultValue={CONTRACT_STATUSES[0]}>{CONTRACT_STATUSES.slice(0, 2).map((x) => <option key={x}>{x}</option>)}</select></Field>
+          <Field label="สถานะสัญญา" required className={hide}><select name="status" defaultValue={CONTRACT_STATUSES[0]}>{CONTRACT_STATUSES.slice(0, 2).map((x) => <option key={x}>{x}</option>)}</select></Field>
         </div>
 
         <div>
-          <h3 className="mb-3 font-semibold text-gold-800">ข้อมูลด้านสุขภาพของผู้รับบริการ</h3>
-          <div className="grid gap-4 md:grid-cols-2">
+          <h3 className={`mb-3 font-semibold text-gold-800 ${hide}`}>ข้อมูลด้านสุขภาพของผู้รับบริการ</h3>
+          <div className={`grid gap-4 md:grid-cols-2 ${hide}`}>
             <Field label="โรงพยาบาลตามสิทธิ์การรักษา"><div className="space-y-2"><div className="relative"><SuggestText value={hosp} onChange={setHosp} options={pastHosp} label="โรงพยาบาล" placeholder="ชื่อโรงพยาบาล เช่น รพ.ราชวิถี" inputClass={right ? "!pr-32" : undefined} />
                 {right && <span className="pointer-events-none absolute right-3 top-[22px] -translate-y-1/2 rounded-full bg-gold-700 px-2.5 py-0.5 text-xs font-medium text-white">{right}</span>}</div>
               <div className="flex flex-wrap gap-1.5"><button type="button" aria-pressed={hosp.trim() === HOSP_LATER} onClick={() => setHosp(hosp.trim() === HOSP_LATER ? "" : HOSP_LATER)}
@@ -590,7 +704,7 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, on
             <Field label="ประวัติแพ้ยา" required><TagInput label="ประวัติแพ้ยา" value={drugA} onChange={setDrugA} suggestions={ALLERGY_DRUGS} none={NO_ALLERGY} quick={["Penicillin", "Sulfonamide (Sulfa)", "Aspirin", "NSAIDs"]} placeholder="พิมพ์ชื่อยาที่แพ้ เช่น pen แล้วเลือก" /><p className="field-hint">ไม่แพ้กด &quot;{NO_ALLERGY}&quot;</p></Field>
             <Field label="ประวัติแพ้อาหาร" required><TagInput label="ประวัติแพ้อาหาร" value={foodA} onChange={setFoodA} suggestions={FOOD_ALLERGENS} none={NO_ALLERGY} quick={["อาหารทะเล", "นมวัว", "ไข่", "ถั่วลิสง"]} placeholder="พิมพ์อาหารที่แพ้ แล้วกด Enter" /><p className="field-hint">ไม่แพ้กด &quot;{NO_ALLERGY}&quot;</p></Field>
           </div>
-          <p className="mt-3 rounded-xl bg-cream-50 px-4 py-2.5 text-sm text-gold-700">โรคประจำตัว ไม่ต้องกรอกที่นี่ · ระบบดึงจากข้อมูลผู้รับบริการ (เมนูผู้รับบริการ) มาพิมพ์ในสัญญาให้เอง</p>
+          <p className={`mt-3 rounded-xl bg-cream-50 px-4 py-2.5 text-sm text-gold-700 ${hide}`}>โรคประจำตัว ไม่ต้องกรอกที่นี่ · ระบบดึงจากข้อมูลผู้รับบริการ (เมนูผู้รับบริการ) มาพิมพ์ในสัญญาให้เอง</p>
           <div className="mt-4 grid gap-4 md:grid-cols-2">
             <Field label="หมายเหตุ" className="md:col-span-2"><textarea name="note" rows={2} placeholder="เช่น แพ้ยาเพนิซิลลิน, ญาติมาเยี่ยมทุกวันเสาร์" defaultValue={renewing ? `ต่อจากสัญญา ${initial?.[0] ?? ""}` : d(20)} /></Field>
           </div>
@@ -604,63 +718,103 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, on
           <h3 className="mb-3 font-semibold text-gold-800">โปรแกรมและค่าบริการ</h3>
           <div className="grid gap-4">
             <Field label="โปรแกรม"><input name="program" list="contract-programs" placeholder="เลือกหรือพิมพ์ชื่อโปรแกรม" defaultValue={d(21) ?? PROGRAMS[0]} /><datalist id="contract-programs">{PROGRAMS.map((x) => <option key={x} value={x} />)}</datalist></Field>
-            <Field label="ค่าห้อง (บาท/เดือน)">
-              {/* เลือกค่าห้อง: การ์ดละประเภทห้อง กดราคาปกติหรือโปรโมชันได้ทันที */}
-              <div className="room-pick" role="radiogroup" aria-label="ค่าห้อง">
+            <Field label={`ค่าห้อง (บาท/${stay} · รวม VAT แล้ว)`}>
+              {/* คิดค่าห้อง รายวัน / รายสัปดาห์ / รายเดือน + จำนวนที่พัก อยู่บรรทัดเดียวกัน · เปลี่ยนหน่วยแล้วราคาห้องที่เลือกไว้เปลี่ยนตาม */}
+              <div className="stay-bar">
+                <div className="stay-tabs" role="radiogroup" aria-label="คิดค่าห้อง">
+                  {(["วัน", "สัปดาห์", "เดือน"] as const).map((u) => (
+                    <button key={u} type="button" role="radio" aria-checked={stay === u} className={stay === u ? "is-on" : ""}
+                      onClick={() => { setStay(u); if (u !== "เดือน") setMonths(0); const i = Number(feePick); if (feePick !== "" && feePick !== "custom" && ROOMS[i]) { setFee(String(unitOf(ROOMS[i], u))); setRoomPart(String(ROOMS[i].part[u])); } if (u !== stay) setStayN(u === "วัน" ? "7" : "1"); }}>
+                      ราย{u}</button>
+                  ))}
+                </div>
+                {stay !== "เดือน" && <div className="stay-n">
+                  <label htmlFor="stay-n">พัก</label>
+                  <button type="button" className="stay-step" aria-label={`ลด 1 ${stay}`} onClick={() => setStayN(String(Math.max(1, nStay - 1)))}>−</button>
+                  <input id="stay-n" type="text" inputMode="numeric" maxLength={3} value={stayN} onChange={(e) => setStayN(e.target.value.replace(/\D/g, "").slice(0, 3))} aria-label={`จำนวน${stay}ที่พัก`} />
+                  <button type="button" className="stay-step" aria-label={`เพิ่ม 1 ${stay}`} onClick={() => setStayN(String(nStay + 1))}>+</button>
+                  <span>{stay}</span>
+                  {(stay === "วัน" ? [3, 7, 14] : [1, 2, 3]).map((n) => <button key={n} type="button" onClick={() => setStayN(String(n))} className={`stay-quick ${nStay === n ? "is-on" : ""}`}>{n}</button>)}
+                </div>}
+              </div>
+              {/* การ์ดห้อง: กดทั้งการ์ด · ราคาต่อหน่วย และยอดรวมตามจำนวนที่พัก */}
+              <div className="room-opts" role="radiogroup" aria-label="ค่าห้อง">
                 {ROOMS.map((x, i) => {
                   const [th, en] = [x.name.replace(/\s*\(.*\)\s*$/, ""), x.name.match(/\(([^)]+)\)/)?.[1] ?? ""];
-                  const on = feePick.startsWith(`${i}:`);
+                  const on = feePick === String(i), v = unitOf(x, stay);
                   return (
-                    <div key={x.name} className={`room-pick-row ${on ? "is-on" : ""}`}>
-                      <span className="room-pick-name"><b>{th}</b>{en && <small>{en}</small>}</span>
-                      {([["m", "ปกติ", x.month], ["p", "โปรโมชัน", x.promo]] as const).map(([k, t, v]) => (
-                        <button key={k} type="button" role="radio" aria-checked={feePick === `${i}:${k}`} aria-label={`${x.name} ราคา${t} ${v.toLocaleString()} บาท`}
-                          className={`room-pick-price ${feePick === `${i}:${k}` ? "is-on" : ""}`} onClick={() => { setFeePick(`${i}:${k}`); setFee(String(v)); }}>
-                          <small>{t}</small>{v.toLocaleString()}
-                        </button>
-                      ))}
-                    </div>
+                    <button key={x.name} type="button" role="radio" aria-checked={on} disabled={!v} aria-label={`${x.name} ราย${stay} ${v.toLocaleString()} บาท รวม VAT`}
+                      className={`room-opt ${on ? "is-on" : ""}`} onClick={() => { setFeePick(String(i)); setFee(String(v)); setRoomPart(String(x.part[stay])); setRoomName(x.name); }}>
+                      <span className="room-opt-name"><b>{th}</b>{en && <small>{en}</small>}</span>
+                      <span className="room-opt-price"><b>{v ? v.toLocaleString() : "-"}</b><small>/{stay}{stay === "สัปดาห์" && !x.weekSet ? " (7 วัน)" : ""}</small>
+                        {stay !== "เดือน" && v > 0 && nStay > 0 && <em>{nStay} {stay} = {(v * nStay).toLocaleString()}</em>}</span>
+                    </button>
                   );
                 })}
-                <div className={`room-pick-row room-pick-custom ${feePick === "custom" ? "is-on" : ""}`}>
-                  <span className="room-pick-name"><b>กำหนดราคาเอง</b><small>ราคาพิเศษ / ห้องนอกใบราคา</small></span>
-                  {feePick === "custom"
-                    ? <>
-                      <label className="room-pick-field">ชื่อห้อง<input type="text" list="room-names" value={roomName} onChange={(e) => setRoomName(e.target.value)} placeholder="เช่น ห้องเดี่ยวพิเศษ" /></label>
-                      <datalist id="room-names">{[...new Set(["ห้องรวม", "ห้องคู่", "ห้องเดี่ยว", ...ROOMS.map((x) => x.name)])].map((x) => <option key={x} value={x} />)}</datalist>
-                      <label className="room-pick-field">ราคา (บาท/เดือน)<input type="number" min={0} value={fee} onChange={(e) => setFee(e.target.value)} placeholder="เช่น 14000" autoFocus /></label>
-                    </>
-                    : <button type="button" role="radio" aria-checked={false} className="room-pick-price" onClick={() => setFeePick("custom")}><small>ใส่ราคา</small>กำหนดเอง</button>}
+                <button type="button" role="radio" aria-checked={feePick === "custom"} className={`room-opt is-custom ${feePick === "custom" ? "is-on" : ""}`} onClick={() => { if (feePick !== "custom") { setFeePick("custom"); setRoomName(""); setRoomPart(""); } }}>
+                  <span className="room-opt-name"><b>กำหนดราคาเอง</b><small>ราคาพิเศษ / ห้องนอกใบราคา</small></span>
+                </button>
+              </div>
+              {feePick === "custom" && <div className="room-custom">
+                <label>ชื่อห้อง<input type="text" list="room-names" value={roomName} onChange={(e) => setRoomName(e.target.value)} placeholder="เช่น ห้องเดี่ยวพิเศษ" /></label>
+                <datalist id="room-names">{[...new Set(["ห้องรวม", "ห้องคู่", "ห้องเดี่ยว", ...ROOMS.map((x) => x.name)])].map((x) => <option key={x} value={x} />)}</datalist>
+                <label>ราคาห้องทั้งหมด (บาท/{stay} รวม VAT)<input type="number" min={0} value={fee} onChange={(e) => setFee(e.target.value)} placeholder={stay === "เดือน" ? "เช่น 14000" : "เช่น 1500"} autoFocus /></label>
+                <label>ในนี้เป็นค่าห้อง (มี VAT)<input type="number" min={0} value={roomPart} onChange={(e) => setRoomPart(e.target.value)} placeholder="ว่าง = ค่าห้องทั้งหมด" /></label>
+              </div>}
+              {/* ยอดค่าห้องทั้งหมด: เปลี่ยนจำนวนวัน/ห้อง แล้วเห็นยอดใหม่ทันที */}
+              <div className="room-total">
+                <div className="min-w-0">
+                  {roomPay > 0 ? <>
+                    <p className="room-total-calc">{stay !== "เดือน" ? `${money(Number(fee) || 0)} × ${nStay} ${stay}` : "ราคาห้องต่อเดือน"}</p>
+                    <p className="room-total-vat">ค่าห้อง {money(partPay)}{vatOn && vatAmt > 0 ? ` (ก่อน VAT ${money(feeN)} + VAT ${rateN}% ${money(vatAmt)})` : " (ไม่มี VAT)"}{medPay > 0 ? ` + ค่าบริการทางการแพทย์ ${money(medPay)} (ไม่มี VAT)` : ""}</p>
+                  </> : <p className="room-total-calc">เลือกห้องด้านบน</p>}
                 </div>
+                <b>{money(roomPay)}<small> บาท</small></b>
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-gold-700">
                 <label className="flex cursor-pointer items-center gap-2 font-medium">
                   <input type="checkbox" className="!h-4 !w-4 !min-h-0" checked={vatOn} onChange={(e) => { setVatOn(e.target.checked); if (e.target.checked && !(Number(roomVat) > 0)) setRoomVat(String(DEFAULT_VAT)); }} />
-                  คิด VAT ค่าห้อง
+                  ค่าห้องมี VAT (รวมในราคาแล้ว)
                 </label>
-                {vatOn && <><input type="number" min={0} max={30} step="0.5" className="!w-20" value={roomVat} onChange={(e) => setRoomVat(e.target.value)} aria-label="VAT ค่าห้อง (%)" /><span>%</span></>}
+                {vatOn && <><input type="number" min={0} max={30} step="0.5" className="!w-16 !min-h-0 !py-1.5" value={roomVat} onChange={(e) => setRoomVat(e.target.value)} aria-label="VAT ค่าห้อง (%)" /><span>%</span></>}
               </div>
             </Field>
           </div>
           <p className="label mt-4">รายการบริการและค่าบริการเพิ่มเติม</p>
           <ServiceLines items={items} onChange={setItems} total={false} exclude={["ห้องพัก"]} />
           <div className="mt-4 grid gap-4 md:grid-cols-2">
-            <Field label="หักค่ามัดจำห้องพัก (บาท)"><input type="number" min={0} value={roomDep} onChange={(e) => setRoomDep(e.target.value)} placeholder="เช่น 3000" /></Field>
+            <Field label="หักค่ามัดจำห้องพัก (บาท)"><input type="number" min={0} value={roomDep} onChange={(e) => setRoomDep(e.target.value)} placeholder="เช่น 3000" />
+              {completing && bookedDeposit > 0 && <p className={paidDeposit >= bookedDeposit ? "field-hint" : "field-error"}>{paidDeposit >= bookedDeposit ? `มัดจำตอนจอง ${money(bookedDeposit)} บาท รับชำระแล้ว หักในใบแรกเข้าให้` : `มัดจำตอนจอง ${money(bookedDeposit)} บาท ${paidDeposit ? `รับชำระแล้ว ${money(paidDeposit)} บาท` : "ยังไม่ได้รับชำระ"} · หักเฉพาะยอดที่รับแล้ว`}</p>}</Field>
             <div className="self-end rounded-2xl bg-cream-50 px-4 py-3 text-sm text-gold-700">
-              {feeN > 0 && <p>ค่าห้อง {money(roomPay)}{vatAmt > 0 ? ` (+ VAT ${rateN}% ${money(vatAmt)})` : " (ไม่คิด VAT)"}</p>}
-              {sum - feeN > 0 && <p>บริการเพิ่มเติม {money(sum - feeN)} (ไม่มี VAT)</p>}
-              <p>รวมต่อเดือน <b className="text-gold-900">{money(monthly)}</b> บาท</p>
-              {monthly > 0 && <p className="mt-1 border-t border-cream-300 pt-1">ใบแจ้งหนี้แรกเข้า: ค่าบริการ {months || 1} เดือน {money((months || 1) * monthly)}{Number(deposit) > 0 ? ` + เงินประกัน ${money(Number(deposit))}` : ""}{Number(roomDep) > 0 ? ` − มัดจำห้องที่รับไว้แล้ว ${money(Number(roomDep))}` : ""} = <b className="text-gold-900">{money(firstBill)}</b> บาท</p>}
+              {feeN > 0 && <p>ค่าห้อง {money(partPay)}{vatAmt > 0 ? ` (รวม VAT ${rateN}% ${money(vatAmt)})` : " (ไม่มี VAT)"}</p>}
+              {medPay > 0 && <p>ค่าบริการทางการแพทย์ {money(medPay)} (ไม่มี VAT)</p>}
+              {sum - feeN - medPay > 0 && <p>บริการเพิ่มเติม {money(sum - feeN - medPay)} (ไม่มี VAT)</p>}
+              <p>{stay === "เดือน" ? "รวมต่อเดือน" : `รวม (พัก ${nStay} ${stay})`} <b className="text-gold-900">{money(monthly)}</b> บาท</p>
+              {monthly > 0 && <p className="mt-1 border-t border-cream-300 pt-1">ใบแจ้งหนี้แรกเข้า: ค่าบริการ {stay === "เดือน" ? `${months || 1} เดือน` : `${nStay} ${stay}`} {money((months || 1) * monthly)}{roomOff > 0 ? ` − ส่วนลดค่าห้อง ${pctN}% ${money(roomOff)}` : ""}{Number(deposit) > 0 ? ` + เงินประกัน ${money(Number(deposit))}` : ""}{Number(roomDep) > 0 ? ` − มัดจำห้องที่รับไว้แล้ว ${money(Number(roomDep))}` : ""} = <b className="text-gold-900">{money(firstBill)}</b> บาท</p>}
             </div>
-            <Field label="ชำระค่าบริการล่วงหน้า">
+            {stay === "เดือน" ? <Field label="ชำระค่าบริการล่วงหน้า">
               <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="ชำระค่าบริการล่วงหน้า">{[0, 1, 2, 3, 6].map((n) => (
                 <button key={n} type="button" role="radio" aria-checked={months === n} onClick={() => setMonths(n)}
                   className={`rounded-full px-3 py-1.5 text-xs font-medium ${months === n ? "bg-gold-700 text-white" : "border border-cream-300 bg-white text-gold-700 hover:border-gold-300"}`}>
                   {n ? `${n} เดือน${monthly > 0 ? ` · ${money(monthly * n)}` : ""}` : "ไม่เก็บล่วงหน้า"}</button>
-              ))}</div></Field>
+              ))}</div>
+              {/* ชำระล่วงหน้าตั้งแต่ 2 เดือน: ใส่ส่วนลดค่าห้องเป็น % (จำนวนเต็ม) ได้เอง · ลดเฉพาะค่าห้อง ไม่ลดบริการเพิ่มเติม */}
+              {months > 1 && roomPay > 0 && <div className="prepaid-off">
+                <label htmlFor="room-pct">ส่วนลดค่าห้อง</label>
+                <div className="prepaid-off-in"><input id="room-pct" type="text" inputMode="numeric" maxLength={3} value={roomPct} placeholder="0"
+                  onChange={(e) => { const v = e.target.value.replace(/\D/g, "").slice(0, 3); setRoomPct(v && Number(v) > 100 ? "100" : v); }} aria-label="ส่วนลดค่าห้อง (%)" /><span>%</span></div>
+                <small>{pctN > 0 ? <>ลดค่าห้อง {months} เดือน ประมาณ <b>{money(roomOff)}</b> บาท · เฉพาะค่าห้อง</> : "จำนวนเต็ม เช่น 5 · ลดเฉพาะค่าห้อง"}</small>
+              </div>}</Field> : <div className="self-center rounded-xl bg-cream-50 px-4 py-2.5 text-sm text-gold-600">พักระยะสั้น: เก็บค่าห้อง {nStay} {stay} ในใบแรกเข้า · ไม่ออกใบค่าบริการรายเดือนให้อัตโนมัติ</div>}
+            <Field label="แบ่งชำระใบแรกเข้า">
+              <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="แบ่งชำระใบแรกเข้า">{[1, 2, 3, 4, 6].map((n) => (
+                <button key={n} type="button" role="radio" aria-checked={parts === n} onClick={() => setParts(n)}
+                  className={`rounded-full px-3 py-1.5 text-xs font-medium ${parts === n ? "bg-gold-700 text-white" : "border border-cream-300 bg-white text-gold-700 hover:border-gold-300"}`}>
+                  {n === 1 ? "จ่ายครั้งเดียว" : `${n} งวด${firstBill > 0 ? ` · งวดละ ${money(splitInstallments(firstBill, n)[0])}` : ""}`}</button>
+              ))}</div>
+              <p className="field-hint">แบ่งงวด = ใบแจ้งหนี้ใบเดียว รับเงินทีละงวดได้ (ระบบบอกยอดงวดถัดไปตอนกดรับชำระ)</p></Field>
             <Field label="ชำระเงินประกัน (บาท)"><input type="number" min={0} value={deposit} onChange={(e) => setDeposit(e.target.value)} placeholder="เช่น 60000" aria-label="ชำระเงินประกัน" />
-              {sum > 0 && <div className="mt-2 flex flex-wrap gap-1.5">{[1, 2].map((n) => <button key={n} type="button" onClick={() => setDeposit(String(sum * n))} className="rounded-full border border-cream-300 bg-white px-3 py-1 text-xs text-gold-700 hover:border-gold-300">{n} เดือน · {money(sum * n)}</button>)}</div>}</Field>
-            {!prepaid && !deposit && sum > 0 && <p role="status" className="md:col-span-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-900">ไม่เก็บล่วงหน้า · ระบบออกใบเดือนแรก {money(Math.max(0, firstBill))} บาท เป็น &quot;{DRAFT}&quot;</p>}
+              {monthly > 0 && stay === "เดือน" && <div className="mt-2 flex flex-wrap gap-1.5">{[1, 2].map((n) => <button key={n} type="button" onClick={() => setDeposit(String(Math.round(monthly * n * 100) / 100))} className="rounded-full border border-cream-300 bg-white px-3 py-1 text-xs text-gold-700 hover:border-gold-300">{n} เดือน · {money(monthly * n)}</button>)}</div>}</Field>
+            {stay === "เดือน" && !prepaid && !deposit && sum > 0 && <p role="status" className="md:col-span-2 rounded-xl border border-cream-300 bg-cream-50 px-4 py-2.5 text-sm text-gold-700">ไม่เก็บล่วงหน้า · ใบแจ้งหนี้เดือนแรก {money(Math.max(0, firstBill))} บาท · ตรวจและเลือกวิธีออกใบได้ในขั้นที่ 4</p>}
           </div>
         </div>
 
@@ -668,7 +822,7 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, on
         {stepProblem && calloutOf(stepProblem)}
         {step === 1 ? <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           <button type="button" className="btn-soft" onClick={onClose}>ยกเลิก</button>
-          <button className="btn-primary" onClick={() => setInvalid(null)}>ถัดไป: ค่าใช้จ่าย <Icon name="arrow" className="h-4 w-4" /></button>
+          <button className="btn-primary" onClick={() => setInvalid(null)}>{booking ? "ถัดไป: เลือกห้องพัก" : "ถัดไป: ค่าใช้จ่าย"} <Icon name="arrow" className="h-4 w-4" /></button>
         </div> : <div className="flex flex-col-reverse gap-2 border-t border-cream-200 pt-4 sm:flex-row sm:justify-end">
           <button type="button" className="btn-soft" onClick={() => goStep(1)}>ย้อนกลับไปแก้รายละเอียด</button>
           <button className="btn-primary" onClick={() => setInvalid(null)}>ถัดไป: เลือกห้องพัก <Icon name="arrow" className="h-4 w-4" /></button>
@@ -677,7 +831,7 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, on
 
       {step === 3 && row && <div ref={step3Ref} className="space-y-5">
         <div className="rounded-2xl border border-cream-200 bg-cream-50/60 px-4 py-3 text-sm text-gold-700">
-          <p><span className="text-gold-500">ผู้รับบริการ</span> <b className="font-medium text-gold-800">{row[2]}</b>{row[13] ? ` · ${row[13]} ปี` : ""} · <span className="text-gold-500">สาขา</span> {row[1]} · <span className="text-gold-500">ผู้ว่าจ้าง</span> {row[3]}{contractTotal(row) ? <> · <span className="text-gold-500">ยอดรวม</span> {money(contractTotal(row))} บาท/เดือน</> : ""}</p>
+          <p><span className="text-gold-500">ผู้รับบริการ</span> <b className="font-medium text-gold-800">{row[2]}</b>{row[13] ? ` · ${row[13]} ปี` : ""} · <span className="text-gold-500">สาขา</span> {row[1]} · <span className="text-gold-500">ผู้ว่าจ้าง</span> {row[3]}{booking ? <> · <span className="text-gold-500">เข้าพัก</span> {start ? docDate(start) : "ยังไม่กำหนด"}</> : contractMonthTotal(row) ? <> · <span className="text-gold-500">ยอดรวม</span> {money(contractMonthTotal(row))} บาท/เดือน</> : ""}</p>
           {existing && <p className="mt-1 text-xs text-gold-500">มีชื่อนี้ในทะเบียนผู้รับบริการแล้ว ระบบจะอัปเดตห้องให้คนเดิม ไม่สร้างรายชื่อซ้ำ</p>}
         </div>
         {/* ชื่อตรงกับคนที่ย้ายออกแล้ว: เตือน (เหลือง) · กดบันทึกแล้วยังเลือก/กรอกไม่ครบ = ไปต่อไม่ได้ (แดง) */}
@@ -700,20 +854,20 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, on
             <p id="contract-suffix-msg" className={suffixMsg ? "field-error" : "field-hint"}>{suffixMsg || (newName ? <>จะบันทึกเป็น <b>{newName}</b> · สร้างทะเบียนผู้รับบริการใหม่ (HN ใหม่) ไม่รวมกับคนเดิม</> : "ระบบไม่ให้มีชื่อซ้ำในสาขาเดียวกัน จึงต้องเพิ่มข้อความต่อท้าย")}</p>
           </>}
         </FormCallout>}
-        {!options.length ? <div className="empty-state"><Icon name="bed" /><p>สาขา{row[1]}ยังไม่มีห้องในระบบ {can(user, "rooms.manage") ? "สร้างห้องที่เมนูห้องพักและเตียง หรือบันทึกสัญญาไปก่อนแล้วจัดห้องภายหลัง" : "แจ้งผู้จัดการสาขาให้สร้างห้อง หรือบันทึกสัญญาไปก่อนแล้วจัดห้องภายหลัง"}</p>
+        {!options.length ? <div className="empty-state"><Icon name="bed" /><p>สาขา{row[1]}ยังไม่มีห้องในระบบ {booking ? (can(user, "rooms.manage") ? "มัดจำค่าห้องต้องเลือกห้อง สร้างห้องที่เมนูห้องพักและเตียงก่อน" : "มัดจำค่าห้องต้องเลือกห้อง แจ้งผู้จัดการสาขาให้สร้างห้องก่อน") : can(user, "rooms.manage") ? "สร้างห้องที่เมนูห้องพักและเตียง หรือบันทึกสัญญาไปก่อนแล้วจัดห้องภายหลัง" : "แจ้งผู้จัดการสาขาให้สร้างห้อง หรือบันทึกสัญญาไปก่อนแล้วจัดห้องภายหลัง"}</p>
           {can(user, "rooms.manage") && <button type="button" className="mt-3 text-sm text-gold-700 underline-offset-4 hover:underline" onClick={() => go("rooms")}>ไปที่ห้องพักและเตียง (ข้อมูลที่กรอกจะไม่ถูกบันทึก)</button>}</div>
           : <>
-            <p className="text-sm text-gold-600">เลือกห้องที่ยังว่าง · สาขา{row[1]} ว่าง {free} เตียง จาก {options.length} ห้อง</p>
+            <p className="text-sm text-gold-600">{booking ? <><b className="text-gold-800">ต้องเลือกห้องที่จะจอง</b> · </> : ""}เลือกห้องที่ยังว่าง · สาขา{row[1]} ว่าง {free} เตียง จาก {options.length} ห้อง</p>
             {free === 0 && <FormCallout tone="warn" title={`ห้องของสาขา${row[1]}เต็มทุกห้องแล้ว`}
-              actions={<button type="button" className={CALLOUT_SOFT} onClick={() => finish(false)}>บันทึกโดยยังไม่เลือกห้อง</button>}>
-              <p>บันทึกสัญญาโดยยังไม่เลือกห้อง แล้วแจ้งผู้จัดการสาขาให้เพิ่มห้องหรือเพิ่มจำนวนผู้ป่วยต่อห้อง</p>
+              actions={booking ? undefined : <button type="button" className={CALLOUT_SOFT} onClick={() => finish(false)}>ไม่เลือกห้อง ไปขั้นถัดไป</button>}>
+              <p>{booking ? "มัดจำค่าห้องต้องเลือกห้องที่ว่าง จึงจองไม่ได้ตอนนี้ · แจ้งผู้จัดการสาขาให้เพิ่มห้องหรือเพิ่มจำนวนผู้ป่วยต่อห้องก่อน" : "บันทึกสัญญาโดยยังไม่เลือกห้อง แล้วแจ้งผู้จัดการสาขาให้เพิ่มห้องหรือเพิ่มจำนวนผู้ป่วยต่อห้อง"}</p>
             </FormCallout>}
             <div ref={gridRef} className="room-grid">{options.map((r) => <RoomCard key={r.i} room={r} selected={roomKey(r.no) === roomKey(room)} onClick={() => pick(r)} />)}</div>
             {/* ห้องที่กด/ที่เลือกไว้ใช้ไม่ได้ (เต็ม / ปิดปรับปรุง / ไม่พบห้อง): ค้างใต้ผังห้องจนกว่าจะเลือกห้องที่ใช้ได้ */}
             {roomMsg && <FormCallout focus="room" title={roomMsg}
               actions={<>
                 {freeIdx >= 0 && <button type="button" className={CALLOUT_PRIMARY} onClick={focusFreeRoom}>เลือกห้องอื่น</button>}
-                <button type="button" className={CALLOUT_SOFT} onClick={() => finish(false)}>บันทึกโดยยังไม่เลือกห้อง</button>
+                {!booking && <button type="button" className={CALLOUT_SOFT} onClick={() => finish(false)}>ไม่เลือกห้อง ไปขั้นถัดไป</button>}
               </>} />}
             {picked && mismatch && <FormCallout tone="warn" title={`ห้อง ${picked.no} (${picked.type}) ค่าห้องคือ ${money(mismatch.fee)} บาท/เดือน`}
               actions={<>
@@ -724,13 +878,113 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, on
             </FormCallout>}
           </>}
         {/* ชื่อนี้มีสัญญาใช้งานอยู่แล้ว (ตรวจซ้ำตอนบันทึก) */}
-        {live3 && liveBox(live3)}
+        {step === 3 && live3 && liveBox(live3)}
         <div className="flex flex-col-reverse gap-2 border-t border-cream-200 pt-4 sm:flex-row sm:justify-end">
-          <button type="button" className="btn-soft" onClick={() => goStep(2)}>ย้อนกลับไปแก้ค่าใช้จ่าย</button>
-          <button type="button" className="btn-soft" onClick={() => finish(false)}>บันทึกโดยยังไม่เลือกห้อง</button>
-          <button type="button" className="btn-primary" disabled={!room} onClick={() => finish(true)}>{room ? `บันทึกสัญญา · ห้อง ${room}` : "เลือกห้องก่อนบันทึก"}</button>
+          <button type="button" className="btn-soft" onClick={() => goStep(booking ? 1 : 2)}>{booking ? "ย้อนกลับไปแก้ข้อมูลการจอง" : "ย้อนกลับไปแก้ค่าใช้จ่าย"}</button>
+          {!booking && <button type="button" className="btn-soft" onClick={() => finish(false)}>ไม่เลือกห้อง ไปขั้นถัดไป</button>}
+          <button type="button" className="btn-primary" disabled={!room} onClick={() => finish(true)}>{room ? `ถัดไป: ใบแจ้งหนี้ · ห้อง ${room}` : "เลือกห้องก่อน"} {room && <Icon name="arrow" className="h-4 w-4" />}</button>
         </div>
       </div>}
+
+      {/* ขั้นที่ 4: ใบแจ้งหนี้ของคนนี้ (ใบแรกเข้า / ใบมัดจำค่าห้อง) · ซ้าย = เลือกทีละข้อ · ขวา = สรุปยอดแบบใบเสร็จ */}
+      {step === 4 && row && (() => {
+        const r = finalRow(), b = billOf(r), t = totals(b.items), vat = vatOf(b.items.filter((i) => !i.credit)).vat;
+        type Mode = [BillChoice["mode"], string, string, "receipt" | "doc" | "check" | "clock"];
+        const modes: Mode[] = [
+          ...(canPay ? [["pay", parts > 1 && !booking ? "รับงวดที่ 1 เลย" : "รับชำระเลย", parts > 1 && !booking ? `รับ ${money(splitInstallments(t.net, parts)[0])} บาท ออกใบเสร็จงวดที่ 1` : "ออกใบเสร็จ พิมพ์ให้ลูกค้าได้ทันที", "receipt"] as Mode] : []),
+          ["unpaid", "รับเงินทีหลัง", `ออกใบแจ้งหนี้ "${UNPAID}" ไว้ก่อน`, "doc"],
+          ...(!booking ? [["draft", "ให้การเงินตรวจยอดก่อน", `ออกเป็น "${DRAFT}"`, "check"] as Mode] : []),
+          // "ไม่ออกใบ" มีเฉพาะสัญญาที่ออกใบแรกเข้าไว้แล้ว (กันออกซ้ำ)
+          ...(b.has ? [["none", "ไม่ต้องออกใบใหม่", `ใช้ใบแรกเข้า ${b.has} ที่ออกไว้แล้ว`, "clock"] as Mode] : []),
+        ];
+        const p4 = tried ? check4() : "";
+        const outcome = !b.items.length || billMode === "none" ? "ยังไม่ออกใบแจ้งหนี้" : billMode === "pay" ? `รับ${payBy.method}แล้วออกใบเสร็จ` : billMode === "draft" ? `ออกใบ "${DRAFT}"` : `ออกใบแจ้งหนี้ "${UNPAID}"`;
+        return (
+          <div ref={step4Ref} className="bill4">
+            <div className="bill4-main">
+              {b.has && <FormCallout tone="warn" title={`สัญญานี้มีใบแรกเข้า ${b.has} แล้ว`}><p>ไม่ต้องออกใบใหม่ เว้นแต่ยกเลิกใบเดิมไปแล้ว · เลือก &quot;ยังไม่ออกใบแจ้งหนี้&quot; ไว้ให้</p></FormCallout>}
+              {booking ? <section>
+                <h3 className="bill4-h"><b>1</b>เลือกยอดมัดจำค่าห้อง</h3>
+                <div role="radiogroup" aria-label="ยอดมัดจำค่าห้อง" className="amt-cards">
+                  {BOOKING_AMOUNTS.map((n) => {
+                    const on = Number(depAmt) === n;
+                    return (
+                      <button key={n} type="button" role="radio" aria-checked={on} onClick={() => setDepAmt(String(n))} className={`amt-card ${on ? "is-on" : ""}`}>
+                        <span className="amt-check" aria-hidden="true">{on && <Icon name="check" className="h-4 w-4" />}</span>
+                        <span className="amt-num">{n.toLocaleString()}<small>บาท</small></span>
+                        <span className="amt-sub">มัดจำค่าห้องพัก</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section> : <section>
+                <h3 className="bill4-h"><b>1</b>รายการในใบแจ้งหนี้แรกเข้า</h3>
+                {b.items.length ? <ul className="bill4-lines">
+                  {b.items.map((i, k) => <li key={k} className={i.credit ? "is-credit" : ""}><span>{i.desc}{i.vat ? <small> · VAT {i.vat}%</small> : null}{!i.credit && i.qty !== 1 ? <small> × {i.qty}</small> : null}</span><b>{i.credit ? `-${money(lineAmount(i))}` : money(lineNet(i))}</b></li>)}
+                </ul> : <p className="rounded-xl bg-cream-50 px-4 py-3 text-sm text-gold-600">สัญญานี้ยังไม่มีค่าบริการ · ไม่มีใบแจ้งหนี้ให้ออก</p>}
+                <p className="field-hint mt-2">แก้รายการ ยอดล่วงหน้า เงินประกัน หรือหักมัดจำห้อง ได้ที่ขั้นที่ 2 ค่าใช้จ่าย</p>
+              </section>}
+              {b.items.length > 0 && <section>
+                <h3 className="bill4-h"><b>2</b>รับเงินอย่างไร</h3>
+                <div role="radiogroup" aria-label="วิธีออกใบแจ้งหนี้" className={`opt-cards ${modes.length > 3 ? "is-2" : ""}`}>
+                  {modes.map(([k, t2, sub, icon]) => (
+                    <button key={k} type="button" role="radio" aria-checked={billMode === k} onClick={() => setBillMode(k)} className={`opt-card ${billMode === k ? "is-on" : ""}`}>
+                      <span className="opt-ico" aria-hidden="true"><Icon name={icon} className="h-5 w-5" /></span>
+                      <span className="min-w-0"><b>{t2}</b><small>{sub}</small></span>
+                      <span className="opt-dot" aria-hidden="true" />
+                    </button>
+                  ))}
+                </div>
+              </section>}
+              {billMode === "pay" && b.items.length > 0 && <section>
+                <h3 className="bill4-h"><b>3</b>ช่องทางชำระ</h3>
+                <div role="radiogroup" aria-label="ช่องทางชำระ" className="pay-cards">
+                  {PAY_METHODS.map((m) => (
+                    <button key={m} type="button" role="radio" aria-checked={payBy.method === m} onClick={() => setPayBy({ ...payBy, method: m })} className={`pay-card ${payBy.method === m ? "is-on" : ""}`}>
+                      <Icon name={m === "เงินสด" ? "receipt" : m === "โอนเงิน" ? "building" : "id"} className="h-4 w-4" />{m === "โอนเงิน" ? "โอนเข้าบัญชีบริษัท" : m}
+                    </button>
+                  ))}
+                </div>
+                <div className="mt-4 grid gap-4 md:grid-cols-2">
+                  <Field label="วันที่รับเงิน"><input type="date" value={payBy.date} max={todayIso()} onChange={(e) => setPayBy({ ...payBy, date: e.target.value })} /></Field>
+                  {payBy.method === "โอนเงิน" && <Field label="หลักฐานการโอนเงิน" required className="md:col-span-2"><PhotoPicker value={payBy.slip} onChange={(v) => setPayBy({ ...payBy, slip: v })} label="ถ่ายหรือเลือกรูปสลิป" /></Field>}
+                </div>
+              </section>}
+              {p4 && <FormCallout focus="step" title={p4} />}
+              {live3 && liveBox(live3)}
+            </div>
+
+            <aside className="bill4-sum" aria-label="สรุป">
+              <p className="bill4-sum-t">{booking ? "สรุปการจอง" : "สรุปใบแจ้งหนี้แรกเข้า"}</p>
+              <dl>
+                <div><dt>ผู้เข้าพัก</dt><dd>{finalName}</dd></div>
+                <div><dt>ผู้ว่าจ้าง</dt><dd>{r[3]}</dd></div>
+                <div><dt>สาขา</dt><dd>{r[1]}</dd></div>
+                <div><dt>ห้อง</dt><dd>{chosen === NO_ROOM ? "ยังไม่เลือก" : chosen}</dd></div>
+                <div><dt>{booking ? "เข้าพัก" : "เริ่มสัญญา"}</dt><dd>{start ? docDate(start) : "ยังไม่กำหนด"}</dd></div>
+              </dl>
+              <div className="bill4-total">
+                {vat > 0 && <p><span>รวม VAT</span><span>{money(vat)}</span></p>}
+                <p className="is-big"><span>ยอดที่ต้องชำระ</span><b>{money(t.net)}</b></p>
+                {!booking && parts > 1 && t.net > 0 && <ol className="bill4-parts">{splitInstallments(t.net, parts).map((x, k) => <li key={k}><span>งวดที่ {k + 1}</span><span>{money(x)}</span></li>)}</ol>}
+                <span className={`bill4-out ${billMode === "pay" && b.items.length ? "is-pay" : ""}`}>{outcome}</span>
+              </div>
+              {booking && <ul className="bill4-terms">
+                <li>เข้าพักภายใน 20 วันหลังวางมัดจำ ไม่เข้าพัก = ไม่คืนมัดจำทุกกรณี</li>
+                <li>เลือกห้องแล้ว ต้องเข้าพักภายใน 15 วัน</li>
+                <li>ยอดมัดจำหักในใบแรกเข้าตอนกด &quot;เปิดสัญญา&quot;</li>
+              </ul>}
+            </aside>
+
+            <div className="bill4-foot">
+              <button type="button" className="btn-soft" onClick={() => goStep(3)}>ย้อนกลับไปเลือกห้อง</button>
+              <button type="button" className="btn-primary" onClick={save}>
+                {booking ? "บันทึกการจอง" : "บันทึกสัญญา"}{b.items.length && billMode === "pay" ? " และรับชำระ" : b.items.length && billMode !== "none" ? " และออกใบแจ้งหนี้" : ""}
+              </button>
+            </div>
+          </div>
+        );
+      })()}
     </Section>
   );
 }
@@ -796,6 +1050,15 @@ export function Contracts() {
   };
   const [invoices, setInvoices] = useRecords<Invoice>("invoices", []);
   const [renew, setRenew] = useState<number | null>(null);
+  /** เปิดสัญญาเต็มจากสัญญาที่จองห้องไว้ (มัดจำค่าห้อง) · ลำดับแถวในทะเบียน */
+  const [complete, setComplete] = useState<number | null>(null);
+  // มาจากปุ่ม "เปิดสัญญา" ในหน้าห้องพัก (รอข้อมูลสัญญาโหลดก่อน)
+  const [completeFor, setCompleteFor] = useState(() => contractHandoff.take());
+  useEffect(() => {
+    if (!completeFor) return;
+    const i = ids.indexOf(completeFor);
+    if (i >= 0) { setCompleteFor(null); setComplete(i); window.scrollTo(0, 0); }
+  }, [completeFor, ids]);
   // เปิดสัญญาจากใบเสนอราคา (ส่งมาจากหน้าใบเสนอราคา)
   const quotes = useCrud("assessments", []);
   const [fromQuote, setFromQuote] = useState<QuoteHandoff | null>(null);
@@ -820,7 +1083,7 @@ export function Contracts() {
   }, [dcResId]);
   // เอกสารพิมพ์: สัญญา · บันทึกต่อท้ายสัญญา · ใบจำหน่าย (ข้อมูลประกอบจากประวัติผู้รับบริการ)
   const branchInfo = useBranchInfo();
-  const [doc, setDoc] = useState<null | { kind: "contract"; i: number; copy?: boolean } | { kind: "renew"; before: string[]; after: string[] } | { kind: "dc"; d: DcData; branch: string }>(null);
+  const [doc, setDoc] = useState<null | { kind: "contract"; i: number; copy?: boolean } | { kind: "renew"; before: string[]; after: string[] } | { kind: "dc"; d: DcData; branch: string } | { kind: "deposit"; id: string }>(null);
   const [terms, setTerms] = useState("");
   const [termsDlg, setTermsDlg] = useState<string | null>(null);
   const admin = user?.role === "Global Admin" || user?.role === "Branch Admin";
@@ -843,11 +1106,13 @@ export function Contracts() {
    * สัญญาใหม่ / ต่อสัญญา: เพิ่มหรืออัปเดตผู้รับบริการพร้อมห้องก่อน (server ออก HN ให้) แล้วจึงบันทึกสัญญา
    * มีค่าบริการล่วงหน้า/เงินประกัน = ออกใบแจ้งหนี้ให้ที่เมนูใบแจ้งหนี้และใบเสร็จ · รอชำระมัดจำ = จองห้องไว้ก่อน
    */
-  const create = (r: string[], photos: IdPhotos): string[] | void => {
+  const create = (r: string[], photos: IdPhotos, bill: BillChoice): string[] | void => {
     const oldId = renew !== null ? ids[renew] : undefined;
+    // เปิดสัญญาเต็มจากสัญญาที่จองไว้: บันทึกทับแถวเดิม (เลขที่สัญญาเดิม) ไม่สร้างสัญญาใหม่
+    const doneI = complete !== null && rows[complete] ? complete : null;
     // กันสัญญาซ้อน: เปิดสัญญาใหม่ให้คนที่มีสัญญาใช้งานอยู่/รอชำระมัดจำในสาขานี้แล้วไม่ได้ (ฟอร์มตรวจแล้ว ตรวจซ้ำกันข้อมูลเพิ่งโหลด)
     //  คืนสัญญาเดิมให้ฟอร์มแสดงกล่องแจ้งค้างไว้ พร้อมปุ่มต่อสัญญาฉบับเดิม
-    const live = renew === null ? rows.find((c) => norm(c[2] ?? "") === norm(r[2]) && c[1] === r[1] && isLive(c)) : undefined;
+    const live = renew === null ? rows.find((c, k) => k !== doneI && norm(c[2] ?? "") === norm(r[2]) && c[1] === r[1] && isLive(c)) : undefined;
     if (live) return live;
     const j = resIndex(r[2], r[1]);
     const p0 = j >= 0 ? res.rows[j] : undefined;
@@ -861,27 +1126,61 @@ export function Contracts() {
       const bed = r[6] === NO_ROOM ? p[7] ?? "" : p[2] === r[6] && p[7] ? p[7] : freeBed(info, p[0]);
       res.update(j, [p[0], r[13] || p[1], r[6] === NO_ROOM ? p[2] : r[6], p[3], p[4], status, p[6] ?? "", bed]);
     } else res.add([r[2], r[13] || "-", r[6], r[1], "", status, "", freeBed(info)]);
-    const id = add(r);
+    let id: string;
+    if (doneI !== null) { id = ids[doneI]; update(doneI, r); } else id = add(r);
     if (photos.employer || photos.resident || oldId) uploadIdCards(id, { ...(photos.employer ? { employer: photos.employer } : {}), ...(photos.resident ? { resident: photos.resident } : {}), ...(oldId ? { copyFrom: oldId } : {}) });
     if (renew !== null) { const old = rows[renew]; update(renew, old.map((x, k) => (k === 5 ? "สิ้นสุดสัญญา" : x))); setDoc({ kind: "renew", before: old, after: r }); }
-    // ใบเดิมของสาขาเดียวกัน: ต่อสัญญาที่เคยหักมัดจำห้อง (AD-01) ไปแล้ว ไม่หักซ้ำ
-    const inv = contractInvoice(r, j >= 0 ? res.rows[j][6] ?? "" : "", invoices.filter((x) => invBranch(x) === r[1]));
+    // ใบแจ้งหนี้จากขั้นที่ 4 (ใบแรกเข้า / ใบมัดจำค่าห้อง) · ตรวจรายการในฟอร์มแล้ว จึงออกเป็นค้างชำระได้เลย
+    const inv: Invoice | null = bill.mode !== "none" && bill.items.length ? { id: newId(), date: todayIso(), who: r[2], hn: j >= 0 ? res.rows[j][6] ?? "" : "", payer: r[3], address: r[10] ?? "", kind: BILL_KINDS[0], contract: r[0], items: JSON.stringify(bill.items), ...totals(bill.items), status: bill.mode === "draft" ? DRAFT : UNPAID, note: bill.note } : null;
     if (inv) setInvoices([inv, ...invoices]);
+    if (inv && bill.mode === "pay" && bill.pay) payNow(inv, bill.pay, bill.booking);
     if (fromQuote) { const k = quotes.ids.indexOf(fromQuote.quoteId); if (k >= 0) quotes.update(k, quotes.rows[k].map((x, n) => (n === 12 ? `เปิดสัญญาแล้ว ${docDate(todayIso())}` : x))); setFromQuote(null); }
-    setCreating(false); setRenew(null);
-    toast(`${renew !== null ? "ต่อสัญญาแล้ว" : "บันทึกสัญญาแล้ว"} · ${r[2]}${r[6] === NO_ROOM ? " (ยังไม่มีห้อง)" : ` ห้อง ${r[6]}`}${inv ? ` · ออกใบแจ้งหนี้ ${money(inv.net)} บาทที่เมนูใบแจ้งหนี้และใบเสร็จแล้ว${inv.status === DRAFT ? ` (${DRAFT})` : ""}` : ""}`);
+    setCreating(false); setRenew(null); setComplete(null);
+    // จองห้อง: เปิดเอกสารการมัดจำค่าห้องพักให้พิมพ์ทันที
+    if (bill.booking) setDoc({ kind: "deposit", id });
+    const what = bill.booking ? "บันทึกการจองแล้ว" : renew !== null ? "ต่อสัญญาแล้ว" : doneI !== null ? "เปิดสัญญาแล้ว" : "บันทึกสัญญาแล้ว";
+    toast(`${what} · ${r[2]}${r[6] === NO_ROOM ? " (ยังไม่มีห้อง)" : ` ห้อง ${r[6]}`}${inv ? bill.mode === "pay" ? ` · กำลังรับชำระ ${money(inv.net)} บาท` : ` · ออกใบแจ้งหนี้ ${money(inv.net)} บาทที่เมนูใบแจ้งหนี้และใบเสร็จแล้ว${inv.status === DRAFT ? ` (${DRAFT})` : ""}` : ""}`);
+  };
+  /**
+   * รับชำระเต็มจำนวนจากขั้นที่ 4 (ออกเป็นใบเสร็จ) · ใบแจ้งหนี้เพิ่งส่งขึ้นระบบ อาจยังไม่ถึง (404) ลองซ้ำก่อนแจ้งว่าไม่สำเร็จ
+   *  สำเร็จ: จองห้อง = เอกสารมัดจำที่เปิดอยู่ติ๊กช่องทางชำระให้เอง · สัญญา = ถามเปิดใบเสร็จเพื่อพิมพ์
+   */
+  const payNow = async (inv: Invoice, p: PayNow, booking: boolean) => {
+    const n = installmentsOf(inv.note), amt = n > 1 ? splitInstallments(inv.net, n)[0] : inv.net;
+    const body = { op: "pay", id: inv.id, cash: p.method === "เงินสด" ? amt : 0, credit: p.method === "บัตรเครดิต" ? amt : 0, transfer: p.method === "โอนเงิน" ? amt : 0, date: p.date, slip: p.method === "โอนเงิน" ? p.slip : undefined, note: booking ? "มัดจำค่าห้อง" : "รับชำระตอนเปิดสัญญา" };
+    const send = () => fetch("/api/billing", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    try {
+      let r = await send();
+      for (let i = 0; i < 6 && r.status === 404; i++) { await new Promise((x) => setTimeout(x, 1500)); r = await send(); }
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || "รับชำระไม่สำเร็จ");
+      refreshData("invoices");
+      if (booking) return toast(`รับชำระมัดจำแล้ว ${money(amt)} บาท · ${inv.who} · พิมพ์ใบเสร็จได้ที่ปุ่ม "เปิดใบเสร็จ"`);
+      confirm({ title: "รับชำระแล้ว", okLabel: "เปิดใบเสร็จ",
+        message: `รับชำระ${n > 1 ? `งวดที่ 1/${n}` : ""} ${money(amt)} บาท (${p.method}) ของ ${inv.who} แล้ว ออกเป็นใบเสร็จรับเงิน${n > 1 ? ` · งวดถัดไปรับที่หน้าใบแจ้งหนี้และใบเสร็จ` : ""} · ต้องการเปิดใบเสร็จเพื่อพิมพ์เลยหรือไม่`,
+        onOk: () => { invoiceHandoff.set(inv.id); go("billing"); } });
+    } catch (e) { toast(`${(e as Error).message} · ออกใบแจ้งหนี้ไว้แล้ว รับชำระต่อที่หน้าใบแจ้งหนี้และใบเสร็จ`); }
+  };
+  /** ใบแรกเข้าที่จะออกในขั้นที่ 4 · ใบเดิมของสาขาเดียวกัน: ต่อสัญญาที่เคยหักมัดจำห้อง (AD-01) ไปแล้ว ไม่หักซ้ำ */
+  const billPreview = (r: string[]) => {
+    const prior = invoices.filter((x) => invBranch(x) === r[1]);
+    // เปิดสัญญาจากที่จองไว้ แต่ออกใบแรกเข้าไปแล้ว (ไม่นับใบมัดจำห้อง) = ไม่ต้องออกซ้ำ
+    const had = r[0] ? invoices.find((x) => x.contract === r[0] && x.status !== VOID && isStartInvoice(x)) : undefined;
+    return { items: contractStartLines(r, prior), note: contractStartNote(r, prior), has: had ? had.no || "ที่ออกไว้" : "" };
   };
 
   const ended = (c: string[]) => c[5] === CANCELLED || c[5] === "สิ้นสุดสัญญา";
   /** ปุ่มหลักของแถวสัญญา: deposit = ออกใบแจ้งหนี้ (รอชำระมัดจำ ยังไม่มีใบ) · month = ออกใบเดือนนี้ · print = พิมพ์สัญญา · none = ไม่มี */
   const thisMonth = todayIso().slice(0, 7); // todayIso = วันที่ตามเวลาไทย
   const billed = useMemo(() => buildBilledIndex(invoices), [invoices]);
-  const primaryOf = (c: string[]): "deposit" | "month" | "print" | "none" => {
+  const primaryOf = (c: string[]): "complete" | "deposit" | "month" | "print" | "none" => {
     if (ended(c)) return "none";
+    // จองห้องด้วยมัดจำค่าห้อง ยังไม่ได้กรอกค่าบริการ = ปุ่ม "เปิดสัญญา" (กรอกให้ครบ)
+    if (isBookingRow(c)) return "complete";
     const bills = invoices.filter((x) => x.contract === c[0] && x.status !== VOID);
     if (can(user, "billing") && c[5] === "รอชำระเงินมัดจำ" && !bills.length) return "deposit";
     // เดือนนี้ยังไม่ได้เรียกเก็บ (ใบแรกเข้าที่ครอบคลุมเดือนนี้ หรือใบรายเดือนของเดือนนี้ นับว่าเก็บแล้ว · ดู contractBilledFor)
-    if (can(user, "billing") && c[5] === "ใช้งานอยู่" && !contractBilledFor(c, thisMonth, billed)) return "month";
+    if (can(user, "billing") && c[5] === "ใช้งานอยู่" && !isStayContract(c) && !contractBilledFor(c, thisMonth, billed)) return "month";
     return "print";
   };
   /** ออกใบแจ้งหนี้ตามสัญญา: ไปหน้าใบแจ้งหนี้และใบเสร็จพร้อมรายการในสัญญา (แก้/เพิ่มได้ก่อนบันทึก) · มีใบค้างชำระอยู่แล้ว ถามก่อน */
@@ -904,6 +1203,26 @@ export function Contracts() {
     const { q, k } = hits[0];
     quotes.update(k, q.map((x, n) => (n === 12 ? "-" : x)));
     return q[6] || "ของ " + q[1];
+  };
+
+  /**
+   * สัญญาแบบเดิม (ค่าห้อง + VAT บวกเพิ่ม) → แบบใหม่: ค่าห้องเดิมเป็นราคารวม VAT · ค่าห้อง 15,000 (มี VAT) + ค่าบริการทางการแพทย์ส่วนที่เหลือ
+   *  ใบที่ยังไม่ได้รับเงิน (ค้างชำระ / รอตรวจสอบยอด) ของสัญญานี้ปรับบรรทัดค่าห้องตาม · ใบที่รับเงินแล้วไม่เปลี่ยน (ออกใบลดหนี้แทน)
+   */
+  const repriceRoom = (i: number) => {
+    const c = rows[i], part = ROOM_PART.เดือน ?? 15000, x = splitOldRoom(c, part);
+    const open = invoices.filter((v) => v.contract === c[0] && (v.status === UNPAID || v.status === DRAFT) && !(v.paid ?? 0) && parseItems(v.items).some((l) => l.vat && !l.credit));
+    const paidN = invoices.filter((v) => v.contract === c[0] && (v.paid ?? 0) > 0).length;
+    const vat = Math.round((x.part - baseOfIncl(x.part, x.rate)) * 100) / 100;
+    confirm({
+      title: "ปรับเป็นราคาห้องรวม VAT", okLabel: "ปรับราคา",
+      message: `สัญญา ${c[0]} ${c[2]}: ค่าห้อง ${money(x.total)} บาท/เดือน จะถือเป็นราคารวม VAT แล้ว (เดิมบวก VAT เพิ่มอีก ${money(Math.round(x.total * x.rate) / 100)}) · แยกเป็นค่าห้อง ${money(x.part)} (รวม VAT ${money(vat)}) + ค่าบริการทางการแพทย์ ${money(x.med)} (ไม่มี VAT)${open.length ? ` · ใบที่ยังไม่ชำระ ${open.length} ใบ (${open.map((v) => v.no ?? "").filter(Boolean).join(", ")}) ปรับยอดตาม` : ""}${paidN ? ` · ใบที่รับเงินแล้ว ${paidN} ใบไม่เปลี่ยน ถ้าต้องคืนส่วนต่างให้ออกใบลดหนี้` : ""}`,
+      onOk: () => {
+        update(i, x.row);
+        if (open.length) setInvoices(invoices.map((v) => { if (!open.includes(v)) return v; const its = splitOldRoomLines(parseItems(v.items), part); return { ...v, items: JSON.stringify(its), ...totals(its) }; }));
+        toast(`ปรับราคาห้องแล้ว · ${c[0]} ${c[2]} · ค่าห้อง ${money(x.part)} + ค่าบริการทางการแพทย์ ${money(x.med)}${open.length ? ` · ปรับใบที่ยังไม่ชำระ ${open.length} ใบ` : ""}`);
+      },
+    });
   };
 
   /** ยกเลิกสัญญา (เช่น ลูกค้าเปลี่ยนใจ ทำสัญญาผิด): สัญญายังอยู่ในทะเบียน · คืนห้อง · ใบแจ้งหนี้ที่ยังไม่ชำระของสัญญานี้ถูกยกเลิกตาม */
@@ -1033,11 +1352,19 @@ export function Contracts() {
   const contractIndex = (c: string[]) => { const i = rows.indexOf(c); return i >= 0 || !c[0] ? i : rows.findIndex((x) => x[0] === c[0]); };
   // ชื่อนี้มีสัญญาใช้งานอยู่แล้ว: ปิดฟอร์มใหม่ แล้วเปิดฟอร์มต่อสัญญาของสัญญาเดิม (เหมือนกด "ต่อสัญญา" ในทะเบียน) / เปิดดูรายละเอียดสัญญาเดิม
   //  key เปลี่ยน = ฟอร์มเริ่มใหม่ด้วยข้อมูลสัญญาเดิม
-  if (creating || renew !== null)
-    return <ContractForm key={renew !== null ? `renew-${renew}` : "new"} rooms={rooms.rows} residents={res.rows} contracts={rows} initial={renew !== null ? rows[renew] : fromQuote?.prefill} fromQuote={fromQuote ? fromQuote.quoteNo : undefined} onClose={() => { setCreating(false); setRenew(null); setFromQuote(null); }} onSave={create}
-      onRenew={(c) => { const i = contractIndex(c); if (i < 0) return; setCreating(false); setFromQuote(null); setRenew(i); window.scrollTo(0, 0); }}
-      onView={(c) => { const i = contractIndex(c); if (i < 0) return; setCreating(false); setRenew(null); setFromQuote(null); setDlg({ mode: "view", i }); }} />;
+  const done = complete !== null ? rows[complete] : undefined;
+  if (creating || renew !== null || done)
+    return <ContractForm key={renew !== null ? `renew-${renew}` : done ? `complete-${complete}` : "new"} rooms={rooms.rows} residents={res.rows} contracts={rows}
+      initial={renew !== null ? rows[renew] : done ?? fromQuote?.prefill} fromQuote={fromQuote && !done ? fromQuote.quoteNo : undefined}
+      completing={!!done} paidDeposit={done ? bookingPaid(done, invoices) : 0} bookedDeposit={done ? Number(String(done[27] ?? "").replace(/,/g, "")) || 0 : 0}
+      canPay={can(user, "billing")} billPreview={billPreview}
+      onClose={() => { setCreating(false); setRenew(null); setComplete(null); setFromQuote(null); }} onSave={create}
+      onRenew={(c) => { const i = contractIndex(c); if (i < 0) return; setCreating(false); setComplete(null); setFromQuote(null); setRenew(i); window.scrollTo(0, 0); }}
+      onView={(c) => { const i = contractIndex(c); if (i < 0) return; setCreating(false); setRenew(null); setComplete(null); setFromQuote(null); setDlg({ mode: "view", i }); }} />;
   const dcRow = dc ? rows[dc.i] : null;
+  /** เอกสารการมัดจำค่าห้องพัก: สัญญาที่จอง + ใบมัดจำล่าสุด (ช่องทางชำระจากการรับเงิน) */
+  const depRow = doc?.kind === "deposit" ? rows[ids.indexOf(doc.id)] : undefined;
+  const depInv = depRow ? bookingInvoiceOf(depRow, invoices) : undefined;
   const dcRes = dcRow ? res.rows[resIndex(dcRow[2], dcRow[1])] : undefined;
   const owing = dcRow ? owingOf(dcRow) : [];
   const unbilledN = unbilled ? unbilled.meds + unbilled.supplies + unbilled.courses + unbilled.sessions : 0;
@@ -1068,7 +1395,7 @@ export function Contracts() {
       <PageHeader
         title="สัญญาบริการ"
         actions={<>
-          <button className="btn-primary" onClick={() => setCreating(true)}><Icon name="plus" className="h-4 w-4" /> เปิดสัญญาใหม่</button>
+          <button className="btn-primary" onClick={() => setCreating(true)}><Icon name="plus" className="h-4 w-4" /> เปิดสัญญาใหม่ / มัดจำห้อง</button>
           {admin && <button className="btn-soft" onClick={() => setTermsDlg(terms)}><Icon name="doc" className="h-4 w-4" /> เงื่อนไขเพิ่มเติมในสัญญา</button>}
           {boss && <button className="btn-soft" disabled={!shown.length} onClick={exportContracts}><CsvIcon /> ส่งออก CSV</button>}
           <button className="btn-soft" onClick={() => setSample(true)}><Icon name="print" className="h-4 w-4" /> ตัวอย่าง สบส. (แบบฟอร์มเปล่า)</button>
@@ -1090,15 +1417,19 @@ export function Contracts() {
           onRow={(k) => setDlg({ mode: "view", i: shown[k].i })} rowLabel="กดเพื่อดูรายละเอียดสัญญา"
           actions={[
             // ปุ่มหลักปุ่มเดียวตามสถานะ: รอชำระมัดจำ (ยังไม่มีใบ) = ออกใบแจ้งหนี้ · ใช้งานอยู่แต่เดือนนี้ยังไม่ออกใบ = ออกใบเดือนนี้ · ใช้งานปกติ = พิมพ์สัญญา (ปุ่มรอง)
+            { label: "เปิดสัญญา", tone: "primary", hidden: (k) => primaryOf(shown[k].r) !== "complete", onClick: (k) => { setComplete(shown[k].i); window.scrollTo(0, 0); } },
             { label: "ออกใบแจ้งหนี้", tone: "primary", hidden: (k) => primaryOf(shown[k].r) !== "deposit", onClick: (k) => billContract(shown[k].i) },
             { label: "ออกใบเดือนนี้", tone: "primary", hidden: (k) => primaryOf(shown[k].r) !== "month", onClick: (k) => billContract(shown[k].i) },
             { label: "พิมพ์สัญญา", tone: "ghost", hidden: (k) => primaryOf(shown[k].r) !== "print", onClick: (k) => setDoc({ kind: "contract", i: shown[k].i }) },
             { label: "รายละเอียด", more: true, onClick: (k) => setDlg({ mode: "view", i: shown[k].i }) },
-            { label: "พิมพ์สัญญา", more: true, hidden: (k) => primaryOf(shown[k].r) === "print", onClick: (k) => setDoc({ kind: "contract", i: shown[k].i }) },
-            { label: "ออกใบแจ้งหนี้", more: true, hidden: (k) => !can(user, "billing") || ended(shown[k].r) || ["deposit", "month"].includes(primaryOf(shown[k].r)), onClick: (k) => billContract(shown[k].i) },
+            { label: "พิมพ์สัญญา", more: true, hidden: (k) => ["print", "complete"].includes(primaryOf(shown[k].r)), onClick: (k) => setDoc({ kind: "contract", i: shown[k].i }) },
+            { label: "พิมพ์ใบมัดจำค่าห้อง", more: true, hidden: (k) => !bookingInvoiceOf(shown[k].r, invoices), onClick: (k) => setDoc({ kind: "deposit", id: ids[shown[k].i] }) },
+            { label: "เปิดสัญญา (กรอกให้ครบ)", more: true, hidden: (k) => shown[k].r[5] !== WAIT_DEPOSIT || primaryOf(shown[k].r) === "complete", onClick: (k) => { setComplete(shown[k].i); window.scrollTo(0, 0); } },
+            { label: "ออกใบแจ้งหนี้", more: true, hidden: (k) => !can(user, "billing") || ended(shown[k].r) || ["deposit", "month", "complete"].includes(primaryOf(shown[k].r)), onClick: (k) => billContract(shown[k].i) },
             { label: "แก้ไข", more: true, onClick: (k) => setDlg({ mode: "edit", i: shown[k].i }) },
+            { label: "ปรับเป็นราคาห้องรวม VAT", more: true, hidden: (k) => ended(shown[k].r) || !isOldRoomPricing(shown[k].r) || !can(user, "billing"), onClick: (k) => repriceRoom(shown[k].i) },
             { label: "รูปบัตร", more: true, onClick: (k) => openCards(shown[k].i) },
-            { label: "ต่อสัญญา", more: true, hidden: (k) => ended(shown[k].r), onClick: (k) => setRenew(shown[k].i) },
+            { label: "ต่อสัญญา", more: true, hidden: (k) => ended(shown[k].r) || isBookingRow(shown[k].r), onClick: (k) => setRenew(shown[k].i) },
             { label: "D/C กลับบ้าน", more: true, hidden: (k) => ended(shown[k].r), onClick: (k) => [CANCELLED, "สิ้นสุดสัญญา"].includes(shown[k].r[5]) ? toast("ไม่สามารถ D/C ได้ สัญญานี้สิ้นสุดหรือถูกยกเลิกแล้ว") : setDc({ i: shown[k].i, date: todayIso(), reason: DC_REASONS[0] }) },
             { label: "ยกเลิกสัญญา", danger: true, more: true, hidden: (k) => shown[k].r[5] === CANCELLED, onClick: (k) => cancel(shown[k].i) },
             ...(can(user, "contracts.delete") ? [{ label: "ลบ", danger: true, more: true, onClick: (k: number) => confirm({ title: "ลบสัญญา", message: `ต้องการลบสัญญา ${shown[k].r[0]} (${shown[k].r[2]}) ออกจากระบบใช่หรือไม่ ลบแล้วกู้คืนไม่ได้ (ดูย้อนหลังได้ที่บันทึกการใช้งานระบบ) ถ้าแค่ไม่ใช้สัญญานี้แล้ว แนะนำให้กด "ยกเลิกสัญญา" แทน`, danger: true, okLabel: "ลบ", onOk: () => { const c = shown[k].r; remove(shown[k].i); toast(`ลบสัญญาแล้ว · ${c[0] || ""} ${c[2]}`.trim()); } }) }] : []),
@@ -1151,11 +1482,13 @@ export function Contracts() {
           <p className="text-xs text-gold-500">ระบบจะเปลี่ยนสัญญาเป็นสิ้นสุด เปลี่ยนผู้รับบริการเป็นย้ายออก คืนห้องให้ว่าง ปิดลิงก์ครอบครัว แล้วเปิดใบจำหน่ายให้พิมพ์</p>
         </div>}
       </Modal>
-      <PrintModal open={!!doc} title={doc?.kind === "contract" ? "สัญญาจ้างดูแลผู้สูงอายุ หรือผู้มีภาวะพึ่งพิง" : doc?.kind === "renew" ? "บันทึกต่อท้ายสัญญา" : "ใบจำหน่ายผู้รับบริการ (D/C)"} onClose={() => setDoc(null)}
-        extra={doc?.kind === "contract" ? <button className="btn-soft" onClick={() => setDoc({ ...doc, copy: !doc.copy })}>{doc.copy ? "เปลี่ยนเป็นต้นฉบับ" : "เปลี่ยนเป็นสำเนา"}</button> : undefined}>
+      <PrintModal open={!!doc} title={doc?.kind === "contract" ? "สัญญาจ้างดูแลผู้สูงอายุ หรือผู้มีภาวะพึ่งพิง" : doc?.kind === "renew" ? "บันทึกต่อท้ายสัญญา" : doc?.kind === "deposit" ? "เอกสารการมัดจำค่าห้องพัก" : "ใบจำหน่ายผู้รับบริการ (D/C)"} onClose={() => setDoc(null)}
+        extra={doc?.kind === "contract" ? <button className="btn-soft" onClick={() => setDoc({ ...doc, copy: !doc.copy })}>{doc.copy ? "เปลี่ยนเป็นต้นฉบับ" : "เปลี่ยนเป็นสำเนา"}</button>
+          : doc?.kind === "deposit" && depInv && can(user, "billing") ? <button className="btn-soft" onClick={() => { invoiceHandoff.set(depInv.id); setDoc(null); go("billing"); }}>{depInv.status === PAID ? "เปิดใบเสร็จ" : "ไปรับชำระ"}</button> : undefined}>
         {doc?.kind === "contract" && rows[doc.i] && <ContractDoc r={rows[doc.i]} hn={resOf(rows[doc.i])?.row[6]} bed={resOf(rows[doc.i])?.row[7]} chronic={resOf(rows[doc.i])?.row[4]} branch={branchInfo(rows[doc.i][1])} terms={terms} by={user?.name} copy={doc.copy} />}
         {doc?.kind === "renew" && <RenewDoc before={doc.before} after={doc.after} hn={resOf(doc.after)?.row[6]} branch={branchInfo(doc.after[1])} by={user?.name} />}
         {doc?.kind === "dc" && <DischargeDoc d={doc.d} branch={branchInfo(doc.branch)} by={user?.name} />}
+        {doc?.kind === "deposit" && (depRow ? <DepositDoc r={depRow} inv={depInv} branch={branchInfo(depRow[1])} by={user?.name} /> : <p className="py-8 text-center text-sm text-gold-500">กำลังโหลด…</p>)}
       </PrintModal>
       <Modal open={termsDlg !== null} wide title="เงื่อนไขอื่น ๆ เพิ่มเติม (ข้อ 5.4 ในสัญญา)" onClose={() => setTermsDlg(null)}
         footer={<><button className="btn-soft" onClick={() => setTermsDlg(null)}>ยกเลิก</button><button className="btn-primary" onClick={saveTerms}>บันทึกเงื่อนไขเพิ่มเติม</button></>}>
@@ -1182,11 +1515,14 @@ export function Residents() {
   const branchNames = useBranchNames();
   const { rows, ids, update, remove } = useCrud("residents", RESIDENTS);
   const { rows: roomRows } = useCrud("rooms", []);
-  const { rows: conRows } = useCrud("contracts", CONTRACTS);
+  const { rows: conRows, ids: conIds } = useCrud("contracts", CONTRACTS);
   /** สัญญาของผู้รับบริการคนนี้ (ชื่อ + สาขา) · live = ใช้งานอยู่ / รอชำระมัดจำ */
   const contractsOf = (r: string[], live = false) => conRows.filter((c) => norm(c[2] ?? "") === norm(r[0]) && c[1] === r[3] && (!live || isLive(c)));
   const { confirm, toast, go } = useApp();
   const { user } = useSession();
+  /** สัญญาที่จองห้องไว้ (รอชำระมัดจำ) ของคนนี้ · ต้องมีสิทธิ์เมนูสัญญา */
+  //  เฉพาะคนที่สถานะ "มัดจำ (จองห้อง)" (คนที่เข้าอยู่/ย้ายออกแล้วแต่สัญญายังค้างสถานะเดิม ไม่แสดง ให้แก้ที่ทะเบียนสัญญา)
+  const reservedOf = (r: string[]) => (can(user, "contracts") && (r[5] ?? "").startsWith("มัดจำ") ? contractsOf(r).find((c) => c[5] === WAIT_DEPOSIT) : undefined);
   const [sample, setSample] = useState(false);
   const [dlg, setDlg] = useState<Dlg>(null);
   const [profile, setProfile] = useState<string | null>(null);
@@ -1256,7 +1592,9 @@ export function Residents() {
           onRow={(k) => setProfile(ids[shown[k].i])} rowLabel="กดเพื่อเปิดประวัติ"
           actions={[
             // กดแถว = ประวัติ · จัดห้องขึ้นเฉพาะคนที่ยังพักอยู่แต่ยังไม่มีห้อง · ที่เหลืออยู่ใน ⋯ (ลบท้ายสุด)
-            { label: "จัดห้อง", tone: "primary", hidden: (k) => !noRoomOf(shown[k].r) || !can(user, "rooms"), onClick: () => go("rooms") },
+            // จองห้องไว้ (สัญญารอชำระมัดจำ): ปุ่มหลัก = เปิดสัญญา (ฟอร์มเปิดสัญญาที่ดึงข้อมูลตอนจองมาให้ เลือกห้องในขั้นที่ 3)
+            { label: "เปิดสัญญา", tone: "primary", hidden: (k) => !reservedOf(shown[k].r), onClick: (k) => { const c = reservedOf(shown[k].r); if (!c) return; contractHandoff.set(conIds[conRows.indexOf(c)]); go("contracts"); } },
+            { label: "จัดห้อง", tone: "primary", hidden: (k) => !noRoomOf(shown[k].r) || !can(user, "rooms") || !!reservedOf(shown[k].r), onClick: () => go("rooms") },
             { label: "ประวัติ", more: true, onClick: (k) => setProfile(ids[shown[k].i]) },
             { label: "ลิงก์ครอบครัว", more: true, onClick: (k) => setFamily(ids[shown[k].i]) },
             { label: "แก้ไขข้อมูล", more: true, onClick: (k) => setDlg({ mode: "edit", i: shown[k].i }) },

@@ -4,10 +4,16 @@
  * DEFAULT_ITEMS = ใบราคาเดิม ใช้ตั้งต้นตารางครั้งแรก และแสดงระหว่างรอโหลด · ใช้ได้ทั้งหน้าเว็บและ server
  * ราคาที่เลือกลงเอกสารแล้วแก้ในเอกสารได้ (เช่น ให้ส่วนลด) และเอกสารที่ออกไปแล้วไม่เปลี่ยนตามใบราคา
  */
-export type RateUnit = "ครั้ง" | "วัน" | "เดือน" | "แพ็กเกจ";
-export const RATE_UNITS: RateUnit[] = ["ครั้ง", "วัน", "เดือน", "แพ็กเกจ"];
+export type RateUnit = "ครั้ง" | "วัน" | "สัปดาห์" | "เดือน" | "แพ็กเกจ";
+export const RATE_UNITS: RateUnit[] = ["ครั้ง", "วัน", "สัปดาห์", "เดือน", "แพ็กเกจ"];
 /** ราคาแต่ละหน่วย · หน่วยเดียวมีได้หลายราคา เช่น รายเดือน 12,000 / 8,000 · label = คำอธิบายราคานั้น · next = ราคาใหม่ที่ตั้งล่วงหน้า */
-export type Rate = { unit: RateUnit; price: number; label?: string; next?: { price: number; from: string } | null };
+export type Rate = { unit: RateUnit; price: number; label?: string; next?: { price: number; from: string } | null;
+  /** ห้องพัก: ส่วนที่เป็น "ค่าห้อง" (รวม VAT) ของราคานี้ · ที่เหลือเป็นค่าบริการทางการแพทย์ (ไม่มี VAT) · ไม่ตั้ง = ROOM_PART */
+  room?: number };
+/** ส่วนค่าห้อง (มี VAT · รวม VAT แล้ว) เริ่มต้นต่อหน่วย: เดือน 15,000 · สัปดาห์/วัน เฉลี่ยจากเดือน (15,000 ÷ 30) */
+export const ROOM_PART: Partial<Record<RateUnit, number>> = { เดือน: 15000, สัปดาห์: 3500, วัน: 500 };
+/** ส่วนค่าห้องของราคานี้ (ไม่เกินราคา) */
+export const roomPartOf = (r: { unit: RateUnit; price: number; room?: number }) => Math.min(r.price, r.room ?? ROOM_PART[r.unit] ?? r.price);
 export type CatId = "RM" | "NS" | "CR" | "EQ" | "PT" | "OT";
 export type PriceItem = {
   id?: string; code: string; cat: CatId; sub: string; name: string; rates: Rate[];
@@ -30,9 +36,9 @@ export const isCat = (c: unknown): c is CatId => typeof c === "string" && c in C
 
 /** รหัสหลัก เช่น NS-21 */
 export const CODE_RE = /^([A-Z]{2})-(\d{2})$/;
-const UNIT_LETTER: Record<RateUnit, string> = { ครั้ง: "S", วัน: "D", เดือน: "M", แพ็กเกจ: "P" };
+const UNIT_LETTER: Record<RateUnit, string> = { ครั้ง: "S", วัน: "D", สัปดาห์: "W", เดือน: "M", แพ็กเกจ: "P" };
 const isPromo = (r: Rate) => /โปรโมชัน/.test(r.label ?? "");
-/** ท้ายรหัสของราคาที่ i: S ครั้ง · D วัน · M เดือน · P แพ็กเกจ · MP โปรโมชัน · M2 ราคาที่ 2 ของหน่วยเดียวกัน */
+/** ท้ายรหัสของราคาที่ i: S ครั้ง · D วัน · W สัปดาห์ · M เดือน · P แพ็กเกจ · MP โปรโมชัน · M2 ราคาที่ 2 ของหน่วยเดียวกัน */
 export function rateSuffix(rates: Rate[], i: number) {
   const r = rates[i], b = UNIT_LETTER[r.unit] ?? "S";
   if (isPromo(r)) return `${b}P`;
@@ -80,8 +86,8 @@ export const DEFAULT_ITEMS: PriceItem[] = [
   room("RM-03", RM2, "ห้องเดี่ยว (Deluxe Room)", 3500, 57000, 47000, "R3"),
   room("RM-04", RM2, "ห้องเดี่ยว (Superior Room)", 4000, 71000, 58000, "R4"),
   room("RM-05", RM2, "ห้องเดี่ยว (Grand Suite Room)", 5000, 90000, 70000, "R5"),
-  item("NS-01", NS0, "ค่าบริการอาหารทางสายยางสูตรมาตรฐาน พร้อมอุปกรณ์", [R("วัน", 500), R("เดือน", 12000), R("เดือน", 8000, "ราคาที่ 2")], "X01"),
-  item("NS-02", NS0, "ค่าบริการให้นมทางสายยาง พร้อมอุปกรณ์ (นำนมมาเอง)", [R("วัน", 300), R("เดือน", 7500), R("เดือน", 4000, "ราคาที่ 2")], "X02"),
+  item("NS-01", NS0, "ค่าบริการอาหารทางสายยางสูตรมาตรฐาน พร้อมอุปกรณ์", [R("วัน", 500), R("เดือน", 12000), R("เดือน", 8000, "ยังไม่รวมอุปกรณ์")], "X01"),
+  item("NS-02", NS0, "ค่าบริการให้นมทางสายยาง พร้อมอุปกรณ์ (นำนมมาเอง)", [R("วัน", 300), R("เดือน", 7500), R("เดือน", 4000, "ยังไม่รวมอุปกรณ์")], "X02"),
   item("NS-04", NS0, "ค่าบริการใส่สายให้อาหารทางจมูก (สายเดิม)", [R("ครั้ง", 300)], "X14"),
   item("NS-05", NS0, "ค่าบริการใส่สายให้อาหารทางจมูก (สายใหม่แบบธรรมดา)", [R("ครั้ง", 1000)], "X15"),
   item("NS-06", NS0, "ค่าบริการใส่สายให้อาหารทางจมูก (สายใหม่แบบ Silicone)", [R("ครั้ง", 1200)], "X16"),
@@ -94,7 +100,7 @@ export const DEFAULT_ITEMS: PriceItem[] = [
   item("NS-20", NS2, "ค่าบริการให้ออกซิเจน", [R("วัน", 400), R("เดือน", 6000)], "X07"),
   item("NS-21", NS2, "ค่าบริการพ่นยา พร้อมอุปกรณ์", [R("ครั้ง", 300), R("วัน", 400), R("เดือน", 6000)], "X21"),
   item("NS-22", NS2, "บริการให้ออกซิเจน และพ่นยา (พร้อมอุปกรณ์ ไม่รวมยา)", [R("วัน", 600), R("เดือน", 9000)], "X29"),
-  item("NS-23", NS2, "ค่าบริการดูดเสมหะ พร้อมอุปกรณ์", [R("ครั้ง", 150), R("เดือน", 9000), R("เดือน", 6000, "ราคาที่ 2")], "X03"),
+  item("NS-23", NS2, "ค่าบริการดูดเสมหะ พร้อมอุปกรณ์", [R("ครั้ง", 150), R("เดือน", 9000), R("เดือน", 6000, "ยังไม่รวมอุปกรณ์")], "X03"),
   item("NS-30", NS3, "สวนปัสสาวะแบบสวนทิ้ง", [R("ครั้ง", 550)], "X17"),
   item("NS-31", NS3, "สวนปัสสาวะแบบคาสาย", [R("ครั้ง", 800)], "X18"),
   item("NS-40", NS4, "ค่าบริการตรวจน้ำตาลปลายนิ้ว DTX (พร้อมอุปกรณ์)", [R("ครั้ง", 100)], "X19"),
@@ -135,11 +141,17 @@ export const priceList = () => current.filter((x) => x.active !== false);
 /** ชื่อที่ลงเอกสารเมื่อเลือกจากใบราคา */
 export const pickName = (x: PriceItem) => (x.cat === "RM" ? `บริการ${x.name}` : x.name);
 
-type Room = { code: string; name: string; day: number; month: number; promo: number };
+/** week = ราคารายสัปดาห์ในใบราคา · ยังไม่ได้ตั้ง = รายวัน × 7 (weekSet = false) · part = ส่วนค่าห้อง (มี VAT) ต่อหน่วย (เดือน = ของราคารายเดือนที่ใช้) */
+type Room = { code: string; name: string; day: number; week: number; weekSet: boolean; month: number; promo: number; part: { วัน: number; สัปดาห์: number; เดือน: number } };
 const roomOf = (x: PriceItem): Room => {
   const p = (f: (r: Rate) => boolean) => x.rates.find(f)?.price ?? 0;
   const month = p((r) => r.unit === "เดือน" && !isPromo(r));
-  return { code: x.code, name: x.name, day: p((r) => r.unit === "วัน"), month, promo: p((r) => r.unit === "เดือน" && isPromo(r)) || month };
+  const day = p((r) => r.unit === "วัน"), week = p((r) => r.unit === "สัปดาห์");
+  const promoR = x.rates.find((r) => r.unit === "เดือน" && isPromo(r)) ?? x.rates.find((r) => r.unit === "เดือน" && !isPromo(r));
+  const partOf = (u: RateUnit, price: number) => { const r = x.rates.find((y) => y.unit === u); return Math.min(price, r?.room ?? ROOM_PART[u] ?? price); };
+  const promo = p((r) => r.unit === "เดือน" && isPromo(r)) || month, w = week || day * 7;
+  return { code: x.code, name: x.name, day, week: w, weekSet: week > 0, month, promo,
+    part: { วัน: partOf("วัน", day), สัปดาห์: week ? partOf("สัปดาห์", week) : Math.min(w, ROOM_PART.สัปดาห์ ?? w), เดือน: Math.min(promo, promoR?.room ?? ROOM_PART.เดือน ?? promo) } };
 };
 /** ห้องพัก: ราคาปกติรายวัน/รายเดือน และราคาโปรโมชันรายเดือน */
 export const rooms = (): Room[] => priceList().filter((x) => x.cat === "RM").map(roomOf);
@@ -177,7 +189,7 @@ export function rateColumns(x: PriceItem) {
 
 /** รหัสคงที่ของบรรทัดที่ไม่ได้อยู่ในหน้าราคา (เงินที่รับไว้ ไม่ใช่รายได้ · ค่าห้องราคาพิเศษตามสัญญา) */
 const FIXED_CODES: [RegExp, string][] = [
-  [/^เงินประกัน/, "DP-01"], [/^มัดจำห้อง/, "DP-02"], [/^หัก\s*มัดจำ/, "AD-01"], [/^ค่าบริการรายเดือน/, "RM-99"],
+  [/^เงินประกัน/, "DP-01"], [/^มัดจำห้อง/, "DP-02"], [/^ค่าบริการทางการแพทย์/, "RM-MD"], [/^หัก\s*มัดจำ/, "AD-01"], [/^ค่าบริการรายเดือน/, "RM-99"],
 ];
 /**
  * รหัสของบรรทัดในเอกสาร (ใบแจ้งหนี้ ใบเสนอราคา สัญญา)
