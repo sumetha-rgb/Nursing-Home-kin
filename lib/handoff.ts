@@ -27,8 +27,9 @@ export const cashHandoff = {
   take: () => { const h = cashOpen; cashOpen = false; return h; },
 };
 
-let bill: { id: string; dc?: boolean } | null = null;
+/** date = วันที่ D/C (YYYY-MM-DD) ใช้คิดค่าบริการเดือนสุดท้าย */
+let bill: { id: string; dc?: boolean; date?: string } | null = null;
 export const billHandoff = {
-  set: (contractId: string, dc = false) => { bill = { id: contractId, dc }; },
+  set: (contractId: string, dc = false, date?: string) => { bill = { id: contractId, dc, date }; },
   take: () => { const h = bill; bill = null; return h; },
 };

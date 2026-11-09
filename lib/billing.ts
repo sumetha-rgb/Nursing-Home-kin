@@ -15,18 +15,37 @@ export type Invoice = {
   id: string; no?: string; date: string; who: string; hn: string; payer: string; address: string;
   kind: string; contract: string; items: string; total: number; discount: number; net: number;
   status: string; paid?: number; cash?: number; credit?: number; transfer?: number; paidDate?: string; cashier?: string; note?: string; slip?: boolean;
+  /** เลขผู้เสียภาษีของผู้ชำระที่เป็นบริษัท 13 หลัก · payerBranch = "สำนักงานใหญ่" หรือ "สาขาที่ 00001" (ว่าง = บุคคลธรรมดา) */
+  payerTaxId?: string; payerBranch?: string;
+  /** ใบลดหนี้: เลขที่ใบเดิมที่อ้างอิง (server ใส่ให้) */
+  ref?: string;
 };
 
 export const BILL_KINDS = ["มัดจำ / แรกเข้า", "ค่าบริการรายเดือน", "ค่าหัตถการ", "คอร์สกายภาพ", "เวชภัณฑ์และอื่น ๆ", "สรุปค่าใช้จ่ายก่อนกลับบ้าน (D/C)"];
 export const UNPAID = "ค้างชำระ", PARTIAL = "ชำระบางส่วน", PAID = "ชำระแล้ว", VOID = "ยกเลิก";
+/**
+ * ใบลดหนี้ (ออกจาก /api/billing op "credit_note" เท่านั้น) · ลดยอดของใบเดิมที่ออกใบกำกับภาษีไปแล้ว
+ *  ลดหนี้แล้ว = หักยอดค้างของใบเดิมครบ · รอคืนเงิน = ใบเดิมชำระไปแล้ว ต้องคืนเงินลูกค้า · คืนเงินแล้ว = บันทึกการคืนเงินแล้ว
+ *  ยอดของใบลดหนี้เป็นบวกในฐานข้อมูล · ทุกรายงานต้องนับเป็นลบ (signedNet / lineSign)
+ */
+export const CN_KIND = "ใบลดหนี้", CN_DONE = "ลดหนี้แล้ว", CN_REFUND = "รอคืนเงิน", CN_REFUNDED = "คืนเงินแล้ว";
+export const CN_STATUSES = [CN_DONE, CN_REFUND, CN_REFUNDED];
+export const isCN = (x: { kind?: string }) => x.kind === CN_KIND;
+/** ยอดสุทธิที่ใช้รวมในรายงาน: ใบลดหนี้เป็นยอดลบ */
+export const signedNet = (x: { kind?: string; net: number }) => (isCN(x) ? -x.net : x.net);
+/** ตัวคูณยอดบรรทัดในรายงาน: บรรทัดของใบลดหนี้เป็นลบ */
+export const lineSign = (x: { kind?: string }) => (isCN(x) ? -1 : 1);
 /** ใบที่ระบบออกให้จากสัญญาที่ไม่ได้ระบุยอดล่วงหน้า · ยังรับชำระไม่ได้จนกว่าการเงินกดยืนยันยอด (เป็นค้างชำระ) */
 export const DRAFT = "รอตรวจสอบยอด";
 /** ยังเก็บเงินไม่ครบ (ยังไม่ได้รับชำระ หรือรับแล้วบางส่วน) */
 export const isOpen = (x: { status: string }) => x.status === UNPAID || x.status === PARTIAL;
 /** ยอดที่ยังค้างอยู่ */
-export const balanceOf = (x: { net: number; paid?: number }) => Math.max(0, Math.round((x.net - (x.paid ?? 0)) * 100) / 100);
+export const balanceOf = (x: { net: number; paid?: number; kind?: string }) => (x.kind === CN_KIND ? 0 : Math.max(0, Math.round((x.net - (x.paid ?? 0)) * 100) / 100));
 /** รายการรับชำระ 1 งวด (จาก /api/billing) */
-export type Payment = { id: string; n: number; date: string; cash: number; credit: number; transfer: number; amount: number; cashier: string; note: string; slip: string | null; slipAt: string | null; paidBefore: number };
+/** amount = ยอดที่ตัดจากยอดค้าง (เงินที่รับ + ภาษีหัก ณ ที่จ่าย) · wht = ภาษีหัก ณ ที่จ่าย · kind: pay = รับเงิน · credit = ใบลดหนี้หักยอด */
+export type Payment = { id: string; n: number; date: string; cash: number; credit: number; transfer: number; amount: number; wht?: number; kind?: string; cashier: string; note: string; slip: string | null; slipAt: string | null; paidBefore: number };
+/** เลขผู้เสียภาษี 13 หลักถูกต้องตามเลขตรวจสอบ */
+export const validTaxId = (v: string) => { const d = v.replace(/\D/g, ""); if (d.length !== 13) return false; let s = 0; for (let i = 0; i < 12; i++) s += Number(d[i]) * (13 - i); return (11 - (s % 11)) % 10 === Number(d[12]); };
 
 export const parseItems = (json: string): BillItem[] => {
   try { const x = JSON.parse(json || "[]"); return Array.isArray(x) ? x.map((i) => ({ desc: String(i.desc ?? ""), qty: Number(i.qty) || 0, price: Number(i.price) || 0, discount: Number(i.discount) || 0, pct: Number(i.pct) || 0, vat: i.vat === true ? DEFAULT_VAT : Number(i.vat) || 0, ...(i.credit ? { credit: true } : {}), ...(typeof i.code === "string" && i.code ? { code: i.code } : {}) })) : []; }

@@ -21,7 +21,7 @@ export function CashCloseStatus({ branch, onOpen }: { branch: string; onOpen?: (
     Promise.all([
       fetch(`/api/billing?op=payments${q}`, { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)),
       fetch(`/api/billing?op=closes${q}`, { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)),
-    ]).then(([p, c]) => { setPays(p?.items ?? null); setCloses(c?.items ?? []); }).catch(() => setPays(null));
+    ]).then(([p, c]) => { setPays(p?.items ? (p.items as Pay[]).filter(hasMoney) : null); setCloses(c?.items ?? []); }).catch(() => setPays(null));
   }, [branch]);
   if (!pays) return null;
   const today = todayIso(), since = new Date(Date.parse(today) - 30 * 864e5).toISOString().slice(0, 10);
@@ -54,6 +54,8 @@ type Pay = { date: string; no: string | null; n: number; branch: string; who: st
 type Close = { id: string; branch: string; date: string; payments: number; cash: number; transfer: number; credit: number; counted: number; note: string; closedBy: string; closedAt: string; approvedBy: string | null; approvedAt: string | null };
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
+/** งวดที่มีเงินเข้าจริง (ไม่นับใบลดหนี้ที่หักยอด และภาษีหัก ณ ที่จ่ายที่ไม่มีเงิน) */
+const hasMoney = (p: Pay) => p.cash + p.transfer + p.credit > 0;
 const num = (s: string) => Number(String(s).replace(/,/g, "")) || 0;
 
 /**
@@ -82,7 +84,7 @@ export default function CashClose({ open, onClose, isGlobal }: { open: boolean; 
       fetch(`/api/billing?op=payments${q}`, { cache: "no-store" }).then((r) => (r.ok ? r.json() : { items: [] })),
       fetch(`/api/billing?op=closes${q}`, { cache: "no-store" }).then((r) => (r.ok ? r.json() : { items: [] })),
     ]).catch(() => [{ items: [] }, { items: [] }]);
-    setPays(p.items ?? []); setCloses(c.items ?? []); setCanApprove(!!c.canApprove); setMissing(c.missing ?? "");
+    setPays(((p.items ?? []) as Pay[]).filter(hasMoney)); setCloses(c.items ?? []); setCanApprove(!!c.canApprove); setMissing(c.missing ?? "");
   }, [isGlobal, branch]);
   useEffect(() => { if (open) load(); }, [open, load]);
   useEffect(() => { setCounted(""); setNote(""); setRedo(false); }, [date, branch]);

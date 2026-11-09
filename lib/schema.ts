@@ -39,6 +39,8 @@ const SPECS: Record<string, Omit<Spec, "scope">> = {
       c("resident_id_no"), c("resident_age", "int"), c("included_services"), c("extra_services"), c("extra_fee"), c("extra_package"),
       c("prepaid", "money"), c("deposit", "money"), c("note"),
       c("program"), c("end_date", "date_th"), c("items_json"), c("hospital"), c("drug_allergy"), c("food_allergy"), c("room_deposit", "money"), c("regular_meds"), c("hospital_alt"), c("room_vat", "num"),
+      /** วันเวลาที่เปิดสัญญาในระบบ (อ่านอย่างเดียว · index 31) ใช้สรุปการเปิดสัญญารายวัน/เดือน/ปี */
+      ro("created_at", undefined, "ts_bkk"),
     ],
   },
   /** ใบแจ้งหนี้/ใบเสร็จ: items = JSON รายการ [{desc, qty, price, discount}] · สถานะ ค้างชำระ → ชำระแล้ว (เป็นใบเสร็จ) */
@@ -50,6 +52,7 @@ const SPECS: Record<string, Omit<Spec, "scope">> = {
       c("total", "num", "total"), c("discount", "num", "discount"), c("net", "num", "net"), c("status", "text", "status"),
       ro("pay_cash", "cash", "num"), ro("pay_credit", "credit", "num"), ro("pay_transfer", "transfer", "num"), ro("paid_date", "paidDate", "date"),
       ro("cashier", "cashier"), c("note", "text", "note"), ro("has_slip", "slip", "bool"), ro("paid_total", "paid", "num"),
+      c("payer_tax_id", "text", "payerTaxId"), c("payer_branch", "text", "payerBranch"), ro("ref_no", "ref"),
     ],
   },
   rooms: { table: "rooms", kind: "rows", branchCol: "branch_name", cols: [c("room_no"), c("branch_name"), c("room_type"), c("capacity", "int"), c("monthly_rate", "money"), c("status"), c("note"), c("floor")] },

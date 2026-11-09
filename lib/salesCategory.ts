@@ -4,7 +4,7 @@
  *  2) ใบเก่า / พิมพ์เอง → จับคู่ชื่อกับรายการในหน้าราคา (ชื่อยาวสุดที่อยู่ในบรรทัด) → คำในชื่อ (ห้อง ยา เวชภัณฑ์ คอร์ส)
  * เงินประกันและเงินรับล่วงหน้าไม่ใช่รายได้ (หมวด DP) · บรรทัดหักเงินที่รับไว้แล้วไม่นับ
  */
-import { BillItem, DRAFT, Invoice, lineNet, parseItems, VOID } from "./billing";
+import { BillItem, DRAFT, Invoice, lineNet, lineSign, parseItems, VOID } from "./billing";
 import { CATS, CatId, PriceItem } from "./priceList";
 
 export type SaleCat = CatId | "MD" | "SP" | "DP";
@@ -40,6 +40,6 @@ export function classify(i: BillItem, prices: PriceItem[]): Omit<SaleLine, "amou
 export function saleLines(list: Invoice[], prices: PriceItem[]): SaleLine[] {
   return list.filter((x) => x.status !== VOID && x.status !== DRAFT).flatMap((x) => parseItems(x.items).flatMap((i) => {
     const c = classify(i, prices);
-    return c ? [{ ...c, amount: lineNet(i), qty: i.qty, date: x.date }] : [];
+    return c ? [{ ...c, amount: lineSign(x) * lineNet(i), qty: lineSign(x) * i.qty, date: x.date }] : [];
   }));
 }

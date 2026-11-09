@@ -1,7 +1,7 @@
 "use client";
 // ส่งออกข้อมูลการเงินเป็น CSV สำหรับฝ่ายบัญชี (หน้าใบแจ้งหนี้และใบเสร็จ และแท็บการเงินในภาพรวมและรายงาน)
 import { useEffect, useState } from "react";
-import { docDate, Invoice, lineAmount, lineDiscount, lineNet, money, parseItems, BillItem } from "./billing";
+import { docDate, Invoice, lineAmount, lineDiscount, lineNet, lineSign, money, parseItems, BillItem } from "./billing";
 import { downloadCsv } from "./store";
 import { lineCode } from "./priceList";
 
@@ -56,14 +56,15 @@ export function exportInvoiceLines(list: Invoice[], branchOf: (x: Invoice) => st
         const amt = lineAmount(i);
         return [x.no ?? "", docDate(x.date), branchOf(x), x.who, x.hn || "", x.kind, x.status, String(k + 1), "", i.desc, itemCategory(i), String(i.qty), money(i.price), money(-amt), "0.00", money(-amt), "0", "0.00", money(-amt)];
       }
-      const base = lineNet(i), vat = r2((base * (i.vat ?? 0)) / 100);
-      return [x.no ?? "", docDate(x.date), branchOf(x), x.who, x.hn || "", x.kind, x.status, String(k + 1), lineCode(i), i.desc, itemCategory(i), String(i.qty), money(i.price), money(lineAmount(i)), money(lineDiscount(i)), money(base), String(i.vat ?? 0), money(vat), money(base + vat)];
+      // ใบลดหนี้: ยอดทุกช่องเป็นลบ
+      const sg = lineSign(x), base = lineNet(i), vat = r2((base * (i.vat ?? 0)) / 100);
+      return [x.no ?? "", docDate(x.date), branchOf(x), x.who, x.hn || "", x.kind, x.status, String(k + 1), lineCode(i), i.desc, itemCategory(i), String(i.qty), money(i.price), money(sg * lineAmount(i)), money(sg * lineDiscount(i)), money(sg * base), String(i.vat ?? 0), money(sg * vat), money(sg * (base + vat))];
     }));
   downloadCsv(name, ["เลขที่เอกสาร", "วันที่", "สาขา", "ผู้รับบริการ", "HN", "ประเภทใบ", "สถานะใบ", "บรรทัด", "รหัสสินค้า", "รายการ", "หมวด", "จำนวน", "ราคาต่อหน่วย", "ยอดก่อนส่วนลด", "ส่วนลด", "ก่อน VAT", "VAT (%)", "VAT", "สุทธิ"], rows);
   return rows.length;
 }
 
-type PayRow = { date: string; no: string | null; n: number; branch: string; who: string; hn: string | null; payer: string | null; kind: string; status: string; cash: number; transfer: number; credit: number; amount: number; cashier: string; note: string; slip: boolean };
+type PayRow = { date: string; no: string | null; n: number; branch: string; who: string; hn: string | null; payer: string | null; kind: string; status: string; cash: number; transfer: number; credit: number; amount: number; wht?: number; pkind?: string; cashier: string; note: string; slip: boolean };
 
 /** การรับเงินทุกงวด: กระทบยอดเงินสด / เงินโอน / บัตร กับบัญชีธนาคารรายวัน */
 export async function exportPayments(branch: string, name: string, inRange: (d: string) => boolean = () => true) {
@@ -71,7 +72,7 @@ export async function exportPayments(branch: string, name: string, inRange: (d: 
   const d = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(d.error || "ดึงข้อมูลการรับเงินไม่สำเร็จ");
   const items = ((d.items ?? []) as PayRow[]).filter((p) => inRange(String(p.date ?? "").slice(0, 10)));
-  downloadCsv(name, ["วันที่รับเงิน", "เลขที่เอกสาร", "งวดที่", "สาขา", "ผู้รับบริการ", "HN", "ผู้ชำระ", "ประเภทใบ", "สถานะใบ", "เงินสด", "เงินโอน", "บัตรเครดิต", "รวมรับงวดนี้", "ผู้รับเงิน", "มีสลิป", "หมายเหตุ"],
-    items.map((p) => [docDate(p.date), p.no ?? "", String(p.n), p.branch ?? "", p.who ?? "", p.hn ?? "", p.payer ?? "", p.kind ?? "", p.status ?? "", money(p.cash), money(p.transfer), money(p.credit), money(p.amount), p.cashier, p.slip ? "มี" : "", p.note]));
+  downloadCsv(name, ["วันที่รับเงิน", "เลขที่เอกสาร", "งวดที่", "สาขา", "ผู้รับบริการ", "HN", "ผู้ชำระ", "ประเภทใบ", "สถานะใบ", "ประเภทรายการ", "เงินสด", "เงินโอน", "บัตรเครดิต", "รวมรับเงิน", "ภาษีหัก ณ ที่จ่าย", "ตัดยอดค้างรวม", "ผู้รับเงิน", "มีสลิป", "หมายเหตุ"],
+    items.map((p) => [docDate(p.date), p.no ?? "", String(p.n), p.branch ?? "", p.who ?? "", p.hn ?? "", p.payer ?? "", p.kind ?? "", p.status ?? "", p.pkind === "credit" ? "ใบลดหนี้หักยอด" : "รับเงิน", money(p.cash), money(p.transfer), money(p.credit), money(p.cash + p.transfer + p.credit), money(p.wht ?? 0), money(p.amount), p.cashier, p.slip ? "มี" : "", p.note]));
   return items.length;
 }

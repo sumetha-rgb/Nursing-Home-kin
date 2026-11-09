@@ -618,12 +618,14 @@ export async function POST(req: NextRequest, { params }: { params: { key: string
 
 /* ---------- ใบแจ้งหนี้: กันแก้ยอด/สถานะของใบที่รับเงินแล้ว และคืนรายการเมื่อยกเลิกใบ ---------- */
 const INV_PAID = ["ชำระแล้ว", "ชำระบางส่วน"], INV_VOID = "ยกเลิก";
+/** ใบลดหนี้ออกและเปลี่ยนสถานะผ่าน /api/billing เท่านั้น (สร้าง/แก้ยอด/เปลี่ยนสถานะผ่านชุดข้อมูลไม่ได้) */
+const INV_CN = ["ลดหนี้แล้ว", "รอคืนเงิน", "คืนเงินแล้ว"], CN_KIND = "ใบลดหนี้";
 const invNum = (v: unknown) => Math.round((Number(String(v ?? "").replace(/,/g, "")) || 0) * 100) / 100;
 /** รายการในใบ (JSON) เทียบแบบไม่สนรูปแบบการเว้นวรรค */
 const invItems = (v: unknown) => { try { return JSON.stringify(JSON.parse(String(v ?? "") || "[]")); } catch { return String(v ?? ""); } };
 type InvGuard = { res?: NextResponse; release: ReturnType<typeof updateQueries>; items: Item[] };
 /** ใบที่ชำระแล้ว / ชำระบางส่วน / ยกเลิก: ช่องที่ยังแก้ได้ (ไม่กระทบยอด เลขที่ ผู้รับบริการ หรือรายงาน) · ช่องอื่นใช้ค่าบน server */
-const INV_LOCKED_EDITABLE = ["note"];
+const INV_LOCKED_EDITABLE = ["note", "payerTaxId", "payerBranch"];
 /** ตารางที่ผูกรายการเข้ากับใบแจ้งหนี้ (ดึงเข้าใบจากหน้าใบแจ้งหนี้และใบเสร็จ · /api/clinic supply_bill) */
 const INVOICE_LINKED = ["supply_issues", "stock_moves", "physio_courses", "clinical_notes"];
 
@@ -647,11 +649,12 @@ async function guardInvoices(s: Spec, me: SessionUser, items: Item[], prev: Map<
     const b = prev.get(it.id)?.rec;
     if (!b) {
       if (INV_PAID.includes(status)) return stop(`บันทึกใบแจ้งหนี้เป็นสถานะ "${status}" ไม่ได้ · รับชำระที่ปุ่ม รับชำระ`);
+      if (INV_CN.includes(status) || String(at(it, "category") ?? "") === CN_KIND) return stop("ออกใบลดหนี้ที่ปุ่ม ออกใบลดหนี้ ของใบเดิม");
       continue;
     }
     const was = String(b.status ?? ""), label = b.doc_no ? `${b.doc_no} ` : "";
     if (status !== was && INV_PAID.includes(status)) return stop(`เปลี่ยนสถานะเป็น "${status}" ไม่ได้ · การรับชำระต้องทำที่ปุ่ม รับชำระ`);
-    if (INV_PAID.includes(was) || was === INV_VOID) {
+    if (INV_PAID.includes(was) || was === INV_VOID || INV_CN.includes(was)) {
       if (status !== was) return stop(`เอกสาร ${label}เป็นสถานะ "${was}" แล้ว (อาจมีอีกเครื่องเพิ่งบันทึก) จึงเปลี่ยนสถานะไม่ได้ · กรุณาโหลดหน้าใหม่`);
       const moneyChanged = invNum(at(it, "net")) !== invNum(b.net) || invNum(at(it, "total")) !== invNum(b.total) || invNum(at(it, "discount")) !== invNum(b.discount) || invItems(at(it, "items_json")) !== invItems(b.items_json);
       if (moneyChanged) return stop(`เอกสาร ${label}สถานะ "${was}" แก้ยอดหรือรายการไม่ได้ · ถ้ายอดไม่ถูกต้องให้ออกใบใหม่`);

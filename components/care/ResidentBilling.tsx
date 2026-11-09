@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import CsvIcon from "@/components/CsvIcon";
-import { balanceOf, docDate, DRAFT, Invoice, money, parseItems, VOID } from "@/lib/billing";
+import { balanceOf, docDate, DRAFT, Invoice, lineSign, money, parseItems, signedNet, VOID } from "@/lib/billing";
 import { lineTotal } from "@/lib/billingExport";
 import { classify, DP_NAME, SALE_CATS } from "@/lib/salesCategory";
 import { usePriceList } from "@/lib/usePrices";
@@ -19,11 +19,11 @@ export default function ResidentBilling({ name, hn }: { name: string; hn?: strin
   const [cat, setCat] = useState("");
   const mine = all.filter((x) => (hn ? x.hn === hn : x.who === name) && x.status !== VOID).sort((a, b) => b.date.localeCompare(a.date));
   const real = mine.filter((x) => x.status !== DRAFT);
-  const billed = real.reduce((n, x) => n + x.net, 0), paid = real.reduce((n, x) => n + (x.paid ?? 0), 0), owe = real.reduce((n, x) => n + balanceOf(x), 0);
+  const billed = real.reduce((n, x) => n + signedNet(x), 0), paid = real.reduce((n, x) => n + (x.paid ?? 0), 0), owe = real.reduce((n, x) => n + balanceOf(x), 0);
   // หมวดชุดเดียวกับแท็บ "ยอดขายตามหมวด" (ตามรหัสในใบราคา) · เงินประกัน/รับล่วงหน้า = DP · บรรทัดหักเงิน = หักเงินที่รับไว้แล้ว
   const prices = usePriceList();
   const catName = (i: Parameters<typeof classify>[0]) => { const c = classify(i, prices); return !c ? "หักเงินที่รับไว้แล้ว" : c.cat === "DP" ? DP_NAME : SALE_CATS.find((x) => x.id === c.cat)?.name ?? c.cat; };
-  const lines = mine.flatMap((x) => parseItems(x.items).map((i, k) => ({ x, k, i, cat: catName(i), total: lineTotal(i) })));
+  const lines = mine.flatMap((x) => parseItems(x.items).map((i, k) => ({ x, k, i, cat: catName(i), total: lineSign(x) * lineTotal(i) })));
   const cats = [...new Set(lines.map((l) => l.cat))];
   const sales = lines.filter((l) => l.x.status !== DRAFT && l.cat !== DP_NAME && l.cat !== "หักเงินที่รับไว้แล้ว");
   const byCat = [...new Set(sales.map((l) => l.cat))].map((c) => {

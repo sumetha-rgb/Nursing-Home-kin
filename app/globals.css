@@ -2384,3 +2384,13 @@ input.is-ai { background:#fbf3df; border-color:#d9b46a; box-shadow:0 0 0 1px #d9
 .r3d-bed { position:absolute; left:0; top:0; display:inline-flex; align-items:center; gap:5px; padding:2px 9px 2px 3px; border-radius:999px; background:#fffdf8f2; border:1px solid #e3c98f; color:#3a2d1b; font-size:12px; font-weight:600; white-space:nowrap; box-shadow:0 3px 8px -3px #5a432040; pointer-events:auto; cursor:pointer; }
 .r3d-bed i { font-style:normal; display:grid; place-items:center; min-width:20px; height:20px; border-radius:999px; background:#b8862f; color:#fff; font-size:11px; font-weight:700; }
 .r3d-bed:hover { border-color:#b8862f; }
+
+/* ใบสรุปก่อนกลับบ้าน: แผงคิดค่าบริการเดือนสุดท้าย */
+.dc-month { border:1px solid #e8dcc6; background:#fbf6ec; border-radius:14px; padding:12px 14px; }
+
+/* สรุปการเปิดสัญญา (หน้าสัญญาบริการ) */
+.cs-table tbody tr.is-click { cursor:pointer; } .cs-table tbody tr.is-click:hover td, .cs-table tbody tr.is-on td { background:#fbf6ec; }
+.cs-table tbody tr.is-zero td { color:#b5a585; }
+.cs-list { list-style:none; margin:6px 0 0; padding:0; display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:8px; }
+.cs-list button { width:100%; text-align:left; display:flex; flex-direction:column; gap:1px; border:1px solid #EDE5D6; border-radius:12px; padding:9px 12px; background:#fff; }
+.cs-list button:hover { border-color:#c9a66b; } .cs-list b { font-size:13.5px; color:#302B24; } .cs-list span { font-size:13px; color:#5d4f38; } .cs-list small { font-size:12px; color:#8a7553; }

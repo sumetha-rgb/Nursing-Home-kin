@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import CsvIcon from "@/components/CsvIcon";
 import Icon from "../Icon";
 import { MetricGrid, Section, Tile } from "../ui";
-import { balanceOf, BILL_KINDS, docDate, DRAFT, Invoice, invoiceBranch, isOpen, money, PAID, PARTIAL, VOID } from "@/lib/billing";
+import { balanceOf, BILL_KINDS, docDate, DRAFT, Invoice, invoiceBranch, isOpen, money, PAID, PARTIAL, signedNet, VOID } from "@/lib/billing";
 import { downloadCsv, useCrud, useRecords } from "@/lib/store";
 import { CONTRACTS, RESIDENTS } from "@/lib/mock";
 import { useApp } from "@/lib/app";
@@ -105,7 +105,8 @@ export default function FinanceAnalytics({ branch, compact, onTiles, month, prev
   const prevLabel = cut ? `${prevDays > 1 ? "1–" : ""}${prevDays} ${monLabel(prev)}` : monLabel(prev);
   const billedNow = billedIn(now), discNow = billedNow.reduce((n, x) => n + (x.discount || 0), 0);
   const delta = paidPrev ? Math.round(((paidNow - paidPrev) / paidPrev) * 100) : null;
-  const billedSum = (m: string, day = 0) => billedIn(m, day).reduce((n, x) => n + x.net, 0);
+  // ใบลดหนี้ในเดือนเดียวกันหักออกจากยอดออกใบ
+  const billedSum = (m: string, day = 0) => billedIn(m, day).reduce((n, x) => n + signedNet(x), 0);
   const collectOf = (m: string, day = 0) => (billedSum(m, day) ? Math.round((paidIn(m, day) / billedSum(m, day)) * 100) : null);
   const grossNow = billedNow.reduce((n, x) => n + (x.total || 0), 0);
   const summary: FinSummary = { month: now, prevMonth: prev, paid: paidNow, paidPrev, billed: billedSum(now), billedPrev: billedSum(prev, cut), collect: collectOf(now), collectPrev: collectOf(prev, cut), prevLabel, owe, openN: open.length, discPct: grossNow ? Math.round((discNow / grossNow) * 1000) / 10 : null };

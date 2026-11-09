@@ -724,6 +724,13 @@ CREATE TABLE IF NOT EXISTS invoice_payments (
 );
 CREATE INDEX IF NOT EXISTS invoice_payments_invoice ON invoice_payments (invoice_id, created_at);
 COMMENT ON TABLE invoice_payments IS 'รายการรับชำระของใบแจ้งหนี้ (รับได้หลายงวด)';
+-- เลขผู้เสียภาษีของผู้ชำระที่เป็นบริษัท (พิมพ์ในใบกำกับภาษี) · ref_no = ใบลดหนี้อ้างอิงใบเดิม
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS payer_tax_id text;
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS payer_branch text;
+ALTER TABLE invoices ADD COLUMN IF NOT EXISTS ref_no text;
+-- wht = ภาษีหัก ณ ที่จ่ายที่ผู้ชำระหักไว้ (ตัดยอดค้างแต่ไม่ใช่เงินที่รับ) · kind: pay = รับเงิน · credit = ใบลดหนี้หักยอดค้าง
+ALTER TABLE invoice_payments ADD COLUMN IF NOT EXISTS wht numeric(12,2) NOT NULL DEFAULT 0;
+ALTER TABLE invoice_payments ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'pay';
 -- ใบที่ชำระแล้วจากเดิม (รับครั้งเดียว) ย้ายเข้าเป็นงวดที่ 1
 UPDATE invoices SET paid_total = net WHERE status = 'ชำระแล้ว' AND paid_total = 0;
 INSERT INTO invoice_payments (id, invoice_id, pay_date, cash, credit, transfer, amount, cashier, slip, slip_at)

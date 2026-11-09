@@ -10,6 +10,7 @@ import { balanceOf, parseItems, lineNet, PAID, contractVat, DEFAULT_VAT, DRAFT, 
 import { buildBilledIndex, contractBilledFor, contractInvoice, contractMonthTotal, isStartInvoice, prepaidMonths, useBranchInfo } from "./Billing";
 import ContractView from "./ContractView";
 import { contractsCsv } from "../billing/contractsCsv";
+import ContractSummary from "../care/ContractSummary";
 import { ContractDoc, contractLines, contractRoomName, contractTotal, DcData, dcRefund, DischargeDoc, PrintModal, RenewDoc } from "../print/Docs";
 import { ServiceLine, ServiceLines } from "../ServicePicker";
 import { AddressFinder, ChipChoice, SuggestText, TagInput } from "../ContractInputs";
@@ -782,6 +783,8 @@ export function Contracts() {
   const [sample, setSample] = useState(false);
   const [dlg, setDlg] = useState<Dlg>(null);
   const [filter, setFilter] = useState("ทั้งหมด");
+  /** ทะเบียนสัญญา หรือ สรุปการเปิดสัญญา รายวัน/เดือน/ปี */
+  const [page, setPage] = useState<"list" | "summary">("list");
   const norm = (x: string) => x.trim().replace(/\s+/g, " ");
   const resIndex = (name: string, branch: string) => res.rows.findIndex((r) => norm(r[0]) === norm(name) && r[3] === branch);
   /** ย้ายผู้รับบริการเข้า/ออกห้อง · เข้าห้องใหม่ = ได้เตียงว่างลำดับแรก (ห้องเดิม = เตียงเดิม) */
@@ -1044,7 +1047,7 @@ export function Contracts() {
   }
   const dcMoney = dcRow ? { owing: owing.reduce((n, x) => n + balanceOf(x), 0), depositPaid: depositPaidOf(dcRow[0]), unbilled: unbilled?.sum ?? 0 } : null;
   /** ออกใบสรุปค่าใช้จ่ายก่อนกลับบ้าน: ไปหน้าใบแจ้งหนี้และใบเสร็จ ดึงรายการที่ยังไม่เรียกเก็บเข้าใบให้ (กลับมากด D/C ต่อได้) */
-  const billDc = () => { if (!dc) return; billHandoff.set(ids[dc.i], true); setDc(null); go("billing"); };
+  const billDc = () => { if (!dc) return; billHandoff.set(ids[dc.i], true, dc.date); setDc(null); go("billing"); };
   /**
    * ช่องในกล่องแก้ไขสัญญา: สาขาและผู้รับบริการอ่านอย่างเดียว (กำหนดตอนเปิดสัญญา)
    *  สถานะเลือกได้แค่ ใช้งานอยู่ / รอชำระมัดจำ · สิ้นสุด/ยกเลิกใช้ปุ่ม D/C หรือ ยกเลิกสัญญา · สัญญาที่จบแล้วเปลี่ยนสถานะไม่ได้
@@ -1071,7 +1074,9 @@ export function Contracts() {
           <button className="btn-soft" onClick={() => setSample(true)}><Icon name="print" className="h-4 w-4" /> ตัวอย่าง สบส. (แบบฟอร์มเปล่า)</button>
         </>}
       />
-      <Section title="ทะเบียนสัญญาบริการ">
+      <div className="mb-4"><Tabs tabs={["ทะเบียนสัญญา", "สรุปการเปิดสัญญา"]} value={page === "list" ? "ทะเบียนสัญญา" : "สรุปการเปิดสัญญา"} onChange={(x) => setPage(x === "ทะเบียนสัญญา" ? "list" : "summary")} /></div>
+      {page === "summary" && <ContractSummary rows={rows} onOpen={(i) => setDlg({ mode: "view", i })} />}
+      {page === "list" && <Section title="ทะเบียนสัญญาบริการ">
         <StatFilter label="กรองสัญญา" value={filter} onChange={setFilter} items={[
           { k: "ทั้งหมด", t: "ทั้งหมด", n: rows.length, tone: "all" },
           { k: "ใช้งานอยู่", t: "ใช้งานอยู่", n: rows.filter((r) => r[5] === "ใช้งานอยู่").length, tone: "good" },
@@ -1099,7 +1104,7 @@ export function Contracts() {
             ...(can(user, "contracts.delete") ? [{ label: "ลบ", danger: true, more: true, onClick: (k: number) => confirm({ title: "ลบสัญญา", message: `ต้องการลบสัญญา ${shown[k].r[0]} (${shown[k].r[2]}) ออกจากระบบใช่หรือไม่ ลบแล้วกู้คืนไม่ได้ (ดูย้อนหลังได้ที่บันทึกการใช้งานระบบ) ถ้าแค่ไม่ใช้สัญญานี้แล้ว แนะนำให้กด "ยกเลิกสัญญา" แทน`, danger: true, okLabel: "ลบ", onOk: () => { const c = shown[k].r; remove(shown[k].i); toast(`ลบสัญญาแล้ว · ${c[0] || ""} ${c[2]}`.trim()); } }) }] : []),
           ]}
         />
-      </Section>
+      </Section>}
       <ContractView r={dlg?.mode === "view" ? rows[dlg.i] : null} onClose={() => setDlg(null)}
         onEdit={() => dlg && setDlg({ mode: "edit", i: dlg.i })}
         onPrint={() => { if (dlg) { setDoc({ kind: "contract", i: dlg.i }); setDlg(null); } }}

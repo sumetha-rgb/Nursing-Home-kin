@@ -3,7 +3,7 @@
  * ตัวสร้างไฟล์ CSV ที่ใช้ร่วมกันระหว่างปุ่มส่งออกในแต่ละหน้า และหน้า "ส่งออกข้อมูล" (components/views/Exports)
  *  ทุกฟังก์ชันรับข้อมูลที่กรองช่วงวันที่/สาขาแล้ว · คืนจำนวนแถวที่ส่งออก
  */
-import { balanceOf, docDate, Invoice, isOpen, money, parseItems, todayIso, VOID } from "./billing";
+import { balanceOf, docDate, Invoice, isOpen, lineSign, money, parseItems, signedNet, todayIso, VOID } from "./billing";
 import { lineTotal } from "./billingExport";
 import { classify, DP_NAME, SALE_CATS, saleLines } from "./salesCategory";
 import { lineCode, PriceItem } from "./priceList";
@@ -12,7 +12,7 @@ import { downloadCsv } from "./store";
 /* ---------- เอกสารการเงิน 1 แถวต่อใบ ---------- */
 export function invoiceDocsCsv(list: Invoice[], branchOf: (x: Invoice) => string, name: string) {
   const rows = [...list].sort((a, b) => b.date.localeCompare(a.date))
-    .map((x) => [x.no ?? "", docDate(x.date), branchOf(x), x.who, x.hn || "", x.payer, x.kind, x.contract || "", money(x.total), money(x.discount), money(x.net), money(x.paid ?? 0), x.status === VOID ? "0.00" : money(balanceOf(x)), x.paidDate ? docDate(x.paidDate) : "", x.status]);
+    .map((x) => [x.no ?? "", docDate(x.date), branchOf(x), x.who, x.hn || "", x.payer, x.ref ? `${x.kind} (อ้างอิง ${x.ref})` : x.kind, x.contract || "", money(lineSign(x) * x.total), money(x.discount), money(signedNet(x)), money(x.paid ?? 0), x.status === VOID ? "0.00" : money(balanceOf(x)), x.paidDate ? docDate(x.paidDate) : "", x.status]);
   downloadCsv(name, ["เลขที่เอกสาร", "วันที่", "สาขา", "ผู้รับบริการ", "HN", "ผู้ชำระ", "ประเภท", "สัญญา", "ยอดก่อนส่วนลด", "ส่วนลด", "ยอดสุทธิ", "ชำระแล้ว", "คงเหลือ", "วันที่รับชำระ", "สถานะ"], rows);
   return rows.length;
 }
@@ -78,7 +78,7 @@ export type SpendLine = { x: Invoice; k: number; i: ReturnType<typeof parseItems
 /** ทุกบรรทัดของใบ (ใบที่กรองแล้ว) พร้อมหมวดชุดเดียวกับแท็บยอดขายตามหมวด และรหัสสินค้า */
 export function spendLines(invs: Invoice[], prices: PriceItem[]): SpendLine[] {
   const catOf = (i: SpendLine["i"]) => { const c = classify(i, prices); return !c ? CREDIT_CAT : c.cat === "DP" ? DP_NAME : SALE_CATS.find((s) => s.id === c.cat)?.name ?? c.cat; };
-  return invs.flatMap((x) => parseItems(x.items).map((i, k) => ({ x, k, i, cat: catOf(i), code: lineCode(i, prices), total: lineTotal(i) })));
+  return invs.flatMap((x) => parseItems(x.items).map((i, k) => ({ x, k, i, cat: catOf(i), code: lineCode(i, prices), total: lineSign(x) * lineTotal(i) })));
 }
 export const personKey = (x: Invoice) => x.hn || x.who;
 export function spendPeople(invs: Invoice[], lines: SpendLine[], branchOf: (x: Invoice) => string) {
@@ -86,7 +86,7 @@ export function spendPeople(invs: Invoice[], lines: SpendLine[], branchOf: (x: I
   const people = [...new Set(invs.map(personKey))].map((key) => {
     const mine = invs.filter((x) => personKey(x) === key), ls = lines.filter((l) => personKey(l.x) === key);
     const by = Object.fromEntries(cols.map((c) => [c, ls.filter((l) => l.cat === c).reduce((n, l) => n + l.total, 0)])) as Record<string, number>;
-    return { key, who: mine[0].who, hn: mine[0].hn || "", branch: branchOf(mine[0]), docs: mine.length, by, billed: mine.reduce((n, x) => n + x.net, 0), paid: mine.reduce((n, x) => n + (x.paid ?? 0), 0), owe: mine.reduce((n, x) => n + balanceOf(x), 0), last: mine.map((x) => x.date).sort().pop() ?? "" };
+    return { key, who: mine[0].who, hn: mine[0].hn || "", branch: branchOf(mine[0]), docs: mine.length, by, billed: mine.reduce((n, x) => n + signedNet(x), 0), paid: mine.reduce((n, x) => n + (x.paid ?? 0), 0), owe: mine.reduce((n, x) => n + balanceOf(x), 0), last: mine.map((x) => x.date).sort().pop() ?? "" };
   });
   return { cols, people };
 }
