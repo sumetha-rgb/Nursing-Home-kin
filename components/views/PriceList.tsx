@@ -6,6 +6,7 @@ import { Field, Modal, PageHeader, Tabs } from "../ui";
 import { useApp } from "@/lib/app";
 import { downloadCsv } from "@/lib/store";
 import { CAT_IDS, CATS, CatId, CODE_RE, codeProblem, PriceItem, Rate, RATE_UNITS, rateCode, RateUnit, ROOM_PART, roomPartOf, setPrices, suggestCode } from "@/lib/priceList";
+import { baseOfIncl, DEFAULT_VAT } from "@/lib/billing";
 
 /**
  * ใบราคาและรหัส: ราคากลางทุกสาขา · ผู้จัดการสาขาและผู้บริหารเพิ่ม แก้ราคา แก้รหัส ปิดใช้ และนำเข้า/ส่งออก CSV
@@ -14,6 +15,15 @@ import { CAT_IDS, CATS, CatId, CODE_RE, codeProblem, PriceItem, Rate, RATE_UNITS
 type Item = PriceItem & { id: string };
 type Hist = { at: string; action: string; detail: string; reason: string; by: string; code: string };
 type FRate = { unit: RateUnit; price: string; label: string; from?: number; room?: string };
+/** ห้องพัก: ราคา 4 แบบที่ใช้ในระบบ (หาในรายการราคาตามหน่วยและคำว่าโปรโมชัน) */
+const isPromoL = (l: string) => /โปรโมชัน/.test(l);
+const ROOM_ROWS: { k: string; t: string; sub?: string; unit: RateUnit; label: string; find: (r: FRate) => boolean }[] = [
+  { k: "day", t: "รายวัน", unit: "วัน", label: "", find: (r) => r.unit === "วัน" },
+  // รายสัปดาห์ = รายวัน × 7 (คำนวณให้ ไม่ตั้งแยก)
+  { k: "week", t: "รายสัปดาห์", sub: "รายวัน × 7 วัน · คำนวณให้", unit: "สัปดาห์", label: "", find: () => false },
+  { k: "month", t: "รายเดือน · ราคาปกติ", unit: "เดือน", label: "", find: (r) => r.unit === "เดือน" && !isPromoL(r.label) },
+  { k: "promo", t: "รายเดือน · โปรโมชัน", sub: "ใช้ตอนเปิดสัญญา", unit: "เดือน", label: "โปรโมชัน", find: (r) => r.unit === "เดือน" && isPromoL(r.label) },
+];
 type Form = { id?: string; cat: CatId; sub: string; code: string; name: string; rates: FRate[] };
 type Status = "all" | "on" | "off" | "next";
 
@@ -307,11 +317,62 @@ function EditDialog({ item, tab: tab0, items, canEdit, onClose, onToggle, onSave
             </Field>
           </div>
 
-          {/* 2 ราคา */}
-          <div className="pl-step">
-            <p className="pl-step-h">ราคา</p>
-            <div className="pl-rate-head" aria-hidden="true"><span>รหัสราคา</span><span>หน่วย</span><span>คำอธิบาย (ถ้ามี)</span><span>ราคา (บาท)</span><span /></div>
+          {/* 2 ราคา · ห้องพักใช้ตาราง 4 แถว (รายวัน / รายสัปดาห์ / รายเดือนปกติ / รายเดือนโปรโมชัน) */}
+          {f.cat === "RM" && <div className="pl-step">
+            <p className="pl-step-h">ราคาห้อง <small className="font-normal text-gold-500">ทุกช่องเป็นราคารวม VAT แล้ว · กรอกราคาห้องทั้งหมด และส่วนที่เป็นค่าห้อง ที่เหลือระบบคิดเป็นค่าบริการทางการแพทย์ให้</small></p>
+            <div className="rm-rates">
+              <div className="rm-head" aria-hidden="true"><span>แบบ</span><span>ราคาห้องทั้งหมด</span><span>ค่าบริการห้องพัก</span><span>ค่าบริการทางการแพทย์</span><span /></div>
+              {ROOM_ROWS.map((row) => {
+                const i = f.rates.findIndex(row.find);
+                const dayR = f.rates.find((r) => r.unit === "วัน"), day = Number(dayR?.price) || 0;
+                if (row.k === "week") {
+                  // รายสัปดาห์: ราคาห้องและค่าห้องรายวัน × 7 ตามแถวรายวันด้านบน (แก้ที่รายวัน)
+                  const dPart = Math.min(day, dayR?.room !== undefined && dayR.room !== "" ? Number(dayR.room) || 0 : ROOM_PART.วัน ?? day);
+                  const wp = day * 7, wPart = dPart * 7, wBase = baseOfIncl(wPart, DEFAULT_VAT);
+                  return (
+                    <div key={row.k} className="rm-row is-calc">
+                      <span className="rm-k"><b>{row.t}</b><small>{row.sub}</small></span>
+                      <span className="rm-f"><span className="rm-lab">ราคาห้องทั้งหมด</span><span className="rm-val">{money(wp)}</span><small>{money(day)} × 7 วัน</small></span>
+                      <span className="rm-f"><span className="rm-lab">ค่าบริการห้องพัก</span><span className="rm-val">{money(wPart)}</span><small>ก่อน VAT {money(wBase)} + VAT {money(Math.round((wPart - wBase) * 100) / 100)}</small></span>
+                      <span className="rm-med"><span className="rm-lab">ค่าบริการทางการแพทย์</span><b>{money(Math.max(0, wp - wPart))}</b></span>
+                      <span />
+                    </div>
+                  );
+                }
+                if (i < 0) return (
+                  <div key={row.k} className="rm-row is-empty">
+                    <span className="rm-k"><b>{row.t}</b>{row.sub && <small>{row.sub}</small>}</span>
+                    <span className="rm-none">{row.k === "week" && day ? `ยังไม่ได้ตั้ง · ตอนนี้ระบบใช้รายวัน × 7 = ${money(day * 7)} (ค่าห้อง ${money(Math.min(day * 7, ROOM_PART.สัปดาห์ ?? 0))})` : "ยังไม่ได้ตั้ง"}</span>
+                    <button type="button" className="row-action is-primary" onClick={() => set({ rates: [...f.rates, { unit: row.unit, price: row.k === "week" && day ? String(day * 7) : "", label: row.label, room: "" }] })}>+ ตั้งราคา{row.t.replace(/ ·.*/, "")}</button>
+                  </div>
+                );
+                const r = f.rates[i], price = Number(r.price) || 0, own = r.room !== undefined && r.room !== "";
+                const part = Math.min(price, own ? Number(r.room) || 0 : ROOM_PART[row.unit] ?? price), med = Math.max(0, price - part), base = baseOfIncl(part, DEFAULT_VAT);
+                const was = r.from !== undefined && item ? item.rates[r.from] : undefined, diff = !!was && r.price !== "" && price !== was.price;
+                return (
+                  <div key={row.k} className="rm-row">
+                    <span className="rm-k"><b>{row.t}</b><small>{rateCode(preview, i)}{row.sub ? ` · ${row.sub}` : ""}</small></span>
+                    <label className="rm-f"><span className="rm-lab">ราคาห้องทั้งหมด</span>
+                      <input type="number" min={0} inputMode="decimal" value={r.price} onChange={(e) => setRate(i, { price: e.target.value })} className={`text-right tabular-nums ${diff ? "pl-changed" : ""}`} aria-label={`ราคาห้องทั้งหมด ${row.t}`} />
+                      {diff ? <small className="pl-was">เดิม {money(was!.price)}</small> : was?.next ? <small className="pl-was is-next">ราคาใหม่ {money(was.next.price)} มีผล {thDate(was.next.from)} · <button type="button" onClick={() => cancelNext(r.from!)}>ยกเลิก</button></small> : null}
+                    </label>
+                    <label className="rm-f"><span className="rm-lab">ค่าบริการห้องพัก</span>
+                      <input type="number" min={0} inputMode="decimal" value={r.room ?? ""} placeholder={String(Math.min(price, ROOM_PART[row.unit] ?? price))} onChange={(e) => setRate(i, { room: e.target.value })} className="text-right tabular-nums" aria-label={`ค่าบริการห้องพัก ${row.t}`} />
+                      <small>{own ? "" : "ค่าเริ่มต้น · "}ก่อน VAT {money(base)} + VAT {money(Math.round((part - base) * 100) / 100)}</small>
+                    </label>
+                    <span className="rm-med"><span className="rm-lab">ค่าบริการทางการแพทย์</span><b>{money(med)}</b></span>
+                    {row.k === "week" ? <button type="button" className="row-action danger" onClick={() => set({ rates: f.rates.filter((_, j) => j !== i) })}>ลบ</button> : <span />}
+                  </div>
+                );
+              })}
+            </div>
+            <p className="field-hint">ตอนเปิดสัญญา การ์ด "รายเดือน" ใช้ราคาโปรโมชัน · ใบเสร็จแสดงค่าบริการห้องพักและค่าบริการทางการแพทย์แยกกัน · VAT คิดเฉพาะค่าบริการห้องพัก</p>
+          </div>}
+          {(f.cat !== "RM" || f.rates.some((r) => !ROOM_ROWS.some((row) => f.rates.findIndex(row.find) === f.rates.indexOf(r)))) && <div className="pl-step">
+            <p className="pl-step-h">{f.cat === "RM" ? "ราคาอื่น ๆ ของห้องนี้" : "ราคา"}</p>
+            <div className="pl-rate-head" aria-hidden="true"><span>รหัสราคา</span><span>หน่วย</span><span>คำอธิบาย (ถ้ามี)</span><span>{f.cat === "RM" ? "ราคาห้อง (บาท · รวม VAT)" : "ราคา (บาท)"}</span><span /></div>
             {f.rates.map((r, i) => {
+              if (f.cat === "RM" && ROOM_ROWS.some((row) => f.rates.findIndex(row.find) === i)) return null;
               const was = r.from !== undefined && item ? item.rates[r.from] : undefined;
               const diff = !!was && r.price !== "" && Number(r.price) !== was.price;
               return (
@@ -323,7 +384,7 @@ function EditDialog({ item, tab: tab0, items, canEdit, onClose, onToggle, onSave
                     <input type="number" min={0} inputMode="decimal" value={r.price} onChange={(e) => setRate(i, { price: e.target.value })} className={`text-right tabular-nums ${diff ? "pl-changed" : ""}`} aria-label="ราคา" />
                     {diff && <small className="pl-was">เดิม {money(was!.price)}</small>}
                     {/* ห้องพัก: แยกส่วนค่าห้อง (มี VAT) ที่เหลือเป็นค่าบริการทางการแพทย์ (ไม่มี VAT) */}
-                    {f.cat === "RM" && <label className="pl-room">ค่าห้อง (มี VAT)
+                    {f.cat === "RM" && <label className="pl-room">ในนี้เป็นค่าห้อง (รวม VAT){(r.room === undefined || r.room === "") && <i className="not-italic text-gold-500"> · ค่าเริ่มต้น</i>}
                       <input type="number" min={0} inputMode="decimal" value={r.room ?? ""} placeholder={String(Math.min(Number(r.price) || 0, ROOM_PART[r.unit] ?? (Number(r.price) || 0)))} onChange={(e) => setRate(i, { room: e.target.value })} aria-label={`ค่าห้อง (มี VAT) ของราคา${r.unit}`} />
                       {Number(r.price) > 0 && <small>ค่าบริการทางการแพทย์ {money(Math.max(0, (Number(r.price) || 0) - Math.min(Number(r.price) || 0, r.room !== undefined && r.room !== "" ? Number(r.room) : ROOM_PART[r.unit] ?? (Number(r.price) || 0))))}</small>}
                     </label>}
@@ -333,9 +394,9 @@ function EditDialog({ item, tab: tab0, items, canEdit, onClose, onToggle, onSave
                 </div>
               );
             })}
-            {f.rates.length < 8 && <button type="button" className="pl-add" onClick={() => set({ rates: [...f.rates, { unit: f.rates[f.rates.length - 1]?.unit ?? "ครั้ง", price: "", label: "" }] })}><Icon name="plus" className="h-4 w-4" /> เพิ่มราคา</button>}
-            <p className="field-hint">ท้ายรหัสราคา: S ครั้ง · D วัน · M เดือน · P แพ็กเกจ · MP โปรโมชัน · M2 ราคาที่ 2</p>
-          </div>
+            {f.rates.length < 8 && f.cat !== "RM" && <button type="button" className="pl-add" onClick={() => set({ rates: [...f.rates, { unit: f.rates[f.rates.length - 1]?.unit ?? "ครั้ง", price: "", label: "" }] })}><Icon name="plus" className="h-4 w-4" /> เพิ่มราคา</button>}
+            <p className="field-hint">ท้ายรหัสราคา: S ครั้ง · D วัน · W สัปดาห์ · M เดือน · P แพ็กเกจ · MP โปรโมชัน · M2 ราคาที่ 2</p>
+          </div>}
 
           {/* 3 มีผลเมื่อ + เหตุผล (เฉพาะตอนแก้) */}
           {!isNew && changes.length > 0 && (

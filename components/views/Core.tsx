@@ -299,6 +299,9 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, co
   const [months, setMonths] = useState(0);
   // ชำระล่วงหน้าตั้งแต่ 2 เดือน: ส่วนลดค่าห้อง (%) จำนวนเต็ม · แบ่งชำระใบแรกเข้าเป็นงวด (เปิดสัญญาจากที่จองไว้ = ดึงที่ตั้งไว้)
   const [roomPct, setRoomPct] = useState(() => (completing && initial ? String(contractMeta(initial).prepaidPct || "") : ""));
+  /** ส่วนลดค่าห้องเป็น % หรือเป็นจำนวนบาท */
+  const [offMode, setOffMode] = useState<"pct" | "baht">(() => (completing && initial && contractMeta(initial).prepaidOff ? "baht" : "pct"));
+  const [offAmt, setOffAmt] = useState(() => (completing && initial ? String(contractMeta(initial).prepaidOff || "") : ""));
   const [parts, setParts] = useState(() => (completing && initial ? Math.max(1, contractMeta(initial).installments ?? 1) : 1));
   const [deposit, setDeposit] = useState("");
   const formRef = useRef<HTMLFormElement>(null);
@@ -380,9 +383,10 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, co
   const sum = feeN + medPay + items.reduce((n, x) => n + svcNet(x), 0);
   const monthly = Math.round((sum - feeN + partPay) * 100) / 100;
   const prepaid = months > 0 && monthly > 0 ? String(Math.round(monthly * months * 100) / 100) : "";
-  const pctN = months > 1 ? Math.min(100, Math.max(0, Math.floor(Number(roomPct) || 0))) : 0;
+  const pctN = months > 1 && offMode === "pct" ? Math.min(100, Math.max(0, Math.floor(Number(roomPct) || 0))) : 0;
+  const offN = months > 1 && offMode === "baht" ? Math.max(0, Math.floor(Number(offAmt) || 0)) : 0;
   /** ส่วนลดค่าห้องชำระล่วงหน้า (รวม VAT · ประมาณ ยอดจริงคิดตามบรรทัดในขั้นที่ 4) */
-  const roomOff = Math.round(roomPay * months * pctN) / 100;
+  const roomOff = offN ? Math.min(offN, roomPay * months) : Math.round(roomPay * months * pctN) / 100;
   const firstBill = (months || 1) * monthly - roomOff + (Number(deposit) || 0) - (Number(roomDep) || 0);
   const branchNames = useBranchNames();
   const { go, toast } = useApp();
@@ -448,7 +452,7 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, co
       g("resident_id"), g("age"), initial?.[14] ?? "", lines.map((x) => x.desc).join(", "), lines.length ? String(lines.reduce((n, x) => n + svcNet(x), 0)) : "", initial?.[17] ?? "",
       booking ? "" : prepaid, booking ? "" : deposit, g("note"),
       booking ? "" : g("program"), booking ? "" : endDate, JSON.stringify([...lines, ...(fee4 !== "-" && roomName.trim() ? [{ desc: roomName.trim(), qty: 1, unit: "เดือน", price: 0, room: true }] : []),
-        ...(!booking && (pctN > 0 || parts > 1) ? [{ desc: "", qty: 0, unit: "", price: 0, meta: { ...(pctN > 0 ? { prepaidPct: pctN } : {}), ...(parts > 1 ? { installments: parts } : {}) } }] : [])]), [hosp.trim(), right ? `(${right})` : ""].filter(Boolean).join(" "), drugA.trim(), foodA.trim(), booking ? String(Number(depAmt) || 0) : roomDep, meds.trim(), hospAlt.trim(),
+        ...(!booking && (pctN > 0 || offN > 0 || parts > 1) ? [{ desc: "", qty: 0, unit: "", price: 0, meta: { ...(pctN > 0 ? { prepaidPct: pctN } : {}), ...(offN > 0 ? { prepaidOff: offN } : {}), ...(parts > 1 ? { installments: parts } : {}) } }] : [])]), [hosp.trim(), right ? `(${right})` : ""].filter(Boolean).join(" "), drugA.trim(), foodA.trim(), booking ? String(Number(depAmt) || 0) : roomDep, meds.trim(), hospAlt.trim(),
       String(rateN),
     ];
   };
@@ -782,39 +786,58 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, co
           </div>
           <p className="label mt-4">รายการบริการและค่าบริการเพิ่มเติม</p>
           <ServiceLines items={items} onChange={setItems} total={false} exclude={["ห้องพัก"]} />
-          <div className="mt-4 grid gap-4 md:grid-cols-2">
-            <Field label="หักค่ามัดจำห้องพัก (บาท)"><input type="number" min={0} value={roomDep} onChange={(e) => setRoomDep(e.target.value)} placeholder="เช่น 3000" />
-              {completing && bookedDeposit > 0 && <p className={paidDeposit >= bookedDeposit ? "field-hint" : "field-error"}>{paidDeposit >= bookedDeposit ? `มัดจำตอนจอง ${money(bookedDeposit)} บาท รับชำระแล้ว หักในใบแรกเข้าให้` : `มัดจำตอนจอง ${money(bookedDeposit)} บาท ${paidDeposit ? `รับชำระแล้ว ${money(paidDeposit)} บาท` : "ยังไม่ได้รับชำระ"} · หักเฉพาะยอดที่รับแล้ว`}</p>}</Field>
-            <div className="self-end rounded-2xl bg-cream-50 px-4 py-3 text-sm text-gold-700">
-              {feeN > 0 && <p>ค่าห้อง {money(partPay)}{vatAmt > 0 ? ` (รวม VAT ${rateN}% ${money(vatAmt)})` : " (ไม่มี VAT)"}</p>}
-              {medPay > 0 && <p>ค่าบริการทางการแพทย์ {money(medPay)} (ไม่มี VAT)</p>}
-              {sum - feeN - medPay > 0 && <p>บริการเพิ่มเติม {money(sum - feeN - medPay)} (ไม่มี VAT)</p>}
-              <p>{stay === "เดือน" ? "รวมต่อเดือน" : `รวม (พัก ${nStay} ${stay})`} <b className="text-gold-900">{money(monthly)}</b> บาท</p>
-              {monthly > 0 && <p className="mt-1 border-t border-cream-300 pt-1">ใบแจ้งหนี้แรกเข้า: ค่าบริการ {stay === "เดือน" ? `${months || 1} เดือน` : `${nStay} ${stay}`} {money((months || 1) * monthly)}{roomOff > 0 ? ` − ส่วนลดค่าห้อง ${pctN}% ${money(roomOff)}` : ""}{Number(deposit) > 0 ? ` + เงินประกัน ${money(Number(deposit))}` : ""}{Number(roomDep) > 0 ? ` − มัดจำห้องที่รับไว้แล้ว ${money(Number(roomDep))}` : ""} = <b className="text-gold-900">{money(firstBill)}</b> บาท</p>}
+          {/* การชำระ (ซ้าย) · สรุปใบแจ้งหนี้แรกเข้า (ขวา) */}
+          <div className="pay2">
+            <div className="pay2-main">
+              {stay === "เดือน" ? <div className="pay2-sec">
+                <p className="pay2-h">ชำระค่าบริการล่วงหน้า</p>
+                <div className="pay2-chips" role="radiogroup" aria-label="ชำระค่าบริการล่วงหน้า">{[0, 1, 2, 3, 6].map((n) => (
+                  <button key={n} type="button" role="radio" aria-checked={months === n} onClick={() => setMonths(n)} className={`pay2-chip ${months === n ? "is-on" : ""}`}>
+                    {n ? `${n} เดือน` : "ไม่เก็บล่วงหน้า"}</button>
+                ))}</div>
+                {/* ชำระล่วงหน้าตั้งแต่ 2 เดือน: ส่วนลดค่าห้องเป็น % (จำนวนเต็ม) · ลดเฉพาะค่าห้อง */}
+                {months > 1 && roomPay > 0 && <div className="pay2-inline">
+                  <label htmlFor="room-pct">ส่วนลดค่าห้อง</label>
+                  <span className="pay2-mode" role="radiogroup" aria-label="ลดเป็น">
+                    {([["pct", "%"], ["baht", "บาท"]] as const).map(([k, t]) => <button key={k} type="button" role="radio" aria-checked={offMode === k} className={offMode === k ? "is-on" : ""} onClick={() => setOffMode(k)}>{t}</button>)}
+                  </span>
+                  {offMode === "pct"
+                    ? <><input id="room-pct" type="text" inputMode="numeric" maxLength={3} value={roomPct} placeholder="0"
+                        onChange={(e) => { const v = e.target.value.replace(/\D/g, "").slice(0, 3); setRoomPct(v && Number(v) > 100 ? "100" : v); }} aria-label="ส่วนลดค่าห้อง (%)" /><span>%</span></>
+                    : <><input id="room-pct" type="text" inputMode="numeric" maxLength={7} value={offAmt} placeholder="เช่น 1000" className="is-wide"
+                        onChange={(e) => setOffAmt(e.target.value.replace(/\D/g, "").slice(0, 7))} aria-label="ส่วนลดค่าห้อง (บาท)" /><span>บาท</span></>}
+                  <small>{roomOff > 0 ? `ลด ${money(roomOff)} บาท` : offMode === "pct" ? "จำนวนเต็ม · ลดเฉพาะค่าห้อง" : "จำนวนเต็ม · ลดจากค่าห้องทั้งหมด"}</small>
+                </div>}
+              </div> : <p className="pay2-note">พักระยะสั้น {nStay} {stay} · เก็บครั้งเดียวในใบแรกเข้า ไม่ออกใบรายเดือนให้อัตโนมัติ</p>}
+              <div className="pay2-sec">
+                <p className="pay2-h">แบ่งชำระ</p>
+                <div className="pay2-chips" role="radiogroup" aria-label="แบ่งชำระใบแรกเข้า">{[1, 2, 3, 4, 6].map((n) => (
+                  <button key={n} type="button" role="radio" aria-checked={parts === n} onClick={() => setParts(n)} className={`pay2-chip ${parts === n ? "is-on" : ""}`}>{n === 1 ? "จ่ายครั้งเดียว" : `${n} งวด`}</button>
+                ))}</div>
+              </div>
+              <div className="pay2-grid">
+                <Field label="เงินประกัน (บาท)"><input type="number" min={0} value={deposit} onChange={(e) => setDeposit(e.target.value)} placeholder="ไม่เก็บ = เว้นว่าง" aria-label="ชำระเงินประกัน" />
+                  {monthly > 0 && stay === "เดือน" && <div className="pay2-chips mt-1.5">{[1, 2].map((n) => <button key={n} type="button" onClick={() => setDeposit(String(Math.round(monthly * n * 100) / 100))} className="pay2-chip is-sm">{n} เดือน · {money(monthly * n)}</button>)}</div>}</Field>
+                <Field label="หักมัดจำห้องที่จ่ายตอนจอง (บาท)"><input type="number" min={0} value={roomDep} onChange={(e) => setRoomDep(e.target.value)} placeholder="ไม่มี = เว้นว่าง" />
+                  {completing && bookedDeposit > 0 && <p className={paidDeposit >= bookedDeposit ? "field-hint" : "field-error"}>{paidDeposit >= bookedDeposit ? `มัดจำตอนจอง ${money(bookedDeposit)} บาท รับชำระแล้ว` : `มัดจำตอนจอง ${money(bookedDeposit)} บาท ${paidDeposit ? `รับชำระแล้ว ${money(paidDeposit)} บาท` : "ยังไม่ได้รับชำระ"} · หักเฉพาะยอดที่รับแล้ว`}</p>}</Field>
+              </div>
             </div>
-            {stay === "เดือน" ? <Field label="ชำระค่าบริการล่วงหน้า">
-              <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="ชำระค่าบริการล่วงหน้า">{[0, 1, 2, 3, 6].map((n) => (
-                <button key={n} type="button" role="radio" aria-checked={months === n} onClick={() => setMonths(n)}
-                  className={`rounded-full px-3 py-1.5 text-xs font-medium ${months === n ? "bg-gold-700 text-white" : "border border-cream-300 bg-white text-gold-700 hover:border-gold-300"}`}>
-                  {n ? `${n} เดือน${monthly > 0 ? ` · ${money(monthly * n)}` : ""}` : "ไม่เก็บล่วงหน้า"}</button>
-              ))}</div>
-              {/* ชำระล่วงหน้าตั้งแต่ 2 เดือน: ใส่ส่วนลดค่าห้องเป็น % (จำนวนเต็ม) ได้เอง · ลดเฉพาะค่าห้อง ไม่ลดบริการเพิ่มเติม */}
-              {months > 1 && roomPay > 0 && <div className="prepaid-off">
-                <label htmlFor="room-pct">ส่วนลดค่าห้อง</label>
-                <div className="prepaid-off-in"><input id="room-pct" type="text" inputMode="numeric" maxLength={3} value={roomPct} placeholder="0"
-                  onChange={(e) => { const v = e.target.value.replace(/\D/g, "").slice(0, 3); setRoomPct(v && Number(v) > 100 ? "100" : v); }} aria-label="ส่วนลดค่าห้อง (%)" /><span>%</span></div>
-                <small>{pctN > 0 ? <>ลดค่าห้อง {months} เดือน ประมาณ <b>{money(roomOff)}</b> บาท · เฉพาะค่าห้อง</> : "จำนวนเต็ม เช่น 5 · ลดเฉพาะค่าห้อง"}</small>
-              </div>}</Field> : <div className="self-center rounded-xl bg-cream-50 px-4 py-2.5 text-sm text-gold-600">พักระยะสั้น: เก็บค่าห้อง {nStay} {stay} ในใบแรกเข้า · ไม่ออกใบค่าบริการรายเดือนให้อัตโนมัติ</div>}
-            <Field label="แบ่งชำระใบแรกเข้า">
-              <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="แบ่งชำระใบแรกเข้า">{[1, 2, 3, 4, 6].map((n) => (
-                <button key={n} type="button" role="radio" aria-checked={parts === n} onClick={() => setParts(n)}
-                  className={`rounded-full px-3 py-1.5 text-xs font-medium ${parts === n ? "bg-gold-700 text-white" : "border border-cream-300 bg-white text-gold-700 hover:border-gold-300"}`}>
-                  {n === 1 ? "จ่ายครั้งเดียว" : `${n} งวด${firstBill > 0 ? ` · งวดละ ${money(splitInstallments(firstBill, n)[0])}` : ""}`}</button>
-              ))}</div>
-              <p className="field-hint">แบ่งงวด = ใบแจ้งหนี้ใบเดียว รับเงินทีละงวดได้ (ระบบบอกยอดงวดถัดไปตอนกดรับชำระ)</p></Field>
-            <Field label="ชำระเงินประกัน (บาท)"><input type="number" min={0} value={deposit} onChange={(e) => setDeposit(e.target.value)} placeholder="เช่น 60000" aria-label="ชำระเงินประกัน" />
-              {monthly > 0 && stay === "เดือน" && <div className="mt-2 flex flex-wrap gap-1.5">{[1, 2].map((n) => <button key={n} type="button" onClick={() => setDeposit(String(Math.round(monthly * n * 100) / 100))} className="rounded-full border border-cream-300 bg-white px-3 py-1 text-xs text-gold-700 hover:border-gold-300">{n} เดือน · {money(monthly * n)}</button>)}</div>}</Field>
-            {stay === "เดือน" && !prepaid && !deposit && sum > 0 && <p role="status" className="md:col-span-2 rounded-xl border border-cream-300 bg-cream-50 px-4 py-2.5 text-sm text-gold-700">ไม่เก็บล่วงหน้า · ใบแจ้งหนี้เดือนแรก {money(Math.max(0, firstBill))} บาท · ตรวจและเลือกวิธีออกใบได้ในขั้นที่ 4</p>}
+            <aside className="pay2-sum" aria-label="สรุปใบแจ้งหนี้แรกเข้า">
+              <p className="pay2-sum-t">ใบแจ้งหนี้แรกเข้า</p>
+              <dl>
+                {feeN > 0 && <div><dt>ค่าบริการห้องพัก<small>{vatAmt > 0 ? `รวม VAT ${money(vatAmt)}` : "ไม่มี VAT"}</small></dt><dd>{money(partPay)}</dd></div>}
+                {medPay > 0 && <div><dt>ค่าบริการทางการแพทย์</dt><dd>{money(medPay)}</dd></div>}
+                {sum - feeN - medPay > 0 && <div><dt>บริการเพิ่มเติม</dt><dd>{money(sum - feeN - medPay)}</dd></div>}
+                <div className="is-sub"><dt>{stay === "เดือน" ? "รวมต่อเดือน" : `รวม ${nStay} ${stay}`}</dt><dd>{money(monthly)}</dd></div>
+                {stay === "เดือน" && months > 1 && <div><dt>× {months} เดือน</dt><dd>{money(monthly * months)}</dd></div>}
+                {roomOff > 0 && <div className="is-minus"><dt>ส่วนลดค่าห้อง{pctN ? ` ${pctN}%` : ""}</dt><dd>−{money(roomOff)}</dd></div>}
+                {Number(deposit) > 0 && <div><dt>เงินประกัน</dt><dd>{money(Number(deposit))}</dd></div>}
+                {Number(roomDep) > 0 && <div className="is-minus"><dt>หักมัดจำห้อง</dt><dd>−{money(Number(roomDep))}</dd></div>}
+              </dl>
+              <p className="pay2-total"><span>ยอดใบแรกเข้า</span><b>{money(Math.max(0, firstBill))}</b></p>
+              {parts > 1 && firstBill > 0 && <p className="pay2-parts">แบ่ง {parts} งวด · งวดละ {money(splitInstallments(firstBill, parts)[0])}</p>}
+              {stay === "เดือน" && !prepaid && !deposit && sum > 0 && <p className="pay2-foot">ไม่เก็บล่วงหน้า · เลือกวิธีออกใบในขั้นที่ 4</p>}
+            </aside>
           </div>
         </div>
 

@@ -19,7 +19,7 @@ import CashClose from "../billing/CashClose";
 import { exportInvoiceLines, exportPayments, usePaidDays } from "@/lib/billingExport";
 import { DataTable, Field, MenuButton, Modal, PageHeader, Section, StatFilter, StatusBadge, Tabs } from "../ui";
 import { ResidentPicker } from "../SearchSelect";
-import { lineCode, pickName, rateCode, rateText, rooms as priceRooms, searchPrices } from "@/lib/priceList";
+import { lineCode, pickName, rateCode, rateText, roomPartByCode, rooms as priceRooms, searchPrices } from "@/lib/priceList";
 import { ServicePicker } from "../ServicePicker";
 import { usePriceList } from "@/lib/usePrices";
 import { refreshTaxInfo, saveTaxInfo, useTaxInfo } from "@/lib/taxInfo";
@@ -76,9 +76,12 @@ export function contractStartLines(r: string[], prior: Invoice[] = []): BillItem
   // ล่วงหน้าหลายเดือน: คูณจำนวนในแต่ละบรรทัด (VAT คิดตามยอดจริง) · ส่วนลดชำระล่วงหน้า (%) เฉพาะบรรทัดค่าห้อง
   const isRoomFee = (l: BillItem) => !!l.vat || isRoomLine(l.desc) || /^RM-/.test(lineCode(l));
   const r2 = (n: number) => Math.round(n * 100) / 100;
-  const service = contractMonthLines(r).map((l) => {
+  /** ยอดรวม VAT ที่ตั้งใจเก็บของแต่ละบรรทัดค่าห้อง (ใช้เก็บเศษสตางค์จากการถอด VAT) */
+  const want: number[] = [];
+  const service = contractMonthLines(r).map((l, k) => {
     if (months <= 1) return l;
     const desc = `${l.desc} (ล่วงหน้า ${months} เดือน)`, off = pct && isRoomFee(l) ? pct : 0;
+    if (isRoomFee(l)) { const f = r2((l.vat ? inclOf(lineNet(l), l.vat) : lineNet(l)) * months); want[k] = off ? r2((f * (100 - off)) / 100) : f; }
     if (!l.vat && !off) return { ...l, qty: l.qty * months, desc };
     // บรรทัดที่มี VAT / มีส่วนลด: คิดจากราคารวม VAT ต่อเดือน × จำนวนเดือน (− ส่วนลด %) แล้วถอด VAT กลับ
     //  ยอดรวม VAT ตรงกับราคาที่ตกลง (เช่น 40,000 × 3 − 10% = 108,000.00) ไม่มีเศษสตางค์จากการปัด VAT ทีละเดือน
@@ -86,6 +89,26 @@ export function contractStartLines(r: string[], prior: Invoice[] = []): BillItem
     const net = off ? baseOfIncl(r2((full * (100 - off)) / 100), rate) : gross;
     return { ...l, qty: 1, price: gross, discount: r2(gross - net), pct: 0, desc: off ? `${desc} · ส่วนลดชำระล่วงหน้า ${off}%` : desc };
   });
+  // ส่วนลดชำระล่วงหน้าเป็นบาท (รวม VAT): ลดจากค่าบริการทางการแพทย์ (ไม่มี VAT) ก่อน แล้วค่อยลดค่าห้อง (มี VAT · ถอด VAT จากยอดที่เหลือ)
+  let rest = months > 1 && !pct ? Math.max(0, Math.floor(contractMeta(r).prepaidOff ?? 0)) : 0, noted = false;
+  if (rest > 0) for (const k of service.map((l, k) => ({ l, k })).filter(({ l }) => isRoomFee(l)).sort((a, b) => Number(!!a.l.vat) - Number(!!b.l.vat)).map(({ k }) => k)) {
+    if (rest <= 0) break;
+    const l = service[k], rate = l.vat ?? 0, net = lineNet(l), incl = rate ? inclOf(net, rate) : net, cut = Math.min(rest, incl);
+    const left = rate ? baseOfIncl(r2(incl - cut), rate) : r2(net - cut);
+    service[k] = { ...l, discount: r2((l.discount ?? 0) + net - left), desc: noted ? l.desc : `${l.desc} · ส่วนลดชำระล่วงหน้า ${money(Math.max(0, Math.floor(contractMeta(r).prepaidOff ?? 0)))} บาท` };
+    if (want[k] !== undefined) want[k] = r2(want[k] - cut);
+    noted = true; rest = r2(rest - cut);
+  }
+  // เศษสตางค์: ค่าห้องรวม VAT บางยอด (เช่น 45,000) ถอด VAT แล้วบวกกลับไม่ได้ยอดเดิมพอดี · เอาส่วนต่าง ±0.0x ไปไว้ที่ค่าบริการทางการแพทย์ (ไม่มี VAT)
+  if (months > 1) {
+    const idx = service.map((_, k) => k).filter((k) => want[k] !== undefined);
+    const byRate: Record<number, number> = {};
+    let got = 0;
+    for (const k of idx) { const l = service[k], net = lineNet(l); got += net; if (l.vat) byRate[l.vat] = (byRate[l.vat] ?? 0) + net; }
+    got += Object.entries(byRate).reduce((n, [rate, b]) => n + r2((b * Number(rate)) / 100), 0);
+    const diff = r2(idx.reduce((n, k) => n + want[k], 0) - got), md = idx.find((k) => !service[k].vat && lineCode(service[k]) === "RM-MD");
+    if (diff && md !== undefined && Math.abs(diff) < 1) { const l = service[md]; service[md] = { ...l, qty: 1, price: r2(l.qty * l.price + diff) }; }
+  }
   if (!service.length && prepaid) service.push({ desc: "ชำระค่าบริการล่วงหน้า", qty: 1, price: prepaid, discount: 0 });
   return [
     ...service,
@@ -216,8 +239,8 @@ export function prepaidMonths(r: string[]) {
 /** หมายเหตุใบแจ้งหนี้แรกเข้า: มัดจำห้องที่หักแล้ว และยอดชำระล่วงหน้าที่ตกลงในสัญญา */
 export function contractStartNote(r: string[], prior: Invoice[] = []): string {
   const prepaid = val(r[18]), dep = roomDepositDue(r, prior), months = prepaidMonths(r), m = contractMeta(r);
-  const pct = months > 1 ? Math.floor(m.prepaidPct ?? 0) : 0, n = Math.floor(m.installments ?? 1);
-  return [prepaid && contractMonthLines(r).length ? `ชำระค่าบริการล่วงหน้า ${months} เดือน${pct ? ` ลดค่าห้อง ${pct}%` : ""}` : "", dep ? `หักมัดจำห้องพักที่ชำระตอนจอง ${money(dep)} บาท` : "", n > 1 ? `แบ่งชำระ ${n} งวด` : ""].filter(Boolean).join(" · ");
+  const pct = months > 1 ? Math.floor(m.prepaidPct ?? 0) : 0, n = Math.floor(m.installments ?? 1), off = months > 1 && !pct ? Math.floor(m.prepaidOff ?? 0) : 0;
+  return [prepaid && contractMonthLines(r).length ? `ชำระค่าบริการล่วงหน้า ${months} เดือน${pct ? ` ลดค่าห้อง ${pct}%` : off ? ` ลดค่าห้อง ${money(off)} บาท` : ""}` : "", dep ? `หักมัดจำห้องพักที่ชำระตอนจอง ${money(dep)} บาท` : "", n > 1 ? `แบ่งชำระ ${n} งวด` : ""].filter(Boolean).join(" · ");
 }
 
 /** ข้อมูลหัวกระดาษของสาขา จากหน้า "ข้อมูลสาขา" (แถว: รหัส, ชื่อ, นิติบุคคล, โทร, ที่อยู่, ...) */
@@ -674,8 +697,13 @@ export function Billing() {
               <button type="button" className="row-action" title="เช่น มัดจำห้องที่รับตอนจอง · หักหลังรวม VAT" onClick={() => setLines([...lines.filter((l) => l.desc.trim()), { desc: "หัก มัดจำที่ชำระไว้แล้ว", qty: 1, price: 0, discount: 0, credit: true }])}>+ หักเงินที่รับไว้แล้ว</button></div>
             {/* ค้นหรือกดหมวดแบบเดียวกับหน้าเปิดสัญญา · กดราคาแล้วเพิ่มเป็นบรรทัดใหม่ (แทนบรรทัดว่าง) · ค่าห้องติ๊ก VAT ให้เอง */}
             <div className="mb-3"><ServicePicker onPick={(x) => {
-              const item: BillItem = { desc: x.desc, qty: x.qty, price: x.price, discount: 0, code: x.code, vat: isRoomLine(x.desc) ? vatRate : 0 };
-              setLines([...lines.filter((l) => !l.credit && l.desc.trim()), item, ...lines.filter((l) => l.credit)]);
+              // ราคาห้อง (รวม VAT แล้ว): แยกเป็นค่าห้อง (ส่วนที่มี VAT เช่น 500/วัน 15,000/เดือน) + ค่าบริการทางการแพทย์ (ส่วนต่าง ไม่มี VAT)
+              const rp = roomPartByCode(x.code);
+              const add: BillItem[] = rp ? [
+                { desc: `ค่า${rp.name} ราย${rp.unit}`, qty: x.qty, price: baseOfIncl(rp.part, vatRate), discount: 0, code: x.code, vat: vatRate },
+                ...(x.price - rp.part > 0 ? [{ desc: `ค่าบริการทางการแพทย์ ราย${rp.unit}`, qty: x.qty, price: Math.round((x.price - rp.part) * 100) / 100, discount: 0, code: "RM-MD" }] : []),
+              ] : [{ desc: x.desc, qty: x.qty, price: x.price, discount: 0, code: x.code, vat: isRoomLine(x.desc) ? vatRate : 0 }];
+              setLines([...lines.filter((l) => !l.credit && l.desc.trim()), ...add, ...lines.filter((l) => l.credit)]);
             }} /></div>
             <div className="space-y-3">{lines.map((l, i) => {
               const set = (p: Partial<BillItem>) => setLines(lines.map((x, j) => (j === i ? { ...x, ...p } : x)));

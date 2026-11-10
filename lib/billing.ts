@@ -118,7 +118,9 @@ export type ContractLine = { desc: string; qty: number; unit: string; price: num
  *  prepaidPct = ส่วนลดค่าห้อง (%) เมื่อชำระล่วงหน้าตั้งแต่ 2 เดือน · ใช้กับใบแรกเข้าเท่านั้น
  *  installments = แบ่งชำระใบแรกเข้ากี่งวด (1 = จ่ายครั้งเดียว)
  */
-export type ContractMeta = { prepaidPct?: number; installments?: number };
+export type ContractMeta = { prepaidPct?: number; installments?: number;
+  /** ส่วนลดค่าห้องชำระล่วงหน้าเป็นบาท (รวม VAT · ใช้แทน prepaidPct) */
+  prepaidOff?: number };
 const rawLines = (r: string[]): ContractLine[] | null => { try { const x = JSON.parse(r[23] || "[]"); if (Array.isArray(x)) return x; } catch { /* สัญญาเก่า */ } return null; };
 /** รายการค่าบริการของสัญญา · สัญญาเก่าที่ยังไม่มีรายการ: แปลงจากค่าบริการเพิ่มเติมรายเดือนเดิม */
 export function contractLines(r: string[]): ContractLine[] {

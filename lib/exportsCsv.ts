@@ -18,12 +18,14 @@ export function invoiceDocsCsv(list: Invoice[], branchOf: (x: Invoice) => string
   const rows = [...list].sort((a, b) => b.date.localeCompare(a.date)).map((x) => {
     const sg = lineSign(x), items = parseItems(x.items), sale = items.filter((i) => !i.credit), t = vatOf(sale);
     const grp = (k: string) => money(sg * sale.filter((i) => groupOf(i) === k).reduce((n, i) => n + inclNet(i), 0));
-    return [x.no ?? "", docDate(x.date), branchOf(x), x.who, x.hn || "", x.payer, x.ref ? `${x.kind} (อ้างอิง ${x.ref})` : x.kind, x.contract || "",
+    // รหัสสินค้าในใบ (เรียงตามบรรทัด · จำนวนมากกว่า 1 ใส่ ×จำนวน) · รายการที่ไม่มีรหัส (ยา เวชภัณฑ์ ที่กรอกเอง) ไม่แสดง
+    const codes = sale.map((i) => { const c = lineCode(i); return c ? (i.qty !== 1 ? `${c} ×${i.qty}` : c) : ""; }).filter(Boolean).join(", ");
+    return [x.no ?? "", docDate(x.date), branchOf(x), x.who, x.hn || "", x.payer, x.ref ? `${x.kind} (อ้างอิง ${x.ref})` : x.kind, x.contract || "", codes,
       ...BILL_GROUPS.map(([k]) => grp(k)), grp("dep"),
       money(sg * t.base), money(sg * t.vat), money(sg * t.exempt), money(sg * (t.base + t.vat + t.exempt)), money(sg * creditOf(items)), money(x.discount),
       money(signedNet(x)), money(x.paid ?? 0), x.status === VOID ? "0.00" : money(balanceOf(x)), x.paidDate ? docDate(x.paidDate) : "", x.status];
   });
-  downloadCsv(name, ["เลขที่เอกสาร", "วันที่", "สาขา", "ผู้รับบริการ", "HN", "ผู้ชำระ", "ประเภท", "สัญญา",
+  downloadCsv(name, ["เลขที่เอกสาร", "วันที่", "สาขา", "ผู้รับบริการ", "HN", "ผู้ชำระ", "ประเภท", "สัญญา", "รหัสสินค้าในใบ",
     ...BILL_GROUPS.map(([k, th]) => (k === "room" ? `${th} (รวม VAT)` : th)), "เงินประกัน / มัดจำ",
     "มูลค่าที่มี VAT (ก่อน VAT)", "VAT 7%", "มูลค่าที่ไม่มี VAT", "รวมทั้งสิ้น (รวม VAT)", "หักเงินที่รับไว้แล้ว", "ส่วนลด (ก่อน VAT)",
     "ยอดสุทธิ", "ชำระแล้ว", "คงเหลือ", "วันที่รับชำระ", "สถานะ"], rows);

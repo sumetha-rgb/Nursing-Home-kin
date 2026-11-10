@@ -997,6 +997,32 @@ button.room-card:hover:not(.is-full):not(.is-closed) { border-color:#c9a96a; box
 .room-total { margin-top:10px; display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 14px; border-radius:12px; background:#f6efe1; }
 .room-total-calc { margin:0; font-size:13.5px; font-weight:600; color:#3a2d1b; } .room-total-vat { margin:0; font-size:12px; color:#8a7457; }
 .room-total > b { font-size:22px; font-weight:700; color:#3a2d1b; white-space:nowrap; font-variant-numeric:tabular-nums; } .room-total > b small { font-size:13px; font-weight:500; color:#8a7457; }
+/* เปิดสัญญา ขั้นที่ 2: การชำระ (ซ้าย) + สรุปใบแรกเข้า (ขวา) */
+.pay2 { margin-top:18px; display:grid; gap:16px 24px; grid-template-columns:minmax(0,1fr); }
+@media (min-width:900px) { .pay2 { grid-template-columns:minmax(0,1fr) 320px; } }
+.pay2-main { display:grid; gap:14px; align-content:start; }
+.pay2-sec { display:grid; gap:8px; } .pay2-h { margin:0; font-size:13px; font-weight:600; color:#5b4628; }
+.pay2-chips { display:flex; flex-wrap:wrap; gap:6px; }
+.pay2-chip { padding:6px 14px; border-radius:999px; border:1px solid #e3d3b2; background:#fff; font-size:13px; font-weight:500; color:#6b5432; }
+.pay2-chip:hover { border-color:#c9a96a; } .pay2-chip.is-on { background:var(--gold); border-color:var(--gold); color:#fff; }
+.pay2-chip.is-sm { padding:3px 10px; font-size:12px; }
+.pay2-inline { display:flex; flex-wrap:wrap; align-items:center; gap:6px 8px; font-size:13px; color:#5b4628; }
+.pay2-inline label { font-weight:600; } .pay2-inline input { width:64px!important; min-height:34px!important; padding:4px!important; text-align:center; }
+.pay2-inline input.is-wide { width:110px!important; text-align:right; }
+.pay2-mode { display:inline-flex; padding:2px; border-radius:9px; background:#f1e9da; }
+.pay2-mode button { padding:3px 10px; border-radius:7px; font-size:12.5px; font-weight:600; color:#7a6a50; } .pay2-mode button.is-on { background:#fff; color:#3a2d1b; box-shadow:0 1px 4px -2px #8b6e3e88; }
+.pay2-inline small { color:#8a7457; font-size:12px; }
+.pay2-note { margin:0; padding:9px 12px; border-radius:10px; background:#f6f1e7; font-size:13px; color:#6b5432; }
+.pay2-grid { display:grid; gap:12px 16px; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); }
+.pay2-sum { align-self:start; border:1px solid #e6dac3; border-radius:16px; background:linear-gradient(180deg,#fffdf8,#fbf6ea); padding:14px 16px; }
+.pay2-sum-t { margin:0 0 8px; font-size:13px; font-weight:600; color:#8b6e3e; }
+.pay2-sum dl { margin:0; display:grid; gap:5px; font-size:13.5px; }
+.pay2-sum dl div { display:flex; justify-content:space-between; gap:12px; } .pay2-sum dt { color:#6b5432; } .pay2-sum dt small { display:block; font-size:11px; color:#9a8566; }
+.pay2-sum dd { margin:0; font-variant-numeric:tabular-nums; color:#3a2d1b; white-space:nowrap; }
+.pay2-sum dl div.is-sub { padding-top:5px; border-top:1px solid #ece2cf; font-weight:600; } .pay2-sum dl div.is-minus dd { color:#a42b20; }
+.pay2-total { margin:10px 0 0; padding-top:10px; border-top:1.5px dashed #dccaa5; display:flex; justify-content:space-between; align-items:baseline; }
+.pay2-total span { font-size:13px; color:#6b5432; } .pay2-total b { font-size:22px; color:#3a2d1b; font-variant-numeric:tabular-nums; }
+.pay2-parts { margin:4px 0 0; font-size:12px; color:#1f6b41; text-align:right; } .pay2-foot { margin:6px 0 0; font-size:11.5px; color:#9a8566; }
 .prepaid-off { margin-top:10px; display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; border:1px dashed #dccaa5; border-radius:12px; background:#fffdf8; padding:10px 12px; }
 .prepaid-off label { font-size:13px; font-weight:600; color:#5b4628; }
 .prepaid-off-in { display:flex; align-items:center; gap:6px; } .prepaid-off-in input { width:72px!important; min-height:38px!important; text-align:center; } .prepaid-off-in span { color:#8a7457; }
@@ -1045,6 +1071,23 @@ button.room-card:hover:not(.is-full):not(.is-closed) { border-color:#c9a96a; box
 .bill-sign p { display:flex; gap:12px; justify-content:flex-end; }
 .bill-sign p + p { margin-bottom:18px; }
 .bill-sign-name { padding-right:60px; }
+/* หน้าราคา · ห้องพัก: ตาราง 4 แถว */
+.rm-rates { display:grid; gap:8px; }
+.rm-head, .rm-row { display:grid; grid-template-columns:minmax(150px,1.1fr) minmax(130px,1fr) minmax(150px,1.1fr) minmax(120px,.9fr) 56px; gap:10px 14px; align-items:start; }
+.rm-head { padding:0 12px; font-size:12px; color:#8a7457; }
+.rm-row { padding:12px; border:1px solid #ece2cf; border-radius:14px; background:#fff; }
+.rm-row.is-empty { grid-template-columns:minmax(150px,1.1fr) 1fr auto; align-items:center; border-style:dashed; background:#fffdf8; }
+.rm-k { display:flex; flex-direction:column; gap:2px; padding-top:6px; } .rm-k b { font-size:14px; color:#3a2d1b; } .rm-k small { font-size:11.5px; color:#9a8566; }
+.rm-f { display:grid; gap:3px; min-width:0; } .rm-f input { min-height:40px!important; } .rm-f small { font-size:11px; color:#8a7457; line-height:1.4; }
+.rm-med { display:flex; flex-direction:column; gap:1px; padding-top:6px; } .rm-med b { font-size:16px; color:#1f6b41; font-variant-numeric:tabular-nums; } .rm-med small { font-size:11px; color:#8a7457; }
+.rm-lab { display:none; font-size:11.5px; color:#8a7457; }
+.rm-none { font-size:13px; color:#8a7457; }
+.rm-row.is-calc { background:#fbf7ee; border-style:dashed; }
+.rm-val { display:flex; align-items:center; justify-content:flex-end; min-height:40px; padding:0 14px; border:1px solid #ece2cf; border-radius:12px; background:#f6f1e7; font-size:15px; color:#5b4628; font-variant-numeric:tabular-nums; }
+@media (max-width:760px) {
+  .rm-head { display:none; } .rm-row, .rm-row.is-empty { grid-template-columns:1fr 1fr; } .rm-k { grid-column:1/-1; padding-top:0; } .rm-lab { display:block; }
+  .rm-none { grid-column:1/-1; }
+}
 .pl-room { display:grid; gap:2px; margin-top:6px; font-size:11.5px; font-weight:500; color:#8a7457; }
 .pl-room input { min-height:34px!important; padding-top:4px!important; padding-bottom:4px!important; text-align:right; font-variant-numeric:tabular-nums; }
 .pl-room small { font-size:11px; color:#1f6b41; } .pl-part { font-style:normal; color:#8a7457; }
