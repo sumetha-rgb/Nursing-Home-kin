@@ -14,7 +14,9 @@ import { useBranchInfo } from "../views/Billing";
 import Receivables from "../billing/Receivables";
 import { CashCloseStatus } from "../billing/CashClose";
 import StatusExport from "../billing/StatusExport";
+import { revenueIn } from "@/lib/servicePeriod";
 import { invoiceDocsCsv } from "@/lib/exportsCsv";
+import SalesTargets from "./SalesTargets";
 
 const TH_MON = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
 const monthKey = (d = new Date(Date.now() + 7 * 3600e3)) => d.toISOString().slice(0, 7);
@@ -96,7 +98,7 @@ export default function FinanceAnalytics({ branch, compact, onTiles, month, prev
   const upTo = (d: string | undefined, day: number) => !day || Number((d ?? "").slice(8, 10)) <= day;
   // รับชำระของเดือน = รวมเงินที่รับแต่ละงวดตามวันที่รับจริง (จาก /api/billing) · ยังโหลดไม่ได้ = ประมาณจากยอดสะสมของใบตามวันที่รับล่าสุด (แบบเดิม)
   const from = `${prev < months[0] ? prev : months[0]}-01`;
-  const days = usePaidDays(from, all.reduce((n, x) => n + (x.paid ?? 0), 0));
+  const days = usePaidDays(from, meta.loaded ? all.reduce((n, x) => n + (x.paid ?? 0), 0) : undefined);
   const dayRows = days ? (branch ? days.filter((p) => p.branch === branch) : days) : null;
   const paidIn = (m: string, day = 0) => dayRows
     ? dayRows.filter((p) => p.date.startsWith(m) && upTo(p.date, day)).reduce((n, p) => n + p.amount, 0)
@@ -116,9 +118,14 @@ export default function FinanceAnalytics({ branch, compact, onTiles, month, prev
   const summary: FinSummary = { month: now, prevMonth: prev, paid: paidNow, paidPrev, billed: billedSum(now), billedPrev: billedSum(prev, cut), collect: collectOf(now), collectPrev: collectOf(prev, cut), prevLabel, owe, openN: open.length, discPct: grossNow ? Math.round((discNow / grossNow) * 1000) / 10 : null };
   const sumKey = JSON.stringify(summary);
   useEffect(() => { onSummary?.(summary); }, [sumKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  /** รายได้ตามช่วงบริการของเดือน (กระจายใบจ่ายล่วงหน้าตามวันที่พักจริง · วิธีเดียวกับ CSV ค้างชำระ / ชำระครบ) */
+  const monthEnd = (m: string) => `${m}-${String(new Date(Date.UTC(Number(m.slice(0, 4)), Number(m.slice(5, 7)), 0)).getUTCDate()).padStart(2, "0")}`;
+  const revOf = (m: string) => revenueIn(list, con.rows, `${m}-01`, monthEnd(m));
+  const revNow = revOf(now), revPrev = revOf(prev);
   const kpis = [
     { label: `รับชำระ ${monLabel(now)}`, value: money(paidNow), unit: "บาท", icon: "check", accent: true, note: delta === null ? `ไม่มีรายรับ ${prevLabel} ให้เทียบ` : delta === 0 ? `เท่ากับ ${prevLabel}` : `${delta > 0 ? "▲ เพิ่มขึ้น" : "▼ ลดลง"} ${Math.abs(delta)}% จาก ${prevLabel}` },
     { label: `ออกใบแจ้งหนี้ ${monLabel(now)}`, value: money(billedSum(now)), unit: "บาท", icon: "receipt", note: `${billedNow.length} ใบ · ส่วนลด ${money(discNow)} บาท${summary.discPct !== null ? ` (${summary.discPct}%)` : ""}` },
+    { label: `รายได้ตามช่วงบริการ ${monLabel(now)}`, value: money(revNow), unit: "บาท", icon: "calendar", note: `กระจายยอดตามวันที่พักในเดือน · ${monLabel(prev)} ${money(revPrev)} บาท` },
     { label: "อัตราเก็บเงินได้", value: summary.collect === null ? "-" : `${summary.collect}%`, icon: "chart", note: `รับชำระ ÷ ยอดออกใบของเดือน${summary.collectPrev !== null ? ` · ${prevLabel} ${summary.collectPrev}%` : ""}` },
     { label: "ค้างชำระ", value: money(owe), unit: "บาท", icon: "alert", note: `${open.length} ใบ` },
     { label: "รอตรวจสอบยอด", value: drafts.length, unit: "ใบ", icon: "history", note: drafts.length ? `รวม ${money(drafts.reduce((n, x) => n + x.net, 0))} บาท` : "ไม่มีใบรอตรวจ" },
@@ -127,8 +134,8 @@ export default function FinanceAnalytics({ branch, compact, onTiles, month, prev
   useEffect(() => { onTiles?.(kpis); }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
   if (compact) return <MetricGrid items={kpis} />;
   const months12 = months;
-  const exportMonths = () => downloadCsv(`การเงิน-รายเดือน${branch ? `-${branch}` : ""}`, ["เดือน", "ออกใบ (ใบ)", "ยอดออกใบ (บาท)", "ส่วนลด (บาท)", "รับชำระ (บาท)"],
-    months12.map((m) => { const b = billedIn(m); return [monLabel(m), String(b.length), money(b.reduce((n, x) => n + x.net, 0)), money(b.reduce((n, x) => n + (x.discount || 0), 0)), money(paidIn(m))]; }));
+  const exportMonths = () => downloadCsv(`การเงิน-รายเดือน${branch ? `-${branch}` : ""}`, ["เดือน", "ออกใบ (ใบ)", "ยอดออกใบ (บาท)", "ส่วนลด (บาท)", "รายได้ตามช่วงบริการ (บาท)", "รับชำระ (บาท)"],
+    months12.map((m) => { const b = billedIn(m); return [monLabel(m), String(b.length), money(b.reduce((n, x) => n + x.net, 0)), money(b.reduce((n, x) => n + (x.discount || 0), 0)), money(revOf(m)), money(paidIn(m))]; }));
   /** เอกสารทั้งหมด 1 แถวต่อใบ · แยกค่าห้อง (รวม VAT) / ค่าบริการทางการแพทย์ / มี VAT / VAT / ไม่มี VAT / ยอดสุทธิ */
   const exportDocs = () => invoiceDocsCsv(all.filter((x) => !branch || branchOf(x) === branch), branchOf, `การเงิน-เอกสาร${branch ? `-${branch}` : ""}`);
 
@@ -140,11 +147,12 @@ export default function FinanceAnalytics({ branch, compact, onTiles, month, prev
         <button className="btn-soft" onClick={exportMonths}><CsvIcon /> ส่งออกสรุปรายเดือน (12 เดือน)</button>
         <button className="btn-soft" onClick={() => setExp(true)}><CsvIcon /> ส่งออกค้างชำระ / ชำระครบ</button>
         <button className="btn-soft" onClick={exportDocs}><CsvIcon /> ส่งออกเอกสารทั้งหมด</button>
-        <StatusExport open={exp} onClose={() => setExp(false)} list={all.filter((x) => !branch || branchOf(x) === branch)} branchOf={branchOf} scope={branch} />
+        <StatusExport open={exp} onClose={() => setExp(false)} list={all.filter((x) => !branch || branchOf(x) === branch)} contracts={con.rows} branchOf={branchOf} scope={branch} />
         <button className="btn-soft" onClick={() => { const n = exportInvoiceLines(all.filter((x) => !branch || branchOf(x) === branch), branchOf, `การเงิน-รายการในใบ${branch ? `-${branch}` : ""}`); toast(`ส่งออกรายการในใบแล้ว ${n} บรรทัด`); }}><CsvIcon /> ส่งออกรายการในใบ (แยกหมวด)</button>
         <button className="btn-soft" onClick={() => exportPayments(branch, `การเงิน-การรับเงินรายงวด${branch ? `-${branch}` : ""}`).then((n) => toast(`ส่งออกการรับเงินแล้ว ${n} งวด`)).catch((e) => toast((e as Error).message))}><CsvIcon /> ส่งออกการรับเงินรายงวด</button>
       </div>
       <MetricGrid items={kpis} />
+      <SalesTargets month={now} branch={branch} list={all.filter((x) => x.status !== VOID)} contracts={con.rows} branchOf={branchOf} />
       <div className="grid gap-6 xl:grid-cols-[3fr_2fr]">
         <Section title="รายรับ 12 เดือน" sub="ยอดที่รับชำระจริง ตามเดือนที่รับเงิน (บาท) · ชี้ที่แท่งเพื่อดูยอด">
           {meta.loaded ? <MonthBars data={months.map((m) => ({ label: monLabel(m), value: paidIn(m) }))} /> : <p className="text-sm text-gold-500">กำลังโหลด…</p>}

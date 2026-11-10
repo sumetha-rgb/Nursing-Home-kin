@@ -28,27 +28,54 @@ const LAST_USER = "kin-user";
 const remember = (u: SessionUser | null) => { try { if (u) localStorage.setItem(LAST_USER, JSON.stringify(u)); else localStorage.removeItem(LAST_USER); } catch { /* ignore */ } };
 const remembered = (): SessionUser | null => { try { return JSON.parse(localStorage.getItem(LAST_USER) ?? "null"); } catch { return null; } };
 
+/**
+ * ผู้ใช้ปัจจุบัน ใช้ร่วมกันทุกส่วนของหน้า: ถาม /api/auth/me ครั้งเดียวแล้วแบ่งคำตอบ (เดิมทุกส่วนที่เรียก useSession ถามเอง ~14 ครั้งต่อการเปิดหน้า)
+ *  คำตอบใช้ได้ 30 วินาที (ส่วนที่เปิดใหม่หลังจากนั้นถามใหม่) · server ยังตรวจ cookie ทุกครั้งที่ดึง/ส่งข้อมูลอยู่แล้ว
+ */
+type Me = { user: SessionUser | null; offline: boolean };
+const ME_MS = 30_000;
+let me: { at: number; p: Promise<Me> } | null = null;
+const meListeners = new Set<(u: SessionUser | null) => void>();
+function loadMe(): Promise<Me> {
+  if (me && Date.now() - me.at < ME_MS) return me.p;
+  const p = fetch("/api/auth/me", { cache: "no-store" })
+    .then((r) => r.json())
+    .then((d): Me => ({ user: d.user ?? null, offline: false }))
+    .catch((): Me => ({ user: remembered(), offline: true })); // ออฟไลน์: ใช้ผู้ใช้ล่าสุดในเครื่อง
+  me = { at: Date.now(), p };
+  return p;
+}
+/** เปลี่ยนผู้ใช้ (เข้า/ออกจากระบบ) → ทุกส่วนของหน้าเห็นพร้อมกัน */
+function shareMe(u: SessionUser | null) {
+  me = { at: Date.now(), p: Promise.resolve({ user: u, offline: false }) };
+  meListeners.forEach((f) => f(u));
+}
+
 /** สถานะการเข้าสู่ระบบของหน้านี้ (ตรวจจาก cookie ผ่าน /api/auth/me) */
 export function useSession() {
   const [user, setUserState] = useState<SessionUser | null>(null);
   const [ready, setReady] = useState(false);
-  const setUser = useCallback((u: SessionUser | null) => {
+  const apply = useCallback((u: SessionUser | null) => {
     if (u) setOfflineOwner(u.id);
     setBranchScope(u);
     remember(u);
     setUserState(u);
   }, []);
+  const setUser = useCallback((u: SessionUser | null) => { apply(u); shareMe(u); }, [apply]);
   useEffect(() => {
-    fetch("/api/auth/me", { cache: "no-store" })
-      .then((r) => r.json())
-      .then((d) => setUser(d.user ?? null))
-      .catch(() => { const u = remembered(); setBranchScope(u); setUserState(u); }) // ออฟไลน์: ใช้ผู้ใช้ล่าสุดในเครื่อง
-      .finally(() => setReady(true));
-  }, [setUser]);
+    let live = true;
+    const on = (u: SessionUser | null) => { if (live) apply(u); };
+    meListeners.add(on);
+    loadMe()
+      .then((m) => { if (!live) return; if (m.offline) { setBranchScope(m.user); setUserState(m.user); } else apply(m.user); })
+      .finally(() => { if (live) setReady(true); });
+    return () => { live = false; meListeners.delete(on); };
+  }, [apply]);
   const logout = useCallback(async () => {
     await api.logout().catch(() => {});
     clearOfflineData();
     remember(null);
+    me = null;
     setUserState(null);
     window.location.reload();
   }, []);

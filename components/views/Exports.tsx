@@ -10,9 +10,9 @@ import { ViewId } from "@/lib/nav";
 import { useBranchNames } from "@/lib/branches";
 import { usePriceList } from "@/lib/usePrices";
 import { downloadCsv, fetchKey } from "@/lib/store";
-import { DRAFT, Invoice, invoiceBranch, isOpen, todayIso, VOID } from "@/lib/billing";
+import { DRAFT, Invoice, invoiceBranch, isCN, isOpen, todayIso, VOID } from "@/lib/billing";
 import { exportInvoiceLines, exportPayments } from "@/lib/billingExport";
-import { closesCsv, CloseRow, debtorsCsv, debtorsOf, personKey, salesItemsCsv, spendLines, spendLinesCsv, spendPeople, spendSummaryCsv } from "@/lib/exportsCsv";
+import { closesCsv, CloseRow, debtorsCsv, debtorsOf, personKey, salesItemsCsv, spendLines, spendLinesCsv, spendPeople, spendSummaryCsv, serviceLinesCsv } from "@/lib/exportsCsv";
 import { CATS, PriceItem, rateCode } from "@/lib/priceList";
 import { apptIso, apptKey, nowTh } from "@/lib/appointments";
 import { invoiceDocsCsv } from "@/lib/exportsCsv";
@@ -53,10 +53,10 @@ const GROUPS: Group[] = [
   { id: "fin", name: "การเงินและบัญชี", hint: "ส่งฝ่ายบัญชี กระทบยอดธนาคาร", icon: "receipt", items: [
     { id: "docs", t: "เอกสารการเงินทั้งหมด", d: "1 แถวต่อใบ: เลขที่ วันที่ ผู้รับบริการ ยอดสุทธิ ชำระแล้ว คงเหลือ สถานะ", rng: true, perms: ["billing"],
       run: async (c) => { const { list, branchOf } = await invoicesWithBranch(c); return invoiceDocsCsv(list.filter((x) => c.inRange(x.date)), branchOf, `การเงิน-เอกสาร-${c.tag}`); } },
-    { id: "owing", t: "คนที่ค้างชำระ", d: "ใบที่ยังค้างหรือชำระบางส่วน ตามวันที่ออกใบ: ผู้รับบริการ ผู้ชำระ ยอดคงเหลือ", rng: true, perms: ["billing"],
-      run: async (c) => { const { list, branchOf } = await invoicesWithBranch(c); return invoiceDocsCsv(list.filter((x) => isOpen(x) && c.inRange(x.date)), branchOf, `การเงิน-ค้างชำระ-${c.tag}`); } },
-    { id: "paidAll", t: "ชำระครบแล้ว", d: "ใบที่รับเงินครบ ตามวันที่รับชำระ: ผู้รับบริการ ยอดสุทธิ วันที่รับชำระ", rng: true, perms: ["billing"],
-      run: async (c) => { const { list, branchOf } = await invoicesWithBranch(c); return invoiceDocsCsv(list.filter((x) => x.status === "ชำระแล้ว" && c.inRange(x.paidDate || x.date)), branchOf, `การเงิน-ชำระครบ-${c.tag}`); } },
+    { id: "owing", t: "คนที่ค้างชำระ", d: "1 แถวต่อรายการ เรียงตามคน · ยอดกระจายตามช่วงบริการ · ช่วงบริการ ยอดในช่วง VAT", rng: true, perms: ["billing"],
+      run: async (c) => { const { list, branchOf } = await invoicesWithBranch(c); return serviceLinesCsv(list.filter((x) => isOpen(x) && !isCN(x)), await fetchKey<string[]>("contracts"), branchOf, `การเงิน-ค้างชำระ-${c.tag}`, c.from, c.to); } },
+    { id: "paidAll", t: "ชำระครบแล้ว", d: "1 แถวต่อรายการ เรียงตามคน · ยอดกระจายตามช่วงบริการ · วิธีชำระ", rng: true, perms: ["billing"],
+      run: async (c) => { const { list, branchOf } = await invoicesWithBranch(c); return serviceLinesCsv(list.filter((x) => x.status === "ชำระแล้ว" && !isCN(x)), await fetchKey<string[]>("contracts"), branchOf, `การเงิน-ชำระครบ-${c.tag}`, c.from, c.to); } },
     { id: "lines", t: "รายการในใบ (แยกหมวด)", d: "1 แถวต่อบรรทัด: รหัสสินค้า รายการ หมวด จำนวน ราคา ส่วนลด VAT ยอดสุทธิ", rng: true, perms: ["billing"],
       run: async (c) => { const { list, branchOf } = await invoicesWithBranch(c); return exportInvoiceLines(list.filter((x) => c.inRange(x.date)), branchOf, `การเงิน-รายการในใบ-${c.tag}`); } },
     { id: "pays", t: "การรับเงินรายงวด", d: "วันที่รับ เงินสด โอน บัตร ผู้รับเงิน และมีสลิปไหม", rng: true, perms: ["billing"],
@@ -163,7 +163,8 @@ export function Exports() {
     const d = new Date(`${today}T00:00:00Z`);
     if (range === "today") return { from: today, to: today };
     if (range === "week") return { from: iso(new Date(d.getTime() - ((d.getUTCDay() + 6) % 7) * 864e5)), to: today };
-    if (range === "month") return { from: `${today.slice(0, 7)}-01`, to: today };
+    // เดือนนี้ = ทั้งเดือนปฏิทิน (ยอดกระจายตามช่วงบริการตรงกับ Dashboard)
+    if (range === "month") return { from: `${today.slice(0, 7)}-01`, to: iso(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0))) };
     if (range === "last") return { from: iso(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - 1, 1))), to: iso(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 0))) };
     return cFrom <= cTo ? { from: cFrom, to: cTo } : { from: cTo, to: cFrom };
   }, [range, cFrom, cTo, today]);

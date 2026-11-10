@@ -8,6 +8,39 @@ import { lineTotal } from "./billingExport";
 import { classify, DP_NAME, SALE_CATS, saleLines } from "./salesCategory";
 import { lineCode, PriceItem } from "./priceList";
 import { downloadCsv } from "./store";
+import { allocate, payMethodOf } from "./servicePeriod";
+
+/**
+ * ค้างชำระ / ชำระครบ แบบ 1 แถวต่อรายการ เรียงตามผู้รับบริการ (ชื่อ → วันที่ออกใบ → เลขที่ → ลำดับบรรทัด)
+ *  ยอดในช่วงที่เลือก = กระจายตามช่วงบริการ (lib/servicePeriod · ตรงกับรายได้ตามช่วงบริการใน Dashboard)
+ *  แสดงเฉพาะรายการที่มียอดในช่วง (from ว่าง = ทุกวันที่) · บรรทัดหักเงินที่รับไว้แล้วเป็นยอดติดลบ ณ วันที่ออกใบ · คอลัมน์สุดท้าย = ชำระด้วย
+ */
+export function serviceLinesRows(list: Invoice[], contracts: string[][], from = "", to = "") {
+  const inR = (d: string) => !from || (d >= from && d <= to);
+  const out: { who: string; hn: string; date: string; no: string; k: number; x: Invoice; cells: string[]; alloc: number }[] = [];
+  for (const x of list) {
+    const base = (k: number, code: string, desc: string, grp: string, qty: number, incl: number, vat: number, p: { from: string; to: string } | null, days: number, inDays: number, alloc: number, vatAlloc: number) => out.push({
+      who: x.who, hn: String(x.hn ?? "").trim(), date: x.date, no: x.no ?? "", k, x, alloc,
+      cells: [code, desc, grp, String(qty), money(incl), vat ? `${vat}%` : "-", p ? docDate(p.from) : "", p ? docDate(p.to) : "", p ? String(days) : "", p ? String(inDays) : "", money(alloc), money(vatAlloc), money(Math.round((alloc - vatAlloc) * 100) / 100)],
+    });
+    for (const a of allocate(x, contracts, from, to)) {
+      if (from && !a.inDays) continue;
+      const g = a.grp === "dep" ? "เงินประกัน / มัดจำ" : BILL_GROUPS.find(([k]) => k === a.grp)?.[1] ?? "";
+      base(a.k, lineCode(a.line), a.line.desc, g, a.line.qty, a.incl, a.line.vat ?? 0, a.period, a.days, a.inDays, a.alloc, a.vatAlloc);
+    }
+    if (inR(x.date.slice(0, 10))) parseItems(x.items).forEach((l, k) => { if (l.credit) { const v = -Math.round(lineSign(x) * l.qty * l.price * 100) / 100; base(k, lineCode(l), l.desc, "หักเงินที่รับไว้แล้ว", l.qty, v, 0, null, 0, 0, v, 0); } });
+  }
+  // เรียงตาม HN (ไม่มี HN ไว้ท้าย) → ชื่อ → วันที่ออกใบ → เลขที่เอกสาร → ลำดับบรรทัด
+  return out.sort((a, b) => (a.hn ? 0 : 1) - (b.hn ? 0 : 1) || a.hn.localeCompare(b.hn) || a.who.localeCompare(b.who, "th") || a.date.localeCompare(b.date) || a.no.localeCompare(b.no) || a.k - b.k);
+}
+export function serviceLinesCsv(list: Invoice[], contracts: string[][], branchOf: (x: Invoice) => string, name: string, from = "", to = "") {
+  // ลำดับคอลัมน์: ใคร (HN ชื่อ สาขา สัญญา) → เอกสาร (เลขที่ วันที่ ประเภท) → รายการ → ยอดในใบ → ช่วงบริการและยอดในช่วง → การชำระ
+  const rows = serviceLinesRows(list, contracts, from, to).map(({ x, cells }) => [x.hn || "", x.who, branchOf(x), x.contract || "", x.no ?? "", docDate(x.date), x.kind, ...cells, x.status, x.paidDate ? docDate(x.paidDate) : "", payMethodOf(x)]);
+  downloadCsv(name, ["HN", "ผู้รับบริการ", "สาขา", "สัญญา", "เลขที่เอกสาร", "วันที่ออกใบ", "ประเภทใบ",
+    "รหัสสินค้า", "รายการ", "หมวดในใบเสร็จ", "จำนวน", "ยอดในใบ (รวม VAT)", "VAT", "ช่วงบริการ เริ่ม", "ช่วงบริการ สิ้นสุด", "วันทั้งหมดของช่วงบริการ", "วันที่อยู่ในช่วงที่เลือก",
+    from ? "ยอดในช่วงที่เลือก (รวม VAT)" : "ยอด (รวม VAT)", from ? "VAT ในช่วงที่เลือก" : "VAT", from ? "ก่อน VAT ในช่วงที่เลือก" : "ก่อน VAT", "สถานะ", "วันที่รับชำระ", "ชำระด้วย"], rows);
+  return rows.length;
+}
 
 /* ---------- เอกสารการเงิน 1 แถวต่อใบ ---------- */
 /**

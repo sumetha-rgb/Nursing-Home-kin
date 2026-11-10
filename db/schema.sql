@@ -1077,3 +1077,15 @@ CREATE TABLE IF NOT EXISTS profile_photos (
   PRIMARY KEY (kind, ref_id)
 );
 COMMENT ON TABLE profile_photos IS 'รูปโปรไฟล์พนักงานและผู้รับบริการ';
+
+-- ---------------------------------------------------------------- เป้ายอดขาย
+-- เป้ายอดขายรายเดือนของแต่ละสาขา (ผู้บริหารตั้ง) · วัดผลด้วยรายได้ตามช่วงบริการ (lib/servicePeriod.ts revenueIn)
+CREATE TABLE IF NOT EXISTS branch_targets (
+  branch_name  text NOT NULL,
+  month        text NOT NULL,           -- YYYY-MM
+  amount       numeric(14,2) NOT NULL,  -- บาท (รวม VAT)
+  updated_by   text,
+  updated_at   timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (branch_name, month)
+);
+COMMENT ON TABLE branch_targets IS 'เป้ายอดขายรายเดือนของแต่ละสาขา';

@@ -6,8 +6,9 @@ import Link from "next/link";
 import Icon from "../Icon";
 import { APPOINTMENTS, CONTRACTS, DAILY_LIST, RESIDENTS, BRANCH_NAMES } from "@/lib/mock";
 import { downloadCsv, newId, refreshData, useCrud, useRecords } from "@/lib/store";
-import { balanceOf, baseOfIncl, BILL_KINDS, BillItem, contractMeta, ContractLine, isOldRoomPricing, isStayContract, splitOldRoom, splitOldRoomLines, installmentsOf, splitInstallments, parseItems, lineNet, PAID, contractVat, DEFAULT_VAT, DRAFT, docDate, inclOf, Invoice, invoiceBranch, isOpen, lineAmount, money, svcNet, todayIso, totals, UNPAID, vatOf, VOID } from "@/lib/billing";
-import { bookingInvoiceOf, bookingPaid, buildBilledIndex, contractBilledFor, contractMonthTotal, contractStartLines, contractStartNote, isStartInvoice, prepaidMonths, useBranchInfo } from "./Billing";
+import { balanceOf, baseOfIncl, BILL_KINDS, BillItem, contractMeta, ContractLine, isOldRoomPricing, splitOldRoom, splitOldRoomLines, installmentsOf, splitInstallments, parseItems, lineNet, PAID, contractVat, DEFAULT_VAT, DRAFT, docDate, inclOf, Invoice, invoiceBranch, isOpen, lineAmount, money, svcNet, todayIso, totals, UNPAID, vatOf, VOID } from "@/lib/billing";
+import { cycleDue, nextCycle } from "@/lib/servicePeriod";
+import { bookingInvoiceOf, bookingPaid, contractMonthTotal, contractStartLines, contractStartNote, isStartInvoice, prepaidMonths, useBranchInfo } from "./Billing";
 import ContractView from "./ContractView";
 import { contractsCsv } from "../billing/contractsCsv";
 import ContractSummary from "../care/ContractSummary";
@@ -16,12 +17,12 @@ import { ServiceLine, ServiceLines } from "../ServicePicker";
 import { AddressFinder, ChipChoice, SuggestText, TagInput } from "../ContractInputs";
 import { addMonthsIso, ALLERGY_DRUGS, COMMON_MEDS, FOOD_ALLERGENS, HEALTH_RIGHTS, HOSP_LATER, isNoAllergy, NO_ALLERGY, RELATIONS } from "@/lib/medicalLists";
 import { PROGRAMS } from "@/lib/contractText";
-import { ROOM_PART, roomByPrice, rooms as priceRooms } from "@/lib/priceList";
+import { roomByPrice, roomShareOf, rooms as priceRooms } from "@/lib/priceList";
 import { usePriceList } from "@/lib/usePrices";
 import { clinic, fetchDocSettings } from "@/lib/clinic";
 import { fetchProfile } from "@/lib/care";
 import { billHandoff, contractHandoff, handoff, invoiceHandoff, QuoteHandoff } from "@/lib/handoff";
-import { buildTodos, HomeData, runTodo, TodoItem } from "../dash/Todo";
+import { buildTodos, HomeData, runTodo, TODO_ACT, TODO_AREAS, TodoItem } from "../dash/Todo";
 import { apptIso, TH_MONTHS, upcomingAppts } from "@/lib/appointments";
 import { useApp } from "@/lib/app";
 import { ViewId } from "@/lib/nav";
@@ -121,7 +122,7 @@ function TodayCards({ onCount }: { onCount: (n: number) => void }) {
       <li key={c.key} className={on ? "is-open" : ""}>
         <div className="td-row">
           <button type="button" className="td-main" aria-expanded={on} onClick={() => setMore(on ? null : c.key)}>
-            <span className={`td-n ${c.urgent ? "is-bad" : ""}`}>{c.n}</span>
+            <span className={`td-n ${c.urgent ? "is-bad" : c.warn ? "is-warn" : ""}`}>{c.n}</span>
             <span className="td-t">{c.title}{c.brief && <small>{c.brief}</small>}</span>
           </button>
           {go2 && <button type="button" className="td-go" onClick={() => runTodo(c, go)}><span>{c.key === "deposit" && c.cta === "ออกใบแจ้งหนี้" ? "ออกใบ" : TODO_ACT[c.key] ?? c.cta}</span><Icon name="chevron" className="h-4 w-4 -rotate-90" /></button>}
@@ -154,18 +155,6 @@ function TodayCards({ onCount }: { onCount: (n: number) => void }) {
     </section>
   );
 }
-/** ด้านของงาน (กล่องเล็กใต้ "ทำก่อน") · ตำแหน่งที่ไม่มีสิทธิ์ด้านนั้นจะไม่เห็นกล่อง */
-const TODO_AREAS = [
-  { name: "การดูแลและทีม", keys: ["alerts", "late", "review", "gap", "checkin"] },
-  { name: "การเงิน", keys: ["bills", "debt60", "unclosed", "monthDue", "drafts", "courses", "deposit", "physio"] },
-  { name: "ห้อง ยา และคลัง", keys: ["room", "stock"] },
-];
-/** ปุ่มสั้นด้านขวาของแต่ละเรื่อง */
-const TODO_ACT: Record<string, string> = {
-  alerts: "ดูรายการ", late: "ตามงาน", review: "ตรวจงาน", gap: "จัดเวร", checkin: "ดูเวร", bills: "รับชำระ", debt60: "ดูลูกหนี้", unclosed: "ปิดยอด",
-  monthDue: "ออกใบ", drafts: "ตรวจยอด", courses: "ออกใบ", deposit: "ดูสัญญา", physio: "ใส่ราคา", room: "จัดห้อง", stock: "ห้องยา",
-};
-
 /* ---------- ระบบสัญญา ---------- */
 const CONTRACT_STATUSES = ["ใช้งานอยู่", "รอชำระเงินมัดจำ", "สิ้นสุดสัญญา", "ยกเลิกสัญญา"];
 const CANCELLED = "ยกเลิกสัญญา";
@@ -374,7 +363,7 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, co
   /** จำนวนวัน/สัปดาห์ที่พัก (รายเดือน = 1) · ค่าห้องทั้งช่วง = ราคาต่อหน่วย × จำนวน */
   const nStay = stay === "เดือน" ? 1 : Math.max(0, Math.floor(Number(stayN) || 0));
   /** ราคาห้องทั้งช่วง (รวม VAT) · ส่วนค่าห้อง (มี VAT) · ค่าบริการทางการแพทย์ (ส่วนที่เหลือ ไม่มี VAT) · ค่าห้องก่อน VAT */
-  const unitPart = Math.min(Number(fee) || 0, roomPart === "" ? Number(fee) || 0 : Number(roomPart) || 0);
+  const unitPart = Math.min(Number(fee) || 0, roomPart === "" ? roomShareOf(Number(fee) || 0) : Number(roomPart) || 0);
   const roomPay = Math.round((Number(fee) || 0) * nStay * 100) / 100, partPay = Math.round(unitPart * nStay * 100) / 100;
   const medPay = Math.round((roomPay - partPay) * 100) / 100, feeN = baseOfIncl(partPay, rateN);
   const vatAmt = Math.round((partPay - feeN) * 100) / 100;
@@ -383,10 +372,11 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, co
   const sum = feeN + medPay + items.reduce((n, x) => n + svcNet(x), 0);
   const monthly = Math.round((sum - feeN + partPay) * 100) / 100;
   const prepaid = months > 0 && monthly > 0 ? String(Math.round(monthly * months * 100) / 100) : "";
-  const pctN = months > 1 && offMode === "pct" ? Math.min(100, Math.max(0, Math.floor(Number(roomPct) || 0))) : 0;
-  const offN = months > 1 && offMode === "baht" ? Math.max(0, Math.floor(Number(offAmt) || 0)) : 0;
+  // ส่วนลดค่าห้อง: ลดเฉพาะค่าบริการห้องพัก (ไม่ลดค่าบริการทางการแพทย์) · ได้ตั้งแต่ 1 เดือน (ไม่เก็บล่วงหน้า = เดือนแรก)
+  const pctN = stay === "เดือน" && offMode === "pct" ? Math.min(100, Math.max(0, Math.floor(Number(roomPct) || 0))) : 0;
+  const offN = stay === "เดือน" && offMode === "baht" ? Math.max(0, Math.floor(Number(offAmt) || 0)) : 0;
   /** ส่วนลดค่าห้องชำระล่วงหน้า (รวม VAT · ประมาณ ยอดจริงคิดตามบรรทัดในขั้นที่ 4) */
-  const roomOff = offN ? Math.min(offN, roomPay * months) : Math.round(roomPay * months * pctN) / 100;
+  const mOff = Math.max(1, months), roomOff = offN ? Math.min(offN, partPay * mOff) : Math.round(partPay * mOff * pctN) / 100;
   const firstBill = (months || 1) * monthly - roomOff + (Number(deposit) || 0) - (Number(roomDep) || 0);
   const branchNames = useBranchNames();
   const { go, toast } = useApp();
@@ -763,7 +753,7 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, co
                 <label>ชื่อห้อง<input type="text" list="room-names" value={roomName} onChange={(e) => setRoomName(e.target.value)} placeholder="เช่น ห้องเดี่ยวพิเศษ" /></label>
                 <datalist id="room-names">{[...new Set(["ห้องรวม", "ห้องคู่", "ห้องเดี่ยว", ...ROOMS.map((x) => x.name)])].map((x) => <option key={x} value={x} />)}</datalist>
                 <label>ราคาห้องทั้งหมด (บาท/{stay} รวม VAT)<input type="number" min={0} value={fee} onChange={(e) => setFee(e.target.value)} placeholder={stay === "เดือน" ? "เช่น 14000" : "เช่น 1500"} autoFocus /></label>
-                <label>ในนี้เป็นค่าห้อง (มี VAT)<input type="number" min={0} value={roomPart} onChange={(e) => setRoomPart(e.target.value)} placeholder="ว่าง = ค่าห้องทั้งหมด" /></label>
+                <label>ในนี้เป็นค่าห้อง (มี VAT)<input type="number" min={0} value={roomPart} onChange={(e) => setRoomPart(e.target.value)} placeholder="ว่าง = 40% ของราคา" /></label>
               </div>}
               {/* ยอดค่าห้องทั้งหมด: เปลี่ยนจำนวนวัน/ห้อง แล้วเห็นยอดใหม่ทันที */}
               <div className="room-total">
@@ -796,7 +786,7 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, co
                     {n ? `${n} เดือน` : "ไม่เก็บล่วงหน้า"}</button>
                 ))}</div>
                 {/* ชำระล่วงหน้าตั้งแต่ 2 เดือน: ส่วนลดค่าห้องเป็น % (จำนวนเต็ม) · ลดเฉพาะค่าห้อง */}
-                {months > 1 && roomPay > 0 && <div className="pay2-inline">
+                {partPay > 0 && <div className="pay2-inline">
                   <label htmlFor="room-pct">ส่วนลดค่าห้อง</label>
                   <span className="pay2-mode" role="radiogroup" aria-label="ลดเป็น">
                     {([["pct", "%"], ["baht", "บาท"]] as const).map(([k, t]) => <button key={k} type="button" role="radio" aria-checked={offMode === k} className={offMode === k ? "is-on" : ""} onClick={() => setOffMode(k)}>{t}</button>)}
@@ -806,7 +796,7 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, co
                         onChange={(e) => { const v = e.target.value.replace(/\D/g, "").slice(0, 3); setRoomPct(v && Number(v) > 100 ? "100" : v); }} aria-label="ส่วนลดค่าห้อง (%)" /><span>%</span></>
                     : <><input id="room-pct" type="text" inputMode="numeric" maxLength={7} value={offAmt} placeholder="เช่น 1000" className="is-wide"
                         onChange={(e) => setOffAmt(e.target.value.replace(/\D/g, "").slice(0, 7))} aria-label="ส่วนลดค่าห้อง (บาท)" /><span>บาท</span></>}
-                  <small>{roomOff > 0 ? `ลด ${money(roomOff)} บาท` : offMode === "pct" ? "จำนวนเต็ม · ลดเฉพาะค่าห้อง" : "จำนวนเต็ม · ลดจากค่าห้องทั้งหมด"}</small>
+                  <small>{roomOff > 0 ? `ค่าห้อง ${money(partPay)} ${pctN ? `− ${pctN}%` : `− ${money(Math.min(offN, partPay * mOff) / mOff)}`} = ${money(Math.round((partPay - roomOff / mOff) * 100) / 100)}${mOff > 1 ? "/เดือน" : ""}` : "ลดเฉพาะค่าบริการห้องพัก"}</small>
                 </div>}
               </div> : <p className="pay2-note">พักระยะสั้น {nStay} {stay} · เก็บครั้งเดียวในใบแรกเข้า ไม่ออกใบรายเดือนให้อัตโนมัติ</p>}
               <div className="pay2-sec">
@@ -830,7 +820,7 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, co
                 {sum - feeN - medPay > 0 && <div><dt>บริการเพิ่มเติม</dt><dd>{money(sum - feeN - medPay)}</dd></div>}
                 <div className="is-sub"><dt>{stay === "เดือน" ? "รวมต่อเดือน" : `รวม ${nStay} ${stay}`}</dt><dd>{money(monthly)}</dd></div>
                 {stay === "เดือน" && months > 1 && <div><dt>× {months} เดือน</dt><dd>{money(monthly * months)}</dd></div>}
-                {roomOff > 0 && <div className="is-minus"><dt>ส่วนลดค่าห้อง{pctN ? ` ${pctN}%` : ""}</dt><dd>−{money(roomOff)}</dd></div>}
+                {roomOff > 0 && <div className="is-minus"><dt>ส่วนลดค่าบริการห้องพัก{pctN ? ` ${pctN}%` : ""}<small>ค่าห้องเหลือ {money(Math.round((partPay * mOff - roomOff) * 100) / 100)}{mOff > 1 ? ` (${money(Math.round((partPay - roomOff / mOff) * 100) / 100)}/เดือน)` : ""}</small></dt><dd>−{money(roomOff)}</dd></div>}
                 {Number(deposit) > 0 && <div><dt>เงินประกัน</dt><dd>{money(Number(deposit))}</dd></div>}
                 {Number(roomDep) > 0 && <div className="is-minus"><dt>หักมัดจำห้อง</dt><dd>−{money(Number(roomDep))}</dd></div>}
               </dl>
@@ -1194,16 +1184,14 @@ export function Contracts() {
 
   const ended = (c: string[]) => c[5] === CANCELLED || c[5] === "สิ้นสุดสัญญา";
   /** ปุ่มหลักของแถวสัญญา: deposit = ออกใบแจ้งหนี้ (รอชำระมัดจำ ยังไม่มีใบ) · month = ออกใบเดือนนี้ · print = พิมพ์สัญญา · none = ไม่มี */
-  const thisMonth = todayIso().slice(0, 7); // todayIso = วันที่ตามเวลาไทย
-  const billed = useMemo(() => buildBilledIndex(invoices), [invoices]);
   const primaryOf = (c: string[]): "complete" | "deposit" | "month" | "print" | "none" => {
     if (ended(c)) return "none";
     // จองห้องด้วยมัดจำค่าห้อง ยังไม่ได้กรอกค่าบริการ = ปุ่ม "เปิดสัญญา" (กรอกให้ครบ)
     if (isBookingRow(c)) return "complete";
     const bills = invoices.filter((x) => x.contract === c[0] && x.status !== VOID);
     if (can(user, "billing") && c[5] === "รอชำระเงินมัดจำ" && !bills.length) return "deposit";
-    // เดือนนี้ยังไม่ได้เรียกเก็บ (ใบแรกเข้าที่ครอบคลุมเดือนนี้ หรือใบรายเดือนของเดือนนี้ นับว่าเก็บแล้ว · ดู contractBilledFor)
-    if (can(user, "billing") && c[5] === "ใช้งานอยู่" && !isStayContract(c) && !contractBilledFor(c, thisMonth, billed)) return "month";
+    // ครบรอบบิลแล้วหรือภายใน 7 วัน ยังไม่มีใบของรอบนั้น (นับตามวันเริ่มสัญญาและเดือนที่ชำระล่วงหน้า · lib/servicePeriod nextCycle)
+    if (can(user, "billing") && c[5] === "ใช้งานอยู่" && cycleDue(nextCycle(c, bills))) return "month";
     return "print";
   };
   /** ออกใบแจ้งหนี้ตามสัญญา: ไปหน้าใบแจ้งหนี้และใบเสร็จพร้อมรายการในสัญญา (แก้/เพิ่มได้ก่อนบันทึก) · มีใบค้างชำระอยู่แล้ว ถามก่อน */
@@ -1233,7 +1221,7 @@ export function Contracts() {
    *  ใบที่ยังไม่ได้รับเงิน (ค้างชำระ / รอตรวจสอบยอด) ของสัญญานี้ปรับบรรทัดค่าห้องตาม · ใบที่รับเงินแล้วไม่เปลี่ยน (ออกใบลดหนี้แทน)
    */
   const repriceRoom = (i: number) => {
-    const c = rows[i], part = ROOM_PART.เดือน ?? 15000, x = splitOldRoom(c, part);
+    const c = rows[i], part = roomShareOf(Number(String(c[4] ?? "").replace(/,/g, "")) || 0), x = splitOldRoom(c, part);
     const open = invoices.filter((v) => v.contract === c[0] && (v.status === UNPAID || v.status === DRAFT) && !(v.paid ?? 0) && parseItems(v.items).some((l) => l.vat && !l.credit));
     const paidN = invoices.filter((v) => v.contract === c[0] && (v.paid ?? 0) > 0).length;
     const vat = Math.round((x.part - baseOfIncl(x.part, x.rate)) * 100) / 100;

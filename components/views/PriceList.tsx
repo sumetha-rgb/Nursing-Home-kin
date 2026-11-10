@@ -5,7 +5,7 @@ import CsvIcon from "../CsvIcon";
 import { Field, Modal, PageHeader, Tabs } from "../ui";
 import { useApp } from "@/lib/app";
 import { downloadCsv } from "@/lib/store";
-import { CAT_IDS, CATS, CatId, CODE_RE, codeProblem, PriceItem, Rate, RATE_UNITS, rateCode, RateUnit, ROOM_PART, roomPartOf, setPrices, suggestCode } from "@/lib/priceList";
+import { CAT_IDS, CATS, CatId, CODE_RE, codeProblem, PriceItem, Rate, RATE_UNITS, rateCode, RateUnit, roomPartOf, roomShareOf, setPrices, suggestCode } from "@/lib/priceList";
 import { baseOfIncl, DEFAULT_VAT } from "@/lib/billing";
 
 /**
@@ -327,7 +327,7 @@ function EditDialog({ item, tab: tab0, items, canEdit, onClose, onToggle, onSave
                 const dayR = f.rates.find((r) => r.unit === "วัน"), day = Number(dayR?.price) || 0;
                 if (row.k === "week") {
                   // รายสัปดาห์: ราคาห้องและค่าห้องรายวัน × 7 ตามแถวรายวันด้านบน (แก้ที่รายวัน)
-                  const dPart = Math.min(day, dayR?.room !== undefined && dayR.room !== "" ? Number(dayR.room) || 0 : ROOM_PART.วัน ?? day);
+                  const dPart = Math.min(day, dayR?.room !== undefined && dayR.room !== "" ? Number(dayR.room) || 0 : roomShareOf(day));
                   const wp = day * 7, wPart = dPart * 7, wBase = baseOfIncl(wPart, DEFAULT_VAT);
                   return (
                     <div key={row.k} className="rm-row is-calc">
@@ -342,12 +342,12 @@ function EditDialog({ item, tab: tab0, items, canEdit, onClose, onToggle, onSave
                 if (i < 0) return (
                   <div key={row.k} className="rm-row is-empty">
                     <span className="rm-k"><b>{row.t}</b>{row.sub && <small>{row.sub}</small>}</span>
-                    <span className="rm-none">{row.k === "week" && day ? `ยังไม่ได้ตั้ง · ตอนนี้ระบบใช้รายวัน × 7 = ${money(day * 7)} (ค่าห้อง ${money(Math.min(day * 7, ROOM_PART.สัปดาห์ ?? 0))})` : "ยังไม่ได้ตั้ง"}</span>
+                    <span className="rm-none">{row.k === "week" && day ? `ยังไม่ได้ตั้ง · ตอนนี้ระบบใช้รายวัน × 7 = ${money(day * 7)} (ค่าห้อง ${money(roomShareOf(day * 7))})` : "ยังไม่ได้ตั้ง"}</span>
                     <button type="button" className="row-action is-primary" onClick={() => set({ rates: [...f.rates, { unit: row.unit, price: row.k === "week" && day ? String(day * 7) : "", label: row.label, room: "" }] })}>+ ตั้งราคา{row.t.replace(/ ·.*/, "")}</button>
                   </div>
                 );
                 const r = f.rates[i], price = Number(r.price) || 0, own = r.room !== undefined && r.room !== "";
-                const part = Math.min(price, own ? Number(r.room) || 0 : ROOM_PART[row.unit] ?? price), med = Math.max(0, price - part), base = baseOfIncl(part, DEFAULT_VAT);
+                const part = Math.min(price, own ? Number(r.room) || 0 : roomShareOf(price)), med = Math.max(0, price - part), base = baseOfIncl(part, DEFAULT_VAT);
                 const was = r.from !== undefined && item ? item.rates[r.from] : undefined, diff = !!was && r.price !== "" && price !== was.price;
                 return (
                   <div key={row.k} className="rm-row">
@@ -357,8 +357,8 @@ function EditDialog({ item, tab: tab0, items, canEdit, onClose, onToggle, onSave
                       {diff ? <small className="pl-was">เดิม {money(was!.price)}</small> : was?.next ? <small className="pl-was is-next">ราคาใหม่ {money(was.next.price)} มีผล {thDate(was.next.from)} · <button type="button" onClick={() => cancelNext(r.from!)}>ยกเลิก</button></small> : null}
                     </label>
                     <label className="rm-f"><span className="rm-lab">ค่าบริการห้องพัก</span>
-                      <input type="number" min={0} inputMode="decimal" value={r.room ?? ""} placeholder={String(Math.min(price, ROOM_PART[row.unit] ?? price))} onChange={(e) => setRate(i, { room: e.target.value })} className="text-right tabular-nums" aria-label={`ค่าบริการห้องพัก ${row.t}`} />
-                      <small>{own ? "" : "ค่าเริ่มต้น · "}ก่อน VAT {money(base)} + VAT {money(Math.round((part - base) * 100) / 100)}</small>
+                      <input type="number" min={0} inputMode="decimal" value={r.room ?? ""} placeholder={String(roomShareOf(price))} onChange={(e) => setRate(i, { room: e.target.value })} className="text-right tabular-nums" aria-label={`ค่าบริการห้องพัก ${row.t}`} />
+                      <small>{own ? "" : "40% (ค่าเริ่มต้น) · "}ก่อน VAT {money(base)} + VAT {money(Math.round((part - base) * 100) / 100)}</small>
                     </label>
                     <span className="rm-med"><span className="rm-lab">ค่าบริการทางการแพทย์</span><b>{money(med)}</b></span>
                     {row.k === "week" ? <button type="button" className="row-action danger" onClick={() => set({ rates: f.rates.filter((_, j) => j !== i) })}>ลบ</button> : <span />}
@@ -385,8 +385,8 @@ function EditDialog({ item, tab: tab0, items, canEdit, onClose, onToggle, onSave
                     {diff && <small className="pl-was">เดิม {money(was!.price)}</small>}
                     {/* ห้องพัก: แยกส่วนค่าห้อง (มี VAT) ที่เหลือเป็นค่าบริการทางการแพทย์ (ไม่มี VAT) */}
                     {f.cat === "RM" && <label className="pl-room">ในนี้เป็นค่าห้อง (รวม VAT){(r.room === undefined || r.room === "") && <i className="not-italic text-gold-500"> · ค่าเริ่มต้น</i>}
-                      <input type="number" min={0} inputMode="decimal" value={r.room ?? ""} placeholder={String(Math.min(Number(r.price) || 0, ROOM_PART[r.unit] ?? (Number(r.price) || 0)))} onChange={(e) => setRate(i, { room: e.target.value })} aria-label={`ค่าห้อง (มี VAT) ของราคา${r.unit}`} />
-                      {Number(r.price) > 0 && <small>ค่าบริการทางการแพทย์ {money(Math.max(0, (Number(r.price) || 0) - Math.min(Number(r.price) || 0, r.room !== undefined && r.room !== "" ? Number(r.room) : ROOM_PART[r.unit] ?? (Number(r.price) || 0))))}</small>}
+                      <input type="number" min={0} inputMode="decimal" value={r.room ?? ""} placeholder={String(roomShareOf(Number(r.price) || 0))} onChange={(e) => setRate(i, { room: e.target.value })} aria-label={`ค่าห้อง (มี VAT) ของราคา${r.unit}`} />
+                      {Number(r.price) > 0 && <small>ค่าบริการทางการแพทย์ {money(Math.max(0, (Number(r.price) || 0) - Math.min(Number(r.price) || 0, r.room !== undefined && r.room !== "" ? Number(r.room) : roomShareOf(Number(r.price) || 0))))}</small>}
                     </label>}
                     {was?.next && !diff && <small className="pl-was is-next">ราคาใหม่ {money(was.next.price)} มีผล {thDate(was.next.from)} · <button type="button" onClick={() => cancelNext(r.from!)}>ยกเลิก</button></small>}
                   </div>

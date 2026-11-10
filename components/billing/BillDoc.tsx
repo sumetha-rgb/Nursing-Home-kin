@@ -229,7 +229,7 @@ export default function BillDoc({ inv, branch, format, copy, slips = [], payment
                   <td>{i.qty}</td><td>{money(inc(i, i.price))}</td><td>{lineDiscount(i) ? money(inc(i, lineDiscount(i))) : "-"}</td><td>{money(inc(i, lineAmount(i) - lineDiscount(i)))}</td>
                 </tr>)}</tbody>
               </table>
-              {key === "room" && detail?.period && <p className="bd-note"><b>ช่วงเวลา:</b> {detail.period}</p>}
+              {key === "room" && detail?.period && <p className="bd-note"><b>ระยะเวลาบริการ:</b> {detail.period}</p>}
             </section>
           );
         })}

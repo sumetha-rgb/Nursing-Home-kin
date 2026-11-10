@@ -3,6 +3,7 @@ import { ReactNode, useEffect, useRef, useState } from "react";
 import { Field, Modal, Section } from "../ui";
 import { money } from "@/lib/billing";
 import { useApp } from "@/lib/app";
+import { useCrud } from "@/lib/store";
 import type { FinSummary } from "../care/FinanceAnalytics";
 import type { HomeData, TodoItem } from "./Todo";
 
@@ -45,36 +46,101 @@ export function useTargets(branch: string) {
   return { targets: t, store, reload: load };
 }
 
-/** ตั้งเป้า: ผู้บริหารตั้งค่าเริ่มต้นทุกสาขา และรายสาขา · ผู้จัดการสาขาตั้งของสาขาตัวเอง */
+/** หมวดของเป้า (จัดหน้าต่างตั้งเป้า) · dir = ทิศของเป้า: min = ไม่ต่ำกว่า · max = ไม่เกิน */
+const TARGET_GROUPS: { name: string; items: { k: keyof Targets; dir: "min" | "max" }[] }[] = [
+  { name: "การเงินและการเข้าพัก", items: [{ k: "occupancy", dir: "min" }, { k: "collect", dir: "min" }] },
+  { name: "คุณภาพงานดูแล", items: [{ k: "tasks", dir: "min" }, { k: "ontime", dir: "min" }, { k: "meds", dir: "min" }] },
+  { name: "ความปลอดภัยและกำลังคน", items: [{ k: "ackMin", dir: "max" }, { k: "ratio", dir: "max" }] },
+];
+
+/**
+ * ตั้งเป้า: ผู้บริหารเลือกด้านซ้ายว่าจะตั้ง "ค่าเริ่มต้นทุกสาขา" หรือสาขาใด (แต่ละสาขาตั้งอิสระได้) · ผู้จัดการสาขาตั้งของสาขาตัวเอง
+ *  ช่องที่ว่าง = ใช้ค่าเริ่มต้น · ช่องที่ตั้งเองมีแถบสีทองและปุ่ม "ใช้ค่าเริ่มต้น" · ล้างทุกช่องแล้วบันทึก = กลับไปใช้ค่าเริ่มต้นทั้งหมด
+ */
 export function TargetsDialog({ open, onClose, branch, store, onSaved, isGlobal }: { open: boolean; onClose: () => void; branch: string; store: TargetStore; onSaved: () => void; isGlobal: boolean }) {
-  const { toast } = useApp();
-  // branch = สาขาที่กำลังตั้งเป้า (ผู้จัดการสาขา = สาขาตัวเอง) · ว่าง = ค่าเริ่มต้นทุกสาขา (เฉพาะผู้บริหาร)
-  const scope = branch;
-  void isGlobal;
-  const cur: Partial<Targets> = scope ? store.branches?.[scope] ?? {} : store.default ?? {};
-  const base: Targets = { ...DEFAULT_TARGETS, ...(store.default ?? {}) };
+  const { toast, confirm } = useApp();
+  const br = useCrud("branches", []);
+  const names = br.rows.filter((r) => r[1] && !/^ปิด/.test(r[10] ?? "")).map((r) => r[1]);
+  // scope = สาขาที่กำลังตั้งเป้า · ว่าง = ค่าเริ่มต้นทุกสาขา (เฉพาะผู้บริหาร) · เริ่มจากสาขาที่เลือกไว้ในหน้า
+  const [scope, setScope] = useState(branch);
+  // สำเนาในหน้าต่าง: บันทึกหลายสาขาต่อกันได้โดยไม่ทับของสาขาที่เพิ่งบันทึก (ระหว่างรอโหลดใหม่)
+  const [local, setLocal] = useState<TargetStore>(store);
   const [f, setF] = useState<Record<string, string>>({});
-  useEffect(() => { if (open) setF(Object.fromEntries(TARGET_FIELDS.map((x) => [x.k, cur[x.k] !== undefined ? String(cur[x.k]) : ""]))); }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { if (open) { setScope(branch); setLocal(store); } }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+  const curOf = (sc: string): Partial<Targets> => (sc ? local.branches?.[sc] ?? {} : local.default ?? {});
+  const cur = curOf(scope);
+  const formOf = (c: Partial<Targets>) => Object.fromEntries(TARGET_FIELDS.map((x) => [x.k, c[x.k] !== undefined ? String(c[x.k]) : ""]));
+  useEffect(() => { if (open) setF(formOf(cur)); }, [open, scope, local]); // eslint-disable-line react-hooks/exhaustive-deps
+  /** ค่าที่ใช้ถ้าเว้นว่าง: สาขา = ค่าเริ่มต้นทุกสาขา · ค่าเริ่มต้นทุกสาขา = ค่าของระบบ */
+  const fallback: Targets = scope ? { ...DEFAULT_TARGETS, ...(local.default ?? {}) } : DEFAULT_TARGETS;
+  const ownN = (b: string) => Object.keys(local.branches?.[b] ?? {}).length;
+  const dirty = JSON.stringify(f) !== JSON.stringify(formOf(cur));
+  const pick = (sc: string) => {
+    if (sc === scope) return;
+    if (!dirty) return setScope(sc);
+    confirm({ title: "ยังไม่ได้บันทึก", message: `ค่าที่แก้ของ${scope ? `สาขา${scope}` : "ค่าเริ่มต้นทุกสาขา"}ยังไม่ได้บันทึก · เปลี่ยนไป${sc ? `สาขา${sc}` : "ค่าเริ่มต้นทุกสาขา"}โดยไม่บันทึก?`, okLabel: "เปลี่ยนโดยไม่บันทึก", onOk: () => setScope(sc) });
+  };
   const save = async () => {
     const vals: Partial<Targets> = {};
     for (const x of TARGET_FIELDS) { const v = f[x.k]?.trim(); if (v) { const nv = Number(v); if (!(nv > 0)) return toast(`กรุณากรอก${x.label}เป็นตัวเลขมากกว่า 0`); vals[x.k] = nv; } }
-    const next: TargetStore = scope ? { ...store, branches: { ...(store.branches ?? {}), [scope]: vals } } : { ...store, default: vals };
+    const branches = { ...(local.branches ?? {}) };
+    if (scope) { if (Object.keys(vals).length) branches[scope] = vals; else delete branches[scope]; }
+    const next: TargetStore = scope ? { ...local, branches } : { ...local, default: vals };
+    setBusy(true);
     const r = await fetch("/api/clinic", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "doc_settings", key: "dash_targets", value: JSON.stringify(next) }) });
     const d = await r.json().catch(() => ({}));
+    setBusy(false);
     if (!r.ok) return toast(d.error || "บันทึกเป้าหมายไม่สำเร็จ");
-    toast(`บันทึกเป้าหมายแล้ว · ${scope ? `สาขา${scope}` : "ค่าเริ่มต้นทุกสาขา"}`); onSaved(); onClose();
+    setLocal(next); onSaved();
+    toast(`บันทึกเป้าหมายแล้ว · ${scope ? (Object.keys(vals).length ? `สาขา${scope}` : `สาขา${scope} กลับไปใช้ค่าเริ่มต้น`) : "ค่าเริ่มต้นทุกสาขา"}`);
+    // ผู้บริหารตั้งหลายสาขาต่อกันได้ (หน้าต่างยังเปิดอยู่) · ผู้จัดการสาขาปิดหน้าต่าง
+    if (!isGlobal) onClose();
   };
+  const fieldOf = (k: keyof Targets) => TARGET_FIELDS.find((x) => x.k === k)!;
+  const hasAny = TARGET_FIELDS.some((x) => f[x.k]?.trim());
   return (
-    <Modal open={open} title={`ตั้งเป้าหมาย · ${scope ? `สาขา${scope}` : "ค่าเริ่มต้นทุกสาขา"}`} onClose={onClose}
-      footer={<><button className="btn-soft" onClick={onClose}>ยกเลิก</button><button className="btn-primary" onClick={save}>บันทึกเป้าหมาย</button></>}>
-      <p className="form-intro">{scope ? "ช่องที่ว่าง = ใช้ค่าเริ่มต้นของทุกสาขา" : "ใช้กับทุกสาขาที่ยังไม่ได้ตั้งเป้าของตัวเอง · ช่องที่ว่าง = ค่าเริ่มต้นของระบบ"} · ป้ายสีบนการ์ดเทียบกับเป้านี้</p>
-      <div className="grid gap-3 sm:grid-cols-2">
-        {TARGET_FIELDS.map((x) => (
-          <Field key={x.k} label={`${x.label} (${x.unit})`}>
-            <input type="number" min={0} inputMode="decimal" value={f[x.k] ?? ""} placeholder={String(scope ? base[x.k] : DEFAULT_TARGETS[x.k])} onChange={(e) => setF({ ...f, [x.k]: e.target.value })} />
-            <p className="field-hint">{x.hint}</p>
-          </Field>
-        ))}
+    <Modal open={open} wide title={`ตั้งเป้าหมาย · ${scope ? `สาขา${scope}` : "ค่าเริ่มต้นทุกสาขา"}`} onClose={onClose}
+      footer={<>
+        {hasAny && <button className="btn-soft tg-clear" disabled={busy} onClick={() => setF(Object.fromEntries(TARGET_FIELDS.map((x) => [x.k, ""])))}>{scope ? "ใช้ค่าเริ่มต้นทั้งหมด" : "ล้างทุกช่อง"}</button>}
+        <button className="btn-soft" onClick={onClose}>{isGlobal ? "ปิด" : "ยกเลิก"}</button>
+        <button className="btn-primary" disabled={busy || !dirty} onClick={save}>{busy ? "กำลังบันทึก…" : dirty ? "บันทึกเป้าหมาย" : "บันทึกแล้ว"}</button>
+      </>}>
+      <div className={`tg ${isGlobal ? "" : "is-single"}`}>
+        {isGlobal && <nav className="tg-nav" aria-label="เลือกว่าจะตั้งเป้าของใคร">
+          <button type="button" className={!scope ? "is-on" : ""} aria-current={!scope ? "true" : undefined} onClick={() => pick("")}>
+            <b>ค่าเริ่มต้นทุกสาขา</b><small>ใช้กับสาขาที่ไม่ได้ตั้งเอง</small>
+          </button>
+          <span className="tg-nav-h">ตั้งรายสาขา</span>
+          {names.map((b) => (
+            <button key={b} type="button" className={`${scope === b ? "is-on" : ""} ${ownN(b) ? "is-own" : ""}`} aria-current={scope === b ? "true" : undefined} onClick={() => pick(b)}>
+              <b>{b}</b><small>{ownN(b) ? `ตั้งเอง ${ownN(b)} ค่า` : "ใช้ค่าเริ่มต้น"}</small>
+            </button>
+          ))}
+        </nav>}
+        <div className="tg-body">
+          <p className="tg-intro">{scope
+            ? <>ตั้งเฉพาะ<b>สาขา{scope}</b> · เว้นว่าง = ใช้ค่าเริ่มต้นทุกสาขา</>
+            : <>ใช้กับ<b>ทุกสาขาที่ไม่ได้ตั้งเอง</b> · เว้นว่าง = ค่าของระบบ</>} · ป้ายสีบนการ์ดภาพรวมเทียบกับเป้านี้</p>
+          {TARGET_GROUPS.map((g) => (
+            <section key={g.name} className="tg-group" aria-label={g.name}>
+              <h4>{g.name}</h4>
+              {g.items.map(({ k, dir }) => {
+                const x = fieldOf(k), v = f[k] ?? "", set = v.trim() !== "";
+                return (
+                  <div key={k} className={`tg-row ${set ? "is-set" : ""}`}>
+                    <label htmlFor={`tg-${k}`}><b>{x.label}</b><small>{dir === "min" ? "ไม่ต่ำกว่า" : "ไม่เกิน"}{x.hint && !/^(ขั้นต่ำ|ไม่เกิน)/.test(x.hint) ? ` · ${x.hint}` : x.hint.includes("ต่อกะ") ? " · ต่อกะ" : ""} · ค่าเริ่มต้น {fallback[k]} {x.unit}</small></label>
+                    <div className="tg-in">
+                      <input id={`tg-${k}`} type="number" min={0} inputMode="decimal" value={v} placeholder={String(fallback[k])} onChange={(e) => setF({ ...f, [k]: e.target.value })} />
+                      <span>{x.unit}</span>
+                      {set ? <button type="button" className="tg-reset" title={`ใช้ค่าเริ่มต้น (${fallback[k]})`} aria-label={`${x.label} ใช้ค่าเริ่มต้น ${fallback[k]}`} onClick={() => setF({ ...f, [k]: "" })}>↺</button> : <i className="tg-reset" aria-hidden />}
+                    </div>
+                  </div>
+                );
+              })}
+            </section>
+          ))}
+        </div>
       </div>
     </Modal>
   );

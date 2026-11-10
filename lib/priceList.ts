@@ -8,12 +8,13 @@ export type RateUnit = "ครั้ง" | "วัน" | "สัปดาห์"
 export const RATE_UNITS: RateUnit[] = ["ครั้ง", "วัน", "สัปดาห์", "เดือน", "แพ็กเกจ"];
 /** ราคาแต่ละหน่วย · หน่วยเดียวมีได้หลายราคา เช่น รายเดือน 12,000 / 8,000 · label = คำอธิบายราคานั้น · next = ราคาใหม่ที่ตั้งล่วงหน้า */
 export type Rate = { unit: RateUnit; price: number; label?: string; next?: { price: number; from: string } | null;
-  /** ห้องพัก: ส่วนที่เป็น "ค่าห้อง" (รวม VAT) ของราคานี้ · ที่เหลือเป็นค่าบริการทางการแพทย์ (ไม่มี VAT) · ไม่ตั้ง = ROOM_PART */
+  /** ห้องพัก: ส่วนที่เป็น "ค่าห้อง" (รวม VAT) ของราคานี้ · ที่เหลือเป็นค่าบริการทางการแพทย์ (ไม่มี VAT) · ไม่ตั้ง = 40% ของราคา */
   room?: number };
-/** ส่วนค่าห้อง (มี VAT · รวม VAT แล้ว) เริ่มต้นต่อหน่วย: เดือน 15,000 · สัปดาห์/วัน เฉลี่ยจากเดือน (15,000 ÷ 30) */
-export const ROOM_PART: Partial<Record<RateUnit, number>> = { เดือน: 15000, สัปดาห์: 3500, วัน: 500 };
-/** ส่วนค่าห้องของราคานี้ (ไม่เกินราคา) */
-export const roomPartOf = (r: { unit: RateUnit; price: number; room?: number }) => Math.min(r.price, r.room ?? ROOM_PART[r.unit] ?? r.price);
+/** ส่วนค่าห้อง (มี VAT · รวม VAT แล้ว) เริ่มต้น = 40% ของราคาห้อง ทุกหน่วย (วัน / สัปดาห์ / เดือน) · ที่เหลือ 60% เป็นค่าบริการทางการแพทย์ */
+export const ROOM_PCT = 40;
+export const roomShareOf = (price: number) => Math.round(price * ROOM_PCT) / 100;
+/** ส่วนค่าห้องของราคานี้ (ตั้งเองในหน้าราคา หรือ 40% · ไม่เกินราคา) */
+export const roomPartOf = (r: { unit: RateUnit; price: number; room?: number }) => Math.min(r.price, r.room ?? roomShareOf(r.price));
 export type CatId = "RM" | "NS" | "CR" | "EQ" | "PT" | "OT";
 export type PriceItem = {
   id?: string; code: string; cat: CatId; sub: string; name: string; rates: Rate[];
@@ -149,24 +150,24 @@ export function roomPartByCode(code?: string): { part: number; unit: RateUnit; n
   const i = x.rates.findIndex((_, k) => rateCode(x, k) === code);
   if (i < 0) return null;
   const r = x.rates[i];
-  if (r.unit === "สัปดาห์") { const d = x.rates.find((y) => y.unit === "วัน"); return { part: Math.min(r.price, (d ? roomPartOf(d) : ROOM_PART.วัน ?? 0) * 7), unit: r.unit, name: x.name }; }
+  if (r.unit === "สัปดาห์") { const d = x.rates.find((y) => y.unit === "วัน"); return { part: Math.min(r.price, (d ? roomPartOf(d) * 7 : roomShareOf(r.price))), unit: r.unit, name: x.name }; }
   return { part: roomPartOf(r), unit: r.unit, name: x.name };
 }
 /** ชื่อที่ลงเอกสารเมื่อเลือกจากใบราคา */
 export const pickName = (x: PriceItem) => (x.cat === "RM" ? `บริการ${x.name}` : x.name);
 
-/** week = รายวัน × 7 เสมอ (ไม่ตั้งแยก กันสับสน · weekSet = false) · part = ส่วนค่าห้อง (มี VAT) ต่อหน่วย (สัปดาห์ = ค่าห้องรายวัน × 7 · เดือน = ของราคารายเดือนที่ใช้) */
+/** week = รายวัน × 7 เสมอ (ไม่ตั้งแยก กันสับสน · weekSet = false) · part = ส่วนค่าห้อง (มี VAT) ต่อหน่วย = 40% ของราคา หรือที่ตั้งเอง (สัปดาห์ = ค่าห้องรายวัน × 7 · เดือน = ของราคารายเดือนที่ใช้) */
 type Room = { code: string; name: string; day: number; week: number; weekSet: boolean; month: number; promo: number; part: { วัน: number; สัปดาห์: number; เดือน: number } };
 const roomOf = (x: PriceItem): Room => {
   const p = (f: (r: Rate) => boolean) => x.rates.find(f)?.price ?? 0;
   const month = p((r) => r.unit === "เดือน" && !isPromo(r));
   const day = p((r) => r.unit === "วัน"), week = p((r) => r.unit === "สัปดาห์");
   const promoR = x.rates.find((r) => r.unit === "เดือน" && isPromo(r)) ?? x.rates.find((r) => r.unit === "เดือน" && !isPromo(r));
-  const partOf = (u: RateUnit, price: number) => { const r = x.rates.find((y) => y.unit === u); return Math.min(price, r?.room ?? ROOM_PART[u] ?? price); };
+  const partOf = (u: RateUnit, price: number) => { const r = x.rates.find((y) => y.unit === u); return Math.min(price, r?.room ?? roomShareOf(price)); };
   const promo = p((r) => r.unit === "เดือน" && isPromo(r)) || month;
   void week; // ราคารายสัปดาห์ที่เคยตั้งในใบราคาไม่ใช้แล้ว: รายสัปดาห์ = รายวัน × 7
   return { code: x.code, name: x.name, day, week: day * 7, weekSet: false, month, promo,
-    part: { วัน: partOf("วัน", day), สัปดาห์: partOf("วัน", day) * 7, เดือน: Math.min(promo, promoR?.room ?? ROOM_PART.เดือน ?? promo) } };
+    part: { วัน: partOf("วัน", day), สัปดาห์: partOf("วัน", day) * 7, เดือน: Math.min(promo, promoR?.room ?? roomShareOf(promo)) } };
 };
 /** ห้องพัก: ราคาปกติรายวัน/รายเดือน และราคาโปรโมชันรายเดือน */
 export const rooms = (): Room[] => priceList().filter((x) => x.cat === "RM").map(roomOf);

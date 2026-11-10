@@ -402,6 +402,21 @@
 .data-table th { background:#faf7f1; color:#6f5f45; font-size:12px; font-weight:600; padding:11px 16px; border-bottom-color:var(--border); }
 .data-table td { padding:12px 16px; line-height:1.7; border-bottom-color:#f2ece2; }
 .data-table tbody tr { transition:background .12s; }
+.data-table { width:100%; }
+.data-table th { white-space:normal; min-width:4.5em; line-height:1.4; vertical-align:bottom; }
+.data-table td { overflow-wrap:break-word; word-break:normal; }
+/* คอลัมน์รอง (DataTable minor) ซ่อนเมื่อพื้นที่ตารางแคบกว่า 1100px (โน้ตบุ๊ก) · จอใหญ่และการ์ดบนมือถือยังเห็นครบ */
+.data-table-container { container-type:inline-size; }
+@container (max-width:1099px) { .data-table .is-minor { display:none; } } /* ขึ้นบรรทัดใหม่ระหว่างคำเท่านั้น (รหัส HN เลขเอกสารไม่ถูกหักกลางคำ) */
+/* ตารางพอดีจอโน้ตบุ๊ก: กว้างเท่าพื้นที่ (ข้อความยาวขึ้นบรรทัดใหม่) · จอเล็กกว่า 1440px ลดระยะห่างในช่อง */
+@media (max-width:1439px) {
+  .data-table { font-size:13.5px; }
+  .data-table th { padding:10px 10px; }
+  .data-table td { padding:10px 10px; line-height:1.6; }
+  .data-table th:first-child, .data-table td:first-child { padding-left:14px; }
+  .data-table .row-action { padding-left:10px; padding-right:10px; }
+}
+@media (max-width:1299px) { .data-table th, .data-table td { padding-left:8px; padding-right:8px; } }
 .data-table tbody tr:hover { background:#fbf8f2; }
 .table-search input { min-height:38px; padding-top:7px; padding-bottom:7px; border-radius:10px; background:#fff; }
 .table-search svg { top:10px; }
@@ -589,6 +604,7 @@ input::placeholder,textarea::placeholder { color:#8a785b; }
   .data-table td { padding:2mm 2.5mm!important; color:#1f1a12!important; border-bottom:1px solid #e2d6c2!important; max-width:none!important; }
   .data-table tr { break-inside:avoid; }
   .data-table .cell-actions { display:none!important; }
+  .data-table .is-minor { display:table-cell!important; } /* พิมพ์: แสดงคอลัมน์รองครบเหมือนเดิม */
   .status-badge { padding:0!important; background:none!important; box-shadow:none!important; color:#1f1a12!important; }
 
   /* ลงชื่อ + ท้ายกระดาษ */
@@ -1502,21 +1518,36 @@ button.room-card:hover:not(.is-full):not(.is-closed) { border-color:#c9a96a; box
 .dash-period button { padding:7px 14px; font-size:13.5px; color:#4A4032; min-height:38px; }
 .dash-period button + button { border-left:1px solid #DED3BF; }
 .dash-period button.is-on { background:#8B6E3E; color:#fff; font-weight:600; }
-.attn { border:1px solid #efc3cb; background:#fdf6f7; border-radius:16px; padding:12px 14px; display:grid; gap:10px; }
+.attn { border:1px solid #EDE5D6; background:#fbf8f1; border-radius:16px; padding:12px 14px; display:grid; gap:10px; }
 .attn.is-clear { border-color:#bfdccb; background:#f1f8f3; }
 .attn-h { display:flex; flex-wrap:wrap; gap:4px 12px; align-items:baseline; }
-.attn-h b { color:#a33a55; font-size:15px; } .attn.is-clear .attn-h b { color:#2f6b4f; }
-.attn-h span { font-size:12.5px; color:#786443; }
+.attn-h b { color:#3d3220; font-size:15px; } .attn.is-clear .attn-h b { color:#2f6b4f; }
+.attn-h span { font-size:12.5px; color:#786443; } .attn-h em { font-style:normal; font-weight:700; color:#a3221b; }
 .attn-done { font-size:12.5px; color:#2f6b4f; } .attn-done span { font-weight:600; }
-.attn-list { display:grid; grid-template-columns:repeat(auto-fill,minmax(168px,1fr)); gap:8px; }
-.attn-i { display:grid; grid-template-columns:auto 1fr; gap:0 10px; align-items:center; align-content:center; text-align:left; border-radius:12px; padding:9px 12px; min-height:58px; background:#fff; border:1px solid #EDE5D6; transition:border-color .12s; }
+/* ด่วน: การ์ดเรียงข้างกัน (คอมพิวเตอร์ได้ 4 ใบต่อแถว) · ปุ่มไปทำอยู่ใต้ข้อความ */
+.attn-urgent { display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:6px; border:1px solid #efc3cb; background:#fdf3f4; border-radius:12px; padding:6px; }
+.attn-row { display:grid; grid-template-columns:auto 1fr; gap:10px; align-items:start; text-align:left; background:#fff; border:1px solid #f3d5db; border-left:4px solid #c8475f; border-radius:9px; padding:8px 10px; transition:border-color .12s; }
+.attn-row:hover { border-color:#c8475f; }
+.attn-row b, .attn-i b { display:grid; justify-items:center; min-width:40px; font-variant-numeric:tabular-nums; line-height:1.05; }
+.attn-row b { font-size:22px; color:#b3261e; }
+.attn-row b i, .attn-i b i { font-style:normal; font-size:11px; font-weight:600; margin-top:2px; opacity:.8; }
+.attn-row span { font-size:13px; font-weight:600; color:#302B24; line-height:1.35; min-width:0; }
+.attn-row small, .attn-i small { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; font-weight:400; font-size:11.5px; line-height:1.4; }
+.attn-row small { color:#8a6f45; }
+.attn-row em { display:block; margin-top:3px; font-style:normal; font-size:12px; font-weight:700; color:#a3221b; }
+/* แยกตามด้านของงาน: แสดงเฉพาะด้านที่มีเรื่องค้าง กว้างตามจำนวนเรื่อง */
+.attn-cols { display:flex; flex-wrap:wrap; gap:8px; }
+.attn-col { min-width:0; display:grid; gap:6px; background:#fff; border:1px solid #EDE5D6; border-radius:12px; padding:7px; }
+.attn-col h4 { display:flex; align-items:center; gap:6px; font-size:12px; font-weight:700; color:#786443; padding:0 3px; }
+.attn-col h4 span { background:#f3ead8; color:#6b5226; border-radius:999px; font-size:11px; padding:0 7px; line-height:18px; }
+.attn-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(168px,1fr)); gap:6px; }
+.attn-i { display:grid; grid-template-columns:auto 1fr; gap:0 10px; align-items:center; text-align:left; border-radius:9px; padding:7px 10px 7px 8px; background:#fdfbf6; border:1px solid #EFE7D7; border-left:4px solid #c9b48a; transition:border-color .12s; }
 .attn-i:hover { border-color:#b89560; }
-.attn-i b { grid-row:span 2; font-size:22px; font-variant-numeric:tabular-nums; min-width:32px; text-align:center; }
-.attn-i span { font-size:13px; font-weight:600; color:#302B24; line-height:1.35; }
-.attn-i small { font-size:11.5px; color:#A58E65; line-height:1.4; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
-.attn-i.crit { border-left:4px solid #c8475f; } .attn-i.crit b { color:#b3261e; }
-.attn-i.warn { border-left:4px solid #d08a1c; } .attn-i.warn b { color:#9a5b00; }
-.attn-i.ok { border-left:4px solid #3f8a63; opacity:.75; } .attn-i.ok b { color:#2f6b4f; }
+.attn-i b { font-size:19px; color:#5d4a2a; }
+.attn-i span { font-size:13px; font-weight:600; color:#302B24; line-height:1.35; min-width:0; }
+.attn-i small { color:#A58E65; }
+.attn-i.warn { border-left-color:#d08a1c; } .attn-i.warn b { color:#9a5b00; }
+@media (max-width:520px) { .attn-col { flex-basis:100% !important; } .attn-grid { grid-template-columns:1fr; } }
 .kgrid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px; }
 .kpi { display:flex; flex-direction:column; align-items:flex-start; gap:1px; text-align:left; border:1px solid #EDE5D6; border-radius:16px; padding:13px 16px; background:#fff; }
 .kpi.is-link { cursor:pointer; transition:border-color .12s, box-shadow .12s; } .kpi.is-link:hover { border-color:#b89560; box-shadow:0 6px 18px -12px #8b6e3e66; }
@@ -1980,7 +2011,7 @@ button.room-card:hover:not(.is-full):not(.is-closed) { border-color:#c9a96a; box
 .td-main { display:grid; grid-template-columns:44px minmax(0,1fr); align-items:center; gap:10px; padding:9px 4px; border-radius:10px; text-align:left; min-width:0; }
 .td-main:hover, .td-main:focus-visible { background:#faf6ee; outline:none; }
 .td-n { font-size:20px; font-weight:700; color:#2f2618; text-align:right; font-variant-numeric:tabular-nums; }
-.td-n.is-bad { color:#a3221b; }
+.td-n.is-bad { color:#a3221b; } .td-n.is-warn { color:#9a5b00; }
 .td-t { min-width:0; display:flex; flex-direction:column; font-size:14px; font-weight:500; color:#2f2618; line-height:1.45; }
 .td-t small { font-size:12px; font-weight:400; color:#8a7457; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
 .td-go { display:inline-flex; align-items:center; gap:2px; font-size:12.5px; font-weight:600; color:#73592f; border:1px solid #e3d3b2; border-radius:999px; padding:3px 6px 3px 12px; white-space:nowrap; background:#fff; }
@@ -2572,3 +2603,72 @@ input.is-ai { background:#fbf3df; border-color:#d9b46a; box-shadow:0 0 0 1px #d9
 .cs-list { list-style:none; margin:6px 0 0; padding:0; display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:8px; }
 .cs-list button { width:100%; text-align:left; display:flex; flex-direction:column; gap:1px; border:1px solid #EDE5D6; border-radius:12px; padding:9px 12px; background:#fff; }
 .cs-list button:hover { border-color:#c9a66b; } .cs-list b { font-size:13.5px; color:#302B24; } .cs-list span { font-size:13px; color:#5d4f38; } .cs-list small { font-size:12px; color:#8a7553; }
+
+/* แถบแจ้งเวอร์ชันใหม่หลัง deploy (components/UpdateBar) · ไว้ด้านบน ไม่บังแถบเมนูล่างของ KinApp */
+.update-bar { position:fixed; z-index:130; left:50%; transform:translateX(-50%); top:calc(12px + env(safe-area-inset-top,0px)); width:min(520px, calc(100vw - 24px));
+  display:flex; align-items:center; gap:10px; padding:10px 10px 10px 14px; border-radius:16px; background:#3a2d1b; color:#fff; box-shadow:0 14px 34px -12px #00000066; animation:kin-toast-in .22s ease-out; }
+.update-dot { flex:none; width:10px; height:10px; border-radius:50%; background:#e8c27a; box-shadow:0 0 0 4px #e8c27a33; }
+.update-text { flex:1; min-width:0; display:flex; flex-direction:column; line-height:1.35; } .update-text b { font-size:14px; font-weight:600; } .update-text small { font-size:12px; color:#e9dcc4; }
+.update-go { flex:none; padding:8px 14px; border-radius:10px; background:#e8c27a; color:#3a2d1b; font-size:13.5px; font-weight:700; }
+.update-later { flex:none; padding:8px 6px; font-size:12.5px; color:#e9dcc4; }
+@media print { .update-bar { display:none!important; } }
+
+/* เป้ายอดขายสาขา (ภาพรวม แท็บการเงิน) */
+.tgt { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:10px; }
+.tgt-row { border:1px solid #EDE5D6; border-radius:12px; padding:10px 12px; background:#fdfbf6; }
+.tgt-row.is-total { background:#fbf6ea; border-color:#e2d3b4; }
+.tgt-top { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:baseline; gap:2px 10px; font-size:13px; color:#786443; }
+.tgt-top b { color:#302B24; font-size:14px; }
+.tgt-top strong { color:#302B24; font-variant-numeric:tabular-nums; }
+.tgt-top em { font-style:normal; font-weight:700; color:#8a6420; margin-left:4px; }
+.tgt-bar { margin-top:7px; height:10px; border-radius:999px; background:#efe6d4; overflow:hidden; }
+.tgt-bar span { display:block; height:100%; border-radius:999px; background:#b89560; transition:width .3s; }
+.tgt-row.is-hit .tgt-bar span { background:#3f8a63; } .tgt-row.is-hit .tgt-top em { color:#2f6b4f; }
+.tgt-row.is-none .tgt-bar span { background:transparent; }
+.tgt-note { margin-top:5px; font-size:12px; color:#8a6f45; }
+.tgt-row.is-hit .tgt-note { color:#2f6b4f; }
+.tgt-empty { grid-column:1/-1; font-size:13px; color:#8a6f45; background:#fbf8f1; border:1px dashed #e2d3b4; border-radius:10px; padding:10px 12px; }
+.tgt-form { display:grid; gap:8px; }
+.tgt-form label { display:grid; grid-template-columns:1fr 180px; align-items:center; gap:10px; font-size:14px; color:#302B24; }
+.tgt-form label small { display:block; font-size:11.5px; color:#A58E65; }
+.tgt-form input { text-align:right; font-variant-numeric:tabular-nums; }
+@media (max-width:520px) { .tgt { grid-template-columns:1fr; } .tgt-form label { grid-template-columns:1fr 140px; } }
+
+/* ตั้งเป้าหมาย: ด้านซ้ายเลือกค่าเริ่มต้น/สาขา · ด้านขวาเป้าแยก 3 หมวด แถวละ 1 เป้า */
+.tg { display:grid; grid-template-columns:210px 1fr; gap:16px; }
+.tg.is-single { grid-template-columns:1fr; }
+.tg-nav { display:flex; flex-direction:column; gap:4px; border-right:1px solid #EFE7D7; padding-right:12px; }
+.tg-nav-h { margin:8px 4px 2px; font-size:11px; font-weight:700; color:#A58E65; letter-spacing:.02em; }
+.tg-nav button { display:grid; text-align:left; gap:0; border-radius:10px; padding:6px 10px; border:1px solid transparent; transition:background .12s; }
+.tg-nav button:hover { background:#faf5ec; }
+.tg-nav button b { font-size:13.5px; font-weight:600; color:#302B24; }
+.tg-nav button small { font-size:11.5px; color:#A58E65; }
+.tg-nav button.is-own small { color:#2f6b4f; font-weight:600; }
+.tg-nav button.is-on { background:#f6eedd; border-color:#e2d3b4; }
+.tg-nav button.is-on b { color:#6b4f1e; }
+.tg-body { display:grid; grid-template-columns:repeat(auto-fit,minmax(330px,1fr)); gap:12px 14px; align-items:start; min-width:0; }
+.modal-panel:has(.tg:not(.is-single)) { max-width:1020px; }
+.tg-intro { grid-column:1/-1; font-size:12.5px; color:#786443; background:#fbf8f1; border-radius:10px; padding:8px 12px; } .tg-intro b { color:#302B24; font-weight:600; margin:0 2px; }
+.tg-group { display:grid; gap:4px; }
+.tg-group h4 { font-size:12px; font-weight:700; color:#8a6a35; margin:2px 0 4px; }
+.tg-row { display:grid; grid-template-columns:1fr auto; grid-template-areas:"l i"; align-items:center; gap:0 14px; padding:5px 8px 5px 12px; border-radius:10px; border:1px solid #F1EADC; border-left:3px solid #F1EADC; background:#fff; }
+.tg-row.is-set { border-left-color:#b89560; background:#fdfaf3; }
+.tg-row label { grid-area:l; display:grid; gap:1px; cursor:pointer; }
+.tg-row label b { font-size:13.5px; font-weight:600; color:#302B24; }
+.tg-row label small { font-size:11.5px; color:#A58E65; }
+.tg-in { grid-area:i; display:flex; align-items:center; gap:6px; }
+.tg-in input { width:96px !important; min-height:34px !important; padding:5px 10px !important; text-align:right; font-variant-numeric:tabular-nums; font-weight:600; }
+.tg-in input::placeholder { font-weight:400; color:#c4b292; }
+.tg-in span { font-size:12px; color:#8a6f45; min-width:2.2em; }
+.tg-reset { width:26px; height:26px; display:inline-grid; place-items:center; border-radius:8px; color:#8a6a35; font-size:15px; }
+button.tg-reset:hover { background:#f3ead8; }
+.modal-panel:has(.tg) .modal-footer > button { white-space:nowrap; }
+.tg-clear { margin-right:auto; }
+@media (max-width:640px) {
+  .modal-panel:has(.tg) .modal-footer { flex-wrap:wrap; }
+  .tg-clear { order:3; flex-basis:100%; margin-right:0; }
+  .tg { grid-template-columns:1fr; }
+  .tg-nav { flex-direction:row; overflow-x:auto; border-right:0; border-bottom:1px solid #EFE7D7; padding:0 0 8px; }
+  .tg-nav button { flex:0 0 auto; } .tg-nav-h { display:none; }
+  .tg-in input { width:78px !important; }
+}

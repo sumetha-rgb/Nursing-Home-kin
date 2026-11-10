@@ -25,11 +25,15 @@ export const fetchCache = "force-no-store";
  *  POST { op: "nudge", taskId, message? }           ตามงานที่ยังไม่ส่ง (ผู้มีสิทธิ์มอบหมายงาน) · ถึงผู้รับผิดชอบ หรือทุกคนในสาขาถ้ายังไม่มีผู้รับผิดชอบ
  *  POST { op: "nudge_reply", id, reason }            KinApp: ตอบว่าทำไม่ได้พร้อมเหตุผล
  *  feed (KinApp) มี nudges = งานที่ถูกตามและยังไม่ส่ง · เปิด feed = บันทึกว่าเห็นแล้ว
+ *  GET  ?op=targets&from=YYYY-MM&to=YYYY-MM        เป้ายอดขายรายเดือนของสาขา (ผู้มีเมนูภาพรวมหรือการเงิน · ผู้ที่ไม่ใช่ผู้บริหารเห็นเฉพาะสาขาตัวเอง)
+ *  POST { op: "targets", month, items: [{ branch, amount }] }   ตั้งเป้ายอดขาย (ผู้บริหาร Global Admin เท่านั้น) · amount 0/ว่าง = ลบเป้า
  */
 const bad = (msg: string, status = 400) => NextResponse.json({ error: msg }, { status });
 const scoped = (me: SessionUser) => me.role !== "Global Admin";
 const text = (v: unknown, max = 500) => (typeof v === "string" ? v.trim().slice(0, max) : "");
 const TH_TIME = (col: string) => `to_char(${col} AT TIME ZONE 'Asia/Bangkok', 'DD/MM HH24:MI')`;
+/** เดือน YYYY-MM */
+const YM = /^\d{4}-(0[1-9]|1[0-2])$/;
 const pct = (a: number, b: number) => (b ? Math.round((a / b) * 100) : 0);
 
 export async function GET(req: NextRequest) {
@@ -37,6 +41,14 @@ export async function GET(req: NextRequest) {
   if (!me) return unauthorized();
   const q = req.nextUrl.searchParams;
   try {
+    if (q.get("op") === "targets") {
+      if (!can(me, "dashboard") && !can(me, "billing")) return forbidden();
+      const from = q.get("from") ?? "", to = q.get("to") ?? "";
+      if (!YM.test(from) || !YM.test(to)) return bad("ช่วงเดือนไม่ถูกต้อง");
+      const items = await sql(`SELECT branch_name AS branch, month, amount::float AS amount, updated_by AS "by", to_char(updated_at AT TIME ZONE 'Asia/Bangkok', 'DD/MM/YYYY HH24:MI') AS at
+          FROM branch_targets WHERE month BETWEEN $1 AND $2 ${scoped(me) ? "AND branch_name = $3" : ""} ORDER BY month, branch_name`, scoped(me) ? [from, to, me.branch] : [from, to]);
+      return NextResponse.json({ items, canEdit: !scoped(me) });
+    }
     if (q.get("op") === "feed") {
       const kudos = await sql(`SELECT task_title, resident_name, given_by, ${TH_TIME("created_at")} AS at FROM kudos WHERE staff_name = $1 ORDER BY created_at DESC LIMIT 5`, [me.name]);
       const cheers = await sql(`SELECT message, sent_by, ${TH_TIME("created_at")} AS at FROM branch_cheers WHERE branch_name = $1 AND created_at > now() - interval '7 days' ORDER BY created_at DESC LIMIT 3`, [me.branch]);
@@ -157,6 +169,27 @@ export async function POST(req: NextRequest) {
   if (!me) return unauthorized();
   const b = (await req.json().catch(() => ({}))) as Record<string, unknown>;
   try {
+    if (b.op === "targets") {
+      if (scoped(me)) return forbidden("ตั้งเป้ายอดขายได้เฉพาะผู้บริหาร");
+      const month = text(b.month, 7);
+      if (!YM.test(month)) return bad("เดือนไม่ถูกต้อง");
+      const items = (Array.isArray(b.items) ? b.items : []).slice(0, 50)
+        .map((x: { branch?: unknown; amount?: unknown }) => ({ branch: text(x.branch, 100), amount: Math.round(Number(x.amount) * 100) / 100 }))
+        .filter((x) => x.branch && Number.isFinite(x.amount) && x.amount >= 0 && x.amount < 1e12);
+      if (!items.length) return bad("ไม่มีเป้าที่จะบันทึก");
+      const before = (await sql(`SELECT branch_name AS branch, amount::float AS amount FROM branch_targets WHERE month = $1`, [month])) as { branch: string; amount: number }[];
+      const prev = new Map(before.map((r) => [r.branch, r.amount]));
+      const changed = items.filter((x) => (prev.get(x.branch) ?? 0) !== x.amount);
+      if (!changed.length) return NextResponse.json({ ok: true, changed: 0 });
+      await sql.transaction(changed.map((x) => x.amount > 0
+        ? sql`INSERT INTO branch_targets (branch_name, month, amount, updated_by) VALUES (${x.branch}, ${month}, ${x.amount}, ${me.name})
+            ON CONFLICT (branch_name, month) DO UPDATE SET amount = EXCLUDED.amount, updated_by = EXCLUDED.updated_by, updated_at = now()`
+        : sql`DELETE FROM branch_targets WHERE branch_name = ${x.branch} AND month = ${month}`));
+      await audit(req, me, changed.map((x) => ({ area: "branch_targets", action: x.amount > 0 ? "update" : "delete", recordId: `${x.branch}|${month}`, branch: x.branch,
+        summary: `เป้ายอดขาย ${x.branch} เดือน ${month}: ${(prev.get(x.branch) ?? 0).toLocaleString("en-US")} → ${x.amount.toLocaleString("en-US")} บาท`,
+        before: prev.has(x.branch) ? { amount: prev.get(x.branch) } : undefined, after: x.amount > 0 ? { amount: x.amount } : undefined })));
+      return NextResponse.json({ ok: true, changed: changed.length });
+    }
     if (b.op === "kudos") {
       if (!can(me, "dashboard") && !can(me, "tasks.review")) return forbidden("บัญชีนี้ไม่มีสิทธิ์ชื่นชมงาน");
       const [t] = (await sql`SELECT id, task_name, resident_name, branch_name, done_by FROM daily_tasks WHERE id = ${String(b.taskId ?? "")}`) as Record<string, string>[];

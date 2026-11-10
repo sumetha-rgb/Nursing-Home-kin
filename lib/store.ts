@@ -193,6 +193,8 @@ async function refresh(key: string) {
   inflight.set(key, p);
   await p;
 }
+/** ข้อมูลที่โหลดไม่เกินเท่านี้ถือว่ายังใหม่ (เปิดหน้าซ้ำ / fetchKey ใช้ของเดิม) */
+const FRESH_MS = 15_000;
 /** ผู้ใช้ไม่ได้แตะหน้าจอเกิน 5 นาที = หยุดดึงอัตโนมัติ (ขยับ/แตะอีกครั้งจะดึงทันที) */
 const IDLE_MS = 5 * 60_000;
 let lastTouch = Date.now();
@@ -221,6 +223,9 @@ if (isBrowser) {
  *  มีในเครื่องแล้ว = ดึงใหม่จากฐานข้อมูลก่อน (ได้ข้อมูลล่าสุด) · ดึงไม่ได้ใช้ของในเครื่อง · ไม่ seed ข้อมูลตัวอย่าง
  */
 export async function fetchKey<T>(key: string): Promise<T[]> {
+  // หน้าจอเพิ่งโหลดชุดนี้ไม่เกิน 15 วินาที (และไม่มีรายการรอส่ง) = ใช้ของเดิม ไม่ต้องถามฐานข้อมูลซ้ำ
+  const cur = store.get(key);
+  if (cur?.loaded && !cur.error && !stale.has(key) && Date.now() - (fetchedAt.get(key) ?? 0) <= FRESH_MS && !outbox.some((o) => o.key === key)) return cur.items.map((x) => x.data as T);
   try {
     const r = await call(key);
     return r.items.map((x) => x.data as T);
@@ -237,8 +242,8 @@ function useEntry<T>(key: string, initial: () => Item<T>[]) {
   useEffect(() => {
     load(key, initial);
     mounted.set(key, (mounted.get(key) ?? 0) + 1);
-    // เปิดหน้านี้อีกครั้ง: ข้อมูลเก่ากว่า 5 วินาที ดึงใหม่
-    if (store.get(key)?.loaded && Date.now() - (fetchedAt.get(key) ?? 0) > 5000) refresh(key);
+    // เปิดหน้านี้อีกครั้ง: ข้อมูลเก่ากว่า 15 วินาที ดึงใหม่ (สลับหน้าไปมาไม่ต้องโหลดซ้ำ · หน้าที่เปิดอยู่ยังดึงใหม่ทุก 20 วินาที)
+    if (store.get(key)?.loaded && Date.now() - (fetchedAt.get(key) ?? 0) > FRESH_MS) refresh(key);
     return () => { mounted.set(key, (mounted.get(key) ?? 1) - 1); };
   }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
   return useSyncExternalStore(subscribe, () => store.get(key) ?? EMPTY, () => EMPTY) as { items: Item<T>[]; loaded: boolean; error: boolean };

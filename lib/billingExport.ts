@@ -14,6 +14,8 @@ export type PaidDay = { branch: string; date: string; amount: number };
 export function usePaidDays(from: string, sig: unknown): PaidDay[] | null {
   const [rows, setRows] = useState<PaidDay[] | null>(null);
   useEffect(() => {
+    // sig = undefined: ใบแจ้งหนี้ยังโหลดไม่เสร็จ รอก่อน (กันดึงซ้ำ 2 รอบตอนเปิดหน้า)
+    if (sig === undefined) return;
     let live = true;
     fetch(`/api/billing?op=paid_days&from=${encodeURIComponent(from)}`, { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : null))
