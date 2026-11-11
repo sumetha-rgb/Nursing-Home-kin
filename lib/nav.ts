@@ -1,4 +1,4 @@
-export type ViewId = "careplan"|"contracts"|"residents"|"tasks_table"|"tasks"|"appointments"|"health_logs"|"feedbacks"|"dashboard"|"official-docs"|"branches"|"staff"|"facility_tasks"|"master_tasks"|"quotations"|"audit"|"roster"|"reviews"|"kpi"|"tutorials"|"rooms"|"billing"|"prices"|"exports";
+export type ViewId = "careplan"|"contracts"|"residents"|"tasks_table"|"tasks"|"appointments"|"health_logs"|"feedbacks"|"dashboard"|"official-docs"|"branches"|"staff"|"facility_tasks"|"master_tasks"|"quotations"|"audit"|"roster"|"reviews"|"kpi"|"tutorials"|"rooms"|"billing"|"prices"|"exports"|"physio";
 /** กลุ่มเมนู: 4 บริหาร · 0 งานดูแล · 1 ขายและการเงิน · 3 ทีมงาน · 2 เครื่องมือและระบบ (ลำดับที่แสดงอยู่ที่ GROUPS ใน Shell.tsx) */
 export type NavGroup = 0|1|2|3|4;
 export type NavItem = {kind:"view";id:ViewId;label:string;icon:string;group:NavGroup}|{kind:"link";href:string;label:string;icon:string;group:NavGroup;perm:"app.staff"|"app.pharmacy"};
@@ -11,6 +11,7 @@ export const NAV:NavItem[]=[
 {kind:"view",id:"rooms",label:"ห้องพักและเตียง",icon:"bed",group:0},
 {kind:"view",id:"tasks",label:"มอบหมายและตรวจงาน",icon:"check",group:0},
 {kind:"view",id:"roster",label:"ตารางเวร",icon:"clock",group:0},
+{kind:"view",id:"physio",label:"ตารางกายภาพ",icon:"pulse",group:0},
 {kind:"view",id:"appointments",label:"ตารางนัดหมาย",icon:"calendar",group:0},
 {kind:"view",id:"health_logs",label:"บันทึกสุขภาพ",icon:"heart",group:0},
 {kind:"view",id:"feedbacks",label:"เสียงจากครอบครัว",icon:"chat",group:0},

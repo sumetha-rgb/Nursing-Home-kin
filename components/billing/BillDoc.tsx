@@ -103,11 +103,14 @@ export default function BillDoc({ inv, branch, format, copy, slips = [], payment
 
   // ทั้งสองแบบใช้กรอบเดียวกัน · สำหรับผู้ชำระ: ซ่อนคอลัมน์ส่วนลดที่ไม่มี (VAT แจกแจงที่แถวสรุปด้านล่างเท่านั้น) แสดงยอดสะสม/คงเหลือของการชำระเป็นงวด และหมายเหตุ
   const cust = format === "customer";
+  /** ใบเสร็จรับเงิน (รับเงินแล้ว: รายงวด หรือชำระครบ) ฉบับผู้ชำระ = ตารางรายการแบบเดียวกับฉบับฝ่ายการเงิน (ทุกบรรทัด · รหัส · ส่วนลด) · ใบแจ้งหนี้ยังสรุปตามหมวด + หน้า 2 */
+  const receipt = !cn && paid && (!!payment || full);
+  const asFin = !cust || receipt;
   const anyDisc = sale.some((i) => lineDiscount(i) > 0);
   // ไม่มีคอลัมน์ VAT ในรายการ: แจกแจง VAT เฉพาะแถวสรุปด้านล่าง (มูลค่าก่อน VAT / VAT / ไม่มี VAT)
-  const colDisc = !cust || anyDisc;
-  // รหัสจากหน้าราคา: เฉพาะใบฝ่ายการเงิน (คอลัมน์ "รหัส") · ใบที่ให้ผู้ชำระไม่แสดงรหัส
-  const colCode = !cust;
+  const colDisc = asFin || anyDisc;
+  // รหัสจากหน้าราคา (คอลัมน์ "รหัส"): ใบฝ่ายการเงิน และใบเสร็จรับเงินทั้งสองฉบับ · ใบแจ้งหนี้ให้ผู้ชำระไม่แสดงรหัส
+  const colCode = asFin;
   const cols = [["ลำดับ", "NO."], ...(colCode ? [["รหัส", "CODE"]] : []), ["รายการ", "DESCRIPTION"], ...(colDisc ? [["จำนวนเงิน", "AMOUNT"], ["ส่วนลด", "DISCOUNT"]] : []), [colDisc ? "คงเหลือ" : "จำนวนเงิน", colDisc ? "NET AMOUNT" : "AMOUNT"]];
   const lead = colCode ? 2 : 1, blank = cols.length - lead - 1;
   /** หน้าแรกของใบสำหรับผู้ชำระ: ยอดตามหมวด (เงินประกัน / มัดจำ แยกบรรทัดของตัวเอง) · ใบลดหนี้แสดงรายการเหมือนเดิม */
@@ -120,8 +123,8 @@ export default function BillDoc({ inv, branch, format, copy, slips = [], payment
     })),
     ...byGrp("dep").map((i, k) => ({ key: `dep${k}`, th: i.desc, en: "", amount: lineAmount(i), discount: lineDiscount(i) })),
   ];
-  /** หน้า 2 รายละเอียดค่าบริการ: เฉพาะใบสำหรับผู้ชำระ (ไม่ใช่ใบลดหนี้) */
-  const showDetail = cust && !cn && sale.length > 0;
+  /** หน้า 2 รายละเอียดค่าบริการ: เฉพาะใบแจ้งหนี้สำหรับผู้ชำระ (ใบเสร็จแสดงรายการครบในหน้าแรกแล้ว · ไม่ใช่ใบลดหนี้) */
+  const showDetail = cust && !cn && !receipt && sale.length > 0;
   /** แถวสรุปใต้รายการ: ข้อความอยู่ช่องรายการ ยอดอยู่ช่องขวาสุด */
   const sumRow = (key: string, label: ReactNode, v: ReactNode) => <tr key={key} className="bill-vat-row">{Array.from({ length: lead }, (_, k) => <td key={`l${k}`} />)}<td className="bill-desc">{label}</td>{Array.from({ length: blank - 1 }, (_, k) => <td key={k} />)}<td>{v}</td></tr>;
   return (
@@ -150,7 +153,7 @@ export default function BillDoc({ inv, branch, format, copy, slips = [], payment
         <table className="bill-table bill-table2">
           <thead><tr>{cols.map(([th, en]) => <th key={th}>{th}{en && <><br />{en}</>}</th>)}</tr></thead>
           <tbody>
-            {cust && groups ? groups.map((g, k) => <tr key={g.key}>
+            {!asFin && groups ? groups.map((g, k) => <tr key={g.key}>
               <td>{k + 1}</td><td className="bill-desc"><b className="font-semibold">{g.th}</b></td>
               {colDisc && <><td>{money(g.amount)}</td><td>{g.discount ? money(g.discount) : "-"}</td></>}
               <td>{money(g.amount - g.discount)}</td>

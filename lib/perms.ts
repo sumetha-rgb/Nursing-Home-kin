@@ -6,14 +6,14 @@
 import type { ViewId } from "./nav";
 import type { Role } from "./roles";
 
-export type Perm = ViewId | "rooms.manage" | "rooms.move" | "contracts.delete" | "invoices.void" | "tasks.review" | "app.staff" | "app.pharmacy";
+export type Perm = ViewId | "rooms.manage" | "rooms.move" | "contracts.delete" | "invoices.void" | "tasks.review" | "physio.record" | "physio.assign" | "app.staff" | "app.pharmacy";
 type Item = { id: Perm; label: string; hint?: string };
 
 export const PERM_GROUPS: { title: string; items: Item[] }[] = [
   { title: "เมนูงานดูแล", items: [
     { id: "careplan", label: "งานวันนี้" }, { id: "residents", label: "ผู้รับบริการ", hint: "ดู/แก้ทะเบียนและประวัติผู้รับบริการ" },
     { id: "rooms", label: "ห้องพักและเตียง", hint: "ดูห้องว่างและคนในห้อง" }, { id: "tasks", label: "มอบหมายและตรวจงาน" }, { id: "roster", label: "ตารางเวร" },
-    { id: "appointments", label: "ตารางนัดหมาย" }, { id: "health_logs", label: "บันทึกสุขภาพ" }, { id: "feedbacks", label: "เสียงจากครอบครัว" },
+    { id: "physio", label: "ตารางกายภาพ", hint: "ดูเคสและตารางของนักกายภาพ" }, { id: "appointments", label: "ตารางนัดหมาย" }, { id: "health_logs", label: "บันทึกสุขภาพ" }, { id: "feedbacks", label: "เสียงจากครอบครัว" },
   ] },
   { title: "เมนูขายและการเงิน", items: [
     { id: "prices", label: "ราคาสินค้าและบริการ", hint: "ดูราคากลาง · ผู้จัดการสาขาและผู้บริหารแก้ราคาและรหัสได้" },
@@ -34,6 +34,8 @@ export const PERM_GROUPS: { title: string; items: Item[] }[] = [
     { id: "rooms.move", label: "จัดคนเข้าห้อง / ย้ายห้อง", hint: "ห้องเต็มย้ายเข้าไม่ได้" },
     { id: "rooms.manage", label: "สร้าง/แก้/ลบห้อง และกำหนดจำนวนผู้ป่วยต่อห้อง" },
     { id: "tasks.review", label: "ตรวจงาน ให้ดาว และตั้งงานประจำ" },
+    { id: "physio.record", label: "บันทึกกายภาพ (ตัดคอร์ส)", hint: "นักกายภาพ · คนที่ไม่มีสิทธิ์อ่านบันทึกได้อย่างเดียว" },
+    { id: "physio.assign", label: "จ่ายเคสกายภาพ", hint: "ผู้จัดการสาขาและฝ่ายขาย · เลือกนักกายภาพ วัน และเวลาของแต่ละคอร์ส" },
     { id: "contracts.delete", label: "ลบสัญญา" },
     { id: "invoices.void", label: "ยกเลิกใบแจ้งหนี้ / ใบเสร็จ" },
   ] },
@@ -53,9 +55,11 @@ const TOOLS: Perm[] = ["tasks_table", "facility_tasks", "master_tasks", "officia
 export const ROLE_PERMS: Record<Role, Perm[]> = {
   "Global Admin": ALL_PERMS,
   "Branch Admin": ALL_PERMS,
-  "Head Nurse": [...CARE, "rooms.move", "rooms.manage", "tasks.review", ...TOOLS, "app.staff", "app.pharmacy"],
-  Cashier: ["contracts", "billing", "rooms", "contracts.delete", "prices"],
+  "Head Nurse": [...CARE, "physio", "rooms.move", "rooms.manage", "tasks.review", ...TOOLS, "app.staff", "app.pharmacy"],
+  // แคชเชียร์ = ฝ่ายขาย: ขายคอร์สกายภาพและจ่ายเคสให้นักกายภาพ (ร่วมกับผู้จัดการสาขา)
+  Cashier: ["contracts", "billing", "rooms", "contracts.delete", "prices", "physio", "physio.assign"],
   Nurse: ["app.staff", "app.pharmacy"],
+  Physio: ["app.staff", "physio.record"],
 };
 
 /** สิทธิ์จริงของบัญชี */

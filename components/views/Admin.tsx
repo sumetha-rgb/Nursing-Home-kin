@@ -167,7 +167,7 @@ export function Staff() {
           { label: "ลบบัญชี", danger: true, more: true, onClick: (n) => { const u = shown[n]; confirm({ title: "ลบบัญชีสมาชิก", message: `ต้องการลบบัญชี ${u.full_name} ใช่หรือไม่ บัญชีนี้จะเข้าสู่ระบบไม่ได้อีก`, danger: true, okLabel: "ลบบัญชี", onOk: () => { run({ action: "delete", id: u.id }, "ลบบัญชีเรียบร้อย"); } }); } },
         ]} />
     </Section>
-    <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-5">{[...ROLES].reverse().map((r) => <div key={r} className="rounded-xl border border-cream-200 bg-cream-100/50 p-4"><p className="text-sm font-medium text-gold-800">{ROLE_INFO[r].th}</p><p className="mt-1 text-xs leading-6 text-gold-600">{ROLE_INFO[r].sees}</p></div>)}</div>
+    <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{[...ROLES].reverse().map((r) => <div key={r} className="rounded-xl border border-cream-200 bg-cream-100/50 p-4"><p className="text-sm font-medium text-gold-800">{ROLE_INFO[r].th}</p><p className="mt-1 text-xs leading-6 text-gold-600">{ROLE_INFO[r].sees}</p></div>)}</div>
     <PermDialog user={perm} me={me} onClose={() => setPerm(null)}
       onSave={async (list) => { if (perm && await run({ action: "permissions", id: perm.id, permissions: list }, list ? `บันทึกสิทธิ์ของ ${perm.full_name} แล้ว` : `${perm.full_name} กลับไปใช้สิทธิ์ตามตำแหน่งแล้ว`)) setPerm(null); }} />
     <FormDialog open={!!dlg} mode={dlg?.mode ?? "add"} title={dlg?.mode === "edit" ? "แก้ไขสมาชิกทีม" : "สร้างบัญชีสมาชิกทีม KIN"} fields={fields}

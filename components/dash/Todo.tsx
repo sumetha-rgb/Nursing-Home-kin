@@ -13,6 +13,12 @@ export type HomeData = {
   unclosed?: { date: string; branch: string }[]; monthDue?: { no: string; name: string; due: string }[]; deposit?: { no: string; name: string; billed: boolean }[];
   stock?: { meds: number; supplies: number; central: number }; noRoom?: { name: string }[]; checkin?: { name: string; shift: string }[];
   rosterGap?: { n: number; first: string | null; soon: number; branches: number };
+  /** คอร์สกายภาพที่ยังไม่มีผู้รับผิดชอบ (คนที่มีสิทธิ์จ่ายเคส) */
+  physioOpen?: { name: string }[];
+  /** เมื่อวานมีนัดกายภาพแต่ไม่มีบันทึก */
+  physioMissed?: { name: string; who: string }[];
+  /** คอร์สกายภาพเหลือ 1–2 ครั้ง */
+  physioLow?: { name: string; left: number }[];
 };
 /** urgent = ด่วน (แดง) · top = ขึ้นก่อนทุกเรื่องเมื่อมีค้าง · open = ทำก่อนไปหน้านั้น (เปิดตัวกรอง/หน้าต่าง) */
 /** short / meta = ชื่อสั้นและตัวเลขสำคัญ 1 อย่าง สำหรับแถบ "ต้องจัดการ" (การ์ดหน้าแรกใช้ title / detail เต็ม) */
@@ -22,13 +28,13 @@ export type TodoItem = { key: string; title: string; short: string; meta?: strin
 
 /** ด้านของงาน (ใช้ทั้งหน้าแรกและแถบต้องจัดการ) · ตำแหน่งที่ไม่มีสิทธิ์ด้านนั้นจะไม่เห็นกล่อง */
 export const TODO_AREAS = [
-  { name: "การดูแลและทีม", keys: ["alerts", "late", "review", "gap", "checkin"] },
-  { name: "การเงิน", keys: ["bills", "debt60", "unclosed", "monthDue", "drafts", "courses", "deposit", "physio"] },
+  { name: "การดูแลและทีม", keys: ["alerts", "late", "review", "gap", "checkin", "physioCase", "physioMissed"] },
+  { name: "การเงิน", keys: ["bills", "debt60", "unclosed", "monthDue", "drafts", "courses", "deposit", "physio", "physioLow"] },
   { name: "ห้อง ยา และคลัง", keys: ["room", "stock"] },
 ];
 /** ปุ่มสั้นด้านขวาของแต่ละเรื่อง */
 export const TODO_ACT: Record<string, string> = {
-  alerts: "ดูรายการ", late: "ตามงาน", review: "ตรวจงาน", gap: "จัดเวร", checkin: "ดูเวร", bills: "รับชำระ", debt60: "ดูลูกหนี้", unclosed: "ปิดยอด",
+  alerts: "ดูรายการ", physioCase: "จ่ายเคส", physioMissed: "ดูงาน", physioLow: "เสนอต่อ", late: "ตามงาน", review: "ตรวจงาน", gap: "จัดเวร", checkin: "ดูเวร", bills: "รับชำระ", debt60: "ดูลูกหนี้", unclosed: "ปิดยอด",
   monthDue: "ออกใบ", drafts: "ตรวจยอด", courses: "ออกใบ", deposit: "ดูสัญญา", physio: "ใส่ราคา", room: "จัดห้อง", stock: "ห้องยา",
 };
 
@@ -67,12 +73,23 @@ export function buildTodos(d: HomeData, user: SessionUser | null | undefined): T
     c.push({ key: "monthDue", short: "ครบรอบบิล", meta: m.length ? `ครบแล้ว ${late} · ใน 7 วัน ${m.length - late}` : undefined, title: "ครบรอบบิล ยังไม่ออกใบ", brief: m.length ? (m.length === 1 ? who[0] : `${who[0]} และอีก ${m.length - 1} สัญญา`) : undefined, n: m.length, unit: "สัญญา", detail: m.length ? `ครบรอบตามวันเริ่มสัญญาแล้ว ${late} สัญญา · จะครบใน 7 วัน ${m.length - late} สัญญา · ${who.slice(0, 3).join(", ")}${m.length > 3 ? ` และอีก ${m.length - 3} สัญญา` : ""}` : "ออกใบครบทุกรอบบิลแล้ว", cta: "ไปออกใบรายเดือน", urgent: late > 0, warn: true, view: "billing" });
   }
   if (d.drafts !== undefined) c.push({ key: "drafts", short: "ใบรอตรวจยอด", title: "ใบแจ้งหนี้รอตรวจสอบยอด", n: d.drafts, unit: "ใบ", detail: d.drafts ? "ออกจากสัญญาอัตโนมัติ · ตรวจรายการแล้วกด ยืนยันยอด จึงรับชำระได้" : "ไม่มีใบรอตรวจสอบ", cta: "ไปตรวจยอด", view: "billing" });
-  if (d.courses !== undefined) c.push({ key: "courses", short: "คอร์สรอออกใบ", title: "คอร์สกายภาพรอออกใบ", n: d.courses, unit: "คอร์ส", detail: d.courses ? "ซื้อคอร์สแล้วแต่ยังไม่ออกใบแจ้งหนี้ · นักกายภาพยังใช้คอร์สไม่ได้จนกว่าจะออกใบ" : "ไม่มีคอร์สรอออกใบ", cta: "ไปออกใบ", view: "billing" });
+  if (d.courses !== undefined) c.push({ key: "courses", short: "คอร์สรอออกใบ", title: "คอร์สกายภาพรอออกใบ", n: d.courses, unit: "คอร์ส", detail: d.courses ? "ซื้อคอร์สแล้วแต่ยังไม่ออกใบแจ้งหนี้ · นักกายภาพเริ่มทำได้แล้ว อย่าลืมออกใบเรียกเก็บ" : "ไม่มีคอร์สรอออกใบ", cta: "ไปออกใบ", view: "billing" });
   if (d.deposit) {
     const nb = d.deposit.filter((x) => !x.billed).length, first = d.deposit[0];
     c.push({ key: "deposit", short: "รอชำระมัดจำ", title: "สัญญารอชำระมัดจำ", brief: first ? `${first.name}${d.deposit.length > 1 ? ` และอีก ${d.deposit.length - 1} สัญญา` : ""}` : undefined, n: d.deposit.length, unit: "สัญญา", detail: first ? `${first.no} · ${first.name}${d.deposit.length > 1 ? ` และอีก ${d.deposit.length - 1} สัญญา` : ""}${nb ? ` · ยังไม่มีใบแจ้งหนี้ ${nb} สัญญา` : ""}` : "ไม่มีสัญญารอชำระ", cta: nb ? "ออกใบแจ้งหนี้" : "ไปที่สัญญาบริการ", view: "contracts" });
   }
   if (d.physio !== undefined) c.push({ key: "physio", short: "กายภาพรอราคา", title: "กายภาพรอกำหนดราคา", n: d.physio, unit: "ครั้ง", detail: d.physio ? "ทำไปแล้วโดยยังไม่มีคอร์ส · ใส่ราคาแล้วดึงเข้าใบแจ้งหนี้" : "ไม่มีรายการรอราคา", cta: "ไปที่ใบแจ้งหนี้และใบเสร็จ", view: "billing" });
+  if (d.physioMissed) {
+    const m = d.physioMissed, who = [...new Set(m.map((x) => x.who))];
+    c.push({ key: "physioMissed", short: "กายภาพเมื่อวานไม่ได้ทำ", title: "นัดกายภาพเมื่อวานที่ไม่มีบันทึก", brief: m.length ? `${namesOf(m.map((x) => x.name))} · ${who.slice(0, 2).join(", ")}` : undefined, n: m.length, unit: "นัด",
+      detail: m.length ? `${m.slice(0, 3).map((x) => `${x.name} (${x.who})`).join(", ")}${m.length > 3 ? ` และอีก ${m.length - 3} นัด` : ""} · ดูรายละเอียดที่ติดตามการส่งงาน` : "นัดเมื่อวานบันทึกครบแล้ว", cta: "ไปที่ตารางกายภาพ", warn: true, view: "physio" });
+  }
+  if (d.physioLow) {
+    const l = d.physioLow;
+    c.push({ key: "physioLow", short: "คอร์สกายภาพใกล้หมด", title: "คอร์สกายภาพใกล้หมด (เหลือ 1–2 ครั้ง)", brief: l.length ? namesOf(l.map((x) => x.name)) : undefined, n: l.length, unit: "คอร์ส",
+      detail: l.length ? `${l.slice(0, 3).map((x) => `${x.name} (เหลือ ${x.left} ครั้ง)`).join(", ")}${l.length > 3 ? ` และอีก ${l.length - 3} คอร์ส` : ""} · แจ้งญาติเรื่องต่อคอร์สก่อนครบ` : "ไม่มีคอร์สใกล้หมด", cta: "ไปที่ตารางกายภาพ", view: "physio" });
+  }
+  if (d.physioOpen) { const ps = d.physioOpen.map((x) => x.name); c.push({ key: "physioCase", short: "เคสกายภาพรอจ่าย", title: "เคสกายภาพยังไม่มีผู้รับผิดชอบ", brief: namesOf(ps), n: ps.length, unit: "เคส", detail: ps.length ? `${namesOf(ps, 3)} · เลือกนักกายภาพ วัน และเวลา ที่เมนูตารางกายภาพ` : "ทุกเคสมีนักกายภาพรับผิดชอบแล้ว", cta: "ไปที่ตารางกายภาพ", warn: true, view: "physio" }); }
   if (d.noRoom) { const nr = d.noRoom.map((x) => x.name); c.push({ key: "room", short: "รอจัดห้อง", title: "ผู้รับบริการที่ยังไม่มีห้อง", brief: namesOf(nr), n: nr.length, unit: "คน", detail: nr.length ? `${namesOf(nr, 4)} · จัดห้องและเตียงให้ (คนที่จองห้องไว้แล้วอยู่ในเรื่องรอชำระมัดจำ)` : "ทุกคนมีห้องแล้ว", cta: "ไปที่ห้องพักและเตียง", view: "rooms" }); }
   if (d.stock) {
     const s = d.stock, n = s.meds + s.supplies + s.central;

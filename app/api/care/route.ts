@@ -222,6 +222,8 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ routines: rows });
       }
       case "alerts": {
+        // นักกายภาพไม่รับแจ้งเตือนสัญญาณชีพ (งานพยาบาล) · กระดิ่งของนักกายภาพแสดงเฉพาะงานกายภาพของตัวเอง
+        if (me.role === "Physio") return NextResponse.json({ alerts: [] });
         const rows = await sql(
           `SELECT id, area, record_id, resident_id, resident_name, branch_name, level, summary, vital_text, created_by,
                   to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') AS created_at
@@ -398,6 +400,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, added });
   }
   if (b.op !== "ack") return bad("unknown op");
+  if (me.role === "Physio") return forbidden("การรับทราบสัญญาณชีพผิดปกติเป็นงานของพยาบาล");
   const [a] = (await sql`SELECT id, branch_name, resident_name, summary, status FROM care_alerts WHERE id = ${String(b.id)}`) as Record<string, string>[];
   if (!a) return bad("ไม่พบแจ้งเตือนนี้", 404);
   if (scoped(me) && a.branch_name !== me.branch) return forbidden();

@@ -33,7 +33,7 @@ const SHARE_MS = 30_000;
 const shared = new Map<string, { at: number; p: Promise<Record<string, unknown>> }>();
 export function attention(me: SessionUser, br: string | null) {
   const flags = [can(me, "tasks") || can(me, "tasks.review"), can(me, "health_logs") || can(me, "residents"), can(me, "billing"), can(me, "contracts") || can(me, "billing"),
-    can(me, "residents") || can(me, "app.pharmacy"), can(me, "rooms"), can(me, "roster")];
+    can(me, "residents") || can(me, "app.pharmacy"), can(me, "rooms"), can(me, "roster"), can(me, "physio.assign")];
   const key = `${br ?? "*"}|${flags.map(Number).join("")}`, now = Date.now(), hit = shared.get(key);
   if (hit && now - hit.at < SHARE_MS) return hit.p;
   const p = compute(flags, br);
@@ -44,7 +44,7 @@ export function attention(me: SessionUser, br: string | null) {
 }
 
 /** คำนวณทุกเรื่องพร้อมกัน (เดิมถามฐานข้อมูลทีละเรื่องต่อกัน 18 ครั้ง) */
-async function compute([tasks, health, billing, contracts, stock, rooms, roster]: boolean[], br: string | null) {
+async function compute([tasks, health, billing, contracts, stock, rooms, roster, physio]: boolean[], br: string | null) {
   const p = br ? [br] : [];
   const w = (col: string) => (br ? `AND ${col} = $1` : "");
   const TODAY = "(now() AT TIME ZONE 'Asia/Bangkok')::date";
@@ -118,6 +118,23 @@ async function compute([tasks, health, billing, contracts, stock, rooms, roster]
         SELECT b.name, d::date AS day FROM generate_series(${TODAY}, (date_trunc('month', ${TODAY}) + interval '1 month - 1 day')::date, interval '1 day') d
         CROSS JOIN (SELECT DISTINCT branch_name AS name FROM residents WHERE coalesce(status, '') NOT LIKE 'ย้ายออก%' ${w("branch_name")}) b
         WHERE (SELECT count(DISTINCT shift) FROM staff_shifts s WHERE s.branch_name = b.name AND s.shift_date = d::date) < 2) x`), (v) => { out.rosterGap = v[0]; });
+  }
+  if (physio) {
+    // คอร์สกายภาพที่ยังเหลือครั้ง แต่ยังไม่มีนักกายภาพผู้รับผิดชอบ (ทำได้ทันทีหลังซื้อ ไม่ต้องรอใบแจ้งหนี้)
+    job(() => q(`SELECT c.resident_name AS name FROM physio_courses c LEFT JOIN residents r ON r.id = c.resident_id
+        WHERE c.used < c.total AND c.therapist_id IS NULL AND coalesce(r.status, '') NOT LIKE 'ย้ายออก%' ${w("c.branch_name")}
+        ORDER BY c.created_at LIMIT 50`), (v) => { out.physioOpen = v; });
+    // เมื่อวานมีนัดตามแผน แต่ไม่มีบันทึกกายภาพของคอร์สนั้น (เกณฑ์เดียวกับหน้าติดตามการส่งงาน: นับตั้งแต่วันจ่ายเคส/แก้แผนล่าสุด · แก้แผนวันนี้ = ไม่นับ)
+    job(() => q(`SELECT c.resident_name AS name, coalesce(c.therapist_name, '-') AS who FROM physio_courses c LEFT JOIN residents r ON r.id = c.resident_id
+        WHERE c.therapist_id IS NOT NULL AND c.used < c.total AND coalesce(r.status, '') NOT LIKE 'ย้ายออก%' ${w("c.branch_name")}
+          AND CASE WHEN coalesce(cardinality(c.plan_dates), 0) > 0 THEN (${TODAY} - 1)::text = ANY(c.plan_dates) ELSE extract(dow FROM ${TODAY} - 1)::int = ANY(coalesce(c.plan_days, '{}')) END
+          AND NOT EXISTS (SELECT 1 FROM clinical_notes n WHERE n.kind = 'physio' AND n.data->>'course_id' = c.id AND (n.created_at AT TIME ZONE 'Asia/Bangkok')::date = ${TODAY} - 1)
+          AND (SELECT (max(a.at) AT TIME ZONE 'Asia/Bangkok')::date FROM audit_logs a WHERE a.area = 'physio' AND a.action = 'update' AND a.summary LIKE 'จ่ายเคสกายภาพ%' AND a.record_id = c.id) < ${TODAY}
+        ORDER BY c.resident_name LIMIT 50`), (v) => { out.physioMissed = v; });
+    // คอร์สใกล้หมด (เหลือ 1–2 ครั้ง) · ฝ่ายขาย/ผู้จัดการเสนอต่อคอร์ส
+    job(() => q(`SELECT c.resident_name AS name, (c.total - c.used)::int AS left FROM physio_courses c LEFT JOIN residents r ON r.id = c.resident_id
+        WHERE c.used < c.total AND c.total - c.used <= 2 AND c.total > 2 AND coalesce(r.status, '') NOT LIKE 'ย้ายออก%' ${w("c.branch_name")}
+        ORDER BY c.total - c.used, c.resident_name LIMIT 50`), (v) => { out.physioLow = v; });
   }
   await Promise.all(jobs);
   return out;

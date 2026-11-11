@@ -1,5 +1,6 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { leftOf, onDate, PhysioBoard, schedOf } from "@/lib/physio";
 import Icon from "@/components/Icon";
 import { Modal } from "@/components/ui";
 import { useApp } from "@/lib/app";
@@ -9,7 +10,58 @@ import { useSession } from "@/lib/session";
 import { stockAlertText, useStockAlerts } from "@/lib/stockAlerts";
 
 /** กระดิ่งแจ้งเตือนสัญญาณชีพผิดปกติ: นับรายการที่ยังไม่มีคนรับทราบ กดเปิดรายการ รับทราบ หรือดูประวัติผู้รับบริการ */
+/** กระดิ่งแจ้งเตือน: นักกายภาพเห็นเฉพาะงานกายภาพของตัวเอง · ตำแหน่งอื่นเห็นสัญญาณชีพผิดปกติ (และคลังยากลางสำหรับผู้จัดการ) */
 export default function AlertsBell({ compact = false }: { compact?: boolean }) {
+  const { user } = useSession();
+  return user?.role === "Physio" ? <PhysioBell compact={compact} userId={user.id} /> : <CareBell compact={compact} />;
+}
+
+/** กระดิ่งของนักกายภาพ: นัดวันนี้ที่ยังไม่บันทึก · เคสของฉันที่ใกล้หมดคอร์ส (เหลือ ≤ 2 ครั้ง) */
+function PhysioBell({ compact, userId }: { compact: boolean; userId: string }) {
+  const [open, setOpen] = useState(false);
+  const [d, setD] = useState<PhysioBoard | null>(null);
+  useEffect(() => {
+    const load = () => fetch("/api/clinic?op=physio_board", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).then((x) => x && setD(x)).catch(() => {});
+    load();
+    const t = setInterval(() => { if (document.visibilityState === "visible") load(); }, 60_000);
+    return () => clearInterval(t);
+  }, []);
+  const mine = (d?.cases ?? []).filter((c) => c.therapist_id === userId);
+  const done = new Set((d?.today ?? []).map((x) => x.course_id));
+  const today = d?.date ?? "";
+  const pending = mine.filter((c) => today && onDate(schedOf(c), today) && !done.has(c.id)).sort((a, b) => (a.plan_time ?? "").localeCompare(b.plan_time ?? ""));
+  const low = mine.filter((c) => leftOf(c) <= 2);
+  const total = pending.length + low.length;
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)} aria-label={`แจ้งเตือน ${total} รายการ`}
+        className={`alerts-bell ${total ? "is-watch" : ""} ${compact ? "is-compact" : ""}`}>
+        <Icon name="bell" className="h-[18px] w-[18px]" />
+        {!compact && <span>แจ้งเตือน</span>}
+        {total > 0 && <b>{total}</b>}
+      </button>
+      <Modal open={open} title="แจ้งเตือนกายภาพ" onClose={() => setOpen(false)} footer={<button className="btn-primary" onClick={() => setOpen(false)}>ปิด</button>}>
+        <h4 className="mb-2 font-semibold text-gold-900">นัดวันนี้ที่ยังไม่บันทึก ({pending.length})</h4>
+        {pending.length === 0 ? <p className="mb-5 rounded-xl bg-emerald-50 px-4 py-4 text-center text-sm text-emerald-800">บันทึกครบทุกนัดวันนี้แล้ว</p> : (
+          <ul className="mb-5 space-y-2">{pending.map((c) => (
+            <li key={c.id} className="alert-item is-watch"><p className="font-semibold text-gold-900">{c.plan_time} · {c.resident_name}</p>
+              <p className="text-xs text-gold-600">{c.room ? `ห้อง ${c.room} · ` : ""}{c.name} · ครั้งที่ {c.used + 1}/{c.total}</p></li>
+          ))}</ul>
+        )}
+        <h4 className="mb-2 font-semibold text-gold-900">คอร์สใกล้หมด ({low.length})</h4>
+        {low.length === 0 ? <p className="rounded-xl bg-cream-50 px-4 py-4 text-center text-sm text-gold-600">ไม่มีคอร์สใกล้หมด</p> : (
+          <ul className="space-y-2">{low.map((c) => (
+            <li key={c.id} className="alert-item is-watch"><p className="font-semibold text-gold-900">{c.resident_name} · เหลือ {leftOf(c)} ครั้ง</p>
+              <p className="text-xs text-gold-600">{c.name} · แจ้งญาติ/แคชเชียร์เรื่องต่อคอร์ส</p></li>
+          ))}</ul>
+        )}
+      </Modal>
+    </>
+  );
+}
+
+/** กระดิ่งของพยาบาลและผู้จัดการ: สัญญาณชีพผิดปกติ + คลังยากลาง (ผู้จัดการ) */
+function CareBell({ compact = false }: { compact?: boolean }) {
   const { alerts, reload } = useAlerts();
   const { toast } = useApp();
   const [open, setOpen] = useState(false);

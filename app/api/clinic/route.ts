@@ -7,6 +7,7 @@ import { can } from "@/lib/perms";
 import { attention } from "@/lib/attention";
 import type { SessionUser } from "@/lib/roles";
 import { NOTE_KINDS } from "@/lib/clinic";
+import { pushTo } from "@/lib/push";
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
@@ -25,8 +26,20 @@ export const fetchCache = "force-no-store";
  *  POST { op: "note_status", id, status }                  ปิด/เปิดปัญหาใน Problem list
  *  POST { op: "note_delete", id }                          ลบบันทึก (ผู้เขียน หรือผู้มีสิทธิ์ผู้รับบริการ)
  *  POST { op: "course", residentId, name, total, price, freeReason? }   ซื้อคอร์สกายภาพ · ราคา 0 = ให้ฟรี (ผู้จัดการขึ้นไป ต้องมีเหตุผล)
- *  POST { op: "course_use", courseId, body?, data? }        ใช้คอร์ส 1 ครั้ง + Progress note (คอร์สที่มีราคาต้องออกใบแจ้งหนี้แล้ว)
+ *  POST { op: "course_use", courseId, body?, data? }        ใช้คอร์ส 1 ครั้ง + Progress note (ทำได้ทันทีหลังซื้อ ไม่ต้องรอใบแจ้งหนี้ · เดิม: คอร์สที่มีราคาต้องออกใบแจ้งหนี้แล้ว)
  *  POST { op: "course_cancel", courseId }                  ยกเลิกคอร์สที่ยังไม่ได้ใช้และยังไม่ออกใบแจ้งหนี้ (เช่น กดซ้ำ)
+ *  GET  ?op=physio_board[&branch=]  ตารางกายภาพ: คอร์สที่ยังเหลือครั้ง + ผู้รับผิดชอบ/แผน · นักกายภาพในสาขา · ทำแล้ววันนี้ · จำนวนครั้งเดือนนี้ต่อคน
+ *  GET  ?op=physio_today            บันทึกกายภาพของวันนี้ในสาขา (KinApp พยาบาลเห็นว่าใครทำแล้ว)
+ *  GET  ?op=physio_history&course=  ประวัติการทำกายภาพทุกครั้งของคอร์ส + เวลาเช็คอิน/บันทึก/ระยะเวลาจริง (ไม่ส่งรูป)
+ *  GET  ?op=physio_photo&visit=&kind=checkin|work   รูปเช็คอิน / รูปงาน (ไฟล์รูป ใส่ใน <img src> ได้)
+ *  POST { op: "course_reassign", fromId, toId }     ย้ายเคสทั้งหมด (ที่ยังเหลือครั้ง) ของนักกายภาพคนหนึ่งไปให้อีกคน (สิทธิ์ จ่ายเคสกายภาพ · เฉพาะสาขาที่ดูแล)
+ *  จ่ายเคส / เปลี่ยนแผน / ย้ายเคส → แจ้งเตือนบนมือถือของนักกายภาพที่เกี่ยวข้อง
+ *  POST { op: "physio_checkin", courseId, photo }    เช็คอินข้างเตียงพร้อมรูป (เวลาจาก server) · เช็คอินซ้ำ = ถ่ายรูปใหม่
+ *  POST { op: "physio_checkin_cancel", visitId }     ยกเลิกเช็คอินที่ยังไม่ได้บันทึก (ของตัวเอง)
+ *  นักกายภาพ (ตำแหน่ง Physio) บันทึก course_use ต้องส่ง visitId (เช็คอินแล้ว) + photo (รูปงาน)
+ *  รับงานข้ามสาขา: นักกายภาพที่ถูกจ่ายเคส (therapist_id) เห็น/เช็คอิน/บันทึก/ดูประวัติเคสนั้นได้แม้อยู่ต่างสาขา (เฉพาะเคสนั้น)
+ *  POST { op: "course_plan", courseId, therapistId, days | dates, time, minutes }   จ่ายเคส/เปลี่ยนผู้รับผิดชอบ (สิทธิ์ จ่ายเคสกายภาพ) · dates = เลือกวันเอง (YYYY-MM-DD)
+ *  บันทึกกายภาพ (course_use · note kind physio) ต้องมีสิทธิ์ บันทึกกายภาพ · คนอื่นอ่านได้อย่างเดียว
  *  POST { op: "physio_free" }                              ปิดแล้ว · ต้องซื้อคอร์สก่อนบันทึกกายภาพ
  *  POST { op: "supply_item", id?, name, unit, price, stock } เพิ่ม/แก้เวชภัณฑ์ในคลัง
  *  POST { op: "supply_issue", residentId, itemId, qty }     เบิกเวชภัณฑ์ให้ผู้รับบริการ (ตัดสต็อก)
@@ -37,6 +50,14 @@ const bad = (msg: string, status = 400) => NextResponse.json({ error: msg }, { s
 const scoped = (me: SessionUser) => me.role !== "Global Admin";
 const canRead = (me: SessionUser) => can(me, "residents") || can(me, "health_logs") || can(me, "app.staff") || can(me, "careplan");
 const canManage = (me: SessionUser) => can(me, "residents");
+/** ดูตารางกายภาพได้: เมนูตารางกายภาพ จ่ายเคส หรือบันทึกกายภาพ (นักกายภาพ) */
+const canPhysio = (me: SessionUser) => can(me, "physio") || can(me, "physio.assign") || can(me, "physio.record");
+const BKK_TODAY = "(now() AT TIME ZONE 'Asia/Bangkok')::date";
+/** รูปถ่ายจากเครื่อง (data URL ย่อแล้ว) ไม่เกิน ~500KB · ไม่ถูกต้อง = "" */
+const imgOf = (v: unknown) => (typeof v === "string" && v.length <= 700_000 && /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(v) ? v : "");
+/** จำนวนรูปงาน (JSON array หรือรูปเดียวแบบเดิม) */
+const WORK_N = (col: string) => `(CASE WHEN ${col} IS NULL THEN 0 WHEN left(${col}, 1) = '[' THEN json_array_length(${col}::json) ELSE 1 END)`;
+const HM = (col: string) => `to_char(${col} AT TIME ZONE 'Asia/Bangkok', 'HH24:MI')`;
 /** ผู้จัดการสาขาขึ้นไป (อนุมัติคอร์สฟรี) */
 const isBoss = (me: SessionUser) => me.role === "Branch Admin" || me.role === "Global Admin";
 const TH_AT = (col: string) => `to_char(${col} AT TIME ZONE 'Asia/Bangkok', 'DD/MM/') || (extract(year FROM ${col} AT TIME ZONE 'Asia/Bangkok')::int + 543) || to_char(${col} AT TIME ZONE 'Asia/Bangkok', ' HH24:MI')`;
@@ -60,6 +81,87 @@ export async function GET(req: NextRequest) {
   const q = req.nextUrl.searchParams;
   try {
     switch (q.get("op")) {
+      case "physio_board": {
+        if (!canPhysio(me)) return forbidden();
+        const br = scoped(me) ? me.branch : q.get("branch") || null;
+        const p = br ? [br] : [];
+        const w = (col: string) => (br ? `AND ${col} = $1` : "");
+        // สาขานี้ หรือของฉัน (เคสข้ามสาขาที่ถูกจ่ายให้ · บันทึก/เช็คอินที่ฉันทำ) · $1 = สาขา, $2 = รหัส/ชื่อฉัน
+        const pm = br ? [br, me.id] : [me.id], pn = br ? [br, me.name] : [me.name];
+        const wOr = (col: string, mine: string) => (br ? `AND (${col} = $1 OR ${mine} = $2)` : "");
+        const [cases, therapists, today, month] = await Promise.all([
+          sql(`SELECT c.id, c.resident_id, c.resident_name, c.branch_name, nullif(trim(r.hn), '') AS hn, nullif(trim(r.room), '-') AS room, nullif(nullif(trim(r.bed), '-'), '') AS bed, c.name, c.total, c.used, coalesce(c.price, 0)::float AS price,
+                NOT ${unbilledSql("c.invoice_id")} AS billed, coalesce((SELECT v.status = 'ชำระแล้ว' FROM invoices v WHERE v.id = c.invoice_id), false) AS paid, c.therapist_id, c.therapist_name, c.plan_days, c.plan_time, c.plan_minutes, c.plan_dates,
+                coalesce((SELECT json_agg(x) FROM (SELECT ${TH_AT("n.created_at")} AS at, n.author, n.title, n.body, n.data->>'pain' AS pain, n.data->>'plan' AS plan, n.data->>'mobility' AS mobility, n.data->>'cc' AS cc, n.data->>'dx' AS dx
+                  FROM clinical_notes n WHERE n.kind = 'physio' AND n.data->>'course_id' = c.id ORDER BY n.created_at DESC LIMIT 3) x), '[]') AS recent
+              FROM physio_courses c LEFT JOIN residents r ON r.id = c.resident_id
+              WHERE c.used < c.total AND coalesce(r.status, '') NOT LIKE 'ย้ายออก%' ${wOr("c.branch_name", "c.therapist_id")} ${br ? "" : "AND $1::text IS NOT NULL"}
+              ORDER BY c.resident_name, c.created_at`, pm),
+          // นักกายภาพ = ตำแหน่งนักกายภาพ หรือคนที่ติ๊กสิทธิ์บันทึกกายภาพรายคน (ผู้บริหาร/ผู้จัดการไม่นับ แม้มีสิทธิ์)
+          // ทุกสาขา (จ่ายเคสข้ามสาขาได้) + ภาระงานรวมทุกสาขา (จำนวนเคสที่ยังเหลือครั้ง)
+          sql(`SELECT s.id, s.full_name AS name, coalesce(s.branch_name, '') AS branch, s.access_level AS role,
+                (SELECT count(*)::int FROM physio_courses c WHERE c.therapist_id = s.id AND c.used < c.total) AS cases_all
+              FROM staff_users s
+              WHERE coalesce(s.status, 'ทำงาน') = 'ทำงาน' AND (s.access_level = 'Physio' OR (s.access_level IN ('Nurse', 'Head Nurse') AND 'physio.record' = ANY(coalesce(s.permissions, '{}'))))
+              ORDER BY s.full_name`),
+          sql(`SELECT n.data->>'course_id' AS course_id, n.resident_name, n.author, to_char(n.created_at AT TIME ZONE 'Asia/Bangkok', 'HH24:MI') AS at, n.data->>'pain' AS pain
+              FROM clinical_notes n WHERE n.kind = 'physio' AND (n.created_at AT TIME ZONE 'Asia/Bangkok')::date = ${BKK_TODAY} ${wOr("n.branch_name", "n.author")} ${br ? "" : "AND $1::text IS NOT NULL"} ORDER BY n.created_at`, pn),
+          sql(`SELECT coalesce(n.author, '-') AS author, count(*)::int AS n FROM clinical_notes n
+              WHERE n.kind = 'physio' AND date_trunc('month', n.created_at AT TIME ZONE 'Asia/Bangkok') = date_trunc('month', now() AT TIME ZONE 'Asia/Bangkok') ${wOr("n.branch_name", "n.author")} ${br ? "" : "AND $1::text IS NOT NULL"} GROUP BY 1 ORDER BY 2 DESC`, pn),
+        ]);
+        const [{ d }] = (await sql(`SELECT ${BKK_TODAY}::text AS d`)) as { d: string }[];
+        // เช็คอินวันนี้ที่ยังไม่ได้บันทึก (กำลังทำ)
+        const visits = await sql(`SELECT id, course_id, therapist_id, therapist_name, ${HM("checkin_at")} AS at, to_char(checkin_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS iso
+            FROM physio_visits WHERE note_id IS NULL AND (checkin_at AT TIME ZONE 'Asia/Bangkok')::date = ${BKK_TODAY} ${wOr("branch_name", "therapist_id")} ${br ? "" : "AND $1::text IS NOT NULL"} ORDER BY checkin_at`, pm);
+        // บันทึกกายภาพของฉัน 90 วันล่าสุด (ปฏิทินใน KinApp: วันที่ผ่านมาบันทึกเคสไหนไปแล้ว)
+        const mylog = await sql(`SELECT n.data->>'course_id' AS course_id, ((n.created_at AT TIME ZONE 'Asia/Bangkok')::date)::text AS date, ${HM("n.created_at")} AS at, n.title, n.resident_name
+            FROM clinical_notes n WHERE n.kind = 'physio' AND n.author = $1 AND n.created_at > now() - interval '90 days' ORDER BY n.created_at`, [me.name]);
+        // ติดตามการส่งงาน (42 วันล่าสุด): บันทึกจริง · เช็คอินที่ไม่ได้บันทึก (วันก่อน ๆ) · วันที่จ่ายเคส/แก้แผนล่าสุด (จากบันทึกการใช้งาน · อ่านอย่างเดียว)
+        const ids = (cases as { id: string }[]).map((c) => c.id);
+        const [log, stale, assigned] = await Promise.all([
+          sql(`SELECT n.id, n.data->>'course_id' AS course_id, n.resident_name, n.author, ((n.created_at AT TIME ZONE 'Asia/Bangkok')::date)::text AS date, ${HM("n.created_at")} AS at, n.title
+              FROM clinical_notes n WHERE n.kind = 'physio' AND n.created_at > now() - interval '42 days' ${wOr("n.branch_name", "n.author")} ${br ? "" : "AND $1::text IS NOT NULL"} ORDER BY n.created_at`, pn),
+          sql(`SELECT course_id, resident_name, therapist_name, ((checkin_at AT TIME ZONE 'Asia/Bangkok')::date)::text AS date, ${HM("checkin_at")} AS at
+              FROM physio_visits WHERE note_id IS NULL AND checkin_at > now() - interval '42 days' AND (checkin_at AT TIME ZONE 'Asia/Bangkok')::date < ${BKK_TODAY}
+                ${wOr("branch_name", "therapist_id")} ${br ? "" : "AND $1::text IS NOT NULL"}`, pm),
+          ids.length ? sql(`SELECT record_id AS course_id, ((max(at) AT TIME ZONE 'Asia/Bangkok')::date)::text AS date FROM audit_logs
+              WHERE area = 'physio' AND action = 'update' AND summary LIKE 'จ่ายเคสกายภาพ%' AND record_id = ANY($1) GROUP BY record_id`, [ids]) : Promise.resolve([]),
+        ]);
+        return NextResponse.json({ cases, therapists, today, month, visits, mylog, log, stale, assigned, date: d });
+      }
+      case "physio_history": {
+        if (!canRead(me) && !canPhysio(me)) return forbidden();
+        const [c] = (await sql`SELECT id, branch_name, therapist_id FROM physio_courses WHERE id = ${q.get("course") ?? ""}`) as { id: string; branch_name: string; therapist_id: string | null }[];
+        if (!c) return bad("ไม่พบคอร์ส", 404);
+        if (scoped(me) && c.branch_name !== me.branch && c.therapist_id !== me.id) return forbidden();
+        const items = await sql(`SELECT n.id, n.title, n.body, n.author, ${TH_AT("n.created_at")} AS at, n.data->>'pain' AS pain, n.data->>'mobility' AS mobility, n.data->>'plan' AS plan,
+              n.data->'activities' AS activities, n.data->'vitals' AS vitals, n.data->>'cc' AS cc, n.data->>'pe' AS pe, n.data->>'dx' AS dx,
+              v.id AS visit_id, ${HM("v.checkin_at")} AS checkin, ${HM("v.done_at")} AS done,
+              round(extract(epoch FROM v.done_at - v.checkin_at) / 60)::int AS minutes, ${WORK_N("v.work_photo")} AS work_n
+            FROM clinical_notes n LEFT JOIN physio_visits v ON v.note_id = n.id
+            WHERE n.kind = 'physio' AND n.data->>'course_id' = $1 ORDER BY n.created_at DESC`, [c.id]);
+        return NextResponse.json({ items });
+      }
+      case "physio_photo": {
+        if (!canRead(me) && !canPhysio(me)) return forbidden();
+        const work = q.get("kind") === "work";
+        const [v] = (await sql`SELECT v.branch_name, v.checkin_photo, v.work_photo, v.therapist_id, c.therapist_id AS owner FROM physio_visits v LEFT JOIN physio_courses c ON c.id = v.course_id WHERE v.id = ${q.get("visit") ?? ""}`) as { branch_name: string; checkin_photo: string; work_photo: string | null; therapist_id: string | null; owner: string | null }[];
+        if (!v) return bad("ไม่พบรูป", 404);
+        if (scoped(me) && v.branch_name !== me.branch && v.therapist_id !== me.id && v.owner !== me.id) return forbidden();
+        // รูปงาน: JSON array (หลายรูป) หรือ data URL เดียว (แบบเดิม) · i = ลำดับรูป
+        let src = String((work ? v.work_photo : v.checkin_photo) ?? "");
+        if (work && src.startsWith("[")) { try { src = String((JSON.parse(src) as string[])[Math.max(0, Number(q.get("i")) || 0)] ?? ""); } catch { src = ""; } }
+        const m = src.match(/^data:(image\/[a-z]+);base64,(.+)$/);
+        if (!m) return bad("ไม่พบรูป", 404);
+        return new NextResponse(Buffer.from(m[2], "base64"), { headers: { "Content-Type": m[1], "Cache-Control": "private, max-age=86400" } });
+      }
+      case "physio_today": {
+        if (!canRead(me) && !canPhysio(me)) return forbidden();
+        const br = scoped(me) ? me.branch : q.get("branch") || null;
+        const today = await sql(`SELECT n.resident_name, n.author, to_char(n.created_at AT TIME ZONE 'Asia/Bangkok', 'HH24:MI') AS at, n.data->>'pain' AS pain
+            FROM clinical_notes n WHERE n.kind = 'physio' AND (n.created_at AT TIME ZONE 'Asia/Bangkok')::date = ${BKK_TODAY} ${br ? "AND n.branch_name = $1" : ""} ORDER BY n.created_at`, br ? [br] : []);
+        return NextResponse.json({ today });
+      }
       case "resident": {
         if (!canRead(me)) return forbidden();
         const o = await residentOf(me, q.get("id") ?? "");
@@ -67,11 +169,14 @@ export async function GET(req: NextRequest) {
         const id = o.r.id;
         const [adm] = (await sql(`SELECT data, assessed_by, ${TH_AT("updated_at")} AS at FROM resident_admissions WHERE resident_id = $1`, [id])) as Record<string, unknown>[];
         const notes = await sql(`SELECT id, kind, title, body, data, status, author, ${TH_AT("created_at")} AS at FROM clinical_notes WHERE resident_id = $1 ORDER BY created_at DESC LIMIT 300`, [id]);
-        const courses = await sql(`SELECT id, name, total, used, price::float, status, created_by, ${billedId} AS invoice_id, ${TH_AT("created_at")} AS at FROM physio_courses WHERE resident_id = $1 ORDER BY created_at DESC`, [id]);
+        const courses = await sql(`SELECT id, name, total, used, price::float, status, created_by, ${billedId} AS invoice_id, ${TH_AT("created_at")} AS at, therapist_name, plan_days, plan_time, plan_minutes, plan_dates, coalesce((SELECT v.status = 'ชำระแล้ว' FROM invoices v WHERE v.id = physio_courses.invoice_id), false) AS paid FROM physio_courses WHERE resident_id = $1 ORDER BY created_at DESC`, [id]);
         const supplies = await sql(`SELECT id, item_name, unit, qty, price::float, issued_by, ${billedId} AS invoice_id, ${TH_AT("created_at")} AS at FROM supply_issues WHERE resident_id = $1 ORDER BY created_at DESC LIMIT 200`, [id]);
+        // เช็คอิน/รูปงานของบันทึกกายภาพ (ไม่ส่งรูป · เปิดดูทีละรูป)
+        const visits = await sql(`SELECT id, note_id, ${HM("checkin_at")} AS checkin, ${HM("done_at")} AS done, round(extract(epoch FROM done_at - checkin_at) / 60)::int AS minutes, ${WORK_N("work_photo")} AS work_n
+            FROM physio_visits WHERE resident_id = $1 AND note_id IS NOT NULL`, [id]);
         // ค่าเริ่มต้นช่องแพ้ยา/แพ้อาหารในแบบประเมินแรกรับ จากสัญญาล่าสุด
         const [fromContract] = (await sql(`SELECT drug_allergy, food_allergy FROM contracts WHERE (resident_id = $1 OR (resident_id IS NULL AND resident_name = $2)) AND coalesce(status, '') <> 'ยกเลิกสัญญา' ORDER BY created_at DESC LIMIT 1`, [id, o.r.full_name])) as { drug_allergy: string | null; food_allergy: string | null }[];
-        return NextResponse.json({ admission: adm ?? null, notes, courses, supplies, contractAllergy: fromContract ?? null });
+        return NextResponse.json({ admission: adm ?? null, notes, courses, supplies, visits, contractAllergy: fromContract ?? null });
       }
       case "courses": {
         if (!canRead(me) && !can(me, "billing") && !can(me, "dashboard")) return forbidden();
@@ -147,6 +252,7 @@ export async function POST(req: NextRequest) {
         if (!canRead(me)) return forbidden();
         const kind = String(b.kind ?? "");
         if (!(NOTE_KINDS as readonly string[]).includes(kind)) return bad("ประเภทบันทึกไม่ถูกต้อง");
+        if (kind === "physio" && !can(me, "physio.record")) return forbidden("บันทึกกายภาพได้เฉพาะนักกายภาพ (สิทธิ์ บันทึกกายภาพ)");
         const o = await residentOf(me, String(b.residentId ?? ""));
         if (!o.r) return o.res;
         const title = text(b.title, 200), body = text(b.body, 4000);
@@ -190,12 +296,20 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ok: true, id });
       }
       case "course_use": {
-        if (!canRead(me)) return forbidden();
+        if (!can(me, "physio.record")) return forbidden("บันทึกกายภาพได้เฉพาะนักกายภาพ (สิทธิ์ บันทึกกายภาพ)");
         const [c] = (await sql(`SELECT *, ${unbilledSql("invoice_id")} AS unbilled FROM physio_courses WHERE id = $1`, [String(b.courseId ?? "")])) as Record<string, string & number>[];
         if (!c) return bad("ไม่พบคอร์ส", 404);
-        if (scoped(me) && c.branch_name !== me.branch) return forbidden();
-        // คอร์สที่มีราคาต้องออกใบแจ้งหนี้ก่อน กันให้บริการก่อนเรียกเก็บเงิน · ใบที่ยกเลิกแล้วไม่นับว่าออกใบ
-        if (Number(c.price) > 0 && (c.unbilled as unknown as boolean)) return bad("คอร์สนี้ยังไม่ได้ออกใบแจ้งหนี้ · แจ้งแคชเชียร์ออกใบก่อนจึงจะบันทึกกายภาพได้", 409);
+        if (scoped(me) && c.branch_name !== me.branch && c.therapist_id !== me.id) return forbidden();
+        // นักกายภาพ: ต้องเช็คอิน (รูปข้างเตียง) ก่อน และส่งรูปงานตอนบันทึก · ผู้จัดการที่บันทึกจากระบบจัดการไม่บังคับ
+        // รูปงาน 1–10 รูป (เก็บเป็น JSON array ในช่อง work_photo)
+        const photos = (Array.isArray(b.photos) ? b.photos : [b.photo]).map(imgOf).filter(Boolean).slice(0, 10);
+        const visitId = text(b.visitId, 80), workPhoto = photos.length ? JSON.stringify(photos) : "";
+        if (me.role === "Physio" || visitId) {
+          const [v] = (await sql`SELECT id FROM physio_visits WHERE id = ${visitId} AND course_id = ${c.id} AND note_id IS NULL AND therapist_id = ${me.id}`) as { id: string }[];
+          if (!v) return bad("กรุณาเช็คอิน (ถ่ายรูปข้างเตียง) ก่อนบันทึกกายภาพ");
+          if (!workPhoto) return bad("กรุณาถ่ายรูปงานก่อนบันทึก");
+        }
+        // ซื้อคอร์สแล้วทำกายภาพได้ทันที ไม่ต้องรอใบแจ้งหนี้ (หน้าจอบอกสถานะ: ยังไม่ออกใบ / รอชำระ / ชำระแล้ว)
         // ตัดครั้งในคำสั่งเดียว กันสองเครื่องกดพร้อมกันจนเกินจำนวน
         const done = (await sql`UPDATE physio_courses SET used = used + 1, status = CASE WHEN used + 1 >= total THEN 'ครบแล้ว' ELSE status END
                                 WHERE id = ${c.id} AND used < total RETURNING used, total`) as { used: number; total: number }[];
@@ -204,8 +318,89 @@ export async function POST(req: NextRequest) {
         await sql`INSERT INTO clinical_notes (id, resident_id, resident_name, branch_name, kind, title, body, data, author)
                   VALUES (${id}, ${c.resident_id}, ${c.resident_name}, ${c.branch_name}, 'physio', ${`${c.name} ครั้งที่ ${done[0].used}/${done[0].total}`}, ${text(b.body, 4000) || null},
                           ${JSON.stringify({ ...obj(b.data), course_id: c.id, session: done[0].used })}::jsonb, ${me.name})`;
+        if (visitId) await sql`UPDATE physio_visits SET note_id = ${id}, work_photo = ${workPhoto}, done_at = now() WHERE id = ${visitId} AND note_id IS NULL`;
         await audit(req, me, [{ area: "physio", action: "update", recordId: c.id, summary: `ใช้คอร์ส ${c.name} ครั้งที่ ${done[0].used}/${done[0].total} · ${c.resident_name}`, branch: c.branch_name }]);
         return NextResponse.json({ ok: true, used: done[0].used, total: done[0].total });
+      }
+      case "physio_checkin": {
+        if (!can(me, "physio.record")) return forbidden("เช็คอินกายภาพได้เฉพาะนักกายภาพ");
+        const [c] = (await sql`SELECT id, resident_id, resident_name, branch_name, name, used, total, therapist_id FROM physio_courses WHERE id = ${String(b.courseId ?? "")}`) as Record<string, string & number>[];
+        if (!c) return bad("ไม่พบคอร์ส", 404);
+        if (scoped(me) && c.branch_name !== me.branch && c.therapist_id !== me.id) return forbidden("เคสนี้อยู่ต่างสาขาและไม่ได้จ่ายให้คุณ");
+        if (Number(c.used) >= Number(c.total)) return bad("คอร์สนี้ใช้ครบจำนวนครั้งแล้ว", 409);
+        const photo = imgOf(b.photo);
+        if (!photo) return bad("กรุณาถ่ายรูปเช็คอิน");
+        // เช็คอินซ้ำวันเดียวกัน (ยังไม่บันทึก) = ถ่ายรูปใหม่และเริ่มเวลาใหม่
+        const again = (await sql(`UPDATE physio_visits SET checkin_photo = $1, checkin_at = now() WHERE course_id = $2 AND therapist_id = $3 AND note_id IS NULL
+            AND (checkin_at AT TIME ZONE 'Asia/Bangkok')::date = ${BKK_TODAY} RETURNING id, ${HM("checkin_at")} AS at`, [photo, c.id, me.id])) as { id: string; at: string }[];
+        const row = again[0] ?? ((await sql(`INSERT INTO physio_visits (id, course_id, resident_id, resident_name, branch_name, therapist_id, therapist_name, checkin_photo)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, ${HM("checkin_at")} AS at`, [randomUUID(), c.id, c.resident_id, c.resident_name, c.branch_name, me.id, me.name, photo])) as { id: string; at: string }[])[0];
+        await audit(req, me, [{ area: "physio", action: "update", recordId: c.id, summary: `เช็คอินกายภาพ ${c.resident_name} · ${c.name} ครั้งที่ ${Number(c.used) + 1}/${c.total} · ${row.at}`, branch: c.branch_name }]);
+        return NextResponse.json({ ok: true, visitId: row.id, at: row.at });
+      }
+      case "physio_checkin_cancel": {
+        if (!can(me, "physio.record")) return forbidden();
+        const gone = (await sql`DELETE FROM physio_visits WHERE id = ${text(b.visitId, 80)} AND therapist_id = ${me.id} AND note_id IS NULL RETURNING course_id, resident_name, branch_name`) as { course_id: string; resident_name: string; branch_name: string }[];
+        if (!gone.length) return bad("ไม่พบเช็คอินที่ยกเลิกได้", 404);
+        await audit(req, me, [{ area: "physio", action: "delete", recordId: gone[0].course_id, summary: `ยกเลิกเช็คอินกายภาพ ${gone[0].resident_name}`, branch: gone[0].branch_name }]);
+        return NextResponse.json({ ok: true });
+      }
+      case "course_reassign": {
+        if (!can(me, "physio.assign")) return forbidden("บัญชีนี้ไม่มีสิทธิ์จ่ายเคสกายภาพ");
+        const from = text(b.fromId, 80), to = text(b.toId, 80);
+        if (!from || !to || from === to) return bad("กรุณาเลือกนักกายภาพที่จะรับเคสแทน");
+        const [t] = (await sql`SELECT full_name FROM staff_users WHERE id = ${to}`) as { full_name: string }[];
+        if (!t) return bad("ไม่พบนักกายภาพที่จะรับเคส", 404);
+        // ย้ายเฉพาะเคสที่ยังเหลือครั้ง · ผู้ที่ไม่ใช่ผู้บริหาร = เฉพาะสาขาตัวเอง · ผู้บริหารเลือกสาขาได้ (ว่าง = ทุกสาขา)
+        const rbr = scoped(me) ? me.branch : text(b.branch, 80) || null;
+        const moved = (await sql(`UPDATE physio_courses SET therapist_id = $1, therapist_name = $2 WHERE therapist_id = $3 AND used < total ${rbr ? "AND branch_name = $4" : ""}
+            RETURNING id, name, resident_name, branch_name`, rbr ? [to, t.full_name, from, rbr] : [to, t.full_name, from])) as { id: string; name: string; resident_name: string; branch_name: string }[];
+        if (!moved.length) return bad("ไม่มีเคสที่ย้ายได้", 404);
+        const [f0] = (await sql`SELECT full_name FROM staff_users WHERE id = ${from}`) as { full_name: string }[];
+        await audit(req, me, moved.map((m) => ({ area: "physio", action: "update", recordId: m.id, branch: m.branch_name,
+          summary: `จ่ายเคสกายภาพ ${m.name} · ${m.resident_name}: ย้ายจาก ${f0?.full_name ?? "-"} → ${t.full_name} (ย้ายเคสทั้งหมด)` })));
+        await Promise.all([
+          pushTo([to], { title: `ได้รับเคสกายภาพเพิ่ม ${moved.length} เคส`, body: `ย้ายมาจาก ${f0?.full_name ?? "-"} · ${moved.slice(0, 3).map((m) => m.resident_name).join(", ")}${moved.length > 3 ? " …" : ""}`, url: "/staff", tag: "physio-reassign" }),
+          pushTo([from], { title: `เคสกายภาพถูกย้าย ${moved.length} เคส`, body: `ย้ายไปให้ ${t.full_name}`, url: "/staff", tag: "physio-reassign" }),
+        ]);
+        return NextResponse.json({ ok: true, moved: moved.length });
+      }
+      case "course_plan": {
+        if (!can(me, "physio.assign")) return forbidden("บัญชีนี้ไม่มีสิทธิ์จ่ายเคสกายภาพ");
+        const [c] = (await sql`SELECT id, resident_name, branch_name, name, total, used, therapist_id, therapist_name, plan_days, plan_time, plan_minutes, plan_dates FROM physio_courses WHERE id = ${String(b.courseId ?? "")}`) as Record<string, unknown>[];
+        if (!c) return bad("ไม่พบคอร์ส", 404);
+        if (scoped(me) && c.branch_name !== me.branch) return forbidden();
+        const tid = text(b.therapistId, 80);
+        let tname: string | null = null;
+        if (tid) {
+          const [t] = (await sql`SELECT full_name, branch_name FROM staff_users WHERE id = ${tid}`) as { full_name: string; branch_name: string | null }[];
+          if (!t) return bad("ไม่พบนักกายภาพ", 404);
+          tname = t.full_name;
+        }
+        const days = [...new Set((Array.isArray(b.days) ? b.days : []).map(Number).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6))].sort();
+        const time = /^([01]\d|2[0-3]):[0-5]\d$/.test(String(b.time ?? "")) ? String(b.time) : null;
+        const minutes = Math.min(180, Math.max(15, Math.round(Number(b.minutes) || 45)));
+        // เลือกวันเอง: วันที่ YYYY-MM-DD ไม่ซ้ำ เรียงตามวัน ไม่เกินจำนวนครั้งที่เหลือ (เกินตัดท้าย) · มีวันที่ = ไม่ใช้แผนรายสัปดาห์
+        const left = Math.max(0, Number(c.total) - Number(c.used));
+        const dates = [...new Set((Array.isArray(b.dates) ? b.dates : []).map(String).filter((d) => /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(d) && !Number.isNaN(Date.parse(d))))].sort().slice(0, Math.min(100, left || 100));
+        const weekly = dates.length ? [] : days;
+        if (tid && ((!weekly.length && !dates.length) || !time)) return bad("กรุณาเลือกวันและเวลาที่ทำกายภาพ");
+        await sql`UPDATE physio_courses SET therapist_id = ${tid || null}, therapist_name = ${tname}, plan_days = ${weekly.length ? weekly : null}, plan_dates = ${tid && dates.length ? dates : null},
+                  plan_time = ${time}, plan_minutes = ${tid ? minutes : null} WHERE id = ${c.id as string}`;
+        const DAY = ["อา.", "จ.", "อ.", "พ.", "พฤ.", "ศ.", "ส."];
+        const was = c.therapist_name ? `${c.therapist_name}` : "ยังไม่มีผู้รับผิดชอบ";
+        const now = tname ? `${tname} · ${dates.length ? `เลือกวันเอง ${dates.length} วัน (${dates[0]} ถึง ${dates[dates.length - 1]})` : weekly.map((d) => DAY[d]).join(" ")} ${time} (${minutes} นาที)` : "ยังไม่มีผู้รับผิดชอบ";
+        // แจ้งเตือนมือถือ: คนใหม่ = ได้เคส / เปลี่ยนนัด · คนเดิม (ถ้าเปลี่ยนคน) = เคสถูกย้าย · ข้อความสั้น (เห็นบนหน้าจอล็อก)
+        const when = dates.length ? `${dates.length} วันที่เลือก` : weekly.map((x) => DAY[x]).join(" ");
+        const pushes: Promise<number>[] = [];
+        if (tid && tid !== c.therapist_id) pushes.push(pushTo([tid], { title: "ได้รับเคสกายภาพใหม่", body: `${c.resident_name} · ${when} ${time ?? ""} น.`, url: "/staff", tag: `physio-${c.id}` }));
+        else if (tid) pushes.push(pushTo([tid], { title: "เปลี่ยนนัดกายภาพ", body: `${c.resident_name} · ${when} ${time ?? ""} น.`, url: "/staff", tag: `physio-${c.id}` }));
+        if (c.therapist_id && c.therapist_id !== tid) pushes.push(pushTo([c.therapist_id as string], { title: "เคสกายภาพถูกย้าย", body: `${c.resident_name} · ย้ายไปให้ ${tname ?? "ผู้อื่น"}`, url: "/staff", tag: `physio-${c.id}` }));
+        await Promise.all(pushes);
+        await audit(req, me, [{ area: "physio", action: "update", recordId: c.id as string, branch: c.branch_name as string,
+          summary: `จ่ายเคสกายภาพ ${c.name} · ${c.resident_name}: ${was} → ${now}`,
+          before: { therapist: c.therapist_name, days: c.plan_days, dates: c.plan_dates, time: c.plan_time, minutes: c.plan_minutes }, after: { therapist: tname, days: weekly, dates, time, minutes: tid ? minutes : null } }]);
+        return NextResponse.json({ ok: true });
       }
       case "course_cancel": {
         if (!canManage(me) && !can(me, "billing")) return forbidden("บัญชีนี้ไม่มีสิทธิ์ยกเลิกคอร์ส");

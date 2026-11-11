@@ -224,7 +224,7 @@ export default function ResidentProfile({ id, onClose }: { id: string | null; on
             </div>
           )}
 
-          {CLINICAL[tab] && id && <ClinicalPanel id={id} tab={CLINICAL[tab]} c={c} reload={reload} />}
+          {CLINICAL[tab] && id && <ClinicalPanel id={id} tab={CLINICAL[tab]} c={c} reload={reload} name={r.full_name} />}
 
           {tab === "สมุดส่งเวร" && (
             <DataTable search={false} columns={["หัวข้อ", "รายละเอียด", "ผู้เขียน", "เวลา"]} empty="ไม่มีบันทึกส่งเวร"

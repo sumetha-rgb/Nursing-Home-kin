@@ -873,6 +873,33 @@ UPDATE care_assessments c SET doc_no = 'QT-' || (extract(year FROM c.created_at 
 FROM n WHERE c.id = n.id;
 -- คอร์สกายภาพ: ออกใบแจ้งหนี้แล้วหรือยัง (ดึงเข้าใบแจ้งหนี้ได้แบบเดียวกับเวชภัณฑ์)
 ALTER TABLE physio_courses ADD COLUMN IF NOT EXISTS invoice_id text;
+-- จ่ายเคสกายภาพ: นักกายภาพผู้รับผิดชอบ และแผนรายสัปดาห์ (plan_days 0 = อาทิตย์ … 6 = เสาร์ · plan_time HH:MM · plan_minutes นาทีต่อครั้ง)
+ALTER TABLE physio_courses ADD COLUMN IF NOT EXISTS therapist_id text;
+ALTER TABLE physio_courses ADD COLUMN IF NOT EXISTS therapist_name text;
+ALTER TABLE physio_courses ADD COLUMN IF NOT EXISTS plan_days int[];
+ALTER TABLE physio_courses ADD COLUMN IF NOT EXISTS plan_time text;
+ALTER TABLE physio_courses ADD COLUMN IF NOT EXISTS plan_minutes int;
+-- นัดแบบเลือกวันเอง (YYYY-MM-DD) · มีค่า = ใช้วันที่เหล่านี้แทนแผนรายสัปดาห์ (plan_days)
+ALTER TABLE physio_courses ADD COLUMN IF NOT EXISTS plan_dates text[];
+-- การไปทำกายภาพแต่ละครั้ง: เช็คอินพร้อมรูป (เวลา server) → บันทึกพร้อมรูปงาน (ผูกกับ clinical_notes.id) · รูปเป็น data URL ย่อแล้ว ดึงเฉพาะตอนเปิดดู
+CREATE TABLE IF NOT EXISTS physio_visits (
+  id             text PRIMARY KEY,
+  course_id      text NOT NULL REFERENCES physio_courses(id) ON DELETE CASCADE,
+  resident_id    text,
+  resident_name  text,
+  branch_name    text,
+  therapist_id   text,
+  therapist_name text,
+  checkin_at     timestamptz NOT NULL DEFAULT now(),
+  checkin_photo  text NOT NULL,
+  note_id        text,
+  work_photo     text,
+  done_at        timestamptz,
+  created_at     timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS physio_visits_course ON physio_visits (course_id, checkin_at);
+CREATE INDEX IF NOT EXISTS physio_visits_note ON physio_visits (note_id);
+COMMENT ON TABLE physio_visits IS 'เช็คอินและรูปงานกายภาพแต่ละครั้ง';
 ALTER TABLE clinical_notes ADD COLUMN IF NOT EXISTS invoice_id text;  -- กายภาพรายครั้งที่ยังไม่มีคอร์ส: ออกใบแจ้งหนี้แล้ว
 -- ยาน้ำนับเป็นปริมาตร: ขนาดบรรจุต่อขวด (เช่น 1000 ml) · สต็อกและขนาดต่อครั้งเก็บเป็น ml
 ALTER TABLE resident_medications ADD COLUMN IF NOT EXISTS pack_size numeric(12,2);

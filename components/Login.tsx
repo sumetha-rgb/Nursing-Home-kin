@@ -10,7 +10,7 @@ import { DEMO_ACCOUNTS, DEMO_PASSWORD, ROLE_INFO, ROLES, Role, SHOW_DEMO } from 
 import { Modal, Tabs } from "./ui";
 import { usePwa } from "./Pwa";
 
-const ROLE_ICON: Record<Role, string> = { "Global Admin": "grid", "Branch Admin": "building", "Head Nurse": "pill", Cashier: "receipt", Nurse: "heart" };
+const ROLE_ICON: Record<Role, string> = { "Global Admin": "grid", "Branch Admin": "building", "Head Nurse": "pill", Cashier: "receipt", Physio: "pulse", Nurse: "heart" };
 
 export default function Login({ onLogin, staff = false }: { onLogin: (u: SessionUser) => void; staff?: boolean }) {
   // KinApp: ติดตั้งแอปก่อนเข้าสู่ระบบ · iPhone ที่เข้าระบบใน Safari แล้วค่อยติดตั้ง ต้องเข้าระบบใหม่อีกครั้งในแอป
@@ -128,7 +128,7 @@ export default function Login({ onLogin, staff = false }: { onLogin: (u: Session
                 <div><p className="text-xs tracking-wider text-gold-500">ACCESS LEVEL · {demo.toUpperCase()}</p><p className="mt-1 text-sm leading-7 text-gold-700">{ROLE_INFO[demo].sees}</p></div>
               </div>
               {demoAcc && <dl className="divide-y divide-cream-200 rounded-2xl border border-cream-200">
-                {[["อีเมล", demoAcc.email], ["รหัสผ่าน", DEMO_PASSWORD], ["สาขา", demoAcc.branch], ["เปิดใช้งานที่", demo === "Nurse" ? "KinApp และแอปจัดยา" : demo === "Cashier" ? "ระบบจัดการ (สัญญาบริการ การเงิน ห้องพักและเตียง)" : demo === "Head Nurse" ? "ระบบจัดการ (งานดูแล ห้องพักและเตียง) · KinApp · แอปจัดยา" : "ระบบจัดการ"]].map(([k, v]) => (
+                {[["อีเมล", demoAcc.email], ["รหัสผ่าน", DEMO_PASSWORD], ["สาขา", demoAcc.branch], ["เปิดใช้งานที่", demo === "Nurse" ? "KinApp และแอปจัดยา" : demo === "Physio" ? "KinApp (เมนูกายภาพ)" : demo === "Cashier" ? "ระบบจัดการ (สัญญาบริการ การเงิน ห้องพักและเตียง)" : demo === "Head Nurse" ? "ระบบจัดการ (งานดูแล ห้องพักและเตียง) · KinApp · แอปจัดยา" : "ระบบจัดการ"]].map(([k, v]) => (
                   <div key={k} className="flex items-center justify-between gap-3 px-4 py-3 text-sm">
                     <dt className="shrink-0 text-gold-500">{k}</dt>
                     <dd className="flex min-w-0 items-center gap-2"><span className={`truncate ${k === "อีเมล" || k === "รหัสผ่าน" ? "font-mono" : ""} text-gold-800`}>{v}</span>

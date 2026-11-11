@@ -33,6 +33,7 @@ import { fetchToday, shortName, SHIFTS, stampPhoto } from "@/lib/roster";
 import type { StaffReview } from "@/lib/reviews";
 import { KPI_PARTS, KpiResp, pointsOf } from "@/lib/kpi";
 import { NO_ALLERGY } from "@/lib/medicalLists";
+import PhysioKin from "@/components/care/PhysioKin";
 
 /* ---------- ข้อมูลจำลอง ---------- */
 /** งานวันนี้ใน KinApp (มาจากหน้างานประจำวันของผู้จัดการ) */
@@ -44,7 +45,7 @@ const HANDOVER0 = [
 ];
 const TYPES = ["เฝ้าระวังอาการ", "คำสั่งแพทย์", "ญาติฝากแจ้ง", "งานค้าง/ทั่วไป"];
 
-type Tab = "tasks" | "meds" | "residents" | "roster" | "perf";
+type Tab = "tasks" | "meds" | "residents" | "roster" | "perf" | "ptoday" | "pweek" | "pcases";
 const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: "tasks", label: "งานวันนี้", icon: "check" },
   { id: "meds", label: "จ่ายยา", icon: "pill" },
@@ -52,6 +53,15 @@ const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: "roster", label: "ตารางเวร", icon: "calendar" },
   { id: "perf", label: "ฉัน", icon: "me" },
 ];
+/** นักกายภาพ: กายภาพวันนี้ · ตารางสัปดาห์ · เคสของฉัน · งานอื่นที่ได้รับมอบหมาย · ฉัน */
+const PHYSIO_TABS: { id: Tab; label: string; icon: string }[] = [
+  { id: "ptoday", label: "วันนี้", icon: "pulse" },
+  { id: "pweek", label: "ตาราง", icon: "calendar" },
+  { id: "pcases", label: "เคสของฉัน", icon: "user" },
+  { id: "tasks", label: "งานอื่น", icon: "check" },
+  { id: "perf", label: "ฉัน", icon: "me" },
+];
+const PHYSIO_VIEWS: Tab[] = ["ptoday", "pweek", "pcases"];
 /** เหตุผลที่ทำแทน (ต่อท้ายในบันทึกงาน "ทำแทน <ชื่อ> · <เหตุผล>") */
 const PROXY_REASONS = ["ไม่อยู่ในเวร", "ติดงานอื่น", "งานด่วน", "อื่น ๆ"];
 const LATE_MIN = 30;
@@ -108,7 +118,19 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
     : needInstall && !hidden.includes("kin-install-hide") ? "install"
     : hidden.includes("kin-push-hide") ? null
     : push.state === "off" ? "enable" : push.state === "denied" ? "denied" : null;
-  const [tab, setTab] = useState<Tab>("tasks");
+  // นักกายภาพเปิดแอปมาเจอคิวกายภาพวันนี้ · ตำแหน่งอื่นเจองานวันนี้
+  const physio = user.role === "Physio";
+  const tabs = physio ? PHYSIO_TABS : TABS;
+  const [tab, setTab] = useState<Tab>(physio ? "ptoday" : "tasks");
+  const [pkCount, setPkCount] = useState(0);
+  // พยาบาล: ใครทำกายภาพแล้ววันนี้ (ดูอย่างเดียว · บันทึกกายภาพได้เฉพาะนักกายภาพ)
+  const [ptDone, setPtDone] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (physio || tab !== "residents") return;
+    fetch("/api/clinic?op=physio_today", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null))
+      .then((x: { today?: { resident_name: string; at: string; author: string | null }[] } | null) => x?.today && setPtDone(Object.fromEntries(x.today.map((t) => [t.resident_name, `${t.at}${t.author ? ` · ${t.author}` : ""}`]))))
+      .catch(() => {});
+  }, [physio, tab]);
   useEffect(() => { if (prefs && tab === "perf" && !hidden.includes("kin-coach-me")) hideCard("kin-coach-me"); }, [prefs, tab]); // eslint-disable-line react-hooks/exhaustive-deps
   // เวลาปัจจุบัน (อัปเดตทุกนาที) ใช้ตัดสินวันทำงานและงานเลยเวลา
   const [now, setNow] = useState(() => Date.now());
@@ -562,6 +584,8 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
           </>
         )}
 
+        {PHYSIO_VIEWS.includes(tab) && <PhysioKin view={tab as "ptoday" | "pweek" | "pcases"} user={user} onCount={setPkCount} />}
+
         {tab === "residents" && (
           <>
             <div className="ka-head"><div><h1>ผู้รับบริการ</h1><p>{RESIDENTS.length} คน · สาขา{user.branch || "-"}</p></div></div>
@@ -576,7 +600,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
                 <li key={r.id ?? r.name} className="ka-res">
                   <button type="button" className="ka-res-main" onClick={() => setResPick(r)} aria-label={`ดูข้อมูล ${r.name}`}>
                     <Avatar kind="resident" id={r.id} name={r.name} size={46} />
-                    <span className="ka-t"><b>{r.name}</b><small>{r.room && r.room !== "-" ? `ห้อง ${r.room}` : "ยังไม่มีห้อง"} · {r.age} ปี{allergy[r.name] && <em className="ka-flag bad">แพ้ {allergy[r.name]}</em>}</small></span>
+                    <span className="ka-t"><b>{r.name}</b><small>{r.room && r.room !== "-" ? `ห้อง ${r.room}` : "ยังไม่มีห้อง"} · {r.age} ปี{allergy[r.name] && <em className="ka-flag bad">แพ้ {allergy[r.name]}</em>}</small>{ptDone[r.name] && <em className="ka-pt">กายภาพแล้ว {ptDone[r.name]}</em>}</span>
                     <span className="ka-res-go">ดูข้อมูล<Icon name="chevron" className="h-4 w-4 -rotate-90" /></span>
                   </button>
                   <div className="ka-res-foot">
@@ -691,8 +715,8 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
 
       {/* เมนูล่าง: แถบลอยสีสว่าง · ปุ่มที่เลือกเป็นแคปซูลสีแชมเปญ · ตัวเลข = งานรอทำ (แดงเมื่อมีงานเลยเวลา) / ซองยาพร้อมจ่าย */}
       <nav aria-label="เมนูล่าง" className="ka-nav">
-        {TABS.map((x) => {
-          const n = x.id === "tasks" ? myPending.length : x.id === "meds" ? ready.length : 0;
+        {tabs.map((x) => {
+          const n = x.id === "tasks" ? myPending.length : x.id === "meds" ? ready.length : x.id === "ptoday" ? pkCount : 0;
           return (
             <button key={x.id} type="button" aria-current={tab === x.id ? "page" : undefined} className={tab === x.id ? "is-on" : ""} onClick={() => { setTab(x.id); setFab(false); window.scrollTo(0, 0); }}>
               <span className="ka-nav-ic"><Icon name={x.icon} className="h-[22px] w-[22px]" />{n > 0 && <i className={`ka-bdg ${x.id === "tasks" && myLate.length ? "is-bad" : ""}`}>{n > 99 ? "99+" : n}</i>}</span>{x.label}
