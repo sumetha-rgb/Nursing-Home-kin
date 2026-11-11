@@ -5,7 +5,7 @@ import Icon from "./Icon";
 import { ResidentPicker, SearchSelect } from "./SearchSelect";
 import { clearNotice, closeModal, openModal, useNotice } from "@/lib/notice";
 
-export function PageHeader({ title, sub, actions }: { title: string; sub?: string; actions?: ReactNode }) {
+export function PageHeader({ title, sub, actions }: { title: string; sub?: ReactNode; actions?: ReactNode }) {
   const clean = title.replace(/\s*\([^)]*\)/g, "").trim();
   return <header className="page-header"><div><span className="kicker"><span className="small-line" /> KIN · THE ART OF CARE</span><h1>{clean}</h1>{sub && <p>{sub}</p>}</div>{actions && <div className="page-actions">{actions}</div>}</header>;
 }

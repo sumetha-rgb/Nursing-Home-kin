@@ -12,7 +12,7 @@ import { useApp } from "@/lib/app";
 import { useSession } from "@/lib/session";
 import { can } from "@/lib/perms";
 import { staying } from "@/lib/rooms";
-import { billHandoff, cashHandoff, invoiceHandoff } from "@/lib/handoff";
+import { billHandoff, cashHandoff, CourseBill, courseHandoff, invoiceHandoff } from "@/lib/handoff";
 import StatusExport from "../billing/StatusExport";
 import { invoiceDocsCsv } from "@/lib/exportsCsv";
 import Receivables from "../billing/Receivables";
@@ -433,13 +433,26 @@ export function Billing() {
       setCourse({ ...course, busy: false });
       return toast(e instanceof Error ? e.message : "บันทึกคอร์สไม่สำเร็จ");
     }
-    const p = res.rows[k], c = contractOf(course.who);
     setCourse(null);
-    setForm({ id: newId(), date: todayIso(), who: course.who, hn: p[6] ?? "", payer: c?.[3] ?? "", address: c?.[10] ?? "", kind: BILL_KINDS.find((x) => x.startsWith("คอร์ส")) ?? BILL_KINDS[1], contract: c?.[0] ?? "", items: "[]", total: 0, discount: 0, net: 0, status: UNPAID, note: "" });
-    setLines([{ desc: `คอร์ส${name.startsWith("กายภาพ") ? "" : "กายภาพ "}${name} ${total} ครั้ง`, qty: 1, price, discount: 0 }]);
-    loadUnbilled(course.who, [id]);
-    toast(`บันทึกคอร์สแล้ว · ${name} ${total} ครั้ง · ${course.who} · ตรวจใบแจ้งหนี้แล้วกดบันทึก`);
+    openCourseBill(k, id, name, total, price);
   };
+  /** เปิดฟอร์มใบแจ้งหนี้ของคอร์สที่เพิ่งซื้อ (ผู้ชำระ/ที่อยู่จากสัญญา) · ใช้ทั้งปุ่มขายคอร์สหน้านี้ และการซื้อคอร์สจากโปรไฟล์ผู้รับบริการ */
+  const openCourseBill = (k: number, id: string, name: string, total: number, price: number) => {
+    const p = res.rows[k], who = p[0], c = contractOf(who);
+    setForm({ id: newId(), date: todayIso(), who, hn: p[6] ?? "", payer: c?.[3] ?? "", address: c?.[10] ?? "", kind: BILL_KINDS.find((x) => x.startsWith("คอร์ส")) ?? BILL_KINDS[1], contract: c?.[0] ?? "", items: "[]", total: 0, discount: 0, net: 0, status: UNPAID, note: "" });
+    setLines([{ desc: `คอร์ส${name.startsWith("กายภาพ") ? "" : "กายภาพ "}${name} ${total} ครั้ง`, qty: 1, price, discount: 0 }]);
+    loadUnbilled(who, [id]);
+    toast(`บันทึกคอร์สแล้ว · ${name} ${total} ครั้ง · ${who} · ตรวจผู้ชำระ ส่วนลด เลขผู้เสียภาษี แล้วกดบันทึกใบแจ้งหนี้`);
+  };
+  // ซื้อคอร์สจากโปรไฟล์ผู้รับบริการ → เปิดใบแจ้งหนี้ให้ทันทีเมื่อรายชื่อผู้รับบริการโหลดแล้ว
+  const [courseFor, setCourseFor] = useState<CourseBill | null>(() => courseHandoff.take());
+  useEffect(() => {
+    if (!courseFor || !res.loaded || !con.loaded) return;
+    const k = res.ids.indexOf(courseFor.residentId);
+    if (k < 0) { setCourseFor(null); return toast("บันทึกคอร์สแล้ว · ไม่พบผู้รับบริการในสาขานี้ · ออกใบแจ้งหนี้จากปุ่มสร้างใบแจ้งหนี้"); }
+    setCourseFor(null);
+    openCourseBill(k, courseFor.courseId, courseFor.name, courseFor.total, courseFor.price);
+  }, [courseFor, res.loaded, con.loaded, res.ids]); // eslint-disable-line react-hooks/exhaustive-deps
   const sum = totals(lines.filter((l) => l.desc.trim()));
   const vatSum = vatOf(lines.filter((l) => l.desc.trim()));
   const saveNew = () => {

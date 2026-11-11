@@ -25,6 +25,7 @@ export const DEMO_ACCOUNTS: { email: string; name: string; role: Role; branch: s
   { email: "cashier@kin.test", name: "แคชเชียร์ (ทดลอง)", role: "Cashier", branch: "สุขุมวิท 107" },
   { email: "staff@kin.test", name: "พนักงานดูแล (ทดลอง)", role: "Nurse", branch: "สุขุมวิท 107" },
   { email: "physio@kin.test", name: "นักกายภาพ (ทดลอง)", role: "Physio", branch: "สุขุมวิท 107" },
+  { email: "physio2@kin.test", name: "ปวีณา สุขเจริญ", role: "Physio", branch: "สุขุมวิท 107" },
 ];
 export const SHOW_DEMO = process.env.NEXT_PUBLIC_SHOW_DEMO_ACCOUNTS !== "false";
 

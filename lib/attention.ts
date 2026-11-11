@@ -125,8 +125,9 @@ async function compute([tasks, health, billing, contracts, stock, rooms, roster,
         WHERE c.used < c.total AND c.therapist_id IS NULL AND coalesce(r.status, '') NOT LIKE 'ย้ายออก%' ${w("c.branch_name")}
         ORDER BY c.created_at LIMIT 50`), (v) => { out.physioOpen = v; });
     // เมื่อวานมีนัดตามแผน แต่ไม่มีบันทึกกายภาพของคอร์สนั้น (เกณฑ์เดียวกับหน้าติดตามการส่งงาน: นับตั้งแต่วันจ่ายเคส/แก้แผนล่าสุด · แก้แผนวันนี้ = ไม่นับ)
-    job(() => q(`SELECT c.resident_name AS name, coalesce(c.therapist_name, '-') AS who FROM physio_courses c LEFT JOIN residents r ON r.id = c.resident_id
+    job(() => q(`SELECT c.resident_name AS name, coalesce(c.plan_slots->'date'->((${TODAY} - 1)::text)->>'name', c.plan_slots->'dow'->(extract(dow FROM ${TODAY} - 1)::int::text)->>'name', c.therapist_name, '-') AS who FROM physio_courses c LEFT JOIN residents r ON r.id = c.resident_id
         WHERE c.therapist_id IS NOT NULL AND c.used < c.total AND coalesce(r.status, '') NOT LIKE 'ย้ายออก%' ${w("c.branch_name")}
+          AND NOT coalesce(c.plan_slots->'skip' ? ((${TODAY} - 1)::text), false)
           AND CASE WHEN coalesce(cardinality(c.plan_dates), 0) > 0 THEN (${TODAY} - 1)::text = ANY(c.plan_dates) ELSE extract(dow FROM ${TODAY} - 1)::int = ANY(coalesce(c.plan_days, '{}')) END
           AND NOT EXISTS (SELECT 1 FROM clinical_notes n WHERE n.kind = 'physio' AND n.data->>'course_id' = c.id AND (n.created_at AT TIME ZONE 'Asia/Bangkok')::date = ${TODAY} - 1)
           AND (SELECT (max(a.at) AT TIME ZONE 'Asia/Bangkok')::date FROM audit_logs a WHERE a.area = 'physio' AND a.action = 'update' AND a.summary LIKE 'จ่ายเคสกายภาพ%' AND a.record_id = c.id) < ${TODAY}

@@ -47,3 +47,11 @@ export const invoiceHandoff = {
   set: (invoiceId: string) => { viewInv = invoiceId; },
   take: () => { const h = viewInv; viewInv = null; return h; },
 };
+
+/** โปรไฟล์ผู้รับบริการ (ซื้อคอร์สกายภาพ) → การเงิน: เปิดฟอร์มใบแจ้งหนี้ที่ใส่คอร์สไว้ให้ (ผู้ชำระ/ที่อยู่จากสัญญา · แก้ส่วนลด เลขผู้เสียภาษี และเพิ่มรายการอื่นได้) */
+export type CourseBill = { residentId: string; courseId: string; name: string; total: number; price: number };
+let courseBill: CourseBill | null = null;
+export const courseHandoff = {
+  set: (h: CourseBill) => { courseBill = h; },
+  take: () => { const h = courseBill; courseBill = null; return h; },
+};

@@ -5,7 +5,7 @@ import PhotoPicker from "../PhotoPicker";
 import { useApp } from "@/lib/app";
 import { useSession } from "@/lib/session";
 import { stampPhoto } from "@/lib/roster";
-import { ACTIVITIES, bmiOf, MAX_PHOTOS, MOBILITY, PhysioVisit, VITAL_FIELDS, Vitals, vitalsText, vitalWarnings } from "@/lib/physio";
+import { ACTIVITIES, bmiOf, canEditRec, editLeft, EDIT_DAYS, MAX_PHOTOS, MOBILITY, PhysioHistory, PhysioVisit, VITAL_FIELDS, Vitals, vitalsText, vitalWarnings } from "@/lib/physio";
 
 /** เคสที่จะบันทึก (ใช้ได้ทั้ง KinApp และโปรไฟล์ผู้รับบริการในระบบจัดการ) */
 export type RecordTarget = {
@@ -16,8 +16,22 @@ export type RecordTarget = {
   visit?: PhysioVisit;
   /** บันทึกแทนนักกายภาพคนนี้ */
   forName?: string | null;
+  /** แก้ไขบันทึกเดิม (ภายใน 7 วัน) · ไม่ตัดคอร์สเพิ่ม ไม่เปลี่ยนรูป */
+  edit?: PhysioHistory;
 };
-type F = { activities: string[]; pain: string; mobility: string; photos: string[]; vit: Record<string, string>; cc: string; pe: string; dx: string; plan: string; showVit: boolean };
+type F = { activities: string[]; pain: string; mobility: string; photos: string[]; vit: Record<string, string>; cc: string; pe: string; dx: string; plan: string; showVit: boolean; minutes: string };
+
+/** ท้ายรายการประวัติ: ตัวหนังสือแดงบอกเวลาที่ยังแก้ได้ + ปุ่มแก้ไข (ผู้บันทึก / ผู้จัดการสาขา) */
+export function EditNote({ h, onEdit }: { h: PhysioHistory; onEdit: () => void }) {
+  const { user } = useSession();
+  const left = editLeft(h);
+  return <>
+    {h.edited && <p className="pk-edited">แก้ไขล่าสุด {h.edited.slice(8, 10)}/{h.edited.slice(5, 7)} {h.edited.slice(11)} น.{h.edited_by ? ` · ${h.edited_by}` : ""}</p>}
+    {left && canEditRec(user, h) && (left.open
+      ? <div className="pk-editrow"><p className="pk-editwarn">แก้ไขได้อีก {left.days} วัน (ถึง {left.until}) · เกิน {EDIT_DAYS} วันแก้ไม่ได้</p><button type="button" className="btn-soft !min-h-0 !py-1.5 !text-sm" onClick={onEdit}>แก้ไข</button></div>
+      : <p className="pk-editwarn is-off">เกิน {EDIT_DAYS} วันหลังบันทึก · แก้ไขไม่ได้แล้ว</p>)}
+  </>;
+}
 const nowTh = () => new Date().toLocaleString("th-TH", { day: "numeric", month: "short", year: "2-digit", hour: "2-digit", minute: "2-digit" });
 const since = (iso: string) => Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60000));
 
@@ -50,10 +64,18 @@ export default function PhysioRecordModal({ target, testMode = false, onClose, o
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     if (!target) { setF(null); return; }
-    setF({ activities: [], pain: target.last?.pain ?? "", mobility: target.last?.mobility ?? "", photos: [], vit: {}, cc: target.last?.cc ?? "", pe: "", dx: target.last?.dx ?? "", plan: "", showVit: true });
+    const e = target.edit;
+    if (e) {
+      // แก้ไข: ค่าเดิมทั้งหมด · บันทึกแบบเก่าที่มีแต่ข้อความรวม = ใส่ไว้ช่องตรวจร่างกาย
+      const plain = !(e.cc || e.pe || e.dx || e.plan);
+      setF({ activities: e.activities ?? [], pain: e.pain ?? "", mobility: e.mobility ?? "", photos: [], cc: e.cc ?? "", pe: e.pe ?? (plain ? e.body ?? "" : ""), dx: e.dx ?? "", plan: e.plan ?? "",
+        vit: Object.fromEntries(Object.entries(e.vitals ?? {}).filter(([k]) => k !== "bmi").map(([k, v]) => [k, String(v)])), showVit: true, minutes: e.minutes != null ? String(e.minutes) : "" });
+      return;
+    }
+    setF({ activities: [], pain: target.last?.pain ?? "", mobility: target.last?.mobility ?? "", photos: [], vit: {}, cc: target.last?.cc ?? "", pe: "", dx: target.last?.dx ?? "", plan: "", showVit: true, minutes: "" });
   }, [target]);
   if (!target || !f) return null;
-  const t = target, needPhoto = !!t.visit;
+  const t = target, ed = t.edit, needPhoto = !!t.visit && !ed, left = ed ? editLeft(ed) : null;
   const set = (p: Partial<F>) => setF({ ...f, ...p });
   const stamp = (u: string) => stampFor(u, "กายภาพ", t.residentName, t.room, user?.name ?? "");
   const vitals = (): Vitals => {
@@ -71,6 +93,16 @@ export default function PhysioRecordModal({ target, testMode = false, onClose, o
     // ข้อความรวม (แสดงในตาราง Progress note ของโปรไฟล์ผู้รับบริการ)
     const body = [f.cc && `อาการสำคัญ: ${f.cc}`, f.pe && `ตรวจร่างกาย: ${f.pe}`, f.dx && `วินิจฉัย: ${f.dx}`, f.plan && `แผนการรักษา: ${f.plan}`, vitalsText(v) && `สัญญาณชีพ: ${vitalsText(v)}`].filter(Boolean).join("\n");
     setBusy(true);
+    if (ed) {
+      const r = await fetch("/api/clinic", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+        op: "physio_edit", id: ed.id, body, data: { pain: f.pain, plan: f.plan, mobility: f.mobility, activities: f.activities, vitals: v, cc: f.cc, pe: f.pe, dx: f.dx, minutes: f.minutes.trim() ? Number(f.minutes) : null },
+      }) });
+      const x = await r.json().catch(() => ({}));
+      setBusy(false);
+      if (!r.ok) return toast(x.error || "แก้ไขไม่สำเร็จ");
+      toast(`แก้ไข${ed.title ?? "บันทึกกายภาพ"}แล้ว · เก็บประวัติการแก้ไขไว้`);
+      return onSaved({ used: t.used, total: t.total });
+    }
     const r = await fetch("/api/clinic", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
       op: "course_use", courseId: t.courseId, ...(t.visit ? { visitId: t.visit.id, photos: f.photos } : {}), body,
       data: { pain: f.pain, plan: f.plan, mobility: f.mobility, minutes: t.visit ? since(t.visit.iso) || null : null, activities: f.activities, vitals: v, cc: f.cc, pe: f.pe, dx: f.dx },
@@ -95,12 +127,15 @@ export default function PhysioRecordModal({ target, testMode = false, onClose, o
   const bmi = bmiOf(Number(f.vit.bw) || undefined, Number(f.vit.ht) || undefined);
   const step = (n: number, done: boolean) => <i className={done ? "is-done" : ""}>{done ? "✓" : n}</i>;
   return (
-    <Modal open title={`บันทึกกายภาพ · ${t.residentName || t.courseName}`} onClose={onClose}
+    <Modal open title={`${ed ? "แก้ไขบันทึกกายภาพ" : "บันทึกกายภาพ"} · ${t.residentName || t.courseName}`} onClose={onClose}
       footer={<>{miss.length > 0 && <span className="pk-miss">ยังขาด: {miss.join(" · ")}</span>}
         <button className="btn-soft" onClick={onClose}>ยกเลิก</button>
-        <button className="btn-primary" disabled={busy || miss.length > 0} onClick={save}>{busy ? "กำลังบันทึก…" : "บันทึก · ตัดคอร์ส 1 ครั้ง"}</button></>}>
+        <button className="btn-primary" disabled={busy || miss.length > 0 || (!!ed && !left?.open)} onClick={save}>{busy ? "กำลังบันทึก…" : ed ? "บันทึกการแก้ไข" : "บันทึก · ตัดคอร์ส 1 ครั้ง"}</button></>}>
       <div className="pk-form pk-rec">
-        <p className="pk-who-line"><b>{t.residentName || t.courseName}</b>{t.hn ? ` · ${t.hn}` : ""} · ครั้งที่ {t.used + 1}/{t.total}{t.visit ? ` · เช็คอิน ${t.visit.at} น.` : ""}{t.forName ? ` · บันทึกแทน ${t.forName}` : ""}</p>
+        {ed ? <>
+          <p className="pk-who-line"><b>{ed.title ?? t.courseName}</b> · บันทึกเมื่อ {ed.at}{ed.author ? ` โดย ${ed.author}` : ""}</p>
+          <p className="pk-editwarn is-box">{left?.open ? `แก้ไขได้อีก ${left.days} วัน (ถึง ${left.until}) · ` : ""}แก้ไขได้ภายใน {EDIT_DAYS} วันหลังบันทึกเท่านั้น · ทุกการแก้ไขเก็บค่าก่อน-หลังไว้ในบันทึกการใช้งาน · จำนวนครั้งและรูปไม่เปลี่ยน</p>
+        </> : <p className="pk-who-line"><b>{t.residentName || t.courseName}</b>{t.hn ? ` · ${t.hn}` : ""} · ครั้งที่ {t.used + 1}/{t.total}{t.visit ? ` · เช็คอิน ${t.visit.at} น.` : ""}{t.forName ? ` · บันทึกแทน ${t.forName}` : ""}</p>}
 
         <section className="pk-step is-opt">
           <button type="button" className="pk-step-h" aria-expanded={f.showVit} onClick={() => set({ showVit: !f.showVit })}>
@@ -138,6 +173,7 @@ export default function PhysioRecordModal({ target, testMode = false, onClose, o
           <div className="pk-chips">{MOBILITY.map((m) => (
             <button key={m} type="button" aria-pressed={f.mobility === m} className={f.mobility === m ? "is-on" : ""} onClick={() => set({ mobility: f.mobility === m ? "" : m })}>{m}</button>
           ))}</div>
+          {ed && <label className="pk-num pk-mins"><span>ระยะเวลาที่ทำ</span><span className="pk-num-in"><input type="number" inputMode="numeric" min={1} max={300} value={f.minutes} onChange={(e) => set({ minutes: e.target.value })} aria-label="ระยะเวลาที่ทำ (นาที)" /><em>นาที</em></span></label>}
           <p className="pk-sub">ความปวด (0 = ไม่ปวด · 10 = ปวดมากที่สุด)</p>
           <div className="pk-pain">{Array.from({ length: 11 }, (_, i) => String(i)).map((v) => (
             <button key={v} type="button" aria-pressed={f.pain === v} className={f.pain === v ? "is-on" : ""} onClick={() => set({ pain: f.pain === v ? "" : v })}>{v}</button>

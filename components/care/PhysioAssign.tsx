@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Modal } from "../ui";
 import { useApp } from "@/lib/app";
-import { addMonth, clashes, DAY_FULL, DAY_TH, dayLabel, leftOf, loadOf, monthCells, monthLabel, PhysioCase, projectDates, Sched, Therapist, TIME_SLOTS, WEEK } from "@/lib/physio";
+import { addMonth, clashes, DAY_FULL, DAY_TH, dayLabel, dowOf, leftOf, loadOf, monthCells, monthLabel, PhysioCase, projectDates, Sched, Therapist, TIME_SLOTS, WEEK } from "@/lib/physio";
 
 const MINUTES = [30, 45, 60, 90];
 /** ปุ่มลัดเลือกวัน */
@@ -31,21 +31,30 @@ export default function PhysioAssign({ c, cases, therapists, today, doneToday, o
   const [minutes, setMinutes] = useState(45);
   const [ym, setYm] = useState(today.slice(0, 7));
   const [busy, setBusy] = useState(false);
+  /** คนทำประจำวัน: "0"–"6" → รหัสนักกายภาพ (ไม่มี = ผู้รับผิดชอบหลัก) */
+  const [dowT, setDowT] = useState<Record<string, string>>({});
   useEffect(() => {
     if (!c) return;
     const team = therapists.filter((t) => t.branch === c.branch_name); // ค่าเริ่มต้น: สาขานี้มีคนเดียว = เลือกให้
     // เคสใหม่ที่สาขามีนักกายภาพคนเดียว = เลือกให้เลย
     setTid(c.therapist_id ?? (team.length === 1 ? team[0].id : "")); setDays(c.plan_days ?? []); setDates(c.plan_dates ?? []); setTime(c.plan_time ?? "");
     setMinutes(c.plan_minutes ?? (Number(c.name.match(/(\d+)\s*นาที/)?.[1]) || 45)); setYm(today.slice(0, 7));
+    setDowT(Object.fromEntries(Object.entries(c.plan_slots?.dow ?? {}).map(([k, v]) => [k, v.id])));
   }, [c]); // eslint-disable-line react-hooks/exhaustive-deps
-  const plan = useMemo(() => (c ? projectDates({ used: c.used, total: c.total, plan_days: dates.length ? null : days, plan_dates: dates }, today, !!doneToday) : []), [c, days, dates, today, doneToday]);
+  const plan = useMemo(() => (c ? projectDates({ used: c.used, total: c.total, plan_days: dates.length ? null : days, plan_dates: dates, plan_slots: dates.length ? null : c.plan_slots }, today, !!doneToday) : []), [c, days, dates, today, doneToday]);
   if (!c) return null;
   // สาขานี้ก่อน แล้วสาขาอื่น (รับงานข้ามสาขาได้ เฉพาะเคสที่ถูกจ่ายให้)
   const local = therapists.filter((t) => t.branch === c.branch_name), away = therapists.filter((t) => t.branch !== c.branch_name);
   const team = [...local, ...away];
   const others = cases.filter((x) => x.id !== c.id);
   const sched: Sched = dates.length ? { dates } : { days };
-  const busyAt = (t: string) => clashes(others, tid, sched, t, minutes);
+  /** วันในสัปดาห์ที่มีนัด (เรียงจันทร์ก่อน) · คนทำของแต่ละวัน (ไม่ได้แบ่ง = ผู้รับผิดชอบหลัก) */
+  const planDow = WEEK.filter((x) => (dates.length ? dates.some((d) => dowOf(d) === x) : days.includes(x)));
+  const doerOf = (x: number) => (dowT[String(x)] && dowT[String(x)] !== tid ? dowT[String(x)] : tid);
+  /** ส่วนของแผนที่คน id ทำ (หาเวลาชนเฉพาะวันของคนนั้น) */
+  const part = (id: string): Sched => (dates.length ? { dates: dates.filter((d) => doerOf(dowOf(d)) === id) } : { days: days.filter((x) => doerOf(x) === id) });
+  const busyAt = (t: string) => clashes(others, tid, part(tid), t, minutes);
+  const split = planDow.filter((x) => doerOf(x) !== tid);
   const clash = busyAt(time);
   // วันในสัปดาห์ / ปุ่มลัด = กลับเป็นแผนทุกสัปดาห์
   const toggle = (d: number) => { setDates([]); setDays(days.includes(d) && !dates.length ? days.filter((x) => x !== d) : dates.length ? [d] : [...days, d]); };
@@ -63,11 +72,11 @@ export default function PhysioAssign({ c, cases, therapists, today, doneToday, o
   const save = async () => {
     if (need.length) return toast(`กรุณาเลือก${need.join("และ")}`);
     setBusy(true);
-    const r = await fetch("/api/clinic", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "course_plan", courseId: c.id, therapistId: tid, days: dates.length ? [] : days, dates, time, minutes }) });
+    const r = await fetch("/api/clinic", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "course_plan", courseId: c.id, therapistId: tid, days: dates.length ? [] : days, dates, time, minutes, slots: { dow: Object.fromEntries(planDow.filter((x) => doerOf(x) !== tid).map((x) => [String(x), doerOf(x)])) } }) });
     const d = await r.json().catch(() => ({}));
     setBusy(false);
     if (!r.ok) return toast(d.error || "บันทึกไม่สำเร็จ");
-    toast(tid ? `จ่ายเคส${c.resident_name}ให้ ${team.find((t) => t.id === tid)?.name ?? ""} แล้ว` : `${c.resident_name} กลับเป็นยังไม่มีผู้รับผิดชอบ`);
+    toast(tid ? `จ่ายเคส${c.resident_name}ให้ ${[tid, ...new Set(split.map(doerOf))].map((id) => team.find((t) => t.id === id)?.name ?? "").join(", ")} แล้ว` : `${c.resident_name} กลับเป็นยังไม่มีผู้รับผิดชอบ`);
     onSaved(); onClose();
   };
   return (
@@ -100,6 +109,7 @@ export default function PhysioAssign({ c, cases, therapists, today, doneToday, o
                   })}</div>
                 </div>
               ))}
+              {c.therapist_id && tid && tid !== c.therapist_id && <p className="pa-movenote">เปลี่ยนผู้รับผิดชอบ: ย้ายเฉพาะ {c.total - c.used} ครั้งที่ยังไม่ได้ทำ{c.used ? ` · ${c.used} ครั้งที่ทำแล้วไม่ย้าย ยังเป็นผลงานของคนที่ทำ` : ""} · ประวัติการบันทึกยังอยู่กับเคส คนใหม่เปิดดูได้</p>}
             </>}
           </section>
 
@@ -132,6 +142,24 @@ export default function PhysioAssign({ c, cases, therapists, today, doneToday, o
               <h4><i>4</i>ครั้งละ</h4>
               <div className="pa-days">{MINUTES.map((m) => <button key={m} type="button" aria-pressed={minutes === m} className={minutes === m ? "is-on" : ""} onClick={() => setMinutes(m)}>{m} นาที</button>)}</div>
             </section>
+
+            {planDow.length > 0 && team.length > 1 && <section className="pa2-step">
+              <h4><i>5</i>แบ่งให้คนอื่นบางวัน<small>ไม่บังคับ · ผู้รับบริการ 1 คน มีนักกายภาพหลายคนได้</small></h4>
+              <p className="pa-hint">ทุก{planDow.length > 1 ? "วันที่มีนัด" : "นัด"}เป็นของ <b>{team.find((t) => t.id === tid)?.name ?? "-"}</b> ถ้าไม่เลือก · คนลาเฉพาะวัน ให้กดนัดวันนั้นในตารางสัปดาห์แทน</p>
+              <div className="pa-dowteam">{planDow.map((x) => {
+                const id = doerOf(x), b = time && id ? clashes(others, id, dates.length ? { dates: dates.filter((d) => dowOf(d) === x) } : { days: [x] }, time, minutes) : [];
+                return (
+                  <label key={x} className={id !== tid ? "is-split" : ""}>
+                    <span>ทุกวัน{DAY_FULL[x]}</span>
+                    <select aria-label={`คนทำวัน${DAY_FULL[x]}`} value={id === tid ? "" : id} onChange={(e) => setDowT({ ...dowT, [String(x)]: e.target.value })}>
+                      <option value="">{team.find((t) => t.id === tid)?.name ?? "-"} (ผู้รับผิดชอบหลัก)</option>
+                      {team.filter((t) => t.id !== tid).map((t) => <option key={t.id} value={t.id}>{t.name}{t.branch !== c.branch_name ? ` · ${t.branch}` : ""}</option>)}
+                    </select>
+                    {b.length > 0 && <small className="pa-busy">ไม่ว่าง: {b.map((k) => `${k.resident_name} ${k.plan_time}`).join(", ")}</small>}
+                  </label>
+                );
+              })}</div>
+            </section>}
           </>}
         </div>
 

@@ -1,4 +1,5 @@
 "use client";
+import Reserve from "@/components/Reserve";
 import Occupancy from "../care/Occupancy";
 import CsvIcon from "@/components/CsvIcon";
 import CourseSummary from "../care/CourseSummary";
@@ -188,14 +189,15 @@ export function Dashboard() {
         {period === "pick" && <input type="month" aria-label="เลือกเดือน" className="!w-auto" value={pick} max={new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 7)} onChange={(e) => e.target.value && setPick(e.target.value)} />}
         <span className="text-sm text-gold-600">{R.label}</span>
       </div>
-      {ins ? <AttentionStrip items={attn} go={go} /> : <p className="mb-4 rounded-xl bg-cream-50 px-4 py-4 text-sm text-gold-600">กำลังโหลดเรื่องที่ต้องจัดการ…</p>}
+      {/* จองพื้นที่เท่าครั้งก่อน ระหว่างโหลด · แถบแท็บและตัวเลขด้านล่างไม่กระโดด */}
+      <Reserve id="attn" loading={!ins} fallback={520} label="กำลังโหลดเรื่องที่ต้องจัดการ…"><AttentionStrip items={attn} go={go} /></Reserve>
       <div className="dash-tabs mt-5 flex flex-wrap items-center justify-between gap-3"><Tabs tabs={DASH_TABS} value={view} onChange={setView} />
         {view === "ตัวชี้วัดหลัก" && <button className="btn-soft" disabled={!kpis.length} onClick={exportOverview}><CsvIcon /> ส่งออก CSV</button>}</div>
       {/* สรุปการเงินของเดือนที่เลือก (ใช้ในการ์ดภาพรวมและรายงานผู้บริหาร) */}
       {fin && view !== "การเงิน" && <div hidden><FinanceAnalytics branch={shiftBranch} compact month={finMonth} prevMonth={finPrev} onSummary={setFinSum} /></div>}
 
       {view === "ตัวชี้วัดหลัก" && <div className="space-y-6">
-        {pct.length ? <KpiCharts pct={pct} counts={counts} vs={vs} /> : <p className="rounded-xl bg-cream-50 px-4 py-6 text-sm text-gold-600">กำลังโหลดตัวชี้วัด…</p>}
+        <Reserve id="kpi" loading={!pct.length} fallback={640} label="กำลังโหลดตัวชี้วัด…"><KpiCharts pct={pct} counts={counts} vs={vs} /></Reserve>
         <p className="text-xs text-gold-500">กดแถวหรือกล่องเพื่อดูรายละเอียด · สีเขียว = ดีขึ้น · สีแดง = แย่ลง</p>
         <section><h3 className="dash-h">กายภาพ <button className="dash-more" onClick={() => setView("กายภาพ")}>ดูรายละเอียด</button></h3><CourseSummary branch={shiftBranch} compact /></section>
       </div>}

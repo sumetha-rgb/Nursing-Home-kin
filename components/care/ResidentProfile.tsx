@@ -69,7 +69,8 @@ const TAB_GROUPS = [
 const CLINICAL: Record<string, ClinicalTab> = { "แรกรับ/ประเมิน": "admission", "บันทึกพยาบาล": "nursing", "กายภาพ": "physio", "เวชภัณฑ์": "supplies" };
 
 /** ประวัติรายบุคคล: กดชื่อผู้รับบริการแล้วเห็นทุกอย่างในหน้าเดียว (พิมพ์เป็นเอกสารได้) */
-export default function ResidentProfile({ id, onClose }: { id: string | null; onClose: () => void }) {
+/** initialTab = เปิดที่แท็บนี้ (เช่น "กายภาพ" จากหน้าตารางกายภาพ) */
+export default function ResidentProfile({ id, onClose, initialTab }: { id: string | null; onClose: () => void; initialTab?: string }) {
   const [p, setP] = useState<Profile | null>(null);
   const [err, setErr] = useState("");
   const [tab, setTab] = useState(TABS[0]);
@@ -84,7 +85,7 @@ export default function ResidentProfile({ id, onClose }: { id: string | null; on
   const [ref, setRef] = useState({ to: "", reason: "", summary: "" });
   useEffect(() => {
     if (!id) return;
-    setP(null); setErr(""); setTab(TABS[0]);
+    setP(null); setErr(""); setTab(initialTab && TABS.includes(initialTab) ? initialTab : TABS[0]);
     fetchProfile(id).then(setP).catch((e) => setErr((e as Error).message));
   }, [id]);
 

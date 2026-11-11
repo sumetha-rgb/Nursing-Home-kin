@@ -5,11 +5,15 @@ import CsvIcon from "@/components/CsvIcon";
 import PhysioAssign from "@/components/care/PhysioAssign";
 import PhysioHistoryModal from "@/components/care/PhysioHistoryModal";
 import PhysioReassign from "@/components/care/PhysioReassign";
+import PhysioSlot from "@/components/care/PhysioSlot";
+import ResidentProfile from "@/components/care/ResidentProfile";
+import PhysioCloseCourse, { CloseTarget } from "@/components/care/PhysioCloseCourse";
+import { teamOf, teamText, whoOn } from "@/lib/physio";
 import { useSession } from "@/lib/session";
 import { can } from "@/lib/perms";
 import { useBranchNames } from "@/lib/branches";
 import { downloadCsv } from "@/lib/store";
-import { addMonth, DAY_FULL, DAY_TH, dowOf, leftOf, loadOf, monthCells, monthLabel, onDate, PhysioBoard, PhysioCase, projectDates, payOf, PayState, schedOf, schedText, TRACK_TEXT, trackRows, TrackRow, TrackStatus, WEEK, weekDates, addDays, dayLabel } from "@/lib/physio";
+import { addMonth, DAY_FULL, DAY_TH, dowOf, leftOf, loadOf, monthCells, monthLabel, onDate, PhysioBoard, PhysioCase, projectDates, payOf, recBy, PayState, schedOf, schedText, TRACK_TEXT, trackRows, TrackRow, TrackStatus, WEEK, weekDates, addDays, dayLabel } from "@/lib/physio";
 
 /**
  * ตารางกายภาพ (เมนูงานดูแล): จ่ายเคสให้นักกายภาพ · ตารางสัปดาห์รายคน · ภาระงาน · ผลงานเดือนนี้
@@ -34,9 +38,19 @@ export function Physio() {
   const [trk, setTrk] = useState("สัปดาห์นี้");
   const [trkWho, setTrkWho] = useState("");
   const [trkSt, setTrkSt] = useState("");
+  /** กรองตามผู้รับบริการ (ชื่อ) */
+  const [trkRes, setTrkRes] = useState("");
+  /** โปรไฟล์ผู้รับบริการ (เปิดที่แท็บกายภาพ) */
+  const [prof, setProf] = useState<string | null>(null);
+  /** ปิดคอร์ส (ผู้จัดการสาขา/ผู้บริหาร) */
+  const [closeT, setCloseT] = useState<CloseTarget | null>(null);
+  /** ปิดคอร์สได้: ผู้จัดการสาขา ผู้บริหาร ฝ่ายขาย/แคชเชียร์ */
+  const boss = can(user, "billing");
   const [hist, setHist] = useState<{ id: string; name: string } | null>(null);
-  /** ย้ายเคสทั้งหมดของนักกายภาพคนนี้ */
-  const [mv, setMv] = useState<{ id: string; name: string } | null>(null);
+  /** หน้าต่างย้ายเคส (ปุ่มบนหัวหน้า) */
+  const [mv, setMv] = useState(false);
+  /** นัดเดียว (คนทำแทนเฉพาะวัน) */
+  const [slot, setSlot] = useState<{ c: PhysioCase; date: string } | null>(null);
   const load = useCallback(() => {
     fetch(`/api/clinic?op=physio_board${br ? `&branch=${encodeURIComponent(br)}` : ""}`, { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : null)).then((x) => setD(x ?? { cases: [], therapists: [], today: [], month: [], date: "" })).catch(() => {});
@@ -55,26 +69,31 @@ export function Physio() {
   const wk = weekDates(tIso);
   // แถวของตาราง = นักกายภาพในสาขา + คนที่มีเคสอยู่แต่ไม่อยู่ในรายชื่อแล้ว (ย้ายสาขา/ลาออก)
   // แถวของตาราง = นักกายภาพของสาขาที่เลือก (ทุกสาขา = ทุกคน) + คนสาขาอื่นที่มาทำเคสที่นี่ + คนที่ไม่อยู่ในทีมแล้วแต่ยังมีเคส
-  const withCase = new Set(cases.map((c) => c.therapist_id).filter(Boolean));
+  const withCase = new Set(cases.flatMap((c) => teamOf(c).map((t) => t.id)));
   const rows = [...(d?.therapists ?? []).filter((t) => !br || t.branch === br || withCase.has(t.id)).map((t) => ({ id: t.id, name: br && t.branch !== br ? `${t.name} · 📍${t.branch}` : t.name, branch: t.branch })),
     ...[...new Map(cases.filter((c) => c.therapist_id && !d?.therapists.some((t) => t.id === c.therapist_id)).map((c) => [c.therapist_id!, { id: c.therapist_id!, name: `${c.therapist_name} (ไม่อยู่ในทีมแล้ว)`, branch: c.branch_name }])).values()]];
   // ตารางสัปดาห์: นัดพร้อมสถานะจริง (ทำแล้ว / ไม่ได้ทำ / รอทำ / นัดไว้) ของแต่ละนักกายภาพ
   const wkRows = d ? trackRows(d, wk[0], wk[6]) : [];
   const cell = (tid: string, date: string) => wkRows.filter((x) => x.therapistId === tid && x.date === date);
+  /** รหัสผู้รับบริการของแถวติดตาม (จากคอร์ส · คอร์สที่ครบแล้วเทียบชื่อ) */
+  const residentOf = (x: TrackRow) => cases.find((c) => c.id === x.caseId)?.resident_id ?? cases.find((c) => c.resident_name === x.resident)?.resident_id ?? null;
   const openRow = (x: TrackRow) => {
     const c = cases.find((k) => k.id === x.caseId);
     if (["done", "noRecord"].includes(x.status) && x.caseId) return setHist({ id: x.caseId, name: x.resident });
-    if (c && canAssign) setPick(c);
+    // นัดวันนี้/ข้างหน้าที่ยังไม่ทำ = หน้าต่างนัดเดียว (ให้คนอื่นทำแทนเฉพาะวันนั้น) · นัดที่ผ่านไปแล้ว = แผนทั้งคอร์ส
+    if (c && canAssign) { if (x.date >= (d?.date ?? "")) setSlot({ c, date: x.date }); else setPick(c); }
   };
   // เดือน: วันนัดที่เหลือของทุกคอร์สตามแผน (เริ่มวันนี้ · บันทึกวันนี้แล้วเริ่มพรุ่งนี้) + ที่บันทึกแล้ววันนี้
   const todayIso = d?.date ?? new Date(Date.now() + 7 * 36e5).toISOString().slice(0, 10);
   const byDay = useMemo(() => {
     const m = new Map<string, { c: PhysioCase; n: number; done?: boolean }[]>();
     const put = (date: string, x: { c: PhysioCase; n: number; done?: boolean }) => m.set(date, [...(m.get(date) ?? []), x]);
+    // ทำแล้ววันนี้ = ของคนที่ทำจริง · นัดที่เหลือ = ของผู้รับผิดชอบปัจจุบัน
+    const doneBy = new Map((d?.log ?? []).filter((r) => r.date === todayIso && r.course_id).map((r) => [r.course_id!, d ? recBy(d, r) : null]));
     for (const c of cases) {
-      if (!c.therapist_id || (who && c.therapist_id !== who)) continue;
-      if (doneIds.has(c.id)) put(todayIso, { c, n: c.used, done: true });
-      for (const p of projectDates(c, todayIso, doneIds.has(c.id))) put(p.date, { c, n: p.n });
+      if (!c.therapist_id) continue;
+      if (doneIds.has(c.id) && (!who || doneBy.get(c.id) === who)) put(todayIso, { c, n: c.used, done: true });
+      for (const p of projectDates(c, todayIso, doneIds.has(c.id))) if (!who || whoOn(c, p.date)?.id === who) put(p.date, { c, n: p.n });
     }
     m.forEach((l) => l.sort((a, b) => (a.c.plan_time ?? "").localeCompare(b.c.plan_time ?? "")));
     return m;
@@ -97,6 +116,7 @@ export function Physio() {
     <>
       <PageHeader title="ตารางกายภาพ" sub={canAssign ? "จ่ายเคสให้นักกายภาพ · กดเคสในตารางเพื่อเปลี่ยนคน วัน หรือเวลา" : "เคสและตารางของนักกายภาพ"}
         actions={<>
+          {canAssign && <button className="btn-soft" title="ย้ายเคสทั้งหมดของนักกายภาพคนหนึ่งไปให้อีกคน (ลา ลาออก ย้ายสาขา)" onClick={() => setMv(true)}>⇄ ย้ายเคส</button>}
           <button className="btn-soft" onClick={exportCases}><CsvIcon /> เคสทั้งหมด</button>
           <button className="btn-soft" onClick={exportMonth}><CsvIcon /> ผลงานเดือนนี้</button>
         </>} />
@@ -136,7 +156,7 @@ export function Physio() {
                   <div key={day} className={`pt-mday ${day === todayIso ? "is-today" : ""} ${day < todayIso ? "is-past" : ""}`}>
                     <span className="pt-mnum">{Number(day.slice(8, 10))}{list.length > 0 && <small>{list.length} ครั้ง</small>}</span>
                     {list.slice(0, 4).map(({ c, n, done }) => (
-                      <button key={c.id} type="button" className={`pt-chip ${done ? "is-done" : ""}`} disabled={!canAssign} title={`${c.plan_time} ${c.resident_name} · ครั้งที่ ${n}/${c.total} · ${c.therapist_name}`} onClick={() => setPick(c)}>
+                      <button key={c.id} type="button" className={`pt-chip ${done ? "is-done" : ""}`} disabled={!canAssign} title={`${c.plan_time} ${c.resident_name} · ครั้งที่ ${n}/${c.total} · ${whoOn(c, day)?.name ?? "-"}`} onClick={() => (done ? setHist({ id: c.id, name: c.resident_name }) : setSlot({ c, date: day }))}>
                         <b>{c.plan_time}</b>{c.resident_name.replace(/^(คุณ|นาย|นางสาว|นาง)\s*/, "")}{done ? " ✓" : ""}
                       </button>
                     ))}
@@ -152,8 +172,7 @@ export function Physio() {
                 const l = loadOf(cases, r.id);
                 return (
                   <tr key={r.id}>
-                    <th scope="row"><b>{r.name}</b><small>{l.cases} เคส · {l.hours} ชม.{!br ? ` · ${r.branch}` : ""}</small>
-                      {canAssign && l.cases > 0 && <button type="button" className="pt-move" title="ย้ายเคสทั้งหมดของคนนี้ไปให้นักกายภาพคนอื่น (ลา ลาออก ย้ายสาขา)" onClick={() => setMv({ id: r.id, name: r.name.replace(/ · 📍.*$/, "") })}>⇄ ย้ายเคสทั้งหมด</button>}</th>
+                    <th scope="row"><b>{r.name}</b><small>{l.cases} เคส · {l.hours} ชม.{!br ? ` · ${r.branch}` : ""}</small></th>
                     {wk.map((dt) => (
                       <td key={dt} className={dt === tIso ? "is-today" : ""}>{cell(r.id, dt).map((x, k) => (
                         <button key={`${x.caseId}${k}`} type="button" className={`pt-chip is-${x.status}`} title={`${x.resident} · ${TRACK_TEXT[x.status]}${x.author ? ` · ${x.author} ${x.at}` : ""}`} onClick={() => openRow(x)}>
@@ -171,7 +190,9 @@ export function Physio() {
         {(() => {
           // ติดตามการส่งงาน: นัดทุกนัดในช่วงที่เลือก พร้อมสถานะ · กดดูสิ่งที่บันทึกได้
           const range = trk === "วันนี้" ? [tIso, tIso] : trk === "สัปดาห์ก่อน" ? [addDays(wk[0], -7), addDays(wk[0], -1)] : trk === "30 วันล่าสุด" ? [addDays(tIso, -29), tIso] : [wk[0], wk[6]];
-          const all = trackRows(d, range[0], range[1]).filter((x) => !trkWho || x.therapistId === trkWho);
+          const inRange = trackRows(d, range[0], range[1]);
+          const resNames = [...new Set(inRange.map((x) => x.resident))].sort((a, b) => a.localeCompare(b, "th"));
+          const all = inRange.filter((x) => (!trkWho || x.therapistId === trkWho) && (!trkRes || x.resident === trkRes));
           const list = all.filter((x) => !trkSt || x.status === trkSt);
           // ที่ถึงกำหนด = ทำแล้ว + ไม่ได้ทำ + เช็คอินไม่บันทึก (ไม่นับนัดวันนี้ที่ยังรอทำ และนัดข้างหน้า)
           const due = all.filter((x) => x.status === "done" || x.status === "missed" || x.status === "noRecord");
@@ -188,12 +209,15 @@ export function Physio() {
                 <span className={missN ? "is-miss" : ""}><b>{missN}</b> ไม่ได้ทำ / ไม่บันทึก</span>
                 <span><b>{pct === null ? "-" : `${pct}%`}</b> ทำตามนัด</span>
                 <select aria-label="นักกายภาพ" value={trkWho} onChange={(e) => setTrkWho(e.target.value)} className="!w-auto"><option value="">นักกายภาพทุกคน</option>{rows.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}</select>
+                <select aria-label="ผู้รับบริการ" value={trkRes} onChange={(e) => setTrkRes(e.target.value)} className="!w-auto"><option value="">ผู้รับบริการทุกคน</option>{resNames.map((n) => <option key={n} value={n}>{n}</option>)}</select>
                 <select aria-label="สถานะ" value={trkSt} onChange={(e) => setTrkSt(e.target.value)} className="!w-auto"><option value="">ทุกสถานะ</option>{(Object.keys(TRACK_TEXT) as TrackStatus[]).map((k) => <option key={k} value={k}>{TRACK_TEXT[k]}</option>)}</select>
               </div>
               <DataTable search={false} columns={["วันที่", "เวลา", "ผู้รับบริการ", "นักกายภาพ", "สถานะ", "ผู้บันทึก"]}
                 rows={list.map((x) => [dayLabel(x.date), x.time || "-", x.resident, x.therapist, x.status, x.author ? `${x.author} · ${x.at}` : x.status === "noRecord" ? `เช็คอิน ${x.at}` : "-"])}
-                render={(_, col, value) => (col === 4 ? <span className={`pt-st is-${value}`}>{TRACK_TEXT[value as TrackStatus]}</span> : undefined)}
-                actions={[{ label: "ดูรายละเอียด", hidden: (k) => !list[k].caseId || !["done", "noRecord"].includes(list[k].status), onClick: (k) => setHist({ id: list[k].caseId!, name: list[k].resident }) }]}
+                render={(k, col, value) => (col === 4 ? <span className={`pt-st is-${value}`}>{TRACK_TEXT[value as TrackStatus]}</span>
+                  : col === 2 && residentOf(list[k]) ? <button type="button" className="pt-reslink" title="ดูข้อมูลผู้รับบริการ (แท็บกายภาพ)" onClick={() => setProf(residentOf(list[k]))}>{value}</button> : undefined)}
+                actions={[{ label: "ดูรายละเอียด", hidden: (k) => !list[k].caseId || !["done", "noRecord"].includes(list[k].status), onClick: (k) => setHist({ id: list[k].caseId!, name: list[k].resident }) },
+                  { label: "ข้อมูลผู้รับบริการ", more: true, hidden: (k) => !residentOf(list[k]), onClick: (k) => setProf(residentOf(list[k])) }]}
                 empty="ไม่มีนัดในช่วงนี้" />
             </Section>
           );
@@ -201,10 +225,13 @@ export function Physio() {
 
         <Section title={`เคสทั้งหมด (${cases.length})`} sub="คอร์สที่ยังเหลือครั้ง">
           <DataTable columns={["ผู้รับบริการ", "ห้อง", "คอร์ส", "ใช้ไป", "นักกายภาพ", "วัน · เวลา", "ใบแจ้งหนี้", "สถานะเคส"]}
-            rows={cases.map((c) => [c.resident_name, c.room ?? "-", c.name, `${c.used}/${c.total}`, c.therapist_name ?? "-", c.plan_time ? `${schedText(c)} ${c.plan_time} (${c.plan_minutes ?? 45} น.)` : "-", payOf(c), caseState(c)])}
-            render={(row, col, value) => col === 6 ? <span className={`pt-pay is-${value}`}>{value === "paid" ? "✓ " : ""}{PAY_SHORT[value as PayState]}</span>
+            rows={cases.map((c) => [c.resident_name, c.room ?? "-", c.name, `${c.used}/${c.total}`, teamText(c) || "-", c.plan_time ? `${schedText(c)} ${c.plan_time} (${c.plan_minutes ?? 45} น.)` : "-", payOf(c), caseState(c)])}
+            render={(row, col, value) => col === 0 ? <button type="button" className="pt-reslink" title="ดูข้อมูลผู้รับบริการ (แท็บกายภาพ)" onClick={() => setProf(cases[row].resident_id)}>{value}</button>
+              : col === 6 ? <span className={`pt-pay is-${value}`}>{value === "paid" ? "✓ " : ""}{PAY_SHORT[value as PayState]}</span>
               : col === 7 ? <span className={`pt-st is-${!cases[row].therapist_id ? "noRecord" : leftOf(cases[row]) <= 2 ? "todo" : "done"}`}>{value}</span> : undefined}
-            actions={[{ label: "ประวัติ", hidden: (k) => cases[k].used === 0, onClick: (k) => setHist({ id: cases[k].id, name: cases[k].resident_name }) }, ...(canAssign ? [{ label: "จ่ายเคส", onClick: (k: number) => setPick(cases[k]) }] : [])]} empty="ยังไม่มีคอร์สกายภาพที่ใช้ได้" />
+            actions={[{ label: "ประวัติ", hidden: (k) => cases[k].used === 0, onClick: (k) => setHist({ id: cases[k].id, name: cases[k].resident_name }) },
+              { label: "ข้อมูลผู้รับบริการ", more: true, onClick: (k) => setProf(cases[k].resident_id) },
+              ...(boss ? [{ label: "ปิดคอร์ส (ไม่ทำต่อ)", more: true, danger: true, hidden: (k: number) => cases[k].used === 0, onClick: (k: number) => { const c = cases[k]; setCloseT({ id: c.id, name: c.name, used: c.used, total: c.total, resident: c.resident_name, billed: c.billed, team: teamText(c) || undefined }); } }] : []), ...(canAssign ? [{ label: "จ่ายเคส", onClick: (k: number) => setPick(cases[k]) }] : [])]} empty="ยังไม่มีคอร์สกายภาพที่ใช้ได้" />
         </Section>
 
         <Section title="ผลงานเดือนนี้" sub="จำนวนครั้งที่บันทึกกายภาพ (ตัดคอร์ส) แยกตามผู้บันทึก">
@@ -213,8 +240,11 @@ export function Physio() {
           )}
         </Section>
       </div>}
+      <PhysioCloseCourse target={closeT} onClose={() => setCloseT(null)} onDone={load} />
+      <ResidentProfile id={prof} initialTab="กายภาพ" onClose={() => { setProf(null); load(); }} />
       <PhysioHistoryModal courseId={hist?.id ?? null} title={hist?.name ?? ""} onClose={() => setHist(null)} />
-      <PhysioReassign from={mv} cases={cases} therapists={d?.therapists ?? []} branch={br} onClose={() => setMv(null)} onSaved={load} />
+      <PhysioSlot target={slot} cases={cases} therapists={d?.therapists ?? []} today={todayIso} doneToday={!!slot && doneIds.has(slot.c.id)} onClose={() => setSlot(null)} onSaved={load} onEditPlan={(c) => setPick(c)} />
+      <PhysioReassign open={mv} cases={cases} therapists={d?.therapists ?? []} branch={br} onClose={() => setMv(false)} onSaved={load} />
       <PhysioAssign c={pick} cases={cases} therapists={d?.therapists ?? []} today={todayIso} doneToday={!!pick && doneIds.has(pick.id)} onClose={() => setPick(null)} onSaved={load} />
     </>
   );

@@ -1,4 +1,5 @@
 "use client";
+import Reserve from "@/components/Reserve";
 import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import CsvIcon from "@/components/CsvIcon";
 import { useBranchNames, withBranches } from "@/lib/branches";
@@ -78,9 +79,10 @@ export function Workflow() {
   const upcoming=upcomingAppts(apptRows);
   const active=residents.filter(r=>r[5].startsWith("เข้าอยู่")).length;
   const today=new Date().toLocaleDateString("th-TH",{weekday:"long",day:"numeric",month:"long",year:"numeric"});
-  const [todo,setTodo]=useState(0);
+  /** จำนวนเรื่องที่รอจัดการ · null = กำลังโหลด */
+  const [todo,setTodo]=useState<number|null>(null);
   return <>
-    <PageHeader title={`สวัสดี ${user?.name??""}`.trim()} sub={`${today}${user?.branch&&user.role!=="Global Admin"?` · สาขา${user.branch}`:""} · ${todo?`วันนี้มี ${todo} เรื่องที่รอคุณจัดการ`:"วันนี้ไม่มีเรื่องค้าง"}`}
+    <PageHeader title={`สวัสดี ${user?.name??""}`.trim()} sub={<>{today}{user?.branch&&user.role!=="Global Admin"?` · สาขา${user.branch}`:""}<br />{todo===null?"กำลังดูเรื่องที่รอคุณจัดการ…":todo?`วันนี้มี ${todo} เรื่องที่รอคุณจัดการ`:"วันนี้ไม่มีเรื่องค้าง"}</>}
       actions={<><button className="btn-soft" onClick={()=>go("appointments")}><Icon name="calendar" className="h-4 w-4" /> ดูตารางนัดหมาย</button>{admitTo&&<button className="btn-primary" onClick={()=>go(admitTo)}><Icon name="plus" className="h-4 w-4" /> รับผู้รับบริการใหม่</button>}</>} />
     <TodayCards onCount={setTodo} />
     <div className="overview-columns mt-8"><div className="space-y-4"><h2 className="text-[17px] font-medium text-gold-800">ภาพรวมศูนย์</h2><Occupancy /><MetricGrid items={[{label:"ผู้รับบริการทั้งหมด",value:residents.length,unit:"คน",note:"ข้อมูลผู้รับบริการในระบบ",icon:"user",accent:true},{label:"กำลังรับการดูแล",value:active,unit:"คน",note:"สถานะเข้าอยู่ในศูนย์",icon:"heart"},{label:"สัญญาที่ใช้งาน",value:contracts.filter(r=>r[5]==="ใช้งานอยู่").length,unit:"สัญญา",note:"ทะเบียนสัญญาบริการ",icon:"doc"},{label:"นัดหมายที่กำลังจะมาถึง",value:upcoming.length,unit:"นัด",note:"จากตารางนัดหมาย",icon:"calendar"}]} /></div>
@@ -105,9 +107,10 @@ function TodayCards({ onCount }: { onCount: (n: number) => void }) {
   }, []);
   const cards = d ? buildTodos(d, user) : [];
   const open = cards.filter((c) => c.n > 0).length;
-  useEffect(() => { onCount(open); }, [open, onCount]);
+  useEffect(() => { if (d) onCount(open); }, [d, open, onCount]);
   const [more, setMore] = useState<string | null>(null);
-  if (!d) return <p className="rounded-2xl bg-cream-50 px-5 py-6 text-sm text-gold-600">กำลังโหลดสิ่งที่ต้องทำวันนี้…</p>;
+  // ระหว่างโหลด: จองพื้นที่เท่าครั้งก่อน (ภาพรวมศูนย์ด้านล่างไม่กระโดด)
+  if (!d) return <Reserve id="today" loading fallback={560} label="กำลังโหลดสิ่งที่ต้องทำวันนี้…">{null}</Reserve>;
   if (!cards.length) return null;
   // กล่อง "ทำก่อน" = เรื่องด่วนที่ค้าง · ที่เหลือแยกตามด้าน · เรื่องที่เรียบร้อยรวมเป็นบรรทัดเดียวท้ายสุด
   const urgent = cards.filter((c) => c.n > 0 && c.urgent);
@@ -132,7 +135,7 @@ function TodayCards({ onCount }: { onCount: (n: number) => void }) {
     );
   };
   return (
-    <section aria-labelledby="todo-h" className="td">
+    <Reserve id="today" loading={false} fallback={560} label=""><section aria-labelledby="todo-h" className="td">
       <div className="td-head">
         <h2 id="todo-h">สิ่งที่ต้องทำวันนี้</h2>
         <div className="td-prog" role="img" aria-label={`เคลียร์แล้ว ${cleared} จาก ${total} เรื่อง`}>
@@ -152,7 +155,7 @@ function TodayCards({ onCount }: { onCount: (n: number) => void }) {
         </section>
       ))}</div>}
       {done.length > 0 && <p className="td-done"><b>✓ เรียบร้อยแล้ว</b>{done.map((c) => <span key={c.key}>{c.short}</span>)}</p>}
-    </section>
+    </section></Reserve>
   );
 }
 /* ---------- ระบบสัญญา ---------- */

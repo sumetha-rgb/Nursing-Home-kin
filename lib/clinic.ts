@@ -7,7 +7,9 @@ export const NOTE_LABEL: Record<NoteKind, string> = { nurse: "Nurse Note", probl
 export type Note = { id: string; kind: NoteKind; title: string | null; body: string | null; data: Record<string, unknown>; status: string | null; author: string | null; at: string };
 export type Course = { id: string; name: string; total: number; used: number; price: number; status: string; created_by: string | null; invoice_id: string | null; at: string;
   /** นักกายภาพผู้รับผิดชอบและแผนรายสัปดาห์ (จ่ายเคสที่เมนูตารางกายภาพ) */
-  therapist_name?: string | null; plan_days?: number[] | null; plan_time?: string | null; plan_minutes?: number | null; plan_dates?: string[] | null; paid?: boolean };
+  therapist_id?: string | null; therapist_name?: string | null; plan_days?: number[] | null; plan_time?: string | null; plan_minutes?: number | null; plan_dates?: string[] | null; paid?: boolean;
+  /** นักกายภาพหลายคน (lib/physio PlanSlots) */
+  plan_slots?: import("@/lib/physio").PlanSlots | null };
 export type SupplyIssue = { id: string; item_name: string; unit: string; qty: number; price: number; issued_by: string | null; invoice_id: string | null; at: string };
 export type SupplyItem = { id: string; branch_name: string; name: string; unit: string; price: number; stock: number };
 export type Clinic = { admission: { data: Record<string, string>; assessed_by: string | null; at: string } | null; notes: Note[]; courses: Course[]; supplies: SupplyIssue[];

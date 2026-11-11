@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { leftOf, onDate, PhysioBoard, schedOf } from "@/lib/physio";
+import { inCase, leftOf, onDate, PhysioBoard, schedOf, whoOn } from "@/lib/physio";
 import Icon from "@/components/Icon";
 import { Modal } from "@/components/ui";
 import { useApp } from "@/lib/app";
@@ -26,10 +26,10 @@ function PhysioBell({ compact, userId }: { compact: boolean; userId: string }) {
     const t = setInterval(() => { if (document.visibilityState === "visible") load(); }, 60_000);
     return () => clearInterval(t);
   }, []);
-  const mine = (d?.cases ?? []).filter((c) => c.therapist_id === userId);
+  const mine = (d?.cases ?? []).filter((c) => inCase(c, userId));
   const done = new Set((d?.today ?? []).map((x) => x.course_id));
   const today = d?.date ?? "";
-  const pending = mine.filter((c) => today && onDate(schedOf(c), today) && !done.has(c.id)).sort((a, b) => (a.plan_time ?? "").localeCompare(b.plan_time ?? ""));
+  const pending = mine.filter((c) => today && onDate(schedOf(c), today) && whoOn(c, today)?.id === userId && !done.has(c.id)).sort((a, b) => (a.plan_time ?? "").localeCompare(b.plan_time ?? ""));
   const low = mine.filter((c) => leftOf(c) <= 2);
   const total = pending.length + low.length;
   return (

@@ -107,6 +107,8 @@ export function Staff() {
   const [reset, setReset] = useState<UserRow | null>(null);
   const [newPw, setNewPw] = useState("");
   const [filter, setFilter] = useState("ทั้งหมด");
+  /** กรองตามตำแหน่ง ("" = ทุกตำแหน่ง) */
+  const [roleF, setRoleF] = useState("");
   const [perm, setPerm] = useState<UserRow | null>(null);
 
   const run = async (body?: object, ok?: string) => {
@@ -145,7 +147,10 @@ export function Staff() {
 
   // ค่าเริ่มต้นของฟอร์มต้องคงที่ระหว่างพิมพ์ (FormDialog รีเซตเมื่อ value เปลี่ยน)
   const formValue = useMemo(() => dlg?.mode === "edit" && dlg.u ? toForm(dlg.u) : dlg?.mode === "add" ? ["", "", "", TYPES[0], roleTh("Nurse"), global ? "" : me?.branch ?? "", "ทำงาน"] : undefined, [dlg]); // eslint-disable-line react-hooks/exhaustive-deps
-  const shown = users.filter((u) => filter === "ทั้งหมด" || u.status === filter);
+  const byStatus = users.filter((u) => filter === "ทั้งหมด" || u.status === filter);
+  const shown = byStatus.filter((u) => !roleF || u.access_level === roleF);
+  /** จำนวนคนต่อตำแหน่ง (ตามสถานะที่เลือก) · ตำแหน่งที่ไม่มีใครไม่แสดงในตัวกรอง */
+  const roleN = (r: string) => byStatus.filter((u) => u.access_level === r).length;
   const pending = users.filter((u) => u.status === "รออนุมัติ").length;
   return <>
     <PageHeader title="ทีมและสิทธิ์การใช้งาน" sub={global ? "บัญชีเข้าสู่ระบบและสิทธิ์ของทีม" : `บัญชีของทีมสาขา${me?.branch ?? ""}`}
@@ -155,6 +160,10 @@ export function Staff() {
         { k: "ทั้งหมด", t: "ทั้งหมด", n: users.length, tone: "all" },
         ...STATUSES.map((st) => ({ k: st, t: st, n: users.filter((u) => u.status === st).length, tone: (st === "ทำงาน" ? "good" : st === "รออนุมัติ" ? "warn" : "muted") as "good" | "warn" | "muted" })),
       ]} summary={<>มีบัญชีเข้าระบบ <b>{users.filter((u) => u.email).length}</b> คน</>} />
+      <StatFilter label="กรองตามตำแหน่ง" value={roleF} onChange={setRoleF} items={[
+        { k: "", t: "ทุกตำแหน่ง", n: byStatus.length, tone: "all" },
+        ...[...ROLES].reverse().filter((r) => roleN(r) > 0 || roleF === r).map((r) => ({ k: r, t: ROLE_INFO[r].th, n: roleN(r), tone: "muted" as const })),
+      ]} summary={roleF ? <>ตำแหน่ง{ROLE_INFO[roleF as Role]?.th ?? roleF} <b>{shown.length}</b> คน</> : undefined} />
       <DataTable columns={[...STAFF_COLS.slice(0, 3), "ตำแหน่ง", "สิทธิ์", ...STAFF_COLS.slice(4)]} rows={shown.map((u) => [u.full_name, u.email ?? "—", u.contract_type ?? "—", roleTh(u.access_level), u.access_level === "Global Admin" ? "ทุกสิทธิ์" : u.permissions ? `กำหนดเอง ${u.permissions.length} รายการ` : "ตามตำแหน่ง", u.branch_name ?? "—", u.status])}
         empty={loading ? "กำลังโหลดรายชื่อ…" : "ไม่พบสมาชิก"}
         render={(n, col) => (col === 0 && shown[n] ? <span className="flex items-center gap-2.5"><Avatar kind="staff" id={shown[n].id} name={shown[n].full_name} size={32} /><b className="font-semibold">{shown[n].full_name}</b></span> : undefined)}
@@ -167,7 +176,7 @@ export function Staff() {
           { label: "ลบบัญชี", danger: true, more: true, onClick: (n) => { const u = shown[n]; confirm({ title: "ลบบัญชีสมาชิก", message: `ต้องการลบบัญชี ${u.full_name} ใช่หรือไม่ บัญชีนี้จะเข้าสู่ระบบไม่ได้อีก`, danger: true, okLabel: "ลบบัญชี", onOk: () => { run({ action: "delete", id: u.id }, "ลบบัญชีเรียบร้อย"); } }); } },
         ]} />
     </Section>
-    <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{[...ROLES].reverse().map((r) => <div key={r} className="rounded-xl border border-cream-200 bg-cream-100/50 p-4"><p className="text-sm font-medium text-gold-800">{ROLE_INFO[r].th}</p><p className="mt-1 text-xs leading-6 text-gold-600">{ROLE_INFO[r].sees}</p></div>)}</div>
+    <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{[...ROLES].reverse().map((r) => <div key={r} className="rounded-xl border border-cream-200 bg-cream-100/50 p-4"><p className="flex items-baseline justify-between gap-2 text-sm font-medium text-gold-800">{ROLE_INFO[r].th}<span className="text-xs font-normal text-gold-600">{users.filter((u) => u.access_level === r && u.status === "ทำงาน").length} คน</span></p><p className="mt-1 text-xs leading-6 text-gold-600">{ROLE_INFO[r].sees}</p></div>)}</div>
     <PermDialog user={perm} me={me} onClose={() => setPerm(null)}
       onSave={async (list) => { if (perm && await run({ action: "permissions", id: perm.id, permissions: list }, list ? `บันทึกสิทธิ์ของ ${perm.full_name} แล้ว` : `${perm.full_name} กลับไปใช้สิทธิ์ตามตำแหน่งแล้ว`)) setPerm(null); }} />
     <FormDialog open={!!dlg} mode={dlg?.mode ?? "add"} title={dlg?.mode === "edit" ? "แก้ไขสมาชิกทีม" : "สร้างบัญชีสมาชิกทีม KIN"} fields={fields}

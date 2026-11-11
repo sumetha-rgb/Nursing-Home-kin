@@ -1,4 +1,5 @@
 "use client";
+import { courseHandoff } from "@/lib/handoff";
 import { useCallback, useEffect, useState } from "react";
 import Icon from "../Icon";
 import { useApp } from "@/lib/app";
@@ -10,7 +11,9 @@ import { DataTable, Field, Modal } from "../ui";
 import { SearchSelect } from "../SearchSelect";
 import PhysioAssign from "./PhysioAssign";
 import PhysioRecordModal, { RecordTarget } from "./PhysioRecord";
-import { photoUrl, PhysioBoard, PhysioCase, schedText } from "@/lib/physio";
+import PhysioSessions from "./PhysioSessions";
+import PhysioCloseCourse, { CloseTarget } from "./PhysioCloseCourse";
+import { closedInfo, PhysioBoard, PhysioCase, PhysioHistory, schedText, teamText } from "@/lib/physio";
 
 /**
  * งานพยาบาลและกายภาพรายบุคคล (แท็บในหน้าประวัติผู้รับบริการ · ใช้ได้ทั้งระบบจัดการและ KinApp)
@@ -148,7 +151,22 @@ function Nursing({ id, c, reload }: P) {
 function Physio({ id, c, reload, name }: P & { name: string }) {
   const { toast } = useApp();
   const { user } = useSession();
-  const canSell = can(user, "residents") || can(user, "billing");
+  // ขายคอร์ส = ผู้จัดการสาขา ผู้บริหาร ฝ่ายขาย (สิทธิ์ใบแจ้งหนี้และใบเสร็จ) · หัวหน้าพยาบาลดูได้ แต่ไม่ขาย
+  const canSell = can(user, "billing");
+  const { go } = useApp();
+  /** ซื้อคอร์ส · bill = เปิดฟอร์มใบแจ้งหนี้ต่อทันที (ระบบจัดการเท่านั้น ไม่ใช่ KinApp) */
+  const buyCourse = async (bill: boolean) => {
+    if (!buy) return;
+    if (buy.free ? !buy.why.trim() : !(Number(buy.price) > 0)) return toast(buy.free ? "กรุณาระบุเหตุผลที่ให้ฟรี" : "กรุณากรอกราคาคอร์ส");
+    const total = Number(buy.total), price = buy.free ? 0 : Number(buy.price) || 0;
+    const r = await fetch("/api/clinic", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "course", residentId: id, name: buy.name, total, price, freeReason: buy.free ? buy.why : "" }) }).catch(() => null);
+    const d = r ? await r.json().catch(() => ({})) : {};
+    if (!r?.ok) return toast(d.error || "บันทึกคอร์สไม่สำเร็จ");
+    setBuy(null); reload();
+    if (bill && d.id) { courseHandoff.set({ residentId: id, courseId: d.id, name: buy.name.trim(), total, price }); go("billing"); return; }
+    toast(`ซื้อคอร์สแล้ว · ${buy.name} ${buy.total} ครั้ง${buy.free ? " · ฟรี ใช้ได้ทันที" : " · ออกใบแจ้งหนี้ภายหลังได้ที่เมนูใบแจ้งหนี้และใบเสร็จ"}`);
+  };
+  const inConsole = typeof window !== "undefined" && !window.location.pathname.startsWith("/staff");
   // บันทึกกายภาพได้เฉพาะสิทธิ์ "บันทึกกายภาพ" (นักกายภาพ) · จ่ายเคสได้เฉพาะสิทธิ์ "จ่ายเคสกายภาพ"
   const canRecord = can(user, "physio.record"), canAssign = can(user, "physio.assign");
   const [board, setBoard] = useState<PhysioBoard | null>(null);
@@ -173,7 +191,19 @@ function Physio({ id, c, reload, name }: P & { name: string }) {
     const s = (v: unknown) => (typeof v === "string" ? v : null);
     setRecT({ courseId: k.id, courseName: k.name, used: k.used, total: k.total, residentName: name, last: { cc: s(last.cc), dx: s(last.dx), pain: s(last.pain), mobility: s(last.mobility) } });
   };
+  /** ปิดคอร์สที่ใช้ไปแล้วแต่ไม่ทำต่อ (ผู้จัดการสาขา/ผู้บริหาร) */
+  const [closeT, setCloseT] = useState<CloseTarget | null>(null);
   const sessions = c.notes.filter((n) => n.kind === "physio");
+  /** บันทึก (clinical_notes) + การเช็คอิน → รูปแบบเดียวกับประวัติ (การ์ด) · แก้ได้ถึง = เวลาบันทึก + 7 วัน */
+  const toHist = (n: (typeof sessions)[number]): PhysioHistory => {
+    const v = c.visits?.find((x) => x.note_id === n.id), d = n.data, s2 = (x: unknown) => (typeof x === "string" && x ? x : null);
+    const t = n.at.match(/^(\d{2})\/(\d{2})\/(\d{4}) (\d{2}):(\d{2})/);
+    const until = t ? new Date(Date.parse(`${Number(t[3]) - 543}-${t[2]}-${t[1]}T${t[4]}:${t[5]}:00+07:00`) + 7 * 864e5).toISOString() : null;
+    return { id: n.id, title: n.title, body: n.body, author: n.author, at: n.at, pain: s2(d.pain), mobility: s2(d.mobility), plan: s2(d.plan),
+      activities: Array.isArray(d.activities) ? (d.activities as string[]) : null, visit_id: v?.id ?? null, checkin: v?.checkin ?? null, done: v?.done ?? null,
+      minutes: typeof d.minutes_fixed === "number" ? d.minutes_fixed : v?.minutes ?? (typeof d.minutes === "number" ? d.minutes : null), work_n: v?.work_n ?? null,
+      vitals: (d.vitals as PhysioHistory["vitals"]) ?? null, cc: s2(d.cc), pe: s2(d.pe), dx: s2(d.dx), edited: s2(d.edited_at), edited_by: s2(d.edited_by), edit_until: until };
+  };
   // ทำกายภาพโดยยังไม่มีคอร์ส (หลังซื้อคอร์สล่าสุด) · เตือนให้แจ้งญาติเปิดคอร์ส
   const key = (at: string) => at.replace(/^(\d{2})\/(\d{2})\/(\d{4}) (\d{2}):(\d{2}).*$/, "$3$2$1$4$5"); // "DD/MM/YYYY HH:MM" → เรียงตามเวลาได้
   const lastBuy = c.courses.map((k) => key(k.at)).sort().pop() ?? "";
@@ -189,49 +219,57 @@ function Physio({ id, c, reload, name }: P & { name: string }) {
         </div>
       </div>
       {free > 0 && <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">ทำกายภาพไปแล้ว {free} ครั้งโดยยังไม่มีคอร์ส · แจ้งญาติเปิดคอร์ส · แคชเชียร์กำหนดราคาครั้งที่ทำไปแล้วตอนออกใบแจ้งหนี้</p>}
-      {!active && <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">{waiting ? "คอร์สกายภาพยังไม่ได้ออกใบแจ้งหนี้ · แจ้งแคชเชียร์ออกใบที่เมนูใบแจ้งหนี้และใบเสร็จก่อนจึงจะบันทึกกายภาพได้" : <>{c.courses.length ? "คอร์สกายภาพใช้ครบแล้ว" : "ยังไม่มีคอร์สกายภาพ"} · ต้องซื้อคอร์สก่อนจึงจะบันทึกการทำกายภาพได้{canSell ? " · กดปุ่ม ซื้อคอร์ส ด้านบน" : " · แจ้งหัวหน้าพยาบาลหรือแคชเชียร์ให้เปิดคอร์สให้ก่อน"}</>}</p>}
+      {!active && <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">{waiting ? "คอร์สกายภาพยังไม่ได้ออกใบแจ้งหนี้ · แจ้งแคชเชียร์ออกใบที่เมนูใบแจ้งหนี้และใบเสร็จก่อนจึงจะบันทึกกายภาพได้" : <>{c.courses.length ? "คอร์สกายภาพใช้ครบแล้ว" : "ยังไม่มีคอร์สกายภาพ"} · ต้องซื้อคอร์สก่อนจึงจะบันทึกการทำกายภาพได้{canSell ? " · กดปุ่ม ซื้อคอร์ส ด้านบน" : " · แจ้งผู้จัดการสาขาหรือฝ่ายขายให้เปิดคอร์สให้ก่อน"}</>}</p>}
       <div className="grid gap-3 md:grid-cols-2">{c.courses.map((k) => {
-        const left = k.total - k.used, pct = Math.round((k.used / k.total) * 100);
+        const cl = k.status === "ปิดคอร์ส" ? closedInfo(k.name) : null;
+        const left = k.total - k.used, pct = Math.round((k.used / (cl ? cl.total : k.total || 1)) * 100);
         return (
           <section key={k.id} className="profile-box">
-            <div className="flex items-start justify-between gap-3"><h4 className="!mb-0">{k.name}</h4><span className={`rounded-full px-2 py-0.5 text-xs font-medium ${left <= 0 ? "bg-cream-200 text-gold-600" : left <= 2 ? "bg-amber-50 text-amber-800" : "bg-emerald-50 text-emerald-800"}`}>{left <= 0 ? "ครบแล้ว" : `เหลือ ${left} ครั้ง`}</span></div>
+            <div className="flex items-start justify-between gap-3"><h4 className="!mb-0">{cl ? cl.base : k.name}</h4><span className={`rounded-full px-2 py-0.5 text-xs font-medium ${k.status === "ปิดคอร์ส" ? "bg-red-50 text-red-800" : left <= 0 ? "bg-cream-200 text-gold-600" : left <= 2 ? "bg-amber-50 text-amber-800" : "bg-emerald-50 text-emerald-800"}`}>{k.status === "ปิดคอร์ส" ? "ปิดคอร์สแล้ว" : left <= 0 ? "ครบแล้ว" : `เหลือ ${left} ครั้ง`}</span></div>
             <p className="mt-1 text-xs text-gold-500">ซื้อเมื่อ {k.at} · โดย {k.created_by ?? "-"}{k.price ? ` · ${money(k.price)} บาท · ${payText(k)}` : ""}</p>
             <div className="mt-3 h-2 overflow-hidden rounded-full bg-cream-300"><div className="h-full rounded-full bg-gold-600" style={{ width: `${pct}%` }} /></div>
-            <p className="mt-1 text-xs text-gold-600">ใช้ไป {k.used}/{k.total} ครั้ง</p>
+            <p className="mt-1 text-xs text-gold-600">ใช้ไป {k.used}/{cl ? cl.total : k.total} ครั้ง{cl ? ` · ยกเลิก ${cl.total - cl.used} ครั้งที่เหลือ` : ""}</p>
+            {cl && <div className="pc-closed">
+              <p><b>ปิดคอร์สแล้ว</b>{cl.by ? <> · โดย <b>{cl.by}</b></> : null}</p>
+              {cl.when && <p>{cl.when}</p>}
+              <p>เหตุผล: {cl.why}</p>
+            </div>}
             {left > 0 && <div className="pa-own">
-              <span>{k.therapist_name ? <><b>{k.therapist_name}</b> · {schedText({ plan_days: k.plan_days ?? null, plan_dates: k.plan_dates })} {k.plan_time}{k.plan_minutes ? ` (${k.plan_minutes} นาที)` : ""}</> : <em>ยังไม่มีนักกายภาพผู้รับผิดชอบ</em>}</span>
+              <span>{k.therapist_name ? <><b>{teamText({ therapist_id: k.therapist_id ?? null, therapist_name: k.therapist_name ?? null, plan_slots: k.plan_slots, plan_days: k.plan_days ?? null, plan_dates: k.plan_dates })}</b> · {schedText({ plan_days: k.plan_days ?? null, plan_dates: k.plan_dates })} {k.plan_time}{k.plan_minutes ? ` (${k.plan_minutes} นาที)` : ""}</> : <em>ยังไม่มีนักกายภาพผู้รับผิดชอบ</em>}</span>
               {canAssign && <button type="button" className="row-action" onClick={() => openAssign(k.id)}>{k.therapist_name ? "เปลี่ยน" : "จ่ายเคส"}</button>}
             </div>}
             {left > 0 && k.price > 0 && <p className={`pk-pay mt-2 is-${!k.invoice_id ? "none" : k.paid ? "paid" : "open"}`}>{k.paid ? "✓ " : ""}{payText(k)}</p>}
             {left > 0 && (canRecord ? <button className="btn-soft mt-3 w-full !py-2" onClick={() => openRec(k)}>บันทึกการทำกายภาพ (ใช้ 1 ครั้ง)</button>
                 : <p className="mt-3 rounded-lg bg-cream-50 px-3 py-2 text-xs text-gold-600">บันทึกกายภาพได้เฉพาะนักกายภาพ{k.therapist_name ? ` (${k.therapist_name})` : ""}</p>)}
+            {canSell && k.used > 0 && left > 0 && <button type="button" className="row-action danger mt-2" onClick={() => setCloseT({ id: k.id, name: k.name, used: k.used, total: k.total, resident: name, billed: !!k.invoice_id,
+              team: k.therapist_name ? teamText({ therapist_id: k.therapist_id ?? null, therapist_name: k.therapist_name ?? null, plan_slots: k.plan_slots, plan_days: k.plan_days ?? null, plan_dates: k.plan_dates }) : undefined })}>ปิดคอร์ส (ไม่ทำต่อ)</button>}
             {canSell && k.used === 0 && !k.invoice_id && <button className="row-action danger mt-2" onClick={() => confirm({ title: "ยกเลิกคอร์ส", danger: true, okLabel: "ยกเลิกคอร์ส", message: `ยกเลิกคอร์ส ${k.name} ${k.total} ครั้ง (ซื้อเมื่อ ${k.at}) ใช่หรือไม่ · ใช้กับคอร์สที่กดซ้ำหรือบันทึกผิด`, onOk: () => run(toast, { op: "course_cancel", courseId: k.id }, `ยกเลิกคอร์สแล้ว · ${k.name}`, reload) })}>ยกเลิกคอร์ส</button>}
           </section>
         );
       })}</div>
       <div><h4 className="profile-sub">ประเมินและ Progress note</h4>
-        <DataTable search={false} columns={["วันเวลา", "ครั้งที่", "Progress note", "ปวด (0–10)", "การเคลื่อนไหว", "แผนครั้งถัดไป", "ผู้บันทึก", "เช็คอิน · รูป"]} empty="ยังไม่มีบันทึกกายภาพ"
-          rows={sessions.map((n) => { const v = c.visits?.find((x) => x.note_id === n.id); return [n.at, n.title ?? "-", n.body ?? "-", String(n.data.pain || "-"), String(n.data.mobility || "-"), String(n.data.plan || "-"), n.author ?? "-", v ? `${v.checkin}–${v.done}${v.minutes != null ? ` (${v.minutes} นาที)` : ""}` : "-"]; })}
-          render={(row, col, value) => {
-            if (col !== 7 || value === "-") return undefined;
-            const v = c.visits?.find((x) => x.note_id === sessions[row].id);
-            return v ? <span className="pk-cell">{value}<a href={photoUrl(v.id, "checkin")} target="_blank" rel="noreferrer">รูปเช็คอิน</a>{Array.from({ length: v.work_n ?? 0 }, (_, i) => <a key={i} href={photoUrl(v.id, "work", i)} target="_blank" rel="noreferrer">รูปงาน {v.work_n > 1 ? i + 1 : ""}</a>)}</span> : undefined;
-          }} /></div>
+        <PhysioSessions items={sessions.map(toHist)} onEdit={(h) => { const n = sessions.find((x) => x.id === h.id); const k = c.courses.find((x) => x.id === n?.data.course_id);
+          setRecT({ courseId: k?.id ?? "", courseName: k?.name ?? h.title ?? "", used: k?.used ?? 0, total: k?.total ?? 0, residentName: name, edit: h }); }} /></div>
       <PhysioAssign c={assign} cases={board?.cases ?? []} therapists={board?.therapists ?? []} today={board?.date ?? new Date(Date.now() + 7 * 36e5).toISOString().slice(0, 10)}
         doneToday={!!assign && !!board?.today.some((t) => t.course_id === assign.id)} onClose={() => setAssign(null)} onSaved={() => { setBoard(null); reload(); }} />
 
       <Modal open={!!buy} title="ซื้อคอร์สกายภาพ" onClose={() => setBuy(null)}
-        footer={<><button className="btn-soft" onClick={() => setBuy(null)}>ยกเลิก</button><button className="btn-primary" onClick={() => buy && ((buy.free ? buy.why.trim() : Number(buy.price) > 0) ? run(toast, { op: "course", residentId: id, name: buy.name, total: Number(buy.total), price: buy.free ? 0 : Number(buy.price) || 0, freeReason: buy.free ? buy.why : "" }, `ซื้อคอร์สแล้ว · ${buy.name} ${buy.total} ครั้ง${buy.free ? " · ฟรี ใช้ได้ทันที" : " · แคชเชียร์ออกใบแจ้งหนี้ที่เมนูใบแจ้งหนี้และใบเสร็จแล้วจึงใช้ได้"}`, () => { setBuy(null); reload(); }) : toast(buy.free ? "กรุณาระบุเหตุผลที่ให้ฟรี" : "กรุณากรอกราคาคอร์ส"))}>บันทึกคอร์ส</button></>}>
+        footer={<><button className="btn-soft" onClick={() => setBuy(null)}>ยกเลิก</button>
+          {buy && !buy.free && inConsole ? <>
+            <button className="btn-soft" onClick={() => buyCourse(false)}>บันทึกคอร์สอย่างเดียว</button>
+            <button className="btn-primary" onClick={() => buyCourse(true)}>บันทึกคอร์สและออกใบแจ้งหนี้</button>
+          </> : <button className="btn-primary" onClick={() => buyCourse(false)}>บันทึกคอร์ส</button>}</>}>
         {buy && <div className="form-grid">
           <Field label="ชื่อคอร์ส" className="md:col-span-2"><input value={buy.name} onChange={(e) => setBuy({ ...buy, name: e.target.value })} /></Field>
           <Field label="จำนวนครั้ง"><input type="number" min={1} value={buy.total} onChange={(e) => setBuy({ ...buy, total: e.target.value })} /></Field>
           <Field label="ราคาคอร์ส (บาท)" required={!buy.free}><input type="number" min={0} value={buy.free ? "" : buy.price} disabled={buy.free} onChange={(e) => setBuy({ ...buy, price: e.target.value })} placeholder="เช่น 8000" />
-            <p className="field-hint">ซื้อแล้วนักกายภาพเริ่มทำได้ทันที · แคชเชียร์ออกใบแจ้งหนี้ที่เมนูใบแจ้งหนี้และใบเสร็จ</p></Field>
+            <p className="field-hint">ซื้อแล้วนักกายภาพเริ่มทำได้ทันที · กด &quot;บันทึกคอร์สและออกใบแจ้งหนี้&quot; เพื่อออกใบต่อเลย (ผู้ชำระ ส่วนลด เลขผู้เสียภาษี และรวมรายการอื่นได้)</p></Field>
           {boss && <label className="md:col-span-2 flex items-center gap-2 text-sm text-gold-700"><input type="checkbox" className="!h-4 !w-4 !min-h-0" checked={buy.free} onChange={(e) => setBuy({ ...buy, free: e.target.checked })} /> ให้คอร์สนี้ฟรี (ผู้จัดการอนุมัติ)</label>}
           {buy.free && <Field label="เหตุผลที่ให้ฟรี" required className="md:col-span-2"><input value={buy.why} onChange={(e) => setBuy({ ...buy, why: e.target.value })} placeholder="เช่น โปรโมชันเปิดสาขา, ทดลองครั้งแรก" /></Field>}
         </div>}
       </Modal>
       <PhysioRecordModal target={recT} onClose={() => setRecT(null)} onSaved={() => { setRecT(null); reload(); }} />
+      <PhysioCloseCourse target={closeT} onClose={() => setCloseT(null)} onDone={() => { setBoard(null); reload(); }} />
     </div>
   );
 }

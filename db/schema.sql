@@ -881,6 +881,9 @@ ALTER TABLE physio_courses ADD COLUMN IF NOT EXISTS plan_time text;
 ALTER TABLE physio_courses ADD COLUMN IF NOT EXISTS plan_minutes int;
 -- นัดแบบเลือกวันเอง (YYYY-MM-DD) · มีค่า = ใช้วันที่เหล่านี้แทนแผนรายสัปดาห์ (plan_days)
 ALTER TABLE physio_courses ADD COLUMN IF NOT EXISTS plan_dates text[];
+-- นักกายภาพหลายคนต่อคอร์ส: คนทำแต่ละนัด { "dow": { "5": {"id","name"} } = ทุกวันศุกร์ · "date": { "2026-11-13": {"id","name"} } = ทำแทนเฉพาะวันนั้น }
+--  ไม่มีค่า = ผู้รับผิดชอบหลัก (therapist_id) ทำทุกนัด · ลำดับ: date > dow > therapist_id
+ALTER TABLE physio_courses ADD COLUMN IF NOT EXISTS plan_slots jsonb;
 -- การไปทำกายภาพแต่ละครั้ง: เช็คอินพร้อมรูป (เวลา server) → บันทึกพร้อมรูปงาน (ผูกกับ clinical_notes.id) · รูปเป็น data URL ย่อแล้ว ดึงเฉพาะตอนเปิดดู
 CREATE TABLE IF NOT EXISTS physio_visits (
   id             text PRIMARY KEY,

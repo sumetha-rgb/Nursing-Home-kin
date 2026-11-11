@@ -6,6 +6,8 @@ import { useApp } from "@/lib/app";
 import type { SessionUser } from "@/lib/roles";
 import PhotoPicker from "../PhotoPicker";
 import PhysioRecordModal, { RecordTarget, stampFor, testPhoto } from "./PhysioRecord";
+import PhysioSessions from "./PhysioSessions";
+import { inCase, whoOn } from "@/lib/physio";
 import { addMonth, DAY_FULL, DAY_TH, dayLabel, dowOf, monthCells, monthLabel, projectDates, WEEK, leftOf, loadOf, onDate, PAY_TEXT, payOf, PhysioBoard, PhysioCase, PhysioHistory, PhysioVisit, photoUrl, schedOf, vitalsText, weekDates } from "@/lib/physio";
 
 export type PhysioView = "ptoday" | "pweek" | "pcases";
@@ -43,12 +45,14 @@ export default function PhysioKin({ view, user, onCount }: { view: PhysioView; u
   }, [load]);
 
   const cases = d?.cases ?? [];
-  const mine = cases.filter((c) => c.therapist_id === user.id);
+  // เคสที่ฉันอยู่ในทีม (หลัก / ประจำบางวัน / ทำแทน) · คิวและปฏิทิน = เฉพาะนัดที่ฉันเป็นคนทำ
+  const mine = cases.filter((c) => inCase(c, user.id));
+  const myDay = (c: PhysioCase, date: string) => whoOn(c, date)?.id === user.id;
   const dow = d?.date ? dowOf(d.date) : new Date().getDay();
   const done = new Map((d?.today ?? []).filter((x) => x.course_id).map((x) => [x.course_id!, x]));
   const tIso = d?.date ?? new Date(Date.now() + 7 * 36e5).toISOString().slice(0, 10);
   // นัดวันนี้ (ทุกสัปดาห์ หรือเลือกวันเอง)
-  const queue = mine.filter((c) => onDate(schedOf(c), tIso)).sort((a, b) => (a.plan_time ?? "").localeCompare(b.plan_time ?? ""));
+  const queue = mine.filter((c) => onDate(schedOf(c), tIso) && myDay(c, tIso)).sort((a, b) => (a.plan_time ?? "").localeCompare(b.plan_time ?? ""));
   const pending = queue.filter((c) => !done.has(c.id)).length;
   useEffect(() => { onCount(pending); }, [pending, onCount]);
   const monthN = d?.month.find((m) => m.author === user.name)?.n ?? 0;
@@ -84,7 +88,7 @@ export default function PhysioKin({ view, user, onCount }: { view: PhysioView; u
   const open = (c: PhysioCase, v: PhysioVisit) => setRecT({
     courseId: c.id, courseName: c.name, used: c.used, total: c.total, residentName: c.resident_name, hn: c.hn, room: c.room, visit: v,
     last: { cc: c.recent[0]?.cc, dx: c.recent[0]?.dx, pain: c.recent[0]?.pain, mobility: c.recent[0]?.mobility },
-    forName: c.therapist_id && c.therapist_id !== user.id ? c.therapist_name : null,
+    forName: (() => { const w = whoOn(c, tIso); return w && w.id !== user.id ? w.name : null; })(),
   });
 
   /** การ์ดเคส: เวลา ชื่อ ห้อง ครั้งที่ ผลครั้งก่อน แผน และปุ่มบันทึก */
@@ -134,7 +138,7 @@ export default function PhysioKin({ view, user, onCount }: { view: PhysioView; u
         const byDay = new Map<string, { c: PhysioCase; n: number; doneAt?: string }[]>();
         const put = (d: string, x: { c: PhysioCase; n: number; doneAt?: string }) => byDay.set(d, [...(byDay.get(d) ?? []), x]);
         for (const l of d.mylog ?? []) { const c = cases.find((k) => k.id === l.course_id); if (c) put(l.date, { c, n: Number(l.title?.match(/ครั้งที่ (\d+)/)?.[1]) || 0, doneAt: l.at }); }
-        for (const c of mine) for (const p of projectDates(c, tIso, done.has(c.id))) put(p.date, { c, n: p.n });
+        for (const c of mine) for (const p of projectDates(c, tIso, done.has(c.id))) if (myDay(c, p.date)) put(p.date, { c, n: p.n });
         byDay.forEach((l) => l.sort((x, y) => (x.c.plan_time ?? "").localeCompare(y.c.plan_time ?? "")));
         const sel = pick || tIso;
         const row = (x: { c: PhysioCase; n: number; doneAt?: string }, date: string) => (
@@ -213,28 +217,12 @@ export default function PhysioKin({ view, user, onCount }: { view: PhysioView; u
         </div>}
       </Modal>
       <Modal open={!!hist} title={hist ? `ประวัติกายภาพ · ${hist.c.resident_name}` : ""} onClose={() => setHist(null)} footer={<button className="btn-primary" onClick={() => setHist(null)}>ปิด</button>}>
-        {hist && (!hist.items ? <p className="pk-empty">กำลังโหลด…</p> : hist.items.length === 0 ? <p className="pk-empty">ยังไม่มีบันทึก</p> : (
-          <ul className="pk-hist">{hist.items.map((h) => (
-            <li key={h.id}>
-              <div className="pk-hist-h"><b>{h.title}</b><small>{h.at}{h.author ? ` · ${h.author}` : ""}</small></div>
-              {h.checkin && <p className="pk-meta">เช็คอิน {h.checkin} · บันทึก {h.done}{h.minutes != null ? ` · ${h.minutes} นาที` : ""}</p>}
-              <p className="pk-meta">{[h.pain ? `ปวด ${h.pain}` : "", h.mobility ?? "", (h.activities ?? []).join(", ")].filter(Boolean).join(" · ") || "-"}</p>
-              {vitalsText(h.vitals) && <p className="pk-meta">สัญญาณชีพ: {vitalsText(h.vitals)}</p>}
-              {h.cc || h.pe || h.dx ? <dl className="pk-tx">
-                {h.cc && <><dt>อาการสำคัญ</dt><dd>{h.cc}</dd></>}{h.pe && <><dt>ตรวจร่างกาย</dt><dd>{h.pe}</dd></>}{h.dx && <><dt>วินิจฉัย</dt><dd>{h.dx}</dd></>}{h.plan && <><dt>แผนการรักษา</dt><dd>{h.plan}</dd></>}
-              </dl> : <>{h.body && <p className="pk-hist-b">{h.body}</p>}{h.plan && <p className="pk-meta">แผน: {h.plan}</p>}</>}
-              {h.visit_id && <div className="pk-thumbs">
-                <button type="button" onClick={() => setZoom(photoUrl(h.visit_id!, "checkin"))}><img src={photoUrl(h.visit_id, "checkin")} alt={`รูปเช็คอิน ${h.title ?? ""}`} loading="lazy" /><span>เช็คอิน</span></button>
-                {Array.from({ length: h.work_n ?? 0 }, (_, i) => <button key={i} type="button" onClick={() => setZoom(photoUrl(h.visit_id!, "work", i))}><img src={photoUrl(h.visit_id!, "work", i)} alt={`รูปงาน ${i + 1} ${h.title ?? ""}`} loading="lazy" /><span>รูปงาน{(h.work_n ?? 0) > 1 ? ` ${i + 1}` : ""}</span></button>)}
-              </div>}
-            </li>
-          ))}</ul>
-        ))}
+        {hist && <PhysioSessions items={hist.items} empty="ยังไม่มีบันทึก" onEdit={(h) => setRecT({ courseId: hist.c.id, courseName: hist.c.name, used: hist.c.used, total: hist.c.total, residentName: hist.c.resident_name, edit: h })} />}
       </Modal>
       <Modal open={!!zoom} title="รูปภาพ" onClose={() => setZoom(null)} footer={<button className="btn-primary" onClick={() => setZoom(null)}>ปิด</button>}>
         {zoom && <img src={zoom} alt="รูปกายภาพ" className="pk-zoom" />}
       </Modal>
-      <PhysioRecordModal target={recT} testMode={testMode} onClose={() => setRecT(null)} onSaved={() => { setRecT(null); load(); }} />
+      <PhysioRecordModal target={recT} testMode={testMode} onClose={() => setRecT(null)} onSaved={() => { const c = recT?.edit && hist ? hist.c : null; setRecT(null); load(); if (c) openHist(c); }} />
       <Modal open={!!appt} title={appt ? appt.c.resident_name : ""} onClose={() => setAppt(null)}
         footer={appt ? <>
           {appt.c.used > 0 && <button className="btn-soft" onClick={() => { const c = appt.c; setAppt(null); openHist(c); }}>{appt.doneAt ? "ดูสิ่งที่บันทึก" : "ดูประวัติทั้งหมด"}</button>}
