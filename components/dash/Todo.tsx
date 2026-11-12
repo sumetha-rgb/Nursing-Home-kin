@@ -1,5 +1,5 @@
 "use client";
-import { docDate, money } from "@/lib/billing";
+// (ยอดเงินในรายการเตือนไม่มีทศนิยม · วันที่แบบสั้น "30 ต.ค.")
 import { bkkToday, thDateText } from "@/lib/servicePeriod";
 import { can } from "@/lib/perms";
 import { cashHandoff, taskHandoff } from "@/lib/handoff";
@@ -26,7 +26,8 @@ export type HomeData = {
 /** short / meta = ชื่อสั้นและตัวเลขสำคัญ 1 อย่าง สำหรับแถบ "ต้องจัดการ" (การ์ดหน้าแรกใช้ title / detail เต็ม) */
 /** brief = ข้อมูลสำคัญ 1 บรรทัดใต้ชื่อเรื่องในหน้างานวันนี้ (ชื่อคน ยอดเงิน วันที่) · detail = รายละเอียดเต็มตอนกดดู */
 /** urgent = ด่วน ขึ้นกล่อง "ทำก่อน" (แดง) · warn = ควรทำเร็ว (ส้ม) · ไม่มีทั้งคู่ = ทำตามรอบงาน */
-export type TodoItem = { key: string; title: string; short: string; meta?: string; brief?: string; n: number; unit: string; detail: string; cta: string; urgent?: boolean; warn?: boolean; top?: boolean; open?: () => void; view?: ViewId; href?: string };
+/** hot = ข้อความใต้ชื่อเรื่องเป็นสีแดง (ค้างนานผิดปกติ) */
+export type TodoItem = { key: string; title: string; short: string; meta?: string; brief?: string; hot?: boolean; n: number; unit: string; detail: string; cta: string; urgent?: boolean; warn?: boolean; top?: boolean; open?: () => void; view?: ViewId; href?: string };
 
 /** ด้านของงาน (ใช้ทั้งหน้าแรกและแถบต้องจัดการ) · ตำแหน่งที่ไม่มีสิทธิ์ด้านนั้นจะไม่เห็นกล่อง */
 export const TODO_AREAS = [
@@ -34,6 +35,8 @@ export const TODO_AREAS = [
   { name: "การเงิน", keys: ["bills", "debt60", "unclosed", "monthDue", "drafts", "courses", "deposit", "physio", "physioLow"] },
   { name: "ห้อง ยา และคลัง", keys: ["room", "stock"] },
 ];
+/** เรื่องด่วนด้านความปลอดภัยผู้รับบริการ (ขึ้นก่อนเรื่องด่วนด้านงานเอกสาร/เงิน) */
+export const SAFETY_KEYS = ["alerts", "late", "checkin"];
 /** ปุ่มสั้นด้านขวาของแต่ละเรื่อง */
 export const TODO_ACT: Record<string, string> = {
   alerts: "ดูรายการ", physioCase: "จ่ายเคส", physioMissed: "ดูงาน", physioReq: "จัดคนแทน", physioLow: "เสนอต่อ", late: "ตามงาน", review: "ตรวจงาน", gap: "จัดเวร", checkin: "ดูเวร", bills: "รับชำระ", debt60: "ดูลูกหนี้", unclosed: "ปิดยอด",
@@ -45,12 +48,14 @@ const bkkTodayPlus1 = () => new Date(Date.now() + 7 * 36e5 + 864e5).toISOString(
 const namesOf = (xs: string[], k = 2) => (xs.length ? `${xs.slice(0, k).join(", ")}${xs.length > k ? ` และอีก ${xs.length - k} คน` : ""}` : undefined);
 /** 2026-11-11 → 11 พ.ย. */
 const dayText = (iso: string) => thDateText(iso).replace(/ \d{4}$/, "");
+/** ยอดเงินในรายการเตือน: ไม่มีทศนิยม (ยอดละเอียดดูในหน้าการเงิน) */
+const baht = (v: number) => Math.round(v).toLocaleString("en-US");
 const ago = (min: number) => (min >= 1440 ? `${Math.floor(min / 1440)} วัน` : min >= 60 ? `${Math.floor(min / 60)} ชม.` : `${min} นาที`);
 
 /** เรื่องที่ต้องจัดการ: ชุดเดียวกันทั้งการ์ดหน้าแรกและแถบ "ต้องจัดการ" · เรียงเรื่องค้างก่อน (ด่วนก่อน) เรื่องเรียบร้อยไว้ท้าย */
 export function buildTodos(d: HomeData, user: SessionUser | null | undefined): TodoItem[] {
   const c: TodoItem[] = [];
-  if (d.alerts) c.push({ key: "alerts", short: "ค่าผิดปกติค้าง", meta: d.alerts.n ? `นานสุด ${ago(d.alerts.oldest)}` : undefined, title: "ค่าสัญญาณชีพผิดปกติ ยังไม่มีคนรับทราบ", brief: d.alerts.n ? `ค้างนานสุด ${ago(d.alerts.oldest)}` : undefined, n: d.alerts.n, unit: "รายการ", detail: d.alerts.n ? `ค้างนานสุด ${ago(d.alerts.oldest)} · กดรับทราบที่ปุ่มแจ้งเตือนด้านบน` : "รับทราบครบแล้ว", cta: "ไปที่บันทึกสุขภาพ", urgent: true, top: true, view: "health_logs" });
+  if (d.alerts) c.push({ key: "alerts", short: "ค่าผิดปกติค้าง", meta: d.alerts.n ? `นานสุด ${ago(d.alerts.oldest)}` : undefined, title: "ค่าสัญญาณชีพผิดปกติ ยังไม่มีคนรับทราบ", brief: d.alerts.n ? `ค้างนานสุด ${ago(d.alerts.oldest)}` : undefined, hot: d.alerts.n > 0 && d.alerts.oldest >= 60, n: d.alerts.n, unit: "รายการ", detail: d.alerts.n ? `ค้างนานสุด ${ago(d.alerts.oldest)} · กดรับทราบที่ปุ่มแจ้งเตือนด้านบน` : "รับทราบครบแล้ว", cta: "ไปที่บันทึกสุขภาพ", urgent: true, top: true, view: "health_logs" });
   if (d.late) {
     const n = d.late.length, list = d.late.slice(0, 2).map((x) => `${x.task} (${x.name})`).join(", ");
     c.push({ key: "late", short: "งานเลยเวลา", title: "งานเลยเวลา", brief: n ? `${[...new Set(d.late.map((x) => x.name))].slice(0, 2).join(", ")}${n > 2 ? ` และอีก ${n - 2} งาน` : ""}` : undefined, n, unit: "งาน", detail: n ? `เลยเวลาเกิน 30 นาทียังไม่มีใครส่ง · ${list}${n > 2 ? ` และอีก ${n - 2} งาน` : ""}` : "งานวันนี้ส่งตรงเวลา", cta: "ไปตามงาน", urgent: true, top: true, open: () => taskHandoff.set("late"), view: "tasks" });
@@ -65,11 +70,11 @@ export function buildTodos(d: HomeData, user: SessionUser | null | undefined): T
     c.push({ key: "gap", short: "ยังไม่จัดเวร", title: "วันที่ยังจัดเวรไม่ครบ", brief: g.n ? when : undefined, n: g.n, unit: "วัน", detail: g.n ? `${when} · วันนี้ถึงสิ้นเดือนยังไม่มีคนเข้าเวรเช้าหรือดึก ${g.n} วัน${g.soon ? ` (ใน 3 วันนี้ ${g.soon} วัน)` : ""}` : "จัดเวรครบถึงสิ้นเดือนแล้ว", cta: "ไปที่ตารางเวร", urgent: g.soon > 0, warn: true, view: "roster" });
   }
   if (d.checkin) c.push({ key: "checkin", short: "ยังไม่เช็คชื่อ", title: "ยังไม่เช็คชื่อเข้าเวร", brief: d.checkin.length ? `${d.checkin.slice(0, 2).map((x) => x.name).join(", ")}${d.checkin.length > 2 ? ` และอีก ${d.checkin.length - 2} คน` : ""}` : undefined, n: d.checkin.length, unit: "คน", detail: d.checkin.length ? `${d.checkin.slice(0, 3).map((x) => `${x.name} (เวร${x.shift})`).join(", ")}${d.checkin.length > 3 ? ` และอีก ${d.checkin.length - 3} คน` : ""} · เลยเวลาผ่อนผันแล้ว` : "ทุกคนในเวรเช็คชื่อแล้ว", cta: "ไปที่ตารางเวร", urgent: true, view: "roster" });
-  if (d.bills) c.push({ key: "bills", short: "ใบค้างชำระ", meta: d.bills.n ? `${money(d.bills.sum)} บาท` : undefined, warn: true, title: "ใบแจ้งหนี้ค้างชำระ", brief: d.bills.n ? `รวม ${money(d.bills.sum)} บาท · เก่าสุด ${docDate(d.bills.oldest ?? "")}` : undefined, n: d.bills.n, unit: "ใบ", detail: d.bills.n ? `รวม ${money(d.bills.sum)} บาท · เก่าสุดออกเมื่อ ${docDate(d.bills.oldest ?? "")}` : "ไม่มีใบค้างชำระ", cta: "ไปรับชำระ", view: "billing" });
-  if (d.debt60) c.push({ key: "debt60", short: "หนี้ค้างเกิน 60 วัน", meta: d.debt60.n ? `${money(d.debt60.sum)} บาท` : undefined, title: "ลูกหนี้ค้างเกิน 60 วัน", brief: d.debt60.n ? `รวม ${money(d.debt60.sum)} บาท` : undefined, n: d.debt60.n, unit: "ใบ", detail: d.debt60.n ? `รวม ${money(d.debt60.sum)} บาท · ส่งใบแจ้งยอดค้างชำระให้ญาติ` : "ไม่มีหนี้ค้างนาน", cta: "ไปที่ลูกหนี้", warn: true, view: "billing" });
+  if (d.bills) c.push({ key: "bills", short: "ใบค้างชำระ", meta: d.bills.n ? `${baht(d.bills.sum)} บาท` : undefined, warn: true, title: "ใบแจ้งหนี้ค้างชำระ", brief: d.bills.n ? `รวม ${baht(d.bills.sum)} บาท · เก่าสุด ${d.bills.oldest ? dayText(d.bills.oldest) : "-"}` : undefined, n: d.bills.n, unit: "ใบ", detail: d.bills.n ? `รวม ${baht(d.bills.sum)} บาท · เก่าสุดออกเมื่อ ${d.bills.oldest ? thDateText(d.bills.oldest) : "-"}` : "ไม่มีใบค้างชำระ", cta: "ไปรับชำระ", view: "billing" });
+  if (d.debt60) c.push({ key: "debt60", short: "หนี้ค้างเกิน 60 วัน", meta: d.debt60.n ? `${baht(d.debt60.sum)} บาท` : undefined, title: "ลูกหนี้ค้างเกิน 60 วัน", brief: d.debt60.n ? `รวม ${baht(d.debt60.sum)} บาท` : undefined, hot: d.debt60.n > 0, n: d.debt60.n, unit: "ใบ", detail: d.debt60.n ? `รวม ${baht(d.debt60.sum)} บาท · ส่งใบแจ้งยอดค้างชำระให้ญาติ` : "ไม่มีหนี้ค้างนาน", cta: "ไปที่ลูกหนี้", warn: true, view: "billing" });
   if (d.unclosed) {
     const days = [...new Set(d.unclosed.map((x) => x.date))];
-    c.push({ key: "unclosed", short: "ยังไม่ปิดยอดเงิน", title: "ยังไม่ปิดยอดรายวัน", brief: days.length ? days.slice(0, 3).map((x) => docDate(x)).join(", ") : undefined, n: days.length, unit: "วัน", detail: days.length ? `มีรับเงินแล้วยังไม่นับเงินสดปิดยอด · ${days.slice(0, 3).map((x) => docDate(x)).join(", ")}${days.length > 3 ? ` และอีก ${days.length - 3} วัน` : ""}` : "ปิดยอดครบทุกวันแล้ว", cta: "ไปปิดยอด", warn: true, open: () => cashHandoff.set(), view: "billing" });
+    c.push({ key: "unclosed", short: "ยังไม่ปิดยอดเงิน", title: "ยังไม่ปิดยอดรายวัน", brief: days.length ? days.slice(0, 3).map((x) => dayText(x)).join(", ") : undefined, n: days.length, unit: "วัน", detail: days.length ? `มีรับเงินแล้วยังไม่นับเงินสดปิดยอด · ${days.slice(0, 3).map((x) => dayText(x)).join(", ")}${days.length > 3 ? ` และอีก ${days.length - 3} วัน` : ""}` : "ปิดยอดครบทุกวันแล้ว", cta: "ไปปิดยอด", warn: true, open: () => cashHandoff.set(), view: "billing" });
   }
   if (d.monthDue) {
     // รอบบิลนับตามวันเริ่มสัญญา · เลยวันครบรอบแล้ว = ด่วน · จะครบใน 7 วัน = ควรเตรียมออกใบ
@@ -121,9 +126,32 @@ export function runTodo(t: TodoItem, go: (v: ViewId) => void) {
  *  ด่วน = แถวเต็มบนสุด มีชื่อคน/รายละเอียดและปุ่มไปทำ · ที่เหลือแยก 3 ด้าน (การดูแลและทีม / การเงิน / ห้อง ยา และคลัง)
  *  ตัวเลขมีหน่วยทุกตัว · ด้านที่ไม่มีเรื่องค้างย่อเหลือ ✓ · เรื่องที่เรียบร้อยรวมเป็นบรรทัดเดียว
  */
-export function AttentionStrip({ items, go }: { items: TodoItem[]; go: (v: ViewId) => void }) {
+/** compact = แถวเดียว "ต้องจัดการ N เรื่อง · ด่วน X" + ชิป · กด "ดูทั้งหมด" จึงกางรายการ (หน้าภาพรวมและรายงาน) */
+export function AttentionStrip({ items, go, compact, expanded, onToggle }: { items: TodoItem[]; go: (v: ViewId) => void; compact?: boolean; expanded?: boolean; onToggle?: (v: boolean) => void }) {
   const open = items.filter((x) => x.n), done = items.filter((x) => !x.n);
   const urgent = open.filter((x) => x.urgent);
+  if (compact) {
+    const chips = [...urgent, ...open.filter((x) => !x.urgent)];
+    const MAX = 6;
+    return (
+      <section className={`attn is-compact ${open.length ? "" : "is-clear"} ${expanded ? "is-open" : ""}`} aria-label="ต้องจัดการ">
+        <div className="attn-bar">
+          <b>{open.length ? `ต้องจัดการ ${open.length} เรื่อง` : "ไม่มีเรื่องค้าง ✓"}</b>
+          {urgent.length > 0 && <em>ด่วน {urgent.length}</em>}
+          {!expanded && open.length > 0 && <span className="attn-chips">
+            {chips.slice(0, MAX).map((x) => (
+              <button key={x.key} type="button" className={`attn-chip ${x.urgent ? "is-bad" : x.warn ? "is-warn" : ""}`} title={`${x.title} · ${x.detail}`} onClick={() => runTodo(x, go)}>
+                {x.short} <b>{x.n}</b>
+              </button>
+            ))}
+            {chips.length > MAX && <span className="attn-chip is-more">อีก {chips.length - MAX}</span>}
+          </span>}
+          {open.length > 0 && <button type="button" className="attn-toggle" aria-expanded={!!expanded} onClick={() => onToggle?.(!expanded)}>{expanded ? "ย่อ ▴" : "ดูทั้งหมด ▾"}</button>}
+        </div>
+        {expanded && <AttentionStrip items={items} go={go} />}
+      </section>
+    );
+  }
   const areas = TODO_AREAS.map((a) => ({ name: a.name, all: items.filter((x) => a.keys.includes(x.key)) })).filter((a) => a.all.length)
     .map((a) => ({ ...a, open: a.all.filter((x) => x.n && !x.urgent), urgentHere: a.all.filter((x) => x.n && x.urgent).length }));
   const act = (x: TodoItem) => (x.key === "deposit" && x.cta === "ออกใบแจ้งหนี้" ? "ออกใบ" : TODO_ACT[x.key] ?? x.cta);

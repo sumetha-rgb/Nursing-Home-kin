@@ -8,8 +8,9 @@ import { useLayoutEffect, useRef, useState } from "react";
  *  3) ตัวชี้วัดที่เป็นจำนวน: แท่งคู่ช่วงก่อน/ช่วงนี้ (แต่ละตัวสเกลของตัวเอง) · กดไปแท็บรายละเอียด
  * สีทองเฉดเดียว 2 ระดับ (#c9a96a / #7a5f33 ผ่านการตรวจสีแล้ว) · ข้อความใช้สีตัวหนังสือ ไม่ใช้สีของแท่ง
  */
-export type PctKpi = { key: string; label: string; cur: number | null; prev: number | null; goal: number; note?: string; trend?: { label: string; v: number | null }[]; trendName?: string; onOpen?: () => void };
-export type CountKpi = { key: string; label: string; unit: string; cur: number; prev: number; higherBetter: boolean; text?: string; onOpen?: () => void };
+/** base = ฐานของ % เช่น "18 จาก 24 เตียง" · drill = สรุปเมื่อกดแถว (กางใต้แถว) · openLabel = ชื่อลิงก์ไปหน้ารายละเอียด */
+export type PctKpi = { key: string; label: string; cur: number | null; prev: number | null; goal: number; note?: string; base?: string; prevLabel?: string; drill?: string[]; openLabel?: string; trend?: { label: string; v: number | null }[]; trendName?: string; onOpen?: () => void };
+export type CountKpi = { key: string; label: string; unit: string; cur: number; prev: number; higherBetter: boolean; text?: string; prevText?: string; onOpen?: () => void };
 
 function useWidth(min = 200) {
   const ref = useRef<HTMLDivElement>(null);
@@ -57,20 +58,25 @@ function Trend({ k }: { k: PctKpi }) {
 
 export default function KpiCharts({ pct, counts, vs }: { pct: PctKpi[]; counts: CountKpi[]; vs: string }) {
   const [sel, setSel] = useState(pct.find((k) => k.trend?.length)?.key ?? pct[0]?.key);
+  const [drill, setDrill] = useState<string | null>(null);
   const k = pct.find((x) => x.key === sel) ?? pct[0];
+  const num = (v: number) => v.toLocaleString("en-US");
   const prevName = vs.trim();
   return (
     <div className="kc">
       <section className="card kc-card">
-        <header className="kc-h"><div><h3>ตัวชี้วัดที่เป็น % เทียบเป้า</h3><p>เทียบกับช่วง {prevName} กดที่แต่ละแถวเพื่อดูแนวโน้ม</p></div></header>
+        <header className="kc-h"><div><h3>ตัวชี้วัดที่เป็น % เทียบเป้า</h3><p>เทียบกับช่วง {prevName} · กดแถวเพื่อดูสรุปและแนวโน้ม</p></div></header>
         <div className="kc-leg" aria-hidden="true"><span><i className="cur" />ช่วงนี้</span><span><i className="prev" />ช่วง {prevName}</span><span><i className="goal" />เส้นเป้าหมาย</span></div>
         <div className="kc-bullets" role="list">
           {pct.map((x) => {
             const gap = x.cur === null ? null : x.cur - x.goal;
+            const isOpen = drill === x.key;
             return (
-              <button key={x.key} type="button" role="listitem" className={`kc-bul ${x.key === k?.key ? "is-on" : ""}`} onClick={() => setSel(x.key)}
-                aria-label={`${x.label} ช่วงนี้ ${x.cur ?? "ไม่มีข้อมูล"}% · ${prevName} ${x.prev ?? "ไม่มีข้อมูล"}% · เป้า ${x.goal}%`}>
-                <span className="kc-bul-n">{x.label}</span>
+              <div key={x.key} role="listitem">
+              <button type="button" className={`kc-bul ${x.key === k?.key ? "is-on" : ""}`} aria-expanded={isOpen} aria-controls={`kc-drill-${x.key}`}
+                onClick={() => { setSel(x.key); setDrill(isOpen ? null : x.key); }}
+                aria-label={`${x.label} ช่วงนี้ ${x.cur ?? "ไม่มีข้อมูล"}%${x.base ? ` (${x.base})` : ""} · ${prevName} ${x.prev ?? "ไม่มีข้อมูล"}% · เป้า ${x.goal}%`}>
+                <span className="kc-bul-n">{x.label}{x.base && <small>{x.base}</small>}</span>
                 <span className="kc-track">
                   {x.prev !== null && <i className="p" style={{ width: `${Math.min(100, x.prev)}%` }} />}
                   {x.cur !== null && <i className="c" style={{ width: `${Math.min(100, x.cur)}%` }} />}
@@ -78,6 +84,12 @@ export default function KpiCharts({ pct, counts, vs }: { pct: PctKpi[]; counts: 
                 </span>
                 <span className="kc-bul-v"><b>{x.cur === null ? "-" : `${x.cur}%`}</b><small className={gap === null ? "" : gap >= 0 ? "is-ok" : "is-bad"}>{gap === null ? "ไม่มีข้อมูล" : gap >= 0 ? "ถึงเป้า" : `ขาดอีก ${Math.abs(gap)}%`}</small></span>
               </button>
+              {isOpen && <div className="kc-drill" id={`kc-drill-${x.key}`}>
+                <p>{x.prevLabel ?? prevName}: {x.prev === null ? "ไม่มีข้อมูล" : `${x.prev}%`} · เป้า {x.goal}%{x.cur !== null && x.prev !== null && x.cur !== x.prev ? ` · ${x.cur > x.prev ? "▲ ดีขึ้น" : "▼ ลดลง"} ${Math.abs(x.cur - x.prev)}%` : ""}</p>
+                {!!x.drill?.length && <ul>{x.drill.map((t) => <li key={t}>{t}</li>)}</ul>}
+                {x.onOpen && <button type="button" className="kc-drill-go" onClick={x.onOpen}>{x.openLabel ?? "ดูรายละเอียด"} ›</button>}
+              </div>}
+              </div>
             );
           })}
         </div>
@@ -91,18 +103,18 @@ export default function KpiCharts({ pct, counts, vs }: { pct: PctKpi[]; counts: 
       </section>}
 
       {counts.length > 0 && <section className="card kc-card is-wide">
-        <header className="kc-h"><div><h3>ตัวชี้วัดที่เป็นจำนวน</h3><p>แท่งสีอ่อนคือช่วง {prevName} แท่งสีเข้มคือช่วงนี้ ตัวเลขสี<span className="kc-ok-t">เขียว</span>แปลว่าดีขึ้น สี<span className="kc-bad-t">แดง</span>แปลว่าแย่ลงและควรตรวจดู กดที่การ์ดเพื่อดูรายละเอียด</p></div></header>
+        <header className="kc-h"><div><h3>ตัวชี้วัดที่เป็นจำนวน</h3><p>เทียบช่วง {prevName} กับตอนนี้ · <span className="kc-ok-t">เขียว</span> = ดีขึ้น · <span className="kc-bad-t">แดง</span> = แย่ลง ควรตรวจดู · กดการ์ดเพื่อดูรายละเอียด</p></div></header>
         <div className="kc-counts">
           {counts.map((c) => {
-            const max = Math.max(c.cur, c.prev, 1), d = c.cur - c.prev;
+            const d = c.cur - c.prev;
             const good = d === 0 ? null : (d > 0) === c.higherBetter;
             return (
               <button key={c.key} type="button" className="kc-count" onClick={c.onOpen} disabled={!c.onOpen}
-                aria-label={`${c.label} ช่วงนี้ ${c.cur} ${c.unit} · ${prevName} ${c.prev} ${c.unit}`}>
+                aria-label={`${c.label} ${prevName} ${c.prev} ${c.unit} → ตอนนี้ ${c.cur} ${c.unit}`}>
                 <span className="kc-count-n">{c.label}</span>
-                <span className="kc-pair" aria-hidden="true"><i className="p" style={{ height: `${Math.max(4, (c.prev / max) * 100)}%` }} /><i className="c" style={{ height: `${Math.max(4, (c.cur / max) * 100)}%` }} /></span>
-                <b>{c.text ?? c.cur.toLocaleString("en-US")} <small>{c.unit}</small></b>
-                <small className={`kc-d ${good === null ? "" : good ? "is-ok" : "is-bad"}`}>{d === 0 ? `เท่ากับช่วง ${prevName}` : `${d > 0 ? "▲ มากขึ้น" : "▼ น้อยลง"} ${Math.abs(d).toLocaleString("en-US")} ${c.unit} ${good ? "ดีขึ้น" : "ควรตรวจดู"}`}</small>
+                <span className="kc-was">เดิม <b>{c.prevText ?? num(c.prev)}</b> → ตอนนี้</span>
+                <b className="kc-now">{c.text ?? num(c.cur)} <small>{c.unit}</small></b>
+                <small className={`kc-d ${good === null ? "" : good ? "is-ok" : "is-bad"}`}>{d === 0 ? "เท่าเดิม" : `${d > 0 ? "▲ เพิ่ม" : "▼ ลด"} ${num(Math.abs(d))} ${c.unit} · ${good ? "ดีขึ้น" : "ควรตรวจดู"}`}</small>
               </button>
             );
           })}

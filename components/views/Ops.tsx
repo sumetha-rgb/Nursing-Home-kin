@@ -27,6 +27,7 @@ import { evaluateVitals, implausible, Level, LEVEL_TH, levelOf, parseVitals, Vit
 import { BlankForm, DataTable, Field, FieldDef, FormDialog, MenuButton, Modal, PageHeader, Section, Select, Tabs } from "../ui";
 import SalesByCategory from "../dash/SalesByCategory";
 import KpiCharts, { CountKpi, PctKpi } from "../dash/KpiCharts";
+import { BranchCompareTable, DashTiles, GroupTabs, type TabGroup, type Tile } from "../dash/Overview";
 
 /* ---------- ภาพรวมและรายงาน (ข้อมูลจริงจาก /api/ops) ---------- */
 type DashBranch = { branch: string; total: number; done: number; checked: number; donePct: number; checkPct: number; mstars: number | null; famStars: number | null; famN: number; satPct: number | null; satN: number; complaints: number; residents: number; perResident: number; score: number };
@@ -67,9 +68,15 @@ export function Dashboard() {
   const fin = can(user, "billing");
   // ยอดขายตามหมวด: ผู้บริหาร (ทุกสาขา) และผู้จัดการสาขา (สาขาตัวเอง) เสมอ · ตำแหน่งอื่นตามสิทธิ์การเงิน
   const sales = fin || user?.role === "Global Admin" || user?.role === "Branch Admin";
-  // แยกดูทีละหมวด · หมวดการเงินเฉพาะผู้มีสิทธิ์การเงิน
-  const DASH_TABS = ["ตัวชี้วัดหลัก", ...(fin ? ["การเงิน"] : []), ...(sales ? ["ยอดขายตามหมวด"] : []), "การเข้าพัก", "สุขภาพผู้รับบริการ", "คุณภาพการดูแล", "ทีมงาน", "รับเข้า-จำหน่าย", "กายภาพ"];
+  // 4 กลุ่ม + แท็บย่อย · หมวดการเงินเฉพาะผู้มีสิทธิ์การเงิน (กลุ่มที่ไม่มีแท็บย่อยให้ดู = ซ่อน)
+  const GROUPS: TabGroup[] = [
+    { name: "ภาพรวม", subs: ["ตัวชี้วัดหลัก"], hint: user?.role === "Global Admin" ? "ตัวชี้วัดเทียบเป้า · เทียบสาขา" : "ตัวชี้วัดเทียบเป้า" },
+    { name: "การเงิน", subs: [...(fin ? ["การเงิน"] : []), ...(sales ? ["ยอดขายตามหมวด"] : [])] },
+    { name: "การดูแล", subs: ["สุขภาพผู้รับบริการ", "คุณภาพการดูแล", "กายภาพ"] },
+    { name: "ห้องและทีม", subs: ["การเข้าพัก", "รับเข้า-จำหน่าย", "ทีมงาน"] },
+  ].filter((g) => g.subs.length);
   const [view, setView] = useState("ตัวชี้วัดหลัก");
+  const [attnOpen, setAttnOpen] = useState(false);
   const [period, setPeriod] = useState<Period>("month");
   const [pick, setPick] = useState(() => new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 7));
   const R = rangeOf(period, pick);
@@ -112,13 +119,16 @@ export function Dashboard() {
   // ตัวชี้วัดหน้าภาพรวม (กดแล้วไปแท็บนั้น)
   const kpis: Kpi[] = [];
   // ชุดเดียวกันในรูปกราฟ (แท็บตัวชี้วัดหลัก) · kpis ยังใช้กับส่งออก CSV และรายงานผู้บริหาร
-  const pct: PctKpi[] = [], counts: CountKpi[] = [];
+  const pct: PctKpi[] = [], counts: CountKpi[] = [], tiles: Tile[] = [];
+  const baht = (v: number) => Math.round(v).toLocaleString("en-US");
   if (ins) {
     const o = ins.occupancy, cap = o.capacity, mi = o.monthly.findIndex((m) => m.month === R.to.slice(0, 7));
     const occ = cap && mi >= 0 ? Math.round((o.monthly[mi].people / cap) * 100) : null, occP = cap && mi > 0 ? Math.round((o.monthly[mi - 1].people / cap) * 100) : null;
     const c = ins.care, tasks = pctOf(c.cur.done, c.cur.total), tasksP = pctOf(c.prev.done, c.prev.total);
     const ontime = pctOf(c.cur.ontime, c.cur.done), ontimeP = pctOf(c.prev.ontime, c.prev.done);
     const h = ins.health, tm = ins.team;
+    const people = o.monthly[mi]?.people ?? 0, noRoom = ins.attention.noRoom?.length ?? 0;
+    const needOcc = cap ? Math.ceil((T.occupancy / 100) * cap) - people : 0;
     const shortOf = (sh: { day: string; staff: number }[]) => sh.filter((s) => s.day <= R.to && (!s.staff || tm.residents / s.staff > T.ratio)).length;
     const famN = (d?.branches ?? []).reduce((n, b) => n + b.famN, 0), fam = famN ? (d?.branches ?? []).reduce((n, b) => n + (b.famStars ?? 0) * b.famN, 0) / famN : null;
     kpis.push(
@@ -134,13 +144,19 @@ export function Dashboard() {
     const meds = pctOf(h.cur.meds.given, h.cur.meds.total), medsP = pctOf(h.prev.meds.given, h.prev.meds.total);
     const dm = (s: string) => `${Number(s.slice(8, 10))}/${Number(s.slice(5, 7))}`;
     pct.push(
-      { key: "occ", label: "อัตราเข้าพัก", cur: occ, prev: occP, goal: T.occupancy, trendName: "รายเดือน", note: `${o.monthly[mi]?.people ?? 0} จาก ${cap} เตียง · เป้า ${T.occupancy}%`,
-        trend: o.monthly.slice(Math.max(0, mi - 5), mi + 1).map((m) => ({ label: monTh(m.month), v: cap ? Math.round((m.people / cap) * 100) : null })), onOpen: () => setView("การเข้าพัก") },
-      ...(finSum ? [{ key: "collect", label: "อัตราเก็บเงินได้", cur: finSum.collect, prev: finSum.collectPrev, goal: T.collect, note: `รับชำระ ÷ ยอดออกใบ · เทียบ ${finSum.prevLabel} · เป้า ${T.collect}%`, onOpen: () => setView("การเงิน") }] : []),
-      { key: "tasks", label: "งานสำเร็จ", cur: tasks, prev: tasksP, goal: T.tasks, trendName: "รายสัปดาห์", note: `${c.cur.done} จาก ${c.cur.total} งาน · เป้า ${T.tasks}%`,
-        trend: c.weekly.map((w) => ({ label: dm(w.from), v: pctOf(w.done, w.total) })), onOpen: () => setView("คุณภาพการดูแล") },
-      { key: "ontime", label: "ส่งงานตรงเวลา", cur: ontime, prev: ontimeP, goal: T.ontime, onOpen: () => setView("คุณภาพการดูแล") },
-      { key: "meds", label: "ให้ยาครบตามมื้อ", cur: meds, prev: medsP, goal: T.meds, onOpen: () => setView("สุขภาพผู้รับบริการ") },
+      { key: "occ", label: "อัตราเข้าพัก", cur: occ, prev: occP, goal: T.occupancy, trendName: "รายเดือน", note: `${people} จาก ${cap} เตียง · เป้า ${T.occupancy}%`, base: `${people} จาก ${cap} เตียง`, prevLabel: mi > 0 ? `สิ้น ${monTh(o.monthly[mi - 1].month)}` : undefined,
+        drill: [`เตียงว่าง ${Math.max(0, cap - people)} เตียง`, needOcc > 0 ? `ต้องมีผู้รับบริการเพิ่มอีก ${needOcc} คนจึงถึงเป้า ${T.occupancy}%` : "ถึงเป้าแล้ว", ...(noRoom ? [`รอจัดห้อง ${noRoom} คน (ยังไม่นับเป็นเตียงที่มีคน)`] : [])],
+        trend: o.monthly.slice(Math.max(0, mi - 5), mi + 1).map((m) => ({ label: monTh(m.month), v: cap ? Math.round((m.people / cap) * 100) : null })), openLabel: "ดูการเข้าพัก", onOpen: () => setView("การเข้าพัก") },
+      ...(finSum ? [{ key: "collect", label: "อัตราเก็บเงินได้", cur: finSum.collect, prev: finSum.collectPrev, goal: T.collect, note: `รับชำระ ÷ ยอดออกใบ · เทียบ ${finSum.prevLabel} · เป้า ${T.collect}%`,
+        base: `รับ ${baht(finSum.paid)} จาก ${baht(finSum.billed)} บาท`,
+        drill: [`ยอดออกใบ ${monTh(finSum.month)} ${baht(finSum.billed)} บาท · รับแล้ว ${baht(finSum.paid)} บาท`, `ค้างชำระทั้งหมดตอนนี้ ${baht(finSum.owe)} บาท (${finSum.openN} ใบ)`], openLabel: "ดูการเงิน", onOpen: () => setView("การเงิน") }] : []),
+      { key: "tasks", label: "งานสำเร็จ", cur: tasks, prev: tasksP, goal: T.tasks, trendName: "รายสัปดาห์", note: `${c.cur.done} จาก ${c.cur.total} งาน · เป้า ${T.tasks}%`, base: `${c.cur.done} จาก ${c.cur.total} งาน`,
+        drill: [`ยังไม่ส่ง ${Math.max(0, c.cur.total - c.cur.done)} งาน`, `หัวหน้าตรวจแล้ว ${c.cur.checked} จาก ${c.cur.done} งานที่ส่ง`, ...(c.cur.low ? [`ได้ต่ำกว่า 3 ดาว ${c.cur.low} งาน`] : [])],
+        trend: c.weekly.map((w) => ({ label: dm(w.from), v: pctOf(w.done, w.total) })), openLabel: "ดูคุณภาพการดูแล", onOpen: () => setView("คุณภาพการดูแล") },
+      { key: "ontime", label: "ส่งงานตรงเวลา", cur: ontime, prev: ontimeP, goal: T.ontime, base: `${c.cur.ontime} จาก ${c.cur.done} งานที่ส่ง`,
+        drill: [`ส่งช้าเกิน 30 นาที ${Math.max(0, c.cur.done - c.cur.ontime)} งาน`, `ช่วง${vs.trim()}: ตรงเวลา ${c.prev.ontime} จาก ${c.prev.done} งาน`], openLabel: "ดูคุณภาพการดูแล", onOpen: () => setView("คุณภาพการดูแล") },
+      { key: "meds", label: "ให้ยาครบตามมื้อ", cur: meds, prev: medsP, goal: T.meds, base: `${h.cur.meds.given} จาก ${h.cur.meds.total} มื้อ`,
+        drill: [`ยังไม่ได้ให้ ${Math.max(0, h.cur.meds.total - h.cur.meds.given)} มื้อ (นับถึงเมื่อวาน)`], openLabel: "ดูสุขภาพผู้รับบริการ", onOpen: () => setView("สุขภาพผู้รับบริการ") },
     );
     counts.push(
       { key: "vit", label: "ค่าผิดปกติ / เฝ้าระวัง", unit: "ครั้ง", cur: h.cur.abnormal, prev: h.prev.abnormal, higherBetter: false, onOpen: () => setView("สุขภาพผู้รับบริการ") },
@@ -148,6 +164,26 @@ export function Dashboard() {
       { key: "flow", label: "รับเข้าใหม่", unit: "คน", cur: ins.flow.cur.admits, prev: ins.flow.prev.admits, higherBetter: true, onOpen: () => setView("รับเข้า-จำหน่าย") },
       ...(finSum ? [{ key: "paid", label: `รับชำระ ${monTh(finSum.month)}`, unit: "บาท", cur: Math.round(finSum.paid), prev: Math.round(finSum.paidPrev), higherBetter: true, onOpen: () => setView("การเงิน") }] : []),
     );
+
+    // 1 · ตัวเลขหลักแถวบน
+    const up = (a: number | null, b: number | null, unit: string, vsT: string, higher = true): Tile["delta"] =>
+      a === null || b === null ? undefined : a === b ? { text: `เท่ากับ${vsT}`, tone: "flat" } : { text: `${a > b ? "▲" : "▼"} ${Math.abs(a - b).toLocaleString("en-US")}${unit} จาก${vsT}`, tone: (a > b) === higher ? "ok" : "bad" };
+    tiles.push({ key: "occ", label: "อัตราเข้าพัก", value: occ === null ? "-" : `${occ}`, unit: occ === null ? undefined : "%", sub: `${people} จาก ${cap} เตียง · เป้า ${T.occupancy}%`,
+      meter: occ === null ? undefined : { pct: occ, goal: T.occupancy }, delta: up(occ, occP, "%", mi > 0 ? ` สิ้น ${monTh(o.monthly[mi - 1].month)}` : ""), onClick: () => setView("การเข้าพัก") });
+    if (finSum) {
+      const ch = finSum.paidPrev ? Math.round(((finSum.paid - finSum.paidPrev) / finSum.paidPrev) * 100) : null;
+      tiles.push({ key: "paid", label: `รับชำระ ${monTh(finSum.month)}`, value: baht(finSum.paid), unit: "บาท", sub: `ออกใบแล้ว ${baht(finSum.billed)} บาท`,
+        delta: ch === null ? undefined : ch === 0 ? { text: `เท่ากับ ${finSum.prevLabel}`, tone: "flat" } : { text: `${ch > 0 ? "▲" : "▼"} ${Math.abs(ch)}% จาก ${finSum.prevLabel}`, tone: ch > 0 ? "ok" : "bad" }, onClick: () => setView("การเงิน") });
+    }
+    const bills = ins.attention.bills;
+    if (bills) tiles.push({ key: "owe", label: "ค้างชำระ", value: baht(bills.sum), unit: "บาท", sub: bills.n ? `${bills.n} ใบ · เก่าสุด ${docDate(bills.oldest ?? "")}` : "ไม่มีใบค้างชำระ", onClick: () => go("billing") });
+    tiles.push({ key: "res", label: "ผู้รับบริการ", value: String(tm.residents), unit: "คน", sub: `มีเตียงแล้ว ${o.inBed} · รอจัดห้อง ${noRoom}`,
+      delta: { text: `ช่วงนี้รับเข้า ${ins.flow.cur.admits} · จำหน่าย ${ins.flow.cur.discharges}`, tone: "flat" }, onClick: () => setView("รับเข้า-จำหน่าย") });
+    if (!fin) tiles.push({ key: "tasks", label: "งานสำเร็จ", value: tasks === null ? "-" : `${tasks}`, unit: tasks === null ? undefined : "%", sub: `${c.cur.done} จาก ${c.cur.total} งาน`,
+      meter: tasks === null ? undefined : { pct: tasks, goal: T.tasks }, delta: up(tasks, tasksP, "%", vs), onClick: () => setView("คุณภาพการดูแล") });
+    const urgent = attn.filter((x) => x.n && x.urgent);
+    tiles.push({ key: "urgent", label: "เรื่องด่วน", value: String(urgent.length), unit: "เรื่อง", urgent: urgent.length > 0,
+      sub: urgent.length ? urgent.slice(0, 2).map((x) => x.short).join(" · ") : "ไม่มีเรื่องด่วน", onClick: urgent.length ? () => setAttnOpen(true) : undefined });
   }
   const exportOverview = () => {
     const att = attn.map((x) => ["ต้องจัดการ", x.title, `${x.n} ${x.unit}`, "", x.detail]);
@@ -190,15 +226,16 @@ export function Dashboard() {
         <span className="text-sm text-gold-600">{R.label}</span>
       </div>
       {/* จองพื้นที่เท่าครั้งก่อน ระหว่างโหลด · แถบแท็บและตัวเลขด้านล่างไม่กระโดด */}
-      <Reserve id="attn" loading={!ins} fallback={520} label="กำลังโหลดเรื่องที่ต้องจัดการ…"><AttentionStrip items={attn} go={go} /></Reserve>
-      <div className="dash-tabs mt-5 flex flex-wrap items-center justify-between gap-3"><Tabs tabs={DASH_TABS} value={view} onChange={setView} />
+      <Reserve id="tiles" loading={!ins} fallback={128} label="กำลังโหลดตัวเลขหลัก…"><DashTiles tiles={tiles} /></Reserve>
+      <Reserve id="attn" loading={!ins} fallback={56} label="กำลังโหลดเรื่องที่ต้องจัดการ…"><div className="mt-3"><AttentionStrip items={attn} go={go} compact expanded={attnOpen} onToggle={setAttnOpen} /></div></Reserve>
+      <div className="dash-tabs mt-5 flex flex-wrap items-end justify-between gap-3"><GroupTabs groups={GROUPS} value={view} onChange={setView} />
         {view === "ตัวชี้วัดหลัก" && <button className="btn-soft" disabled={!kpis.length} onClick={exportOverview}><CsvIcon /> ส่งออก CSV</button>}</div>
       {/* สรุปการเงินของเดือนที่เลือก (ใช้ในการ์ดภาพรวมและรายงานผู้บริหาร) */}
       {fin && view !== "การเงิน" && <div hidden><FinanceAnalytics branch={shiftBranch} compact month={finMonth} prevMonth={finPrev} onSummary={setFinSum} /></div>}
 
       {view === "ตัวชี้วัดหลัก" && <div className="space-y-6">
         <Reserve id="kpi" loading={!pct.length} fallback={640} label="กำลังโหลดตัวชี้วัด…"><KpiCharts pct={pct} counts={counts} vs={vs} /></Reserve>
-        <p className="text-xs text-gold-500">กดแถวหรือกล่องเพื่อดูรายละเอียด · สีเขียว = ดีขึ้น · สีแดง = แย่ลง</p>
+        {ins?.compare && ins.compare.length > 1 && <BranchCompareTable rows={ins.compare} store={store} money={fin} onPick={(b) => { setShiftBranch(b); window.scrollTo({ top: 0, behavior: "smooth" }); }} />}
         <section><h3 className="dash-h">กายภาพ <button className="dash-more" onClick={() => setView("กายภาพ")}>ดูรายละเอียด</button></h3><CourseSummary branch={shiftBranch} compact /></section>
       </div>}
 

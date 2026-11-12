@@ -115,3 +115,47 @@ export async function insights(br: string | null, r: Range) {
 
   return { range: r, health, care, team, flow, occupancy };
 }
+
+/* ---------- เทียบสาขา (ผู้บริหาร · ดูรวมทุกสาขา) ---------- */
+export type BranchCompare = {
+  branch: string; capacity: number; inBed: number; residents: number;
+  done: number; ontime: number; openAlerts: number;
+  /** จำนวนพยาบาลแต่ละกะในช่วง (ถึงวันนี้) ไว้คิดกะที่คนไม่พอตามเป้าของแต่ละสาขา */
+  shifts: number[];
+  paid?: number; owe?: number; oweN?: number;
+};
+/** ตัวเลขหลักของทุกสาขาในช่วงเดียวกัน · money = รวมรับชำระ/ค้างชำระ (เฉพาะผู้มีสิทธิ์การเงิน) */
+export async function compareBranches(r: Range, money: boolean): Promise<BranchCompare[]> {
+  const g = async (q: string, p: unknown[] = []) => new Map(((await sql(q, p)) as Row[]).map((x) => [String(x.b), x]));
+  const month = r.to.slice(0, 7);
+  const [cap, bed, res, care, alerts, shifts, paid, owe] = await Promise.all([
+    g(`SELECT branch_name AS b, coalesce(sum(capacity), 0)::int AS n FROM rooms WHERE coalesce(status, '') NOT LIKE 'ปิด%' GROUP BY 1`),
+    g(`SELECT x.branch_name AS b, count(*)::int AS n FROM residents x WHERE coalesce(x.status, '') NOT LIKE 'ย้ายออก%'
+        AND EXISTS (SELECT 1 FROM rooms r WHERE r.branch_name = x.branch_name AND lower(regexp_replace(trim(r.room_no), '\s+', ' ', 'g')) = lower(regexp_replace(trim(x.room), '\s+', ' ', 'g')) AND coalesce(r.status, '') NOT LIKE 'ปิด%') GROUP BY 1`),
+    g(`SELECT branch_name AS b, count(*)::int AS n FROM residents WHERE status LIKE 'เข้าอยู่%' GROUP BY 1`),
+    g(`SELECT branch_name AS b, count(*) FILTER (WHERE status IN ('เสร็จแล้ว','ตรวจแล้ว'))::int AS done,
+        count(*) FILTER (WHERE status IN ('เสร็จแล้ว','ตรวจแล้ว') AND submitted_time IS NOT NULL AND scheduled_time IS NOT NULL
+          AND (CASE WHEN submitted_time - scheduled_time < interval '-12 hours' THEN submitted_time - scheduled_time + interval '24 hours'
+                    WHEN submitted_time - scheduled_time > interval '12 hours' THEN submitted_time - scheduled_time - interval '24 hours'
+                    ELSE submitted_time - scheduled_time END) <= interval '30 minutes')::int AS ontime
+      FROM daily_tasks WHERE work_date BETWEEN $1::date AND LEAST($2::date, ${TODAY}) GROUP BY 1`, [r.from, r.to]),
+    g(`SELECT branch_name AS b, count(*)::int AS n FROM care_alerts WHERE status = 'open' GROUP BY 1`),
+    sql(`SELECT branch_name AS b, shift_date::text AS day, shift, count(*)::int AS n FROM staff_shifts
+      WHERE shift_date BETWEEN $1::date AND LEAST($2::date, ${TODAY}) GROUP BY 1, 2, 3`, [r.from, r.to]) as Promise<Row[]>,
+    money ? g(`SELECT i.branch_name AS b, coalesce(sum(p.amount), 0)::float AS n FROM invoice_payments p JOIN invoices i ON i.id = p.invoice_id
+        WHERE p.kind = 'pay' AND to_char(p.pay_date, 'YYYY-MM') = $1 AND p.pay_date <= LEAST($2::date, ${TODAY}) GROUP BY 1`, [month, r.to]) : Promise.resolve(new Map<string, Row>()),
+    money ? g(`SELECT branch_name AS b, count(*)::int AS c, coalesce(sum(net - coalesce(paid_total, 0)), 0)::float AS n FROM invoices WHERE status IN ('ค้างชำระ', 'ชำระบางส่วน') GROUP BY 1`) : Promise.resolve(new Map<string, Row>()),
+  ]);
+  const names = [...new Set([...cap.keys(), ...res.keys(), ...care.keys()])].filter((b) => b && b !== "null").sort();
+  // ทุกวัน × กะเช้า/ดึก ในช่วง (ถึงวันนี้) · ไม่มีเวร = 0 คน
+  const today = new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10), end = r.to < today ? r.to : today;
+  const days: string[] = [];
+  for (let t = Date.parse(r.from); days.length < 400 && new Date(t).toISOString().slice(0, 10) <= end; t += 864e5) days.push(new Date(t).toISOString().slice(0, 10));
+  const staffOf = new Map(shifts.map((x) => [`${x.b}|${x.day}|${x.shift}`, n(x.n)]));
+  return names.map((b) => ({
+    branch: b, capacity: n(cap.get(b)?.n), inBed: n(bed.get(b)?.n), residents: n(res.get(b)?.n),
+    done: n(care.get(b)?.done), ontime: n(care.get(b)?.ontime), openAlerts: n(alerts.get(b)?.n),
+    shifts: days.flatMap((d) => ["เช้า", "ดึก"].map((sh) => staffOf.get(`${b}|${d}|${sh}`) ?? 0)),
+    ...(money ? { paid: n(paid.get(b)?.n), owe: n(owe.get(b)?.n), oweN: n(owe.get(b)?.c) } : {}),
+  }));
+}

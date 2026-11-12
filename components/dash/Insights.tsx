@@ -1,5 +1,6 @@
 "use client";
 import { ReactNode, useEffect, useRef, useState } from "react";
+import type { BranchCompare } from "@/lib/insights";
 import { Field, Modal, Section } from "../ui";
 import { money } from "@/lib/billing";
 import { useApp } from "@/lib/app";
@@ -20,6 +21,8 @@ export type Insights = {
   team: { residents: number; cur: { shifts: Shift[]; late: number; lateMin: number; absent: number }; prev: { shifts: Shift[]; late: number; lateMin: number; absent: number } };
   flow: { cur: FlowStat; prev: FlowStat; monthly: { month: string; admits: number; discharges: number }[] };
   occupancy: { capacity: number; inBed: number; monthly: { month: string; people: number }[] };
+  /** เทียบสาขา (เฉพาะผู้บริหารที่ดูรวมทุกสาขา) */
+  compare?: BranchCompare[];
 };
 
 /* ---------- เป้าหมาย (เก็บใน doc_settings คีย์ dash_targets · ค่า default + รายสาขา) ---------- */

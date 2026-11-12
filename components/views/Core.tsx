@@ -23,7 +23,7 @@ import { usePriceList } from "@/lib/usePrices";
 import { clinic, fetchDocSettings } from "@/lib/clinic";
 import { fetchProfile } from "@/lib/care";
 import { billHandoff, contractHandoff, handoff, invoiceHandoff, QuoteHandoff } from "@/lib/handoff";
-import { buildTodos, HomeData, runTodo, TODO_ACT, TODO_AREAS, TodoItem } from "../dash/Todo";
+import { buildTodos, HomeData, runTodo, SAFETY_KEYS, TODO_ACT, TODO_AREAS, TodoItem } from "../dash/Todo";
 import { apptIso, TH_MONTHS, upcomingAppts } from "@/lib/appointments";
 import { useApp } from "@/lib/app";
 import { ViewId } from "@/lib/nav";
@@ -79,12 +79,10 @@ export function Workflow() {
   const upcoming=upcomingAppts(apptRows);
   const active=residents.filter(r=>r[5].startsWith("เข้าอยู่")).length;
   const today=new Date().toLocaleDateString("th-TH",{weekday:"long",day:"numeric",month:"long",year:"numeric"});
-  /** จำนวนเรื่องที่รอจัดการ · null = กำลังโหลด */
-  const [todo,setTodo]=useState<number|null>(null);
   return <>
-    <PageHeader title={`สวัสดี ${user?.name??""}`.trim()} sub={<>{today}{user?.branch&&user.role!=="Global Admin"?` · สาขา${user.branch}`:""}<br />{todo===null?"กำลังดูเรื่องที่รอคุณจัดการ…":todo?`วันนี้มี ${todo} เรื่องที่รอคุณจัดการ`:"วันนี้ไม่มีเรื่องค้าง"}</>}
+    <PageHeader title={`สวัสดี ${user?.name??""}`.trim()} sub={<>{today}{user?.branch&&user.role!=="Global Admin"?` · สาขา${user.branch}`:""}</>}
       actions={<><button className="btn-soft" onClick={()=>go("appointments")}><Icon name="calendar" className="h-4 w-4" /> ดูตารางนัดหมาย</button>{admitTo&&<button className="btn-primary" onClick={()=>go(admitTo)}><Icon name="plus" className="h-4 w-4" /> รับผู้รับบริการใหม่</button>}</>} />
-    <TodayCards onCount={setTodo} />
+    <TodayCards />
     <div className="overview-columns mt-8"><div className="space-y-4"><h2 className="text-[17px] font-medium text-gold-800">ภาพรวมศูนย์</h2><Occupancy /><MetricGrid items={[{label:"ผู้รับบริการทั้งหมด",value:residents.length,unit:"คน",note:"ข้อมูลผู้รับบริการในระบบ",icon:"user",accent:true},{label:"กำลังรับการดูแล",value:active,unit:"คน",note:"สถานะเข้าอยู่ในศูนย์",icon:"heart"},{label:"สัญญาที่ใช้งาน",value:contracts.filter(r=>r[5]==="ใช้งานอยู่").length,unit:"สัญญา",note:"ทะเบียนสัญญาบริการ",icon:"doc"},{label:"นัดหมายที่กำลังจะมาถึง",value:upcoming.length,unit:"นัด",note:"จากตารางนัดหมาย",icon:"calendar"}]} /></div>
       <aside className="overview-sidebar"><section className="card side-section"><h2 className="section-mini-title">นัดหมายที่กำลังมาถึง<Icon name="calendar" className="h-4 w-4 text-gold-400" /></h2>{upcoming.length?upcoming.slice(0,3).map(({r:a},i)=>{const d=apptIso(a[0]);return <div key={i} className="appointment-mini"><div className="appointment-date">{Number(d.slice(8,10))}<small>{TH_MONTHS[Number(d.slice(5,7))-1]}</small></div><div><strong>{a[2]}</strong><p>{(a[1]??"").slice(0,5)} น. · {a[3]}</p></div></div>;}):<p className="py-3 text-sm text-gold-500">ยังไม่มีนัดหมายที่กำลังจะมาถึง</p>}<button className="side-link" onClick={()=>go("appointments")}>ดูนัดหมายทั้งหมด<Icon name="arrow" className="h-4 w-4" /></button></section>{can(user,"app.staff")&&<Link href="/staff" className="card side-section mt-4 flex items-center gap-4"><span className="grid h-10 w-10 place-items-center rounded-xl bg-cream-100 text-gold-500"><Icon name="phone" /></span><span><strong className="block text-sm font-medium text-gold-700">พื้นที่ของทีมดูแล</strong><span className="text-xs text-gold-500">เปิด KinApp →</span></span></Link>}</aside></div>
     <details className="card mt-8 p-5 [&_summary::-webkit-details-marker]:hidden"><summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3"><span><strong className="block text-[17px] font-medium text-gold-800">เส้นทางการดูแล (คู่มือขั้นตอน)</strong><span className="text-sm text-gold-600">ขั้นตอนงานประจำวัน และการรับผู้รับบริการใหม่ · กดเพื่อเปิดดู</span></span><span className="btn-soft !py-2">เปิด / ปิดขั้นตอน</span></summary>
@@ -93,8 +91,10 @@ export function Workflow() {
 }
 
 /* ---------- สิ่งที่ต้องทำวันนี้ (หน้าแรก) ---------- */
-/** การ์ดเรื่องที่ต้องจัดการวันนี้ · ชุดเดียวกับแถบ "ต้องจัดการ" ในภาพรวมและรายงาน (components/dash/Todo.tsx) · ดึงใหม่ทุก 1 นาทีและตอนกลับมาที่หน้าต่าง */
-function TodayCards({ onCount }: { onCount: (n: number) => void }) {
+/** การ์ดเรื่องที่ต้องจัดการวันนี้ · ชุดเดียวกับแถบ "ต้องจัดการ" ในภาพรวมและรายงาน (components/dash/Todo.tsx) · ดึงใหม่ทุก 1 นาทีและตอนกลับมาที่หน้าต่าง
+ *  หัว = เหลือกี่เรื่อง · ด่วนกี่เรื่อง · แถบเคลียร์แล้ว · ทำก่อน แบ่ง 2 ระดับ (ความปลอดภัยผู้รับบริการ → ต้องทำวันนี้)
+ *  กล่องด้านอื่นกว้างตามจำนวนเรื่อง (ไม่มีช่องว่างเปล่า) · เรื่องที่เรียบร้อยย่อเป็นบรรทัดเดียว กดดูรายการ */
+function TodayCards() {
   const { go } = useApp();
   const { user } = useSession();
   const [d, setD] = useState<HomeData | null>(null);
@@ -106,27 +106,26 @@ function TodayCards({ onCount }: { onCount: (n: number) => void }) {
     return () => { clearInterval(t); window.removeEventListener("focus", load); };
   }, []);
   const cards = d ? buildTodos(d, user) : [];
-  const open = cards.filter((c) => c.n > 0).length;
-  useEffect(() => { if (d) onCount(open); }, [d, open, onCount]);
   const [more, setMore] = useState<string | null>(null);
   // ระหว่างโหลด: จองพื้นที่เท่าครั้งก่อน (ภาพรวมศูนย์ด้านล่างไม่กระโดด)
   if (!d) return <Reserve id="today" loading fallback={560} label="กำลังโหลดสิ่งที่ต้องทำวันนี้…">{null}</Reserve>;
   if (!cards.length) return null;
-  // กล่อง "ทำก่อน" = เรื่องด่วนที่ค้าง · ที่เหลือแยกตามด้าน · เรื่องที่เรียบร้อยรวมเป็นบรรทัดเดียวท้ายสุด
-  const urgent = cards.filter((c) => c.n > 0 && c.urgent);
+  const open = cards.filter((c) => c.n > 0);
+  const urgent = open.filter((c) => c.urgent);
+  const safety = urgent.filter((c) => SAFETY_KEYS.includes(c.key)), today = urgent.filter((c) => !SAFETY_KEYS.includes(c.key));
   const areas = TODO_AREAS.map((a) => ({ ...a, all: cards.filter((c) => a.keys.includes(c.key)) }))
     .filter((a) => a.all.length)
     .map((a) => ({ ...a, open: a.all.filter((c) => c.n > 0 && !c.urgent), urgentHere: a.all.filter((c) => c.n > 0 && c.urgent).length }));
   const done = cards.filter((c) => !c.n);
-  const cleared = done.length, total = cards.length, C = 113.1;
+  const total = cards.length, cleared = done.length, pct = Math.round((cleared / total) * 100);
   const row = (c: TodoItem) => {
     const on = more === c.key, go2 = !!(c.view || c.href);
     return (
       <li key={c.key} className={on ? "is-open" : ""}>
         <div className="td-row">
           <button type="button" className="td-main" aria-expanded={on} onClick={() => setMore(on ? null : c.key)}>
-            <span className={`td-n ${c.urgent ? "is-bad" : c.warn ? "is-warn" : ""}`}>{c.n}</span>
-            <span className="td-t">{c.title}{c.brief && <small>{c.brief}</small>}</span>
+            <span className={`td-n ${c.urgent ? "is-bad" : c.warn ? "is-warn" : ""}`}>{c.n}<small>{c.unit}</small></span>
+            <span className="td-t">{c.title}{c.brief && <small className={c.hot ? "is-hot" : ""}>{c.brief}</small>}</span>
           </button>
           {go2 && <button type="button" className="td-go" onClick={() => runTodo(c, go)}><span>{c.key === "deposit" && c.cta === "ออกใบแจ้งหนี้" ? "ออกใบ" : TODO_ACT[c.key] ?? c.cta}</span><Icon name="chevron" className="h-4 w-4 -rotate-90" /></button>}
         </div>
@@ -134,27 +133,37 @@ function TodayCards({ onCount }: { onCount: (n: number) => void }) {
       </li>
     );
   };
+  const tier = (name: string, list: TodoItem[]) => list.length > 0 && (
+    <div className="td-tier"><h4>{name}<span>{list.length}</span></h4><ul className={`td-list ${list.length > 1 ? "is-2col" : ""}`}>{list.map(row)}</ul></div>
+  );
+  const shown = areas.filter((a) => a.open.length || !a.urgentHere);
   return (
     <Reserve id="today" loading={false} fallback={560} label=""><section aria-labelledby="todo-h" className="td">
       <div className="td-head">
         <h2 id="todo-h">สิ่งที่ต้องทำวันนี้</h2>
-        <div className="td-prog" role="img" aria-label={`เคลียร์แล้ว ${cleared} จาก ${total} เรื่อง`}>
-          <svg viewBox="0 0 44 44" width="46" height="46" aria-hidden="true"><circle cx="22" cy="22" r="18" className="t" /><circle cx="22" cy="22" r="18" className="v" style={{ strokeDashoffset: C * (1 - cleared / total) }} /></svg>
-          <span><b>{cleared}</b> จาก {total} เรื่อง<small>เคลียร์แล้ว</small></span>
+        <p className="td-sum">{open.length ? <>เหลือ <b>{open.length}</b> เรื่อง</> : <b className="is-ok">เคลียร์ครบทุกเรื่องแล้ว</b>}
+          {urgent.length > 0 && <em>ด่วน {urgent.length}</em>}</p>
+        <div className="td-bar" role="img" aria-label={`เคลียร์แล้ว ${cleared} จาก ${total} เรื่อง`}>
+          <span className="td-track"><i style={{ width: `${pct}%` }} /></span>
+          <small>เคลียร์แล้ว {cleared} จาก {total} เรื่อง</small>
         </div>
       </div>
       {urgent.length > 0 && <section className="td-box is-urgent" aria-label="ทำก่อน">
         <h3><i className="td-dot is-bad" />ทำก่อน <span>{urgent.length}</span></h3>
-        <ul className="td-list">{urgent.map(row)}</ul>
+        {tier("ความปลอดภัยผู้รับบริการ", safety)}
+        {tier("ต้องทำวันนี้", today)}
       </section>}
-      {areas.length > 0 && <div className="td-cols">{areas.map((a) => (
-        <section key={a.name} className="td-box" aria-label={a.name}>
-          <h3><i className={`td-dot ${a.open.length ? "is-warn" : a.urgentHere ? "is-bad" : "is-good"}`} />{a.name} <span>{a.open.length}</span></h3>
-          {a.open.length ? <ul className="td-list">{a.open.map(row)}</ul>
-            : a.urgentHere ? <p className="td-clear is-muted">↑ เรื่องด้านนี้อยู่ในกล่องทำก่อน {a.urgentHere} เรื่อง</p> : <p className="td-clear">✓ ไม่มีงานค้าง</p>}
+      {shown.length > 0 && <div className="td-cols">{shown.map((a) => (
+        <section key={a.name} className="td-box" aria-label={a.name} style={{ flex: `${Math.max(1, a.open.length)} 1 300px` }}>
+          <h3><i className={`td-dot ${a.open.length ? "is-warn" : "is-good"}`} />{a.name} <span>{a.open.length}</span></h3>
+          {a.open.length ? <ul className="td-list">{a.open.map(row)}</ul> : <p className="td-clear">✓ ไม่มีงานค้าง</p>}
+          {a.open.length > 0 && a.urgentHere > 0 && <p className="td-clear is-muted">↑ อีก {a.urgentHere} เรื่องของด้านนี้อยู่ในกล่องทำก่อน</p>}
         </section>
       ))}</div>}
-      {done.length > 0 && <p className="td-done"><b>✓ เรียบร้อยแล้ว</b>{done.map((c) => <span key={c.key}>{c.short}</span>)}</p>}
+      {done.length > 0 && <details className="td-done">
+        <summary><b>✓ เรียบร้อย {done.length} เรื่อง</b><span>กดดูรายการ</span></summary>
+        <ul>{done.map((c) => <li key={c.key}><b>{c.short}</b> {c.detail}</li>)}</ul>
+      </details>}
     </section></Reserve>
   );
 }

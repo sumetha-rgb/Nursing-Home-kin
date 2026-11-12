@@ -6,7 +6,7 @@ import { currentUser, forbidden, unauthorized } from "@/lib/auth";
 import { audit } from "@/lib/audit";
 import { can } from "@/lib/perms";
 import type { SessionUser } from "@/lib/roles";
-import { insights } from "@/lib/insights";
+import { compareBranches, insights } from "@/lib/insights";
 import { attention } from "@/lib/attention";
 
 export const dynamic = "force-dynamic";
@@ -106,8 +106,10 @@ export async function GET(req: NextRequest) {
       const from = ok(q.get("from")), to = ok(q.get("to")), pfrom = ok(q.get("pfrom")), pto = ok(q.get("pto"));
       if (!from || !to || !pfrom || !pto || to < from || pto < pfrom) return bad("ช่วงวันที่ไม่ถูกต้อง");
       const br = scoped(me) ? me.branch : q.get("branch") || null;
-      const [data, att] = await Promise.all([insights(br, { from, to, pfrom, pto }), attention(me, br)]);
-      return NextResponse.json({ ...data, attention: att });
+      // เทียบสาขา: ผู้บริหารที่ดูรวมทุกสาขาเท่านั้น (ผู้จัดการสาขาเห็นเฉพาะสาขาตัวเอง)
+      const all = !scoped(me) && !br;
+      const [data, att, cmp] = await Promise.all([insights(br, { from, to, pfrom, pto }), attention(me, br), all ? compareBranches({ from, to, pfrom, pto }, can(me, "billing")) : Promise.resolve(undefined)]);
+      return NextResponse.json({ ...data, attention: att, ...(cmp ? { compare: cmp } : {}) });
     }
     if (q.get("op") !== "dashboard") return bad("unknown op");
     if (!can(me, "dashboard")) return forbidden();
