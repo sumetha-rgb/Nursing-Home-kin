@@ -4,6 +4,25 @@ import { sql } from "@/lib/db";
 import { hashPassword, normEmail, passwordProblem, startSession, validEmail } from "@/lib/auth";
 import { audit } from "@/lib/audit";
 import { permsFor } from "@/lib/perms";
+import { pushTo } from "@/lib/push";
+
+/**
+ * แจ้งเตือนบนมือถือถึงคนที่อนุมัติได้ของสาขานั้น (ผู้จัดการสาขา หรือคนที่ได้สิทธิ์เมนูทีมเพิ่ม) · ผู้บริหารไม่ได้แจ้งเตือน เห็นในแถบต้องจัดการ
+ * tag เดียวต่อสาขา: หลายคนสมัครติดกัน แจ้งเตือนเดิมถูกแทนด้วยยอดล่าสุด "สมัครใหม่รออนุมัติ 3 คน"
+ */
+async function notifyApprovers(branch: string) {
+  const ids = (await sql`SELECT id FROM staff_users WHERE branch_name = ${branch} AND coalesce(status, 'ทำงาน') = 'ทำงาน' AND access_level <> 'Global Admin'
+      AND CASE WHEN permissions IS NULL THEN access_level = 'Branch Admin' ELSE 'staff' = ANY(permissions) END`) as { id: string }[];
+  if (!ids.length) return;
+  const wait = (await sql`SELECT full_name FROM staff_users WHERE status = 'รออนุมัติ' AND branch_name = ${branch} ORDER BY created_at DESC LIMIT 20`) as { full_name: string }[];
+  const names = wait.slice(0, 2).map((x) => x.full_name).join(", ") + (wait.length > 2 ? ` และอีก ${wait.length - 2} คน` : "");
+  await pushTo(ids.map((x) => x.id), {
+    title: wait.length > 1 ? `มีคนสมัครใหม่ รออนุมัติ ${wait.length} คน` : "มีคนสมัครใหม่ รออนุมัติ",
+    body: `${names} · สาขา${branch} · กดเพื่อตรวจและเลือกตำแหน่ง`,
+    url: "/?view=staff&filter=pending",
+    tag: `signup-${branch}`,
+  });
+}
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
@@ -33,7 +52,10 @@ export async function POST(req: NextRequest) {
     VALUES (${id}, ${name}, ${email}, ${await hashPassword(body.password)}, null, 'Nurse', ${branch}, ${auto ? "ทำงาน" : "รออนุมัติ"}, ${Date.now()})`;
   await audit(req, null, [{ area: "users", action: "register", recordId: id, summary: `${name} (${email})`, branch, after: { full_name: name, email, access_level: "Nurse", branch_name: branch, status: auto ? "ทำงาน" : "รออนุมัติ" } }], name);
 
-  if (!auto) return NextResponse.json({ pending: true });
+  if (!auto) {
+    await notifyApprovers(branch).catch(() => {}); // แจ้งเตือนไม่สำเร็จ ไม่ทำให้การสมัครล้ม
+    return NextResponse.json({ pending: true });
+  }
   const res = NextResponse.json({ pending: false, user: { id, name, email, role: "Nurse", branch, perms: permsFor("Nurse") } });
   await startSession(res, id);
   return res;

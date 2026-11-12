@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import Icon from "@/components/Icon";
-import { COMPANY } from "@/components/ui";
+import { COMPANY, CompanyFoot } from "@/components/ui";
 
 type Task = { time: string | null; title: string; note: string | null; by: string | null; photo: string | null };
 type Diary = { resident: string; branch: string; date: string; today: string; days: string[]; tasks: Task[]; meds: { meal: string; given: boolean; at: string | null }[] };
@@ -118,7 +118,7 @@ export default function FamilyApp({ token }: { token: string }) {
           <button type="button" aria-label="ปิด" onClick={() => setBig(null)}><Icon name="close" className="h-5 w-5" /></button>
         </div>
       )}
-      <footer className="survey-foot">{COMPANY.th}<br />{COMPANY.contact}</footer>
+      <CompanyFoot branch={d?.branch} />
     </main>
   );
 }

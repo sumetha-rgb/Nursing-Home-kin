@@ -1,4 +1,5 @@
 "use client";
+import { useBranchInfo } from "@/lib/branches";
 import { ReactNode, useEffect, useState, useId, useRef, Children, isValidElement, cloneElement, ReactElement } from "react";
 import { createPortal } from "react-dom";
 import Icon from "./Icon";
@@ -265,23 +266,43 @@ export const COMPANY = {
 };
 const printedAt = () => new Date().toLocaleString("th-TH", { dateStyle: "long", timeStyle: "short" });
 
+/**
+ * บริษัทที่ออกเอกสารของสาขา: สาขาที่กรอกชื่อนิติบุคคลอื่นไว้ (หน้าข้อมูลสาขา) ใช้ชื่อ ที่อยู่ และเบอร์ของสาขานั้น
+ *  เช่น สุขุมวิท 107 · ราชพฤกษ์ · พัทยา = บริษัท คิน ออริจิ้น เฮลท์แคร์ จำกัด · ไม่ได้กรอก / ผู้บริหารดูทุกสาขา = บริษัทหลัก · โลโก้ KIN เหมือนกันทุกบริษัท
+ */
+export function companyOf(b?: { legal: string; address: string; phone: string }) {
+  if (!b?.legal || b.legal === COMPANY.th) return COMPANY;
+  return { ...COMPANY, th: b.legal, address: b.address || COMPANY.address, contact: `${b.phone ? `โทร ${b.phone} · ` : ""}kinrehab.com` };
+}
+/** บริษัทของสาขา (ไม่ระบุ = สาขาของผู้ใช้ที่เข้าระบบ) */
+export function useCompany(branch?: string | null) {
+  return companyOf(useBranchInfo(branch));
+}
+
 /** หัวกระดาษบริษัท: โลโก้ ชื่อบริษัท ที่อยู่ ชื่อเอกสาร และวันที่พิมพ์ */
-export function PrintLetterhead({ title, className = "" }: { title?: string; className?: string }) {
+export function PrintLetterhead({ title, className = "", branch }: { title?: string; className?: string; branch?: string | null }) {
+  const co = useCompany(branch);
   return (
     <div className={"print-only print-letterhead " + className}>
       <div className="print-letterhead-row">
         <img src="/logo-mark.png" alt="KIN" className="print-logo" />
         <div className="print-company">
-          <strong>{COMPANY.brand}</strong>
-          <span>{COMPANY.th}</span>
-          <small>{COMPANY.address}</small>
-          <small>{COMPANY.contact}</small>
+          <strong>{co.brand}</strong>
+          <span>{co.th}</span>
+          <small>{co.address}</small>
+          <small>{co.contact}</small>
         </div>
         <div className="print-meta"><span>วันที่พิมพ์</span><b>{printedAt()}</b></div>
       </div>
       {title && <h1 className="print-title">{title}</h1>}
     </div>
   );
+}
+
+/** ท้ายหน้าที่ญาติเปิด (ลิงก์ครอบครัว รีวิว แบบประเมิน): ชื่อบริษัทของสาขา */
+export function CompanyFoot({ branch }: { branch?: string | null }) {
+  const co = useCompany(branch ?? null);
+  return <footer className="survey-foot">{co.th}<br />{co.contact}</footer>;
 }
 
 /** ท้ายกระดาษ: ข้อความกำกับเอกสาร */

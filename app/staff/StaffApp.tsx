@@ -4,6 +4,7 @@ import TutorialVideos from "@/components/TutorialVideos";
 import Image from "next/image";
 import Link from "next/link";
 import Login from "@/components/Login";
+import AppSwitcher from "@/components/AppSwitcher";
 import PasswordDialog from "@/components/PasswordDialog";
 import { useSession, SessionUser } from "@/lib/session";
 import { ROLE_INFO } from "@/lib/roles";
@@ -377,12 +378,13 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
     <div className="staff-app mx-auto min-h-dvh w-full max-w-lg pb-28 sm:border-x sm:border-cream-300/60">
       {/* header */}
       <header className="sticky top-0 z-30 flex items-center justify-between gap-3 border-b border-cream-300/60 bg-white/95 px-4 py-3 backdrop-blur">
-        <div className="flex items-center gap-2.5">
-          <Image src="/logo-mark.png" alt="KIN" width={44} height={33} className="h-9 w-auto" />
-          <div className="leading-tight"><p className="text-[15px] font-semibold text-gold-800">KinApp</p><p className="text-[11px] font-medium text-gold-600">สาขา{user.branch || "-"}</p></div>
+        <div className="flex min-w-0 items-center gap-2.5">
+          <Image src="/logo-mark.png" alt="KIN" width={44} height={33} className="h-9 w-auto shrink-0" />
+          <div className="min-w-0 leading-tight"><p className="text-[15px] font-semibold text-gold-800">KinApp</p><p className="truncate text-[11px] font-medium text-gold-600">สาขา{user.branch || "-"}</p></div>
         </div>
         <div className="flex items-center gap-2">
           <AlertsBell compact />
+          <AppSwitcher user={user} current="kinapp" compact />
           <button type="button" className={`ka-me ${tab === "perf" ? "is-on" : ""}`} onClick={goMe} aria-label="หน้าฉัน: รูปโปรไฟล์ ผลงาน และตั้งค่า">
             <Avatar kind="staff" id={user.id} name={user.name} size={30} />
             <span>{shortName(user.name)}</span>
@@ -553,7 +555,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
           <>
             <div className="ka-head">
               <div><h1>จ่ายยา</h1><p>มื้อ{meal} · จ่ายแล้ว {mealQ.filter((p) => p.given).length} จาก {mealQ.length} ซอง</p></div>
-              <Link href="/pharmacy?page=dispense" className="ka-pill"><Icon name="pill" className="h-4 w-4" />แอปจัดยา</Link>
+              <Link href="/pharmacy?page=dispense" className="ka-pill"><Icon name="pill" className="h-4 w-4" />ห้องยา</Link>
             </div>
             <div className="ka-meals" role="radiogroup" aria-label="มื้อยา">
               {MEALS.map((m) => <button key={m} type="button" role="radio" aria-checked={meal === m} onClick={() => setMeal(m)}>{m}<b>{queue.filter((p) => p.meal === m).length}</b></button>)}
@@ -912,5 +914,5 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
 /* ---------- หน้าเข้าสู่ระบบแอปพนักงาน ---------- */
 export default function StaffApp() {
  const { user, ready, setUser, logout } = useSession();
- return <AppProvider go={()=>{}}>{!ready?<main className="grid min-h-dvh place-items-center text-sm text-gold-500">กำลังตรวจสอบการเข้าสู่ระบบ…</main>:user&&!can(user,"app.staff")?<CashierOnly name={user.name} app="KinApp" onLogout={logout} />:user?<App user={user} onLogout={logout} />:<Login staff onLogin={setUser} />}</AppProvider>;
+ return <AppProvider go={()=>{}}>{!ready?<main className="grid min-h-dvh place-items-center text-sm text-gold-500">กำลังตรวจสอบการเข้าสู่ระบบ…</main>:user&&!can(user,"app.staff")?<CashierOnly user={user} app="kinapp" onLogout={logout} />:user?<App user={user} onLogout={logout} />:<Login staff onLogin={setUser} />}</AppProvider>;
 }

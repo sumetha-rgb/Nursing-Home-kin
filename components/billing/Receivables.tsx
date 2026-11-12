@@ -5,7 +5,7 @@ import Icon from "../Icon";
 import { DataTable, Section } from "../ui";
 import { balanceOf, bahtText, docDate, Invoice, money, todayIso } from "@/lib/billing";
 import { AGE_BUCKETS, BucketKey, bucketOf, Debtor, debtorsCsv, debtorsOf } from "@/lib/exportsCsv";
-import { PAY_CHANNELS } from "@/lib/contractText";
+import { payChannels } from "@/lib/contractText";
 import { DocBranch, DocFoot, DocHead, DocTitle, KV, longDate, Paper, PrintModal, Signs } from "../print/Docs";
 
 /** ช่วงอายุหนี้และการรวมรายคน อยู่ที่ lib/exportsCsv (ใช้ร่วมกับหน้าส่งออกข้อมูล) */
@@ -81,7 +81,7 @@ function StatementDoc({ d, branch, today, by }: { d: Debtor; branch: DocBranch; 
         ))}</tbody>
         <tfoot><tr><td colSpan={5}>รวมยอดค้างชำระ ({bahtText(d.total)})</td><td className="n">{money(d.total)}</td><td /></tr></tfoot>
       </table></div>
-      <p className="doc-note">ช่องทางการชำระเงิน: {PAY_CHANNELS.join(" · ")}</p>
+      <p className="doc-note">ช่องทางการชำระเงิน: {payChannels(branch?.legal).join(" · ")}</p>
       <p className="doc-note">หากท่านชำระแล้ว ขออภัยมา ณ ที่นี้ และกรุณาแจ้งหลักฐานการชำระเงินกับฝ่ายการเงิน · เอกสารนี้ไม่ใช่ใบเสร็จรับเงินหรือใบกำกับภาษี</p>
       <Signs people={[["ฝ่ายการเงิน", by]]} />
       <DocFoot left={`ใบแจ้งยอดค้างชำระ · ${d.who}`} by={by} />

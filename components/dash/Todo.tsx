@@ -5,6 +5,7 @@ import { can } from "@/lib/perms";
 import { cashHandoff, taskHandoff } from "@/lib/handoff";
 import type { ViewId } from "@/lib/nav";
 import type { SessionUser } from "@/lib/roles";
+import { wantStaffFilter } from "@/lib/staffIntent";
 
 /** ข้อมูลจาก lib/attention.ts (/api/clinic?op=home และ attention ใน /api/ops?op=insights) · มีเฉพาะเรื่องที่บัญชีนี้มีสิทธิ์ */
 export type HomeData = {
@@ -19,6 +20,8 @@ export type HomeData = {
   physioMissed?: { name: string; who: string }[];
   /** คอร์สกายภาพเหลือ 1–2 ครั้ง */
   physioLow?: { name: string; left: number }[];
+  /** คนสมัครใช้งานเองที่รออนุมัติ (ผู้จัดการสาขา/ผู้บริหาร) · days = รอมากี่วัน */
+  signups?: { name: string; branch: string; days: number }[];
   /** นักกายภาพขอคนแทน (ยังไม่มีใครจัด) */
   physioReq?: { name: string; date: string; who: string; reason: string }[];
 };
@@ -31,7 +34,7 @@ export type TodoItem = { key: string; title: string; short: string; meta?: strin
 
 /** ด้านของงาน (ใช้ทั้งหน้าแรกและแถบต้องจัดการ) · ตำแหน่งที่ไม่มีสิทธิ์ด้านนั้นจะไม่เห็นกล่อง */
 export const TODO_AREAS = [
-  { name: "การดูแลและทีม", keys: ["alerts", "late", "review", "gap", "checkin", "physioReq", "physioCase", "physioMissed"] },
+  { name: "การดูแลและทีม", keys: ["alerts", "late", "review", "gap", "checkin", "signup", "physioReq", "physioCase", "physioMissed"] },
   { name: "การเงิน", keys: ["bills", "debt60", "unclosed", "monthDue", "drafts", "courses", "deposit", "physio", "physioLow"] },
   { name: "ห้อง ยา และคลัง", keys: ["room", "stock"] },
 ];
@@ -39,7 +42,7 @@ export const TODO_AREAS = [
 export const SAFETY_KEYS = ["alerts", "late", "checkin"];
 /** ปุ่มสั้นด้านขวาของแต่ละเรื่อง */
 export const TODO_ACT: Record<string, string> = {
-  alerts: "ดูรายการ", physioCase: "จ่ายเคส", physioMissed: "ดูงาน", physioReq: "จัดคนแทน", physioLow: "เสนอต่อ", late: "ตามงาน", review: "ตรวจงาน", gap: "จัดเวร", checkin: "ดูเวร", bills: "รับชำระ", debt60: "ดูลูกหนี้", unclosed: "ปิดยอด",
+  alerts: "ดูรายการ", signup: "อนุมัติ", physioCase: "จ่ายเคส", physioMissed: "ดูงาน", physioReq: "จัดคนแทน", physioLow: "เสนอต่อ", late: "ตามงาน", review: "ตรวจงาน", gap: "จัดเวร", checkin: "ดูเวร", bills: "รับชำระ", debt60: "ดูลูกหนี้", unclosed: "ปิดยอด",
   monthDue: "ออกใบ", drafts: "ตรวจยอด", courses: "ออกใบ", deposit: "ดูสัญญา", physio: "ใส่ราคา", room: "จัดห้อง", stock: "ห้องยา",
 };
 
@@ -105,6 +108,13 @@ export function buildTodos(d: HomeData, user: SessionUser | null | undefined): T
       detail: l.length ? `${l.slice(0, 3).map((x) => `${x.name} (เหลือ ${x.left} ครั้ง)`).join(", ")}${l.length > 3 ? ` และอีก ${l.length - 3} คอร์ส` : ""} · แจ้งญาติเรื่องต่อคอร์สก่อนครบ` : "ไม่มีคอร์สใกล้หมด", cta: "ไปที่ตารางกายภาพ", view: "physio" });
   }
   if (d.physioOpen) { const ps = d.physioOpen.map((x) => x.name); c.push({ key: "physioCase", short: "เคสกายภาพรอจ่าย", title: "เคสกายภาพยังไม่มีผู้รับผิดชอบ", brief: namesOf(ps), n: ps.length, unit: "เคส", detail: ps.length ? `${namesOf(ps, 3)} · เลือกนักกายภาพ วัน และเวลา ที่เมนูตารางกายภาพ` : "ทุกเคสมีนักกายภาพรับผิดชอบแล้ว", cta: "ไปที่ตารางกายภาพ", warn: true, view: "physio" }); }
+  if (d.signups) {
+    const s = d.signups, oldest = s.reduce((m, x) => Math.max(m, x.days), 0);
+    c.push({ key: "signup", short: "สมัครใหม่รออนุมัติ", title: "สมัครใหม่รออนุมัติ", n: s.length, unit: "คน", warn: true,
+      brief: s.length ? `${namesOf(s.map((x) => x.name))}${oldest >= 2 ? ` · รอนานสุด ${oldest} วัน` : ""}` : undefined, hot: oldest >= 2,
+      detail: s.length ? `${s.slice(0, 3).map((x) => `${x.name} (สาขา${x.branch})`).join(", ")}${s.length > 3 ? ` และอีก ${s.length - 3} คน` : ""} · ตรวจว่าเป็นพนักงานจริง แล้วกดอนุมัติพร้อมเลือกตำแหน่ง` : "ไม่มีคนสมัครรออนุมัติ",
+      cta: "ไปอนุมัติ", view: "staff", open: () => wantStaffFilter("รออนุมัติ") });
+  }
   if (d.noRoom) { const nr = d.noRoom.map((x) => x.name); c.push({ key: "room", short: "รอจัดห้อง", title: "ผู้รับบริการที่ยังไม่มีห้อง", brief: namesOf(nr), n: nr.length, unit: "คน", detail: nr.length ? `${namesOf(nr, 4)} · จัดห้องและเตียงให้ (คนที่จองห้องไว้แล้วอยู่ในเรื่องรอชำระมัดจำ)` : "ทุกคนมีห้องแล้ว", cta: "ไปที่ห้องพักและเตียง", view: "rooms" }); }
   if (d.stock) {
     const s = d.stock, n = s.meds + s.supplies + s.central;

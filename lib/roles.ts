@@ -8,7 +8,7 @@ export type BranchCheck = "all" | "ok" | "upcoming" | "closed" | "missing";
 export type SessionUser = { id: string; name: string; email: string; role: Role; branch: string; branchCheck?: BranchCheck; perms?: string[] };
 
 export const ROLE_INFO: Record<Role, { th: string; sees: string; app: string }> = {
-  Nurse: { th: "พยาบาล", sees: "KinApp (แอปพนักงาน) และแอปจัดยาเท่านั้น เห็นเฉพาะข้อมูลสาขาตัวเอง", app: "/staff" },
+  Nurse: { th: "พยาบาล", sees: "KinApp และห้องยาเท่านั้น เห็นเฉพาะข้อมูลสาขาตัวเอง", app: "/staff" },
   Physio: { th: "นักกายภาพบำบัด", sees: "KinApp: คิวกายภาพวันนี้ ตารางสัปดาห์ เคสที่รับผิดชอบ และบันทึกกายภาพ เห็นเฉพาะข้อมูลสาขาตัวเอง", app: "/staff" },
   Cashier: { th: "แคชเชียร์", sees: "เปิดสัญญาใหม่ เลือกห้องให้ผู้รับบริการ ออกใบแจ้งหนี้/ใบเสร็จ และดูห้องว่างของสาขาตัวเอง", app: "/" },
   "Head Nurse": { th: "หัวหน้าพยาบาล", sees: "เมนูงานดูแล สร้างห้องและกำหนดจำนวนเตียง ย้ายห้อง ตรวจงาน และใช้ KinApp/แอปจัดยา เห็นเฉพาะข้อมูลสาขาตัวเอง", app: "/" },

@@ -3185,3 +3185,156 @@ button.attn-chip:hover { filter:brightness(.96); }
   .td-bar { flex-basis:100%; max-width:none; margin-left:0; }
   .td-n small { font-size:10px; }
 }
+
+/* ---------- หน้าเข้าสู่ระบบ: แอปทั้ง 3 · สมัครใช้งาน · เลือกแอป (components/Login.tsx) ---------- */
+.auth-apps-head { display:flex; align-items:baseline; justify-content:space-between; gap:8px; border-top:1px solid #d7ccb962; margin-top:22px; padding-top:16px; position:relative; z-index:1; }
+.auth-apps-head b { font-weight:600; color:#4b4334; font-size:15px; }
+.auth-apps-head small { color:#8a7a60; font-size:12.5px; }
+.auth-apps { list-style:none; margin:12px 0 18px; padding:0; display:grid; gap:10px; flex:1; align-content:start; position:relative; z-index:1; }
+.auth-apps li { display:grid; grid-template-columns:42px minmax(0,1fr); gap:12px; align-items:start; background:#ffffffb8; border:1px solid #e3d8c4; border-radius:14px; padding:11px 13px; }
+.auth-app-ic { width:42px; height:42px; border-radius:12px; display:grid; place-items:center; background:#f4ebd7; color:#73592f; flex-shrink:0; }
+.auth-apps b { display:block; font-weight:600; color:#4a4032; }
+.auth-apps p { font-size:13.5px; color:#786443; line-height:1.5; }
+.auth-apps small { display:block; font-size:12.5px; color:#8a7a60; margin-top:2px; }
+.auth-mini-apps { display:none; }
+.auth-label-row { display:flex; align-items:baseline; justify-content:space-between; gap:8px; }
+.auth-link { border:0; background:none; padding:0; font-size:13px; color:#73592f; text-decoration:underline; text-underline-offset:3px; }
+.auth-help { margin-top:6px; font-size:13px; line-height:1.6; color:#786443; }
+.auth-help b { color:#4a4032; font-weight:600; }
+.auth-signup { margin-top:20px; display:grid; gap:8px; }
+.auth-or { display:flex; align-items:center; gap:10px; color:#8a7a60; font-size:13.5px; }
+.auth-or::before,.auth-or::after { content:""; flex:1; height:1px; background:#ece5d8; }
+.auth-signup-btn { display:flex; align-items:center; justify-content:center; gap:8px; width:100%; border:1.5px solid #8b6e3e; background:#fff; color:#73592f; border-radius:12px; font-weight:600; padding:11px 16px; transition:background .15s; }
+.auth-signup-btn:hover { background:#f4ebd7; }
+.auth-signup-note { text-align:center; font-size:12.5px; color:#8a7a60; }
+.auth-demo { margin-top:18px; border:1px solid #ede5d6; border-radius:14px; background:#fffdfa; padding:10px 12px; }
+.auth-demo summary { cursor:pointer; font-size:13px; color:#786443; font-weight:500; }
+.auth-back { display:inline-flex; align-items:center; gap:6px; border:0; background:none; padding:0; color:#73592f; font-weight:600; font-size:14px; margin-bottom:10px; }
+.auth-note { margin-top:16px; display:flex; gap:10px; align-items:flex-start; font-size:13px; color:#786443; background:#f7f3ea; border-radius:12px; padding:10px 12px; line-height:1.6; }
+.auth-note svg { margin-top:3px; color:#8b6e3e; }
+.auth-steps { list-style:none; margin:16px 0 0; padding:0; display:grid; gap:10px; }
+.auth-steps li { display:grid; grid-template-columns:30px minmax(0,1fr); gap:10px; align-items:start; color:#8a7a60; }
+.auth-steps li>span { width:30px; height:30px; border-radius:50%; display:grid; place-items:center; font-size:13.5px; font-weight:600; border:1.5px solid #ede5d6; background:#fff; }
+.auth-steps b { display:block; font-weight:600; font-size:14px; line-height:1.4; padding-top:4px; }
+.auth-steps small { display:block; font-size:12.5px; }
+.auth-steps li.is-done>span { background:#e6f1e7; border-color:#e6f1e7; color:#3f7a4f; }
+.auth-steps li.is-done b { color:#3f7a4f; }
+.auth-steps li.is-now>span { background:#8b6e3e; border-color:#8b6e3e; color:#fff; }
+.auth-steps li.is-now b { color:#4a4032; }
+.auth-steps li.is-now small { color:#786443; }
+.auth-steps.is-mini { grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; background:#f7f3ea; border-radius:12px; padding:10px; }
+.auth-steps.is-mini li { grid-template-columns:24px minmax(0,1fr); gap:6px; }
+.auth-steps.is-mini li>span { width:24px; height:24px; font-size:12px; }
+.auth-steps.is-mini b { font-size:12.5px; padding-top:2px; font-weight:500; }
+.auth-steps.is-mini li.is-now b { font-weight:600; }
+.auth-done-ic { width:52px; height:52px; border-radius:50%; display:grid; place-items:center; background:#e6f1e7; color:#3f7a4f; font-size:24px; font-weight:700; margin-bottom:14px; }
+.auth-done-ic.is-wait { background:#f4ebd7; color:#73592f; }
+.auth-kv { margin-top:16px; border:1px solid #ede5d6; border-radius:12px; }
+.auth-kv div { display:flex; justify-content:space-between; gap:12px; padding:9px 12px; font-size:13.5px; }
+.auth-kv div+div { border-top:1px solid #ede5d6; }
+.auth-kv dt { color:#8a7a60; flex-shrink:0; }
+.auth-kv dd { color:#4a4032; font-weight:500; text-align:right; overflow-wrap:anywhere; min-width:0; }
+.auth-pick { display:grid; gap:10px; margin-top:18px; }
+.auth-pick button { display:grid; grid-template-columns:42px minmax(0,1fr) auto; gap:12px; align-items:center; text-align:left; border:1px solid #e6dccb; background:#fff; border-radius:16px; padding:12px 14px; transition:border-color .15s,box-shadow .15s; }
+.auth-pick button:hover { border-color:#8b6e3e; box-shadow:0 6px 16px -10px #8b6e3e66; }
+.auth-pick button.is-rec { border-color:#8b6e3e; box-shadow:inset 0 0 0 1px #8b6e3e; }
+.auth-pick b { display:flex; flex-wrap:wrap; align-items:center; gap:6px; font-weight:600; color:#4a4032; }
+.auth-pick b i { font-style:normal; font-size:11.5px; font-weight:600; color:#fff; background:#8b6e3e; border-radius:999px; padding:0 8px; }
+.auth-pick small { display:block; color:#786443; font-size:13px; line-height:1.5; }
+@media(min-width:1024px) and (max-height:780px) { .auth-apps small { display:none; } .auth-apps li { padding:8px 12px; } .auth-apps-head { margin-top:14px; padding-top:12px; } }
+@media(max-width:767px) {
+  .auth-apps,.auth-apps-head { display:none; }
+  .auth-mini-apps { display:flex; flex-wrap:wrap; gap:6px; margin-top:12px; }
+  .auth-mini-apps span { display:inline-flex; align-items:center; gap:5px; background:#fff; border:1px solid #e6dccb; border-radius:999px; padding:3px 10px 3px 7px; font-size:12.5px; color:#4a4032; }
+  .auth-mini-apps svg { color:#8b6e3e; }
+}
+
+/* ---------- ปุ่มสลับแอป มุมขวาบน (components/AppSwitcher.tsx) ---------- */
+.app-sw { position:relative; flex-shrink:0; }
+.app-sw-btn { display:inline-flex; align-items:center; gap:7px; height:40px; padding:0 13px; border-radius:10px; border:1px solid #e8d8b7; background:#f4ebd7; color:#73592f; font-size:14px; font-weight:600; transition:background .15s; }
+.app-sw-btn:hover { background:#efe2c6; }
+.app-sw-btn[aria-expanded="true"] { background:#8b6e3e; border-color:#8b6e3e; color:#fff; }
+.app-sw-btn:focus-visible { outline:2px solid #8b6e3e; outline-offset:2px; }
+.app-sw-btn.is-compact { height:36px; padding:0 10px; }
+.app-sw-btn.is-compact span { display:none; }
+.app-sw-pop,.app-sw-hint { position:absolute; right:0; top:calc(100% + 10px); z-index:60; }
+.app-sw-pop { width:340px; background:#fff; border:1px solid #e6dccb; border-radius:18px; box-shadow:0 24px 48px -20px #30282055; padding:10px; }
+.app-sw-title { margin:4px 8px 8px; font-size:12.5px; font-weight:600; color:#8a7a60; }
+.app-sw-row { width:100%; display:grid; grid-template-columns:40px minmax(0,1fr) auto; gap:11px; align-items:center; text-align:left; border-radius:12px; padding:9px 8px; }
+.app-sw-row:hover,.app-sw-row.is-here { background:#f7f3ea; }
+.app-sw-ic { width:40px; height:40px; border-radius:11px; display:grid; place-items:center; background:#f4ebd7; color:#73592f; }
+.app-sw-row b { display:block; font-weight:600; color:#4a4032; font-size:14.5px; }
+.app-sw-row small { display:block; font-size:12.5px; color:#786443; line-height:1.45; }
+.app-sw-row em { font-style:normal; font-size:12px; font-weight:600; color:#3f7a4f; background:#e6f1e7; border-radius:999px; padding:2px 9px; white-space:nowrap; }
+.app-sw-foot { border-top:1px solid #ede5d6; margin-top:6px; padding:9px 8px 3px; font-size:12.5px; color:#8a7a60; }
+.app-sw-hint { width:280px; background:#4a4032; color:#f7f3ea; border-radius:14px; padding:11px 13px; font-size:13px; line-height:1.55; box-shadow:0 14px 30px -14px #00000066; display:grid; gap:6px; }
+.app-sw-hint::before { content:""; position:absolute; top:-6px; right:18px; width:12px; height:12px; background:#4a4032; transform:rotate(45deg); }
+.app-sw-hint button { justify-self:end; color:#e8d8b7; font-weight:600; font-size:13px; }
+@media(max-width:767px) {
+  .app-sw-btn span { display:none; }
+  .app-sw-btn { padding:0 10px; }
+  .app-sw-pop,.app-sw-hint { position:fixed; left:12px; right:12px; top:66px; width:auto; }
+  .app-sw-hint::before { display:none; }
+}
+@media print { .app-sw { display:none!important; } }
+.auth-form .auth-form-description.is-keep { display:block; }
+.auth-who { font-size:13px; font-weight:500; color:#786443; }
+/* ปุ่มแอป: อธิบายสำหรับคนใช้ครั้งแรก */
+.app-sw-btn { position:relative; }
+.app-sw-btn.is-compact { flex-direction:column; justify-content:center; gap:0; height:44px; min-width:44px; padding:0 6px; line-height:1; }
+.app-sw-btn.is-compact span { display:block; font-size:10.5px; margin-top:2px; }
+.app-sw-new { position:absolute; top:-4px; right:-4px; width:11px; height:11px; border-radius:50%; background:#c0392b; border:2px solid #fff; }
+.app-sw-head { padding:4px 8px 10px; border-bottom:1px solid #ede5d6; margin-bottom:6px; }
+.app-sw-head b { display:block; font-size:15px; font-weight:600; color:#4a4032; }
+.app-sw-head p { font-size:12.5px; color:#786443; line-height:1.5; margin-top:2px; }
+.app-sw-row b { display:flex; flex-wrap:wrap; align-items:center; gap:6px; }
+.app-sw-row b i { font-style:normal; font-size:11px; font-weight:500; color:#73592f; background:#f4ebd7; border-radius:999px; padding:0 7px; line-height:18px; }
+.app-sw-go { display:inline-flex; align-items:center; gap:3px; font-size:12.5px; font-weight:600; color:#73592f; white-space:nowrap; }
+.app-sw-foot b { color:#4a4032; font-weight:600; }
+.app-sw-hint p b { color:#f3d9a4; }
+.app-sw-hint-act { display:flex; justify-content:flex-end; gap:8px; }
+.app-sw-hint-act button { font-size:13px; font-weight:600; color:#e8d8b7; padding:4px 6px; }
+.app-sw-hint-act button.is-main { background:#f3d9a4; color:#2f2618; border-radius:9px; padding:4px 12px; }
+@media(max-width:767px) {
+  .app-sw-btn:not(.is-compact) { flex-direction:column; justify-content:center; gap:0; height:42px; min-width:42px; padding:0 6px; line-height:1; }
+  .app-sw-btn:not(.is-compact) span { display:block; font-size:10.5px; margin-top:2px; }
+}
+/* KinApp (คอลัมน์แคบ): รายการแอปและป้ายกางใต้หัวแอป ชิดขวา ไม่ยื่นออกนอกคอลัมน์ */
+.app-sw.is-compact { position:static; }
+.app-sw.is-compact .app-sw-pop,.app-sw.is-compact .app-sw-hint { right:12px; top:calc(100% + 6px); }
+.app-sw.is-compact .app-sw-hint::before { display:none; }
+/* จอคอม: รายการแอปกว้างขึ้น คำอธิบายแต่ละแอปไม่ตกหลายบรรทัด */
+@media(min-width:1024px) { .app-sw-pop { width:410px; } .app-sw-hint { width:320px; } }
+
+/* ---------- อนุมัติคนสมัครใหม่ (components/views/Admin.tsx · ApproveDialog) ---------- */
+.nav-count { margin-left:auto; min-width:22px; height:22px; padding:0 6px; border-radius:999px; background:#b4442f; color:#fff; font-size:12px; font-weight:700; display:grid; place-items:center; line-height:1; }
+.apv { display:grid; gap:16px; }
+.apv-who { display:flex; align-items:center; gap:12px; }
+.apv-who b { display:block; font-size:17px; font-weight:600; color:#4a4032; }
+.apv-who small { display:block; font-size:13px; color:#786443; overflow-wrap:anywhere; }
+.apv fieldset { border:0; padding:0; margin:0; min-width:0; }
+.apv legend,.apv-label { font-size:13.5px; font-weight:600; color:#4a4032; margin-bottom:6px; padding:0; }
+.apv-roles { display:grid; gap:8px; }
+.apv-roles label { display:grid; grid-template-columns:20px minmax(0,1fr); gap:10px; align-items:start; border:1px solid #e6dccb; border-radius:14px; padding:10px 12px; cursor:pointer; transition:border-color .15s; }
+.apv-roles label:hover { border-color:#cdb78b; }
+.apv-roles label.is-on { border-color:#8b6e3e; box-shadow:inset 0 0 0 1px #8b6e3e; background:#fffcf6; }
+.apv-roles input { margin-top:4px; width:17px; height:17px; accent-color:#8b6e3e; }
+.apv-roles b { font-weight:600; color:#4a4032; }
+.apv-apps { display:flex; flex-wrap:wrap; gap:4px; margin-top:3px; }
+.apv-apps i { font-style:normal; font-size:12px; background:#f4ebd7; color:#73592f; border-radius:999px; padding:0 8px; }
+.apv-roles small { display:block; font-size:12.5px; color:#786443; margin-top:2px; }
+.apv-fixed { border:1px solid #ede5d6; background:#f7f3ea; border-radius:12px; padding:10px 12px; color:#4a4032; font-weight:500; }
+.apv-help { margin-top:6px; font-size:12.5px; line-height:1.6; color:#786443; }
+.apv-confirm { background:#fbe9e4; border-radius:14px; padding:12px 14px; font-size:14px; line-height:1.7; color:#4a4032; }
+.apv-confirm b { color:#a8402c; }
+.apv-no { color:#a8402c !important; }
+.apv-wait { display:inline-flex; flex-direction:column; gap:1px; font-size:13px; font-weight:600; color:#9a6a12; }
+.apv-wait small { font-size:11.5px; font-weight:400; color:#786443; }
+.apv-wait.is-late, .apv-wait.is-late small { color:#a8402c; }
+.menu-dot { position:absolute; top:-3px; right:-3px; width:11px; height:11px; border-radius:50%; background:#b4442f; border:2px solid #fff; }
+/* หัวใบเสร็จ: โลโก้ไม่ถูกบีบเมื่อชื่อบริษัท/ที่อยู่ยาว (ข้อความตัดบรรทัดในช่องของตัวเองแทน) */
+.bill-logo { flex-shrink:0; align-self:flex-start; }
+.bill-logo small { white-space:nowrap; }
+.bill-head2 .bill-company { min-width:0; overflow-wrap:anywhere; }
+/* แถวสรุป VAT/ยอดรวมในใบเสร็จ: บรรทัดเดียว */
+.bill-vat-row td.bill-sum-label { white-space:nowrap; }

@@ -16,14 +16,16 @@ export async function POST(req: NextRequest) {
   if (tooManyAttempts(email)) return NextResponse.json({ error: "ลองผิดหลายครั้งเกินไป กรุณารอ 10 นาทีแล้วลองใหม่" }, { status: 429 });
 
   const [u] = await sql`
-    SELECT id, password_hash, status, full_name AS name, email, access_level AS role, branch_name AS branch, permissions
+    SELECT id, password_hash, status, full_name AS name, email, access_level AS role, branch_name AS branch, permissions,
+      to_char(created_at AT TIME ZONE 'Asia/Bangkok', 'YYYY-MM-DD HH24:MI') AS since
     FROM staff_users WHERE lower(email) = ${email}`;
   if (!u || !(await verifyPassword(password, u.password_hash))) {
     recordFailure(email);
     await audit(req, null, [{ area: "auth", action: "login_failed", summary: email, branch: u?.branch ?? null }], u?.name ?? email);
     return NextResponse.json({ error: "อีเมลหรือรหัสผ่านไม่ถูกต้อง" }, { status: 401 });
   }
-  if (u.status === "รออนุมัติ") return NextResponse.json({ error: "บัญชีนี้รอผู้ดูแลอนุมัติ กรุณาติดต่อผู้จัดการสาขา" }, { status: 403 });
+  // รหัสผ่านถูกแล้ว แต่ยังไม่อนุมัติ: บอกชื่อและสาขาให้หน้าเข้าสู่ระบบแสดงขั้นตอนต่อ (ไม่บอกข้อมูลอื่น)
+  if (u.status === "รออนุมัติ") return NextResponse.json({ error: "บัญชีนี้รอผู้จัดการสาขาอนุมัติ", pending: true, name: u.name, branch: u.branch ?? "", since: u.since ?? "" }, { status: 403 });
   if (u.status !== "ทำงาน") return NextResponse.json({ error: `บัญชีนี้ถูกระงับ (${u.status})` }, { status: 403 });
 
   clearFailures(email);

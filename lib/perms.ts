@@ -40,8 +40,8 @@ export const PERM_GROUPS: { title: string; items: Item[] }[] = [
     { id: "invoices.void", label: "ยกเลิกใบแจ้งหนี้ / ใบเสร็จ" },
   ] },
   { title: "แอปในมือถือ", items: [
-    { id: "app.staff", label: "KinApp (แอปพนักงาน)", hint: "งานวันนี้ จ่ายยา สัญญาณชีพ ส่งเวร" },
-    { id: "app.pharmacy", label: "แอปจัดยา" },
+    { id: "app.staff", label: "KinApp", hint: "งานวันนี้ จ่ายยา สัญญาณชีพ ส่งเวร" },
+    { id: "app.pharmacy", label: "ห้องยา", hint: "จัดยา ตรวจยา คลังยา เวชภัณฑ์" },
   ] },
 ];
 

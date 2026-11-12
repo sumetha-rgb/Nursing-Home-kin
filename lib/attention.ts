@@ -33,7 +33,7 @@ const SHARE_MS = 30_000;
 const shared = new Map<string, { at: number; p: Promise<Record<string, unknown>> }>();
 export function attention(me: SessionUser, br: string | null) {
   const flags = [can(me, "tasks") || can(me, "tasks.review"), can(me, "health_logs") || can(me, "residents"), can(me, "billing"), can(me, "contracts") || can(me, "billing"),
-    can(me, "residents") || can(me, "app.pharmacy"), can(me, "rooms"), can(me, "roster"), can(me, "physio.assign")];
+    can(me, "residents") || can(me, "app.pharmacy"), can(me, "rooms"), can(me, "roster"), can(me, "physio.assign"), can(me, "staff")];
   const key = `${br ?? "*"}|${flags.map(Number).join("")}`, now = Date.now(), hit = shared.get(key);
   if (hit && now - hit.at < SHARE_MS) return hit.p;
   const p = compute(flags, br);
@@ -44,7 +44,7 @@ export function attention(me: SessionUser, br: string | null) {
 }
 
 /** คำนวณทุกเรื่องพร้อมกัน (เดิมถามฐานข้อมูลทีละเรื่องต่อกัน 18 ครั้ง) */
-async function compute([tasks, health, billing, contracts, stock, rooms, roster, physio]: boolean[], br: string | null) {
+async function compute([tasks, health, billing, contracts, stock, rooms, roster, physio, staff]: boolean[], br: string | null) {
   const p = br ? [br] : [];
   const w = (col: string) => (br ? `AND ${col} = $1` : "");
   const TODAY = "(now() AT TIME ZONE 'Asia/Bangkok')::date";
@@ -140,6 +140,11 @@ async function compute([tasks, health, billing, contracts, stock, rooms, roster,
     job(() => q(`SELECT c.resident_name AS name, (c.total - c.used)::int AS left FROM physio_courses c LEFT JOIN residents r ON r.id = c.resident_id
         WHERE c.used < c.total AND c.total - c.used <= 2 AND c.total > 2 AND coalesce(r.status, '') NOT LIKE 'ย้ายออก%' ${w("c.branch_name")}
         ORDER BY c.total - c.used, c.resident_name LIMIT 50`), (v) => { out.physioLow = v; });
+  }
+  if (staff) {
+    // คนสมัครใช้งานเองที่ยังรออนุมัติ (ผู้จัดการสาขา/ผู้บริหาร · เมนูทีมและสิทธิ์การใช้งาน) · days = รอมากี่วัน
+    job(() => q(`SELECT full_name AS name, branch_name AS branch, floor(extract(epoch FROM now() - created_at) / 86400)::int AS days
+        FROM staff_users WHERE status = 'รออนุมัติ' ${w("branch_name")} ORDER BY created_at LIMIT 50`), (v) => { out.signups = v; });
   }
   await Promise.all(jobs);
   return out;

@@ -28,8 +28,8 @@ export const NAV:NavItem[]=[
 {kind:"view",id:"official-docs",label:"เอกสารและระเบียบ",icon:"files",group:2},
 {kind:"view",id:"tutorials",label:"วิดีโอสอนใช้งาน",icon:"play",group:2},
 {kind:"view",id:"audit",label:"บันทึกการใช้งานระบบ",icon:"history",group:2},
-{kind:"link",href:"/staff",label:"KinApp (แอปพยาบาล)",icon:"phone",group:2,perm:"app.staff"},
-{kind:"link",href:"/pharmacy",label:"ห้องยา (จัดยา · คลัง)",icon:"pill",group:2,perm:"app.pharmacy"},
+{kind:"link",href:"/staff",label:"KinApp",icon:"phone",group:2,perm:"app.staff"},
+{kind:"link",href:"/pharmacy",label:"ห้องยา",icon:"pill",group:2,perm:"app.pharmacy"},
 ];
 /** หน้า "ส่งออกข้อมูล" ไม่มีสิทธิ์ของตัวเอง: เห็นเมนูเมื่อมีสิทธิ์หน้าต้นทางของไฟล์ใดไฟล์หนึ่ง (แต่ละไฟล์ตรวจสิทธิ์ของตัวเองอีกชั้น) */
 export const EXPORT_SOURCES: ViewId[] = ["billing", "dashboard", "quotations", "contracts", "appointments", "health_logs", "tasks_table", "roster", "kpi", "staff", "branches", "prices", "facility_tasks", "master_tasks"];

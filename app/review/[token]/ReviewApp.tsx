@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import Image from "next/image";
 import Icon from "@/components/Icon";
-import { COMPANY } from "@/components/ui";
+import { COMPANY, CompanyFoot } from "@/components/ui";
 
 type Staff = { id: string; name: string; cared: boolean };
 type Info = { resident: string; branch: string; staff: Staff[]; tags: string[]; relations: string[] };
@@ -138,7 +138,7 @@ export default function ReviewApp({ token }: { token: string }) {
           </button>
         </section>
       )}
-      <footer className="survey-foot">{COMPANY.th}<br />{COMPANY.contact}</footer>
+      <CompanyFoot branch={info?.branch} />
     </main>
   );
 }

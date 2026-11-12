@@ -54,7 +54,12 @@ self.addEventListener("notificationclick", (e) => {
   e.notification.close();
   const url = (e.notification.data && e.notification.data.url) || "/staff";
   e.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((list) => {
-    const open = list.find((c) => new URL(c.url).pathname.startsWith(new URL(url, self.location.origin).pathname));
+    const target = new URL(url, self.location.origin);
+    // ลิงก์ที่ระบุเมนู (?view=...): ใช้หน้าต่างของแอปเดียวกันแล้วพาไปหน้านั้น · ไม่มี = โฟกัสหน้าต่างเดิมตามเดิม
+    const same = list.find((c) => new URL(c.url).pathname === target.pathname);
+    if (target.search && same) return same.focus().then((c) => (c && c.navigate ? c.navigate(target.href) : c));
+    if (target.search) return self.clients.openWindow(target.href);
+    const open = list.find((c) => new URL(c.url).pathname.startsWith(target.pathname));
     return open ? open.focus() : self.clients.openWindow(url);
   }));
 });

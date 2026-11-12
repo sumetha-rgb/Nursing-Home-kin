@@ -126,7 +126,8 @@ export default function BillDoc({ inv, branch, format, copy, slips = [], payment
   /** หน้า 2 รายละเอียดค่าบริการ: เฉพาะใบแจ้งหนี้สำหรับผู้ชำระ (ใบเสร็จแสดงรายการครบในหน้าแรกแล้ว · ไม่ใช่ใบลดหนี้) */
   const showDetail = cust && !cn && !receipt && sale.length > 0;
   /** แถวสรุปใต้รายการ: ข้อความอยู่ช่องรายการ ยอดอยู่ช่องขวาสุด */
-  const sumRow = (key: string, label: ReactNode, v: ReactNode) => <tr key={key} className="bill-vat-row">{Array.from({ length: lead }, (_, k) => <td key={`l${k}`} />)}<td className="bill-desc">{label}</td>{Array.from({ length: blank - 1 }, (_, k) => <td key={k} />)}<td>{v}</td></tr>;
+  // แถวสรุป VAT/ยอดรวม: ชื่อแถวกินช่องรายการถึงช่องก่อนยอดเงิน (อ่านบรรทัดเดียว ไม่ตัดคำ)
+  const sumRow = (key: string, label: ReactNode, v: ReactNode) => <tr key={key} className="bill-vat-row">{Array.from({ length: lead }, (_, k) => <td key={`l${k}`} />)}<td className="bill-desc bill-sum-label" colSpan={blank}>{label}</td><td>{v}</td></tr>;
   return (
     <div className="bill-doc"><div className="bill-page" ref={pageRef}>
       {!cust && <p className="bill-part">ส่วนที่ 2 สำหรับฝ่ายการเงิน / บัญชี</p>}
@@ -164,15 +165,15 @@ export default function BillDoc({ inv, branch, format, copy, slips = [], payment
             </tr>)}
             <tr className="bill-filler">{cols.map(([th], c) => <td key={th} className={c === lead ? "bill-desc" : colCode && c === 1 ? "bill-code-col" : undefined} />)}</tr>
             {tax.vat > 0 && <>
-              {sumRow("base", "มูลค่าที่เสียภาษีมูลค่าเพิ่ม (ก่อน VAT) / VATABLE AMOUNT", money(tax.base))}
+              {sumRow("base", "มูลค่าก่อนภาษี / VATABLE AMOUNT", money(tax.base))}
               {tax.rates.map((x) => sumRow(`v${x.rate}`, `ภาษีมูลค่าเพิ่ม ${x.rate}% / VAT ${x.rate}%`, money(x.vat)))}
-              {tax.exempt > 0 && sumRow("ex", "มูลค่าที่ไม่มีภาษีมูลค่าเพิ่ม / NON-VAT AMOUNT", money(tax.exempt))}
-              {sumRow("grand", <b>รวมทั้งสิ้น (รวม VAT) / GRAND TOTAL</b>, <b>{money(grand)}</b>)}
+              {tax.exempt > 0 && sumRow("ex", "มูลค่าที่ไม่มีภาษี / NON-VAT AMOUNT", money(tax.exempt))}
+              {sumRow("grand", <b>รวมทั้งสิ้น / GRAND TOTAL</b>, <b>{money(grand)}</b>)}
             </>}
             {payVat && <>
-              {sumRow("pb", "มูลค่าที่เสียภาษีของงวดนี้ (ก่อน VAT) / VATABLE AMOUNT", money(payVat.base))}
-              {sumRow("pv", `ภาษีมูลค่าเพิ่มของงวดนี้ / VAT`, money(payVat.vat))}
-              {payVat.exempt > 0.005 && sumRow("pe", "มูลค่าที่ไม่มีภาษีมูลค่าเพิ่มของงวดนี้ / NON-VAT", money(payVat.exempt))}
+              {sumRow("pb", "มูลค่าก่อนภาษี (งวดนี้) / VATABLE AMOUNT", money(payVat.base))}
+              {sumRow("pv", `ภาษีมูลค่าเพิ่ม (งวดนี้) / VAT`, money(payVat.vat))}
+              {payVat.exempt > 0.005 && sumRow("pe", "มูลค่าที่ไม่มีภาษี (งวดนี้) / NON-VAT AMOUNT", money(payVat.exempt))}
             </>}
             {credits.map((c, k) => sumRow(`c${k}`, `${c.desc} / LESS: AMOUNT RECEIVED`, `-${money(c.qty * c.price)}`))}
             {credit > 0 && sumRow("due", <b>ยอดที่ต้องชำระ / AMOUNT DUE</b>, <b>{money(inv.net)}</b>)}

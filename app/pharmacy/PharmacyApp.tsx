@@ -19,6 +19,7 @@ import { stockAlertText, useStockAlerts } from "@/lib/stockAlerts";
 import { can } from "@/lib/perms";
 import { useResidents } from "@/lib/care";
 import Login from "@/components/Login";
+import AppSwitcher from "@/components/AppSwitcher";
 import { useSession, SessionUser } from "@/lib/session";
 
 import { nowTh, Drug, Pack, Page, MEALS, DAYS, FORMS, STORES, TIMINGS, AUDIT_STATUS, ERR_5R, WARN_SUGGEST, RESIDENTS as RESIDENTS0, d, DRUGS0, MASTER0, iso, thai, dayOf, drugsFor, isLiquid, stockText, sumByUnit, daysLeft } from "@/lib/pharmacy";
@@ -86,7 +87,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
 
   const sidebar = (
     <div className="sidebar-inner">
-      <Link href="/pharmacy" className="sidebar-brand"><Image src="/logo-mark.png" alt="KIN" width={43} height={34} /><div><span className="sidebar-wordmark">KIN<span>med</span></span><span className="sidebar-brand-caption">ระบบบริหารจัดการยา</span></div></Link>
+      <Link href="/pharmacy" className="sidebar-brand"><Image src="/logo-mark.png" alt="KIN" width={43} height={34} /><div><span className="sidebar-wordmark">KIN<span>med</span></span><span className="sidebar-brand-caption">ห้องยา · จัดยาและคลังยา</span></div></Link>
       <div className="workspace-identity"><span className="workspace-monogram">ห</span><div><strong>{user.name}</strong><span>ห้องยา · {user.branch}</span></div><span className="workspace-live" /></div>
       <nav className="sidebar-nav" aria-label="เมนูห้องยา">
         {GROUPS.map((g) => (
@@ -119,7 +120,10 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
             <button className="icon-button lg:hidden" onClick={() => setDrawer(true)} aria-label="เปิดเมนู"><Icon name="menu" /></button>
             <span className="topbar-section">ห้องยา</span><span className="topbar-slash">/</span><span className="topbar-current">{current.label}</span>
           </div>
-          <button className="btn-primary !min-h-[40px] !px-4 !py-2 text-sm" onClick={() => go("dispense")}><Icon name="pill" className="h-4 w-4" /> จัดยา</button>
+          <div className="flex items-center gap-3">
+            <button className="btn-primary !min-h-[40px] !px-4 !py-2 text-sm" onClick={() => go("dispense")}><Icon name="pill" className="h-4 w-4" /> จัดยา</button>
+            <AppSwitcher user={user} current="pharmacy" />
+          </div>
         </header>
         <OfflineBar />
         <main className="workspace-main" key={page}>
@@ -843,7 +847,7 @@ function Manual() {
     ["2. การจัดยา (Dispensing Process)", "เลือกผู้รับบริการและวันกินยา แล้วกด \"เริ่มจัดยามื้อนี้\" ถ้ายาในคลังมีไม่พอ ระบบจะแจ้งเตือนสีเหลืองทันทีและจัดเท่าที่มี สำหรับยาที่มีเงื่อนไขวันกิน ระบบจะดึงยาเข้าซองเฉพาะวันที่ตรงเงื่อนไขให้อัตโนมัติ ถ่ายรูปซองยาที่จัดเสร็จแล้วกดบันทึก สถานะจะเปลี่ยนเป็น \"จัดยาแล้ว\" และรูปซองถูกเก็บไว้ให้ผู้ตรวจ QA ดู"],
     ["3. การแก้ไขเมื่อทำผิดพลาด (Reset)", "หากจัดยาผิด ถ่ายรูปผิด หรือต้องการจัดใหม่ ให้กดปุ่ม \"รีเซต\" บนการ์ดมื้อยา ระบบจะล้างการจัดยาของมื้อนั้นและคืนสต็อกยา"],
     ["4. ระบบตรวจสอบการจัดยา (QA & Near Miss)", "ใช้หลัก 5R (Right Patient, Right Drug, Right Dose, Right Time, Right Route) ร่วมกับรูปถ่าย ผู้ตรวจกด \"ดูรูปซองเทียบฉลากยา\" เพื่อเทียบรูปซองกับรูปฉลากต้นฉบับ หากถูกต้องกด \"ตรวจผ่าน\" ซองจะขึ้นคิวจ่ายยาใน KinApp หากพบว่าจัดผิดกด \"แจ้งจัดยาผิด\" ระบุสาเหตุ แล้วกด \"รีเซตซองนี้แล้วจัดใหม่\" ระบบคืนยาและเปิดหน้าจัดยาของผู้ป่วยคนนั้นให้ การดักจับความผิดพลาดตรงนี้เรียกว่า Category B (Near Miss)"],
-    ["5. การให้ยา (KinApp)", "พยาบาลเปิดคิวจ่ายยาวันนี้ในแอปพยาบาล ให้ยาแล้วกดบันทึก ระบบเก็บชื่อผู้ให้ยาและเวลา ขึ้นในบันทึกการให้ยา (MAR) ของประวัติผู้ป่วย"],
+    ["5. การให้ยา (KinApp)", "พยาบาลเปิดคิวจ่ายยาวันนี้ใน KinApp ให้ยาแล้วกดบันทึก ระบบเก็บชื่อผู้ให้ยาและเวลา ขึ้นในบันทึกการให้ยา (MAR) ของประวัติผู้ป่วย"],
     ["6. การสุ่มตรวจ (Cycle Count)", "ใช้เมนูตรวจนับและปรับยอดยาเพื่อนับยาจริงเทียบกับระบบเป็นประจำ และอัปเดตสถานะยา เช่น ยาหมด ยาหมดอายุ หรือยางดใช้"],
   ];
   return (
@@ -858,5 +862,5 @@ function Manual() {
 export default function PharmacyApp() {
   const { user, ready, setUser, logout } = useSession();
   if (!ready) return <main className="grid min-h-dvh place-items-center text-sm text-gold-500">กำลังตรวจสอบการเข้าสู่ระบบ…</main>;
-  return <AppProvider go={() => {}}>{user && !can(user, "app.pharmacy") ? <CashierOnly name={user.name} app="แอปจัดยา" onLogout={logout} /> : user ? <App user={user} onLogout={logout} /> : <Login staff onLogin={setUser} />}</AppProvider>;
+  return <AppProvider go={() => {}}>{user && !can(user, "app.pharmacy") ? <CashierOnly user={user} app="pharmacy" onLogout={logout} /> : user ? <App user={user} onLogout={logout} /> : <Login staff onLogin={setUser} />}</AppProvider>;
 }

@@ -1,5 +1,5 @@
 "use client";
-import { useState, type ComponentType } from "react";
+import { useEffect, useState, type ComponentType } from "react";
 import dynamic from "next/dynamic";
 import Login from "@/components/Login";
 import Shell from "@/components/Shell";
@@ -7,7 +7,8 @@ import PasswordDialog from "@/components/PasswordDialog";
 import { AppProvider } from "@/lib/app";
 import { useSession } from "@/lib/session";
 import { can, hasConsole } from "@/lib/perms";
-import { ROLE_INFO } from "@/lib/roles";
+import CashierOnly from "@/components/CashierOnly";
+import { wantStaffFilter } from "@/lib/staffIntent";
 import { EXPORT_SOURCES, NAV, ViewId } from "@/lib/nav";
 
 /** แต่ละหน้าโหลดตอนเปิดใช้เท่านั้น (หน้าแรกไม่ต้องรอโค้ดของทุกเมนู) */
@@ -71,32 +72,23 @@ function Splash() {
   return <main className="grid min-h-dvh place-items-center text-sm text-gold-500">กำลังตรวจสอบการเข้าสู่ระบบ…</main>;
 }
 
-/** บัญชีพยาบาลเข้าระบบจัดการไม่ได้ */
-function NurseOnly({ name, role, pharmacy, onLogout }: { name: string; role: string; pharmacy: boolean; onLogout: () => void }) {
-  return (
-    <main className="grid min-h-dvh place-items-center px-5">
-      <section className="card w-full max-w-md p-8 text-center">
-        <p className="kicker justify-center">KIN CARE TEAM</p>
-        <h1 className="mt-3 text-2xl font-medium text-gold-800">สวัสดี {name}</h1>
-        <p className="mt-3 text-sm leading-7 text-gold-600">บัญชี{role}ใช้ได้กับแอปพนักงาน{pharmacy ? "และแอปจัดยา" : ""} ระบบจัดการสำหรับผู้จัดการสาขาและผู้บริหาร</p>
-        <div className={`mt-6 grid gap-2 ${pharmacy ? "sm:grid-cols-2" : ""}`}>
-          <a href="/staff" className="btn-primary">KinApp (แอปพนักงาน)</a>
-          {pharmacy && <a href="/pharmacy" className="btn-soft">แอปจัดยา</a>}
-        </div>
-        <button className="mt-5 text-sm text-gold-500 underline-offset-4 hover:underline" onClick={onLogout}>ออกจากระบบ</button>
-      </section>
-    </main>
-  );
-}
-
 export default function Home() {
   const { user, ready, setUser, logout } = useSession();
   const [view, setView] = useState<ViewId>("careplan");
   const [pw, setPw] = useState(false);
+  // ลิงก์จากแจ้งเตือนบนมือถือ: ?view=<เมนู>&filter=pending → เปิดเมนูนั้น (ตัวกรองรออนุมัติ) แล้วล้างที่อยู่เว็บ
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search), v = q.get("view");
+    if (!v) return;
+    if (v === "staff" && q.get("filter") === "pending") wantStaffFilter("รออนุมัติ");
+    if (NAV.some((n) => n.kind === "view" && n.id === v)) setView(v as ViewId);
+    window.history.replaceState(null, "", "/");
+  }, []);
 
   if (!ready) return <Splash />;
   if (!user) return <Login onLogin={setUser} />;
-  if (!hasConsole(user)) return <NurseOnly name={user.name} role={ROLE_INFO[user.role]?.th ?? "พนักงาน"} pharmacy={can(user, "app.pharmacy")} onLogout={logout} />;
+  // บัญชีที่ไม่มีเมนูระบบจัดการ (พยาบาล นักกายภาพ) → พาไปแอปของตัวเอง
+  if (!hasConsole(user)) return <CashierOnly user={user} app="console" onLogout={logout} />;
   // เห็นเฉพาะเมนูที่ติ๊กสิทธิ์ไว้ (lib/perms)
   const views = NAV.flatMap((n) => (n.kind === "view" && (n.id === "exports" ? EXPORT_SOURCES.some((p) => can(user, p)) : can(user, n.id)) ? [n.id] : []));
   const shown = !views.includes(view) ? views[0] : view;

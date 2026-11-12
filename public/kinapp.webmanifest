@@ -16,6 +16,6 @@
     { "src": "/icons/kinapp-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ],
   "shortcuts": [
-    { "name": "แอปจัดยา", "url": "/pharmacy", "icons": [{ "src": "/icons/kinapp-192.png", "sizes": "192x192" }] }
+    { "name": "ห้องยา", "url": "/pharmacy", "icons": [{ "src": "/icons/kinapp-192.png", "sizes": "192x192" }] }
   ]
 }

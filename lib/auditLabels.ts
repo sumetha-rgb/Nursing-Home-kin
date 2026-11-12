@@ -4,15 +4,15 @@ import { ROLE_INFO, Role } from "./roles";
 export const ACTION_LABEL: Record<string, string> = {
   create: "เพิ่ม", update: "แก้ไข", delete: "ลบ", clear: "ล้างข้อมูล", replace: "แทนที่ทั้งหมด",
   login: "เข้าสู่ระบบ", login_failed: "เข้าสู่ระบบไม่สำเร็จ", change_password: "เปลี่ยนรหัสผ่าน",
-  register: "สมัครสมาชิก", approve: "อนุมัติบัญชี", permissions: "กำหนดสิทธิ์", export: "ส่งออกไฟล์", view_idcard: "เปิดดูรูปบัตรประชาชน", reset_password: "รีเซตรหัสผ่าน", acknowledge: "รับทราบแจ้งเตือน", checkin: "เช็คชื่อเข้างาน", checkout: "เช็คชื่อออกงาน",
+  register: "สมัครสมาชิก", approve: "อนุมัติบัญชี", reject: "ไม่อนุมัติบัญชี", permissions: "กำหนดสิทธิ์", export: "ส่งออกไฟล์", view_idcard: "เปิดดูรูปบัตรประชาชน", reset_password: "รีเซตรหัสผ่าน", acknowledge: "รับทราบแจ้งเตือน", checkin: "เช็คชื่อเข้างาน", checkout: "เช็คชื่อออกงาน",
 };
 
 /** กลุ่มตัวกรอง → action ที่อยู่ในกลุ่ม */
 export const ACTION_GROUPS: Record<string, string[]> = {
-  "ต้องตรวจ": ["login_failed", "delete", "clear"],
+  "ต้องตรวจ": ["login_failed", "delete", "clear", "reject"],
   "เพิ่ม": ["create", "register"],
   "แก้ไข": ["update", "approve", "replace", "acknowledge", "permissions"],
-  "ลบ": ["delete", "clear"],
+  "ลบ": ["delete", "clear", "reject"],
   "เปิดดูข้อมูลส่วนบุคคล": ["view_idcard", "export"],
   "บัญชีและการเข้าสู่ระบบ": ["login", "login_failed", "change_password", "reset_password", "checkin", "checkout"],
 };
@@ -21,8 +21,8 @@ export const AREA_LABEL: Record<string, string> = {
   residents: "ผู้รับบริการ", contracts: "สัญญาบริการ", assessments: "ใบเสนอราคา / แผนดูแล", tasks_table: "งานดูแลย้อนหลัง",
   facility: "งานส่วนกลางของสาขา", master: "แม่แบบงานมาตรฐาน", appointments: "ตารางนัดหมาย", health: "บันทึกสุขภาพ",
   complaints: "เสียงจากครอบครัว", docs: "เอกสารและระเบียบ", branches: "ข้อมูลสาขา", users: "ทีมและสิทธิ์การใช้งาน",
-  auth: "การเข้าสู่ระบบ", "pharmacy-master": "แอปจัดยา · ฐานข้อมูลยา", "pharmacy-drugs": "แอปจัดยา · คลังยา",
-  "pharmacy-packs": "แอปจัดยา · ซองยา", "staff-tasks": "KinApp · งานวันนี้", "staff-meds": "KinApp · คิวจ่ายยา",
+  auth: "การเข้าสู่ระบบ", "pharmacy-master": "ห้องยา · ฐานข้อมูลยา", "pharmacy-drugs": "ห้องยา · คลังยา",
+  "pharmacy-packs": "ห้องยา · ซองยา", "staff-tasks": "KinApp · งานวันนี้", "staff-meds": "KinApp · คิวจ่ายยา",
   "staff-handover": "KinApp · สมุดส่งเวร", alerts: "แจ้งเตือนสัญญาณชีพ", routines: "งานประจำ (ทำซ้ำทุกวัน)", roster: "ตารางเวร", attendance: "เช็คชื่อเข้า-ออกงาน",
   admissions: "ประเมินแรกรับ", clinical: "บันทึกทางคลินิก", physio: "กายภาพ / คอร์สกายภาพ", supplies: "เวชภัณฑ์", stock: "คลังยากลาง", bonus: "ผลงานพิเศษ", cheers: "ส่งกำลังใจ", doc_settings: "ข้อความในเอกสาร", family_updates: "อัปเดตถึงครอบครัว",
   review_links: "ลิงก์ครอบครัว (สมุดภาพ/รีวิว)", family_photos: "สมุดภาพครอบครัว", kpi: "น้ำหนัก KPI พนักงาน", rooms: "ห้องพักและเตียง", invoices: "ใบแจ้งหนี้และใบเสร็จ", prices: "ราคาสินค้าและบริการ", branch_targets: "เป้ายอดขายสาขา",

@@ -9,7 +9,7 @@ export type { ContractLine } from "@/lib/billing";
 import { extraServices, packages, rateColumns, roomByPrice, rooms } from "@/lib/priceList";
 import { usePriceList } from "@/lib/usePrices";
 import { isNoAllergy } from "@/lib/medicalLists";
-import { ACCEPT, CONSENT, CONSENT_MARKETING, DOC_RECEIPT, EXCLUDED, EXCLUDED_NOTE, FINES, HOSPITAL_STEPS, INCLUDED, INCLUDED_NOTE, PAY_CHANNELS, REHAB_CHECKS, ROOM_CHECK, ROOM_CHECK_NOTE,
+import { ACCEPT, CONSENT, CONSENT_MARKETING, DOC_RECEIPT, EXCLUDED, EXCLUDED_NOTE, FINES, HOSPITAL_STEPS, INCLUDED, INCLUDED_NOTE, payChannels, REHAB_CHECKS, ROOM_CHECK, ROOM_CHECK_NOTE,
   RULES_CENTER, RULES_FINANCE_AFTER, RULES_FINANCE_BEFORE, RULES_NURSING, RULES_REFUND, RULES_REHAB, VISIT_EFFECTIVE, VISIT_RULES } from "@/lib/contractText";
 
 /**
@@ -237,7 +237,7 @@ export function ContractDoc({ r, hn, bed, branch, terms, by, copy, chronic }: { 
         <p>ที่อยู่ที่ปรากฏในข้อ 2.3 เป็นที่อยู่ในการจัดส่งสรรพเอกสาร และให้ถือเป็นภูมิลำเนาอีกแห่งหนึ่งของญาติ หรือผู้สนับสนุนด้วย</p>
       </Num>
       {RULES_FINANCE_AFTER.map((x, i) => <Num key={i} n={`2.${i + 4}`}><p>{x}</p></Num>)}
-      <Num n={`2.${RULES_FINANCE_AFTER.length + 4}`}><p>ช่องทางการชำระค่าใช้จ่าย</p><ul className="doc-dash">{PAY_CHANNELS.map((x) => <li key={x}>{x}</li>)}</ul></Num>
+      <Num n={`2.${RULES_FINANCE_AFTER.length + 4}`}><p>ช่องทางการชำระค่าใช้จ่าย</p><ul className="doc-dash">{payChannels(legal).map((x) => <li key={x}>{x}</li>)}</ul></Num>
 
       <DocH>3. ระเบียบข้อบังคับทางการพยาบาล</DocH>
       {RULES_NURSING.map((x, i) => <Num key={i} n={`3.${i + 1}`}><p>{x}</p></Num>)}

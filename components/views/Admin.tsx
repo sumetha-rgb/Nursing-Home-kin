@@ -7,6 +7,10 @@ import { BRANCHES, BRANCH_NAMES } from "@/lib/mock";
 import { api, SessionUser, UserRow, useSession } from "@/lib/session";
 import { BRANCH_ROLES, ROLE_INFO, ROLES, Role } from "@/lib/roles";
 import PermDialog from "../PermDialog";
+import { permsFor } from "@/lib/perms";
+import { APPS, appsFor } from "@/lib/apps";
+import { PENDING_EVENT, takeStaffFilter } from "@/lib/staffIntent";
+import { thDateText } from "@/lib/servicePeriod";
 import { branchBeds, roomInfos } from "@/lib/rooms";
 import { RESIDENTS } from "@/lib/mock";
 import { downloadCsv, useCrud } from "@/lib/store";
@@ -94,6 +98,60 @@ const TYPES = ["B (NJY GROUP)", "MF (Master Franchise)", "F (Franchise)"];
 const STATUSES = ["ทำงาน", "รออนุมัติ", "พักงาน", "ลาออก"];
 const STAFF_COLS = ["ชื่อ-นามสกุล", "อีเมล", "ประเภทสัญญา", "ตำแหน่ง", "สาขา", "สถานะ"];
 const roleTh = (r: string) => (r in ROLE_INFO ? ROLE_INFO[r as Role].th : r);
+/** วันเวลาที่สมัคร "2026-11-12 14:20" → "12 พ.ย. 14:20" · รอมากี่วัน */
+const signedAt = (s?: string) => (s ? `${thDateText(s.slice(0, 10)).replace(/ \d{4}$/, "")} ${s.slice(11, 16)}` : "");
+const waitDays = (s?: string) => (s ? Math.floor((Date.now() - new Date(s.replace(" ", "T") + ":00+07:00").getTime()) / 864e5) : 0);
+/** งานหลักของแต่ละตำแหน่ง (หน้าต่างอนุมัติ) */
+const ROLE_NOTE: Partial<Record<Role, string>> = {
+  Nurse: "งานเวร จ่ายยา บันทึกการดูแล จัดยา", Physio: "เห็นเฉพาะนัดกายภาพที่ได้รับมอบหมาย", Cashier: "สัญญา การเงิน ห้องพัก ขายคอร์สกายภาพ",
+  "Head Nurse": "งานดูแล ห้องพัก ตรวจงาน และแอปของทีมดูแล", "Branch Admin": "ทุกเมนูของสาขา รวมทีมและสิทธิ์การใช้งาน",
+};
+
+/**
+ * อนุมัติคนสมัครใหม่: เลือกตำแหน่ง (บอกแอปที่ใช้ได้) · สาขา = ผู้จัดการแก้ไม่ได้ ผู้บริหารย้ายได้ · ไม่อนุมัติ = ยืนยันแล้วลบคำขอ
+ *  ทุกครั้งบันทึกในประวัติการแก้ไข (users · approve / reject)
+ */
+function ApproveDialog({ u, global, branches, onClose, onApprove, onReject }: {
+  u: UserRow | null; global: boolean; branches: string[]; onClose: () => void;
+  onApprove: (role: Role, branch: string) => Promise<boolean>; onReject: () => Promise<boolean>;
+}) {
+  const roles: Role[] = global ? [...BRANCH_ROLES, "Branch Admin"] : [...BRANCH_ROLES];
+  const [role, setRole] = useState<Role>("Nurse");
+  const [branch, setBranch] = useState("");
+  const [ask, setAsk] = useState(false);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { if (u) { setRole(roles.includes(u.access_level as Role) ? (u.access_level as Role) : "Nurse"); setBranch(u.branch_name ?? ""); setAsk(false); } }, [u]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!u) return null;
+  const days = waitDays(u.created_at);
+  const act = async (f: () => Promise<boolean>) => { setBusy(true); try { if (await f()) onClose(); } finally { setBusy(false); } };
+  return (
+    <Modal open title={ask ? "ไม่อนุมัติคำขอนี้" : "อนุมัติบัญชี"} onClose={onClose}
+      footer={ask
+        ? <><button className="btn-soft" onClick={() => setAsk(false)} disabled={busy}>ย้อนกลับ</button><button className="btn-danger" disabled={busy} onClick={() => act(onReject)}>ยืนยัน ไม่อนุมัติ</button></>
+        : <><button className="btn-soft apv-no" onClick={() => setAsk(true)} disabled={busy}><Icon name="close" className="h-4 w-4" />ไม่อนุมัติ</button><button className="btn-primary" disabled={busy || !branch} onClick={() => act(() => onApprove(role, branch))}><Icon name="check" className="h-4 w-4" />{busy ? "กำลังบันทึก…" : `อนุมัติเป็น${ROLE_INFO[role].th}`}</button></>}>
+      {ask
+        ? <p className="apv-confirm">ไม่อนุมัติ <b>{u.full_name}</b> ใช่ไหม · คำขอนี้จะถูกลบ และบันทึกในประวัติการแก้ไข ถ้าสมัครผิด เจ้าตัวสมัครใหม่ได้ด้วยอีเมลเดิม</p>
+        : <div className="apv">
+          <div className="apv-who"><Avatar kind="staff" id={u.id} name={u.full_name} size={46} /><div><b>{u.full_name}</b><small>{u.email}{u.created_at ? ` · สมัคร ${signedAt(u.created_at)}` : ""}{days >= 2 ? ` · รอ ${days} วัน` : ""}</small></div></div>
+          <fieldset><legend>ตำแหน่ง</legend>
+            <div className="apv-roles">{roles.map((r) => (
+              <label key={r} className={role === r ? "is-on" : ""}>
+                <input type="radio" name="apv-role" checked={role === r} onChange={() => setRole(r)} />
+                <span><b>{ROLE_INFO[r].th}</b><span className="apv-apps">{appsFor({ role: r, perms: permsFor(r) } as SessionUser).map((a) => <i key={a}>{APPS[a].name}</i>)}</span><small>{ROLE_NOTE[r]}</small></span>
+              </label>
+            ))}</div>
+          </fieldset>
+          <div><p className="apv-label">สาขา</p>
+            {global
+              ? <select value={branch} onChange={(e) => setBranch(e.target.value)} aria-label="สาขา">{!branches.includes(branch) && <option value={branch}>{branch || "-- เลือกสาขา --"}</option>}{branches.map((b) => <option key={b}>{b}</option>)}</select>
+              : <><p className="apv-fixed">{branch}</p><p className="apv-help">ผู้จัดการสาขาอนุมัติได้เฉพาะสาขาตัวเอง ถ้าคนนี้สมัครผิดสาขา กด &quot;ไม่อนุมัติ&quot; แล้วให้สมัครใหม่ หรือแจ้งผู้บริหารให้ย้ายสาขา</p></>}
+          </div>
+          <p className="apv-help">อนุมัติแล้วเข้าสู่ระบบได้ทันทีด้วยอีเมลและรหัสผ่านที่ตั้งไว้ ปรับสิทธิ์รายคนเพิ่มได้ภายหลังที่เมนู &quot;สิทธิ์การใช้งาน&quot;</p>
+        </div>}
+    </Modal>
+  );
+}
+
 /** ชื่อไทยของตำแหน่ง → รหัสตำแหน่งในระบบ (ฟอร์มเลือกเป็นชื่อไทย) */
 const roleId = (th: string) => ROLES.find((r) => ROLE_INFO[r].th === th) ?? th;
 
@@ -106,7 +164,9 @@ export function Staff() {
   const [dlg, setDlg] = useState<{ mode: "add" | "edit"; u?: UserRow } | null>(null);
   const [reset, setReset] = useState<UserRow | null>(null);
   const [newPw, setNewPw] = useState("");
-  const [filter, setFilter] = useState("ทั้งหมด");
+  // เปิดจากแถบต้องจัดการ / แจ้งเตือน / ตัวเลขที่เมนู → ตัวกรอง "รออนุมัติ"
+  const [filter, setFilter] = useState(() => takeStaffFilter() ?? "ทั้งหมด");
+  const [approve, setApprove] = useState<UserRow | null>(null);
   /** กรองตามตำแหน่ง ("" = ทุกตำแหน่ง) */
   const [roleF, setRoleF] = useState("");
   const [perm, setPerm] = useState<UserRow | null>(null);
@@ -116,6 +176,7 @@ export function Staff() {
       const r = await api.users(body) as { users: UserRow[]; me?: SessionUser };
       setUsers(r.users); if (r.me) setMe(r.me);
       if (ok) toast(ok);
+      window.dispatchEvent(new Event(PENDING_EVENT)); // ตัวเลขรออนุมัติที่เมนูอัปเดตทันที
       return true;
     } catch (e) { toast((e as Error).message); return false; }
     finally { setLoading(false); }
@@ -166,10 +227,11 @@ export function Staff() {
       ]} summary={roleF ? <>ตำแหน่ง{ROLE_INFO[roleF as Role]?.th ?? roleF} <b>{shown.length}</b> คน</> : undefined} />
       <DataTable columns={[...STAFF_COLS.slice(0, 3), "ตำแหน่ง", "สิทธิ์", ...STAFF_COLS.slice(4)]} rows={shown.map((u) => [u.full_name, u.email ?? "—", u.contract_type ?? "—", roleTh(u.access_level), u.access_level === "Global Admin" ? "ทุกสิทธิ์" : u.permissions ? `กำหนดเอง ${u.permissions.length} รายการ` : "ตามตำแหน่ง", u.branch_name ?? "—", u.status])}
         empty={loading ? "กำลังโหลดรายชื่อ…" : "ไม่พบสมาชิก"}
-        render={(n, col) => (col === 0 && shown[n] ? <span className="flex items-center gap-2.5"><Avatar kind="staff" id={shown[n].id} name={shown[n].full_name} size={32} /><b className="font-semibold">{shown[n].full_name}</b></span> : undefined)}
-        onRow={(n) => setDlg({ mode: "edit", u: shown[n] })} rowLabel="กดเพื่อแก้ไขข้อมูลสมาชิก"
+        render={(n, col) => (col === 0 && shown[n] ? <span className="flex items-center gap-2.5"><Avatar kind="staff" id={shown[n].id} name={shown[n].full_name} size={32} /><b className="font-semibold">{shown[n].full_name}</b></span>
+          : col === 6 && shown[n]?.status === "รออนุมัติ" ? <span className={`apv-wait ${waitDays(shown[n].created_at) >= 2 ? "is-late" : ""}`}>รออนุมัติ<small>{shown[n].created_at ? `สมัคร ${signedAt(shown[n].created_at)}` : ""}{waitDays(shown[n].created_at) >= 2 ? ` · รอ ${waitDays(shown[n].created_at)} วัน` : ""}</small></span> : undefined)}
+        onRow={(n) => (shown[n].status === "รออนุมัติ" ? setApprove(shown[n]) : setDlg({ mode: "edit", u: shown[n] }))} rowLabel="กดเพื่อแก้ไขข้อมูลสมาชิก"
         actions={[
-          { label: "อนุมัติ", tone: "primary", hidden: (n) => shown[n].status !== "รออนุมัติ", onClick: (n) => run({ action: "approve", id: shown[n].id }, `อนุมัติ ${shown[n].full_name} แล้ว`) },
+          { label: "อนุมัติ", tone: "primary", hidden: (n) => shown[n].status !== "รออนุมัติ", onClick: (n) => setApprove(shown[n]) },
           { label: "แก้ไข", more: true, onClick: (n) => setDlg({ mode: "edit", u: shown[n] }) },
           { label: "สิทธิ์การใช้งาน", more: true, onClick: (n) => setPerm(shown[n]) },
           { label: "รีเซตรหัสผ่าน", more: true, onClick: (n) => { setNewPw(""); setReset(shown[n]); } },
@@ -177,6 +239,9 @@ export function Staff() {
         ]} />
     </Section>
     <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{[...ROLES].reverse().map((r) => <div key={r} className="rounded-xl border border-cream-200 bg-cream-100/50 p-4"><p className="flex items-baseline justify-between gap-2 text-sm font-medium text-gold-800">{ROLE_INFO[r].th}<span className="text-xs font-normal text-gold-600">{users.filter((u) => u.access_level === r && u.status === "ทำงาน").length} คน</span></p><p className="mt-1 text-xs leading-6 text-gold-600">{ROLE_INFO[r].sees}</p></div>)}</div>
+    <ApproveDialog u={approve} global={global} branches={branchNames} onClose={() => setApprove(null)}
+      onApprove={(role, branch) => run({ action: "approve", id: approve!.id, access_level: role, branch_name: branch }, `อนุมัติ ${approve!.full_name} เป็น${ROLE_INFO[role].th} สาขา${branch}แล้ว`)}
+      onReject={() => run({ action: "reject", id: approve!.id }, `ไม่อนุมัติ ${approve!.full_name} · ลบคำขอแล้ว`)} />
     <PermDialog user={perm} me={me} onClose={() => setPerm(null)}
       onSave={async (list) => { if (perm && await run({ action: "permissions", id: perm.id, permissions: list }, list ? `บันทึกสิทธิ์ของ ${perm.full_name} แล้ว` : `${perm.full_name} กลับไปใช้สิทธิ์ตามตำแหน่งแล้ว`)) setPerm(null); }} />
     <FormDialog open={!!dlg} mode={dlg?.mode ?? "add"} title={dlg?.mode === "edit" ? "แก้ไขสมาชิกทีม" : "สร้างบัญชีสมาชิกทีม KIN"} fields={fields}

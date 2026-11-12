@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import Image from "next/image";
 import Icon from "@/components/Icon";
-import { COMPANY } from "@/components/ui";
+import { COMPANY, CompanyFoot } from "@/components/ui";
 
 type Kind = "survey" | "complaint";
 const RELATIONS = ["บุตร/ธิดา", "คู่สมรส", "หลาน", "ญาติ", "ผู้รับบริการเอง", "อื่น ๆ"];
@@ -129,7 +129,7 @@ export default function SurveyApp({ branch, initial }: { branch: string; initial
           <p className="mt-3 text-center text-xs text-gold-500">ข้อมูลของท่านใช้เพื่อปรับปรุงบริการและติดต่อกลับเท่านั้น</p>
         </section>
       )}
-      <footer className="survey-foot">{COMPANY.th}<br />{COMPANY.contact}</footer>
+      <CompanyFoot branch={valid ? branch : null} />
     </main>
   );
 }

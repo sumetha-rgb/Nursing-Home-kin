@@ -22,8 +22,8 @@ const err = (msg: string, status = 400) => NextResponse.json({ error: msg }, { s
 
 async function listFor(me: SessionUser) {
   const rows = (me.role === "Global Admin"
-    ? await sql`SELECT id, full_name, email, contract_type, access_level, branch_name, status, last_login_at::text, permissions FROM staff_users ORDER BY sort_order DESC, created_at DESC`
-    : await sql`SELECT id, full_name, email, contract_type, access_level, branch_name, status, last_login_at::text, permissions FROM staff_users WHERE branch_name = ${me.branch} ORDER BY sort_order DESC, created_at DESC`) as Row[];
+    ? await sql`SELECT id, full_name, email, contract_type, access_level, branch_name, status, last_login_at::text, permissions, to_char(created_at AT TIME ZONE 'Asia/Bangkok', 'YYYY-MM-DD HH24:MI') AS created_at FROM staff_users ORDER BY sort_order DESC, created_at DESC`
+    : await sql`SELECT id, full_name, email, contract_type, access_level, branch_name, status, last_login_at::text, permissions, to_char(created_at AT TIME ZONE 'Asia/Bangkok', 'YYYY-MM-DD HH24:MI') AS created_at FROM staff_users WHERE branch_name = ${me.branch} ORDER BY sort_order DESC, created_at DESC`) as Row[];
   return rows;
 }
 
@@ -42,6 +42,13 @@ async function guard(req: NextRequest) {
 export async function GET(req: NextRequest) {
   const g = await guard(req);
   if (!g.me) return g.res;
+  // ?op=pending: จำนวนคนสมัครรออนุมัติ (ตัวเลขที่เมนู "ทีมและสิทธิ์การใช้งาน") · ผู้จัดการนับเฉพาะสาขาตัวเอง
+  if (req.nextUrl.searchParams.get("op") === "pending") {
+    const [r] = g.me.role === "Global Admin"
+      ? await sql`SELECT count(*)::int AS n FROM staff_users WHERE status = 'รออนุมัติ'`
+      : await sql`SELECT count(*)::int AS n FROM staff_users WHERE status = 'รออนุมัติ' AND branch_name = ${g.me.branch}`;
+    return NextResponse.json({ n: (r?.n as number) ?? 0 });
+  }
   return NextResponse.json({ users: await listFor(g.me), me: g.me });
 }
 
@@ -77,7 +84,7 @@ export async function POST(req: NextRequest) {
       await audit(req, me, [{ area: "users", action: "create", recordId: id, summary: `${v.full_name} (${v.email})`, branch: v.branch_name || null, after: v }]);
       break;
     }
-    case "update": case "approve": case "reset_password": case "delete": case "permissions": {
+    case "update": case "approve": case "reject": case "reset_password": case "delete": case "permissions": {
       const [t] = (await sql`SELECT id, full_name, email, contract_type, access_level, branch_name, status, permissions FROM staff_users WHERE id = ${String(b.id)}`) as Row[];
       if (!t) return err("ไม่พบบัญชีนี้", 404);
       if (!canManage(me, t)) return forbidden();
@@ -96,8 +103,19 @@ export async function POST(req: NextRequest) {
         await sql`UPDATE staff_users SET permissions = ${list}, updated_at = now() WHERE id = ${t.id}`;
         await log("permissions", { permissions: list ? list.map((p) => PERM_LABEL[p]).join(", ") : "ค่าเริ่มต้นของตำแหน่ง" });
       } else if (b.action === "approve") {
-        await sql`UPDATE staff_users SET status = 'ทำงาน', updated_at = now() WHERE id = ${t.id}`;
-        await log("approve", { ...before, status: "ทำงาน" });
+        // อนุมัติพร้อมเลือกตำแหน่ง · ผู้จัดการสาขาให้ได้เฉพาะตำแหน่งระดับสาขา และสาขาคงเป็นสาขาตัวเอง · ผู้บริหารย้ายสาขาได้
+        if (t.status !== "รออนุมัติ") return err("บัญชีนี้ไม่ได้รออนุมัติแล้ว");
+        const global = me.role === "Global Admin";
+        const role = typeof b.access_level === "string" && b.access_level ? b.access_level : t.access_level;
+        if (!(global ? (ROLES as readonly string[]).includes(role) : branchRole(role))) return err("เลือกตำแหน่งนี้ไม่ได้");
+        const branch = global && typeof b.branch_name === "string" && b.branch_name.trim() ? b.branch_name.trim() : t.branch_name;
+        await sql`UPDATE staff_users SET status = 'ทำงาน', access_level = ${role}, branch_name = ${branch}, updated_at = now() WHERE id = ${t.id}`;
+        await log("approve", { ...before, status: "ทำงาน", access_level: role, branch_name: branch });
+      } else if (b.action === "reject") {
+        // ไม่อนุมัติ = ลบคำขอสมัคร (เฉพาะบัญชีที่ยังรออนุมัติ) · อีเมลเดิมสมัครใหม่ได้
+        if (t.status !== "รออนุมัติ") return err("บัญชีนี้ไม่ได้รออนุมัติแล้ว");
+        await sql`DELETE FROM staff_users WHERE id = ${t.id} AND status = 'รออนุมัติ'`;
+        await log("reject");
       } else if (b.action === "reset_password") {
         const pwErr = passwordProblem(b.password);
         if (pwErr) return err(pwErr);
