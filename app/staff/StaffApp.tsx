@@ -233,7 +233,8 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
     document.addEventListener("visibilitychange", onShow);
     return () => document.removeEventListener("visibilitychange", onShow);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  const isMine = (k: Task) => k.owner === user.name || (!k.owner && !!myShift && k.shift === `กะ${myShift}`);
+  // นักกายภาพ: งานของฉัน = งานที่ระบุชื่อตัวเองเท่านั้น (ไม่รับงานกลางของเวร)
+  const isMine = (k: Task) => k.owner === user.name || (!physio && !k.owner && !!myShift && k.shift === `กะ${myShift}`);
   const [taskView, setTaskView] = useState<"mine" | "all">("mine");
   // ส่งงานได้: งานที่ระบุชื่อฉัน · งานกลางของเวรที่ฉันเข้า · หัวหน้าพยาบาล/ผู้ตรวจงาน ส่งงานกลางได้ทุกเวร
   // งานของคนอื่น (หรืองานกลางของเวรอื่น) ต้องกด "ทำแทน" และยืนยัน ระบบบันทึกว่าใครทำแทนใคร
@@ -494,10 +495,11 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
             </div>
 
             {taskTab === "todo" && <>
-              <div className="ka-chips" role="radiogroup" aria-label="แสดงงาน">
+              {/* นักกายภาพ: เห็นเฉพาะงานที่ระบุชื่อตัวเอง (ไม่มีมุมมองทั้งสาขา) */}
+              {!physio && <div className="ka-chips" role="radiogroup" aria-label="แสดงงาน">
                 <button type="button" role="radio" aria-checked={taskView === "mine"} onClick={() => setTaskView("mine")}>ของฉันและทีม {myPending.length}</button>
                 <button type="button" role="radio" aria-checked={taskView === "all"} onClick={() => setTaskView("all")}>ทั้งสาขา {pendingAll.length}</button>
-              </div>
+              </div>}
               {myShift === null && taskView === "mine" && <p className="ka-note">{shownShift ? `เวร${shownShift}ของคุณเป็นของวันทำงานอื่น (เปลี่ยนวัน 07:00 น.)` : "วันนี้ไม่มีเวรของคุณในตาราง"} · แสดงเฉพาะงานที่ระบุชื่อคุณ</p>}
               {myPending.length === 0 && (taskView === "mine" || pendingAll.length === 0) && <Empty t={pendingAll.length ? "ไม่มีงานของคุณค้างแล้ว · กด \"ทั้งสาขา\" เพื่อดูงานของทีม" : tasks.length ? "ไม่มีงานค้างแล้ว เยี่ยมมาก" : "ยังไม่มีงานที่ผู้จัดการมอบหมายสำหรับวันนี้"} />}
               {myLate.length > 0 && <><p className="ka-h is-bad">เลยเวลา · {myLate.length}</p><ul className="ka-list">{myLate.map(taskRow)}</ul></>}

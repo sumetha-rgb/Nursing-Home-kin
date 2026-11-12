@@ -20,7 +20,11 @@ export type PhysioCase = {
 /** คนทำนัด (รหัส + ชื่อ) */
 export type Slot = { id: string; name: string };
 /** dow: "0"–"6" (0 = อาทิตย์) → คนทำทุกวันนั้น · date: YYYY-MM-DD → คนทำแทนเฉพาะวันนั้น */
-export type PlanSlots = { dow?: Record<string, Slot>; date?: Record<string, Slot>; /** วันที่ยกเลิกนัด (แผนทุกสัปดาห์ · ข้ามเฉพาะวันนั้น) */ skip?: string[] };
+export type PlanSlots = { dow?: Record<string, Slot>; date?: Record<string, Slot>; /** วันที่ยกเลิกนัด (แผนทุกสัปดาห์ · ข้ามเฉพาะวันนั้น) */ skip?: string[];
+  /** นักกายภาพขอคนแทน (วันที่ → ผู้ขอ เหตุผล เวลาไทย) · ล้างเมื่อจัดคนแทน/ยกเลิกนัดวันนั้น */
+  req?: Record<string, { by: Slot; reason: string; at: string }>;
+  /** ทีมประจำเคส (รวมผู้รับผิดชอบหลัก) · ผู้จัดการ/ฝ่ายขายส่งใครในทีมไปแต่ละนัดก็ได้ · คนในทีมเห็นเคสและประวัติ */
+  team?: Slot[] };
 type SlotCase = { therapist_id: string | null; therapist_name: string | null; plan_slots?: PlanSlots | null };
 /** คนทำนัดวันที่ date: ทำแทนเฉพาะวัน > คนประจำวันนั้นของสัปดาห์ > ผู้รับผิดชอบหลัก */
 export function whoOn(c: SlotCase, date: string): Slot | null {
@@ -29,7 +33,7 @@ export function whoOn(c: SlotCase, date: string): Slot | null {
 }
 /** ทีมของคอร์ส: ผู้รับผิดชอบหลัก + คนประจำวัน + คนทำแทน (ไม่ซ้ำ · หลักก่อน) */
 export function teamOf(c: SlotCase): Slot[] {
-  const all = [...(c.therapist_id ? [{ id: c.therapist_id, name: c.therapist_name ?? "-" }] : []), ...Object.values(c.plan_slots?.dow ?? {}), ...Object.values(c.plan_slots?.date ?? {})];
+  const all = [...(c.therapist_id ? [{ id: c.therapist_id, name: c.therapist_name ?? "-" }] : []), ...(c.plan_slots?.team ?? []), ...Object.values(c.plan_slots?.dow ?? {}), ...Object.values(c.plan_slots?.date ?? {})];
   return all.filter((x, k) => all.findIndex((y) => y.id === x.id) === k);
 }
 /** นักกายภาพคนนี้อยู่ในทีมของคอร์สไหม */
@@ -37,9 +41,10 @@ export const inCase = (c: SlotCase, tid: string) => teamOf(c).some((t) => t.id =
 /** ทีมเป็นข้อความ เช่น "ก. (หลัก) · ข. ศ." */
 export function teamText(c: SlotCase & { plan_days: number[] | null; plan_dates?: string[] | null }) {
   const dow = c.plan_slots?.dow ?? {};
-  const others = teamOf({ ...c, plan_slots: { dow } }).filter((t) => t.id !== c.therapist_id);
+  // ทีม = หลัก + คนประจำวัน + ทีมประจำเคส (ไม่นับคนทำแทนรายวัน) · คนที่ไม่มีวันประจำแสดงแค่ชื่อ
+  const others = teamOf({ ...c, plan_slots: { dow, team: c.plan_slots?.team } }).filter((t) => t.id !== c.therapist_id);
   if (!others.length) return c.therapist_name ?? "";
-  return [c.therapist_name ?? "-", ...others.map((t) => `${t.name} ${WEEK.filter((x) => dow[String(x)]?.id === t.id).map((x) => DAY_TH[x]).join(" ")}`)].join(" · ");
+  return [c.therapist_name ?? "-", ...others.map((t) => `${t.name} ${WEEK.filter((x) => dow[String(x)]?.id === t.id).map((x) => DAY_TH[x]).join(" ")}`.trim())].join(" · ");
 }
 /** cases_all = เคสที่ยังเหลือครั้งทุกสาขา (ภาระงานรวม) */
 export type Therapist = { id: string; name: string; branch: string; role: string; cases_all?: number };
@@ -64,7 +69,9 @@ export type PhysioBoard = { cases: PhysioCase[]; therapists: Therapist[]; today:
 /** สถานะนัดกายภาพ (ติดตามการส่งงาน) */
 export type TrackStatus = "done" | "missed" | "noRecord" | "live" | "todo" | "planned";
 export const TRACK_TEXT: Record<TrackStatus, string> = { done: "ทำแล้ว", missed: "ไม่ได้ทำ", noRecord: "เช็คอินแล้ว ไม่บันทึก", live: "กำลังทำ (เช็คอินแล้ว)", todo: "รอทำวันนี้", planned: "นัดไว้" };
-export type TrackRow = { date: string; time: string; resident: string; therapist: string; therapistId: string | null; status: TrackStatus; at?: string; author?: string; caseId: string | null };
+export type TrackRow = { date: string; time: string; resident: string; therapist: string; therapistId: string | null; status: TrackStatus; at?: string; author?: string; caseId: string | null;
+  /** นัดนี้มีคนทำแทน (เฉพาะวัน) */ cover?: boolean;
+  /** นักกายภาพขอคนแทนนัดนี้ (เหตุผล) */ req?: string };
 /**
  * นัดทุกนัดในช่วง from–to พร้อมสถานะ · วันที่ผ่านมา: ตามแผนตั้งแต่วันจ่ายเคส (เทียบบันทึกจริง) · วันนี้/ข้างหน้า: ตามแผนจนครบคอร์ส
  *  บันทึกทุกครั้งนับเป็น "ทำแล้ว" (รวมที่ไม่ตรงวันนัด) · ประวัติทุกบันทึกจึงอยู่ในรายการนี้
@@ -82,8 +89,9 @@ export function trackRows(d: PhysioBoard, from: string, to: string): TrackRow[] 
     const dates = new Set<string>();
     for (let x = from; x <= to && x < today; x = addDays(x, 1)) if (x >= start && onDate(s, x)) dates.add(x);
     if (to >= today) {
-      const doneToday = recs.some((r) => r.course_id === c.id && r.date === today);
-      if (doneToday && onDate(s, today)) dates.add(today);
+      // บันทึกวันนี้แล้วไหม: ดูจากบันทึกทั้งหมด (ไม่ใช่เฉพาะช่วงที่ดู) · ดูสัปดาห์หน้าแล้วนัดสุดท้ายไม่หาย
+      const doneToday = (d.log ?? []).some((r) => r.course_id === c.id && r.date === today);
+      if (doneToday && onDate(s, today) && today >= from) dates.add(today);
       for (const p of projectDates(c, today, doneToday)) if (p.date >= from && p.date <= to) dates.add(p.date);
     }
     for (const date of [...dates].sort()) {
@@ -92,7 +100,7 @@ export function trackRows(d: PhysioBoard, from: string, to: string): TrackRow[] 
       const stale = (d.stale ?? []).find((v) => v.course_id === c.id && v.date === date);
       const status: TrackStatus = rec ? "done" : date < today ? (stale ? "noRecord" : "missed") : date === today ? (live.has(c.id) ? "live" : "todo") : "planned";
       const w = whoOn(c, date);
-      rows.push({ date, time: rec?.at ?? c.plan_time ?? "", resident: c.resident_name, therapist: rec ? rec.author ?? "-" : w?.name ?? "-", therapistId: rec ? recBy(d, rec) : w?.id ?? null, status, at: rec?.at ?? stale?.at, author: rec?.author ?? undefined, caseId: c.id });
+      rows.push({ date, time: rec?.at ?? c.plan_time ?? "", resident: c.resident_name, therapist: rec ? rec.author ?? "-" : w?.name ?? "-", therapistId: rec ? recBy(d, rec) : w?.id ?? null, status, cover: !rec && !!c.plan_slots?.date?.[date], req: rec ? undefined : c.plan_slots?.req?.[date]?.reason, at: rec?.at ?? stale?.at, author: rec?.author ?? undefined, caseId: c.id });
     }
   }
   for (const r of recs) if (!used.has(r.id)) {

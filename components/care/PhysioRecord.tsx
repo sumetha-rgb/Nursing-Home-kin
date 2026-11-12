@@ -1,4 +1,5 @@
 "use client";
+import { fromText } from "@/components/Toaster";
 import { useEffect, useState } from "react";
 import { Modal } from "../ui";
 import PhotoPicker from "../PhotoPicker";
@@ -99,7 +100,7 @@ export default function PhysioRecordModal({ target, testMode = false, onClose, o
       }) });
       const x = await r.json().catch(() => ({}));
       setBusy(false);
-      if (!r.ok) return toast(x.error || "แก้ไขไม่สำเร็จ");
+      if (!r.ok) return toast({ ...fromText(x.error || "แก้ไขไม่สำเร็จ"), type: "warn" });
       toast(`แก้ไข${ed.title ?? "บันทึกกายภาพ"}แล้ว · เก็บประวัติการแก้ไขไว้`);
       return onSaved({ used: t.used, total: t.total });
     }
@@ -109,7 +110,7 @@ export default function PhysioRecordModal({ target, testMode = false, onClose, o
     }) });
     const x = await r.json().catch(() => ({}));
     setBusy(false);
-    if (!r.ok) return toast(x.error || "บันทึกไม่สำเร็จ");
+    if (!r.ok) return toast({ ...fromText(x.error || "บันทึกไม่สำเร็จ"), type: "warn" });
     toast(`บันทึก${t.residentName} ครั้งที่ ${x.used}/${x.total} แล้ว${x.total - x.used <= 2 ? ` · เหลือ ${x.total - x.used} ครั้ง แจ้งญาติ/ฝ่ายขาย` : ""}`);
     onSaved(x);
   };

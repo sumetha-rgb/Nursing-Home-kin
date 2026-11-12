@@ -132,6 +132,10 @@ async function compute([tasks, health, billing, contracts, stock, rooms, roster,
           AND NOT EXISTS (SELECT 1 FROM clinical_notes n WHERE n.kind = 'physio' AND n.data->>'course_id' = c.id AND (n.created_at AT TIME ZONE 'Asia/Bangkok')::date = ${TODAY} - 1)
           AND (SELECT (max(a.at) AT TIME ZONE 'Asia/Bangkok')::date FROM audit_logs a WHERE a.area = 'physio' AND a.action = 'update' AND a.summary LIKE 'จ่ายเคสกายภาพ%' AND a.record_id = c.id) < ${TODAY}
         ORDER BY c.resident_name LIMIT 50`), (v) => { out.physioMissed = v; });
+    // นักกายภาพขอคนแทน (วันนี้เป็นต้นไป) ที่ยังไม่มีใครจัด
+    job(() => q(`SELECT c.resident_name AS name, r.key AS date, r.value->'by'->>'name' AS who, r.value->>'reason' AS reason
+        FROM physio_courses c CROSS JOIN LATERAL jsonb_each(coalesce(c.plan_slots->'req', '{}'::jsonb)) r
+        WHERE c.used < c.total AND r.key >= ${TODAY}::text ${w("c.branch_name")} ORDER BY r.key LIMIT 50`), (v) => { out.physioReq = v; });
     // คอร์สใกล้หมด (เหลือ 1–2 ครั้ง) · ฝ่ายขาย/ผู้จัดการเสนอต่อคอร์ส
     job(() => q(`SELECT c.resident_name AS name, (c.total - c.used)::int AS left FROM physio_courses c LEFT JOIN residents r ON r.id = c.resident_id
         WHERE c.used < c.total AND c.total - c.used <= 2 AND c.total > 2 AND coalesce(r.status, '') NOT LIKE 'ย้ายออก%' ${w("c.branch_name")}

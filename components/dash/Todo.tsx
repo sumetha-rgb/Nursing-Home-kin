@@ -19,6 +19,8 @@ export type HomeData = {
   physioMissed?: { name: string; who: string }[];
   /** คอร์สกายภาพเหลือ 1–2 ครั้ง */
   physioLow?: { name: string; left: number }[];
+  /** นักกายภาพขอคนแทน (ยังไม่มีใครจัด) */
+  physioReq?: { name: string; date: string; who: string; reason: string }[];
 };
 /** urgent = ด่วน (แดง) · top = ขึ้นก่อนทุกเรื่องเมื่อมีค้าง · open = ทำก่อนไปหน้านั้น (เปิดตัวกรอง/หน้าต่าง) */
 /** short / meta = ชื่อสั้นและตัวเลขสำคัญ 1 อย่าง สำหรับแถบ "ต้องจัดการ" (การ์ดหน้าแรกใช้ title / detail เต็ม) */
@@ -28,16 +30,18 @@ export type TodoItem = { key: string; title: string; short: string; meta?: strin
 
 /** ด้านของงาน (ใช้ทั้งหน้าแรกและแถบต้องจัดการ) · ตำแหน่งที่ไม่มีสิทธิ์ด้านนั้นจะไม่เห็นกล่อง */
 export const TODO_AREAS = [
-  { name: "การดูแลและทีม", keys: ["alerts", "late", "review", "gap", "checkin", "physioCase", "physioMissed"] },
+  { name: "การดูแลและทีม", keys: ["alerts", "late", "review", "gap", "checkin", "physioReq", "physioCase", "physioMissed"] },
   { name: "การเงิน", keys: ["bills", "debt60", "unclosed", "monthDue", "drafts", "courses", "deposit", "physio", "physioLow"] },
   { name: "ห้อง ยา และคลัง", keys: ["room", "stock"] },
 ];
 /** ปุ่มสั้นด้านขวาของแต่ละเรื่อง */
 export const TODO_ACT: Record<string, string> = {
-  alerts: "ดูรายการ", physioCase: "จ่ายเคส", physioMissed: "ดูงาน", physioLow: "เสนอต่อ", late: "ตามงาน", review: "ตรวจงาน", gap: "จัดเวร", checkin: "ดูเวร", bills: "รับชำระ", debt60: "ดูลูกหนี้", unclosed: "ปิดยอด",
+  alerts: "ดูรายการ", physioCase: "จ่ายเคส", physioMissed: "ดูงาน", physioReq: "จัดคนแทน", physioLow: "เสนอต่อ", late: "ตามงาน", review: "ตรวจงาน", gap: "จัดเวร", checkin: "ดูเวร", bills: "รับชำระ", debt60: "ดูลูกหนี้", unclosed: "ปิดยอด",
   monthDue: "ออกใบ", drafts: "ตรวจยอด", courses: "ออกใบ", deposit: "ดูสัญญา", physio: "ใส่ราคา", room: "จัดห้อง", stock: "ห้องยา",
 };
 
+/** พรุ่งนี้ (YYYY-MM-DD เวลาไทย) · คำขอคนแทนของวันนี้/พรุ่งนี้ = ด่วน */
+const bkkTodayPlus1 = () => new Date(Date.now() + 7 * 36e5 + 864e5).toISOString().slice(0, 10);
 const namesOf = (xs: string[], k = 2) => (xs.length ? `${xs.slice(0, k).join(", ")}${xs.length > k ? ` และอีก ${xs.length - k} คน` : ""}` : undefined);
 /** 2026-11-11 → 11 พ.ย. */
 const dayText = (iso: string) => thDateText(iso).replace(/ \d{4}$/, "");
@@ -79,6 +83,12 @@ export function buildTodos(d: HomeData, user: SessionUser | null | undefined): T
     c.push({ key: "deposit", short: "รอชำระมัดจำ", title: "สัญญารอชำระมัดจำ", brief: first ? `${first.name}${d.deposit.length > 1 ? ` และอีก ${d.deposit.length - 1} สัญญา` : ""}` : undefined, n: d.deposit.length, unit: "สัญญา", detail: first ? `${first.no} · ${first.name}${d.deposit.length > 1 ? ` และอีก ${d.deposit.length - 1} สัญญา` : ""}${nb ? ` · ยังไม่มีใบแจ้งหนี้ ${nb} สัญญา` : ""}` : "ไม่มีสัญญารอชำระ", cta: nb ? "ออกใบแจ้งหนี้" : "ไปที่สัญญาบริการ", view: "contracts" });
   }
   if (d.physio !== undefined) c.push({ key: "physio", short: "กายภาพรอราคา", title: "กายภาพรอกำหนดราคา", n: d.physio, unit: "ครั้ง", detail: d.physio ? "ทำไปแล้วโดยยังไม่มีคอร์ส · ใส่ราคาแล้วดึงเข้าใบแจ้งหนี้" : "ไม่มีรายการรอราคา", cta: "ไปที่ใบแจ้งหนี้และใบเสร็จ", view: "billing" });
+  if (d.physioReq) {
+    const q = d.physioReq, soon = q.filter((x) => x.date <= bkkTodayPlus1()).length;
+    c.push({ key: "physioReq", short: "ขอคนแทนกายภาพ", title: "นักกายภาพขอคนแทน", brief: q.length ? `${q.slice(0, 2).map((x) => `${x.who} · ${dayText(x.date)}`).join(", ")}${q.length > 2 ? ` และอีก ${q.length - 2} นัด` : ""}` : undefined, n: q.length, unit: "นัด",
+      detail: q.length ? `${q.slice(0, 3).map((x) => `${x.name} ${dayText(x.date)} (${x.who}: ${x.reason})`).join(", ")}${q.length > 3 ? ` และอีก ${q.length - 3} นัด` : ""} · กดนัดในตารางกายภาพเพื่อเลือกคนทำแทน` : "ไม่มีคำขอคนแทน",
+      cta: "ไปที่ตารางกายภาพ", urgent: soon > 0, warn: true, view: "physio" });
+  }
   if (d.physioMissed) {
     const m = d.physioMissed, who = [...new Set(m.map((x) => x.who))];
     c.push({ key: "physioMissed", short: "กายภาพเมื่อวานไม่ได้ทำ", title: "นัดกายภาพเมื่อวานที่ไม่มีบันทึก", brief: m.length ? `${namesOf(m.map((x) => x.name))} · ${who.slice(0, 2).join(", ")}` : undefined, n: m.length, unit: "นัด",

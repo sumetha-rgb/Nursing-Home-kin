@@ -1,4 +1,5 @@
 "use client";
+import { usePushRefresh } from "@/lib/pushRefresh";
 import { useEffect, useState } from "react";
 import { inCase, leftOf, onDate, PhysioBoard, schedOf, whoOn } from "@/lib/physio";
 import Icon from "@/components/Icon";
@@ -20,12 +21,15 @@ export default function AlertsBell({ compact = false }: { compact?: boolean }) {
 function PhysioBell({ compact, userId }: { compact: boolean; userId: string }) {
   const [open, setOpen] = useState(false);
   const [d, setD] = useState<PhysioBoard | null>(null);
+  /** ได้แจ้งเตือนเรื่องกายภาพ = ดึงใหม่ทันที */
+  const [tick, setTick] = useState(0);
+  usePushRefresh((t) => t.startsWith("physio"), () => setTick((n) => n + 1));
   useEffect(() => {
     const load = () => fetch("/api/clinic?op=physio_board", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).then((x) => x && setD(x)).catch(() => {});
     load();
     const t = setInterval(() => { if (document.visibilityState === "visible") load(); }, 60_000);
     return () => clearInterval(t);
-  }, []);
+  }, [tick]);
   const mine = (d?.cases ?? []).filter((c) => inCase(c, userId));
   const done = new Set((d?.today ?? []).map((x) => x.course_id));
   const today = d?.date ?? "";

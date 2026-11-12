@@ -218,11 +218,17 @@ async function generateDaily(key: string, s: Spec) {
     VALUES (${randomUUID()}, ${top - i}, ${d}, ${r.branch_name}, ${r.resident_id}, ${r.resident_name}, ${r.task_name}, '-', ${r.sched_time}, ${r.shift}, 'รอทำ', ${r.instruction ?? "-"})`));
 }
 
-async function list(key: string, s: Spec, branch: string | null) {
+async function list(key: string, s: Spec, branch: string | null, me?: SessionUser) {
   const [meta] = await sql`SELECT 1 FROM app_seed WHERE collection = ${key}`;
   const w = where(s, branch, 1, true);
   const rows = (await sql(`SELECT id, ${s.cols.map(selectExpr).join(", ")} FROM ${s.table} WHERE true${w.clause} ORDER BY sort_order DESC, created_at DESC`, w.params)) as Record<string, unknown>[];
-  return { seeded: !!meta, items: rows.map((r) => rowToItem(s, r)) };
+  let items = rows.map((r) => rowToItem(s, r));
+  // นักกายภาพ: งานประจำวันเห็นเฉพาะงานที่ระบุชื่อตัวเอง (ไม่เห็นงานดูแลผู้รับบริการคนอื่นในสาขา)
+  if (me?.role === "Physio" && key.startsWith("daily-")) {
+    const ai = s.cols.findIndex((c) => c.col === "assignee");
+    items = items.filter((it) => String(values(s, it.data)[ai] ?? "") === me.name);
+  }
+  return { seeded: !!meta, items };
 }
 
 /**
@@ -458,7 +464,7 @@ export async function GET(req: NextRequest, { params }: { params: { key: string 
   const a = await access(req, params.key);
   if (!a.s) return a.res;
   try { await generateDaily(params.key, a.s); } catch (e) { console.error("[generateDaily]", e); }
-  return NextResponse.json(await list(params.key, a.s, a.branch));
+  return NextResponse.json(await list(params.key, a.s, a.branch, a.me));
 }
 
 export async function POST(req: NextRequest, { params }: { params: { key: string } }) {
@@ -469,7 +475,7 @@ export async function POST(req: NextRequest, { params }: { params: { key: string
   let body: Body;
   try { body = await req.json(); } catch { return bad("invalid json"); }
   // อ่านอย่างเดียว: ข้อมูลตั้งต้นให้ผู้มีสิทธิ์แก้เป็นคนใส่ ตอบรายการปัจจุบันกลับไป
-  if (a.level === "read") return body.op === "seed" ? NextResponse.json(await list(key, s, branch)) : forbidden("บัญชีนี้ดูข้อมูลส่วนนี้ได้อย่างเดียว");
+  if (a.level === "read") return body.op === "seed" ? NextResponse.json(await list(key, s, branch, me)) : forbidden("บัญชีนี้ดูข้อมูลส่วนนี้ได้อย่างเดียว");
   if (key === "contracts" && body.op === "delete" && !can(me, "contracts.delete")) return forbidden("บัญชีนี้ไม่มีสิทธิ์ลบสัญญา");
   // ข้อมูลระดับองค์กร (เช่น สาขา): ผู้จัดการสาขาอ่านได้ แต่เพิ่ม/แก้/ลบได้เฉพาะผู้บริหาร
   if (s.globalWrite && me.role !== "Global Admin") return forbidden("แก้ไขข้อมูลสาขาได้เฉพาะผู้บริหาร (Global Admin)");
@@ -613,7 +619,7 @@ export async function POST(req: NextRequest, { params }: { params: { key: string
     return bad("database error", 500);
   }
   await audit(req, me, logs);
-  return NextResponse.json(await list(key, s, branch));
+  return NextResponse.json(await list(key, s, branch, me));
 }
 
 /* ---------- ใบแจ้งหนี้: กันแก้ยอด/สถานะของใบที่รับเงินแล้ว และคืนรายการเมื่อยกเลิกใบ ---------- */

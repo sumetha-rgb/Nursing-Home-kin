@@ -28,7 +28,10 @@ export default function PhysioSlot({ target, cases, therapists, today, doneToday
   const covered = !!c.plan_slots?.date?.[date];
   const others = cases.filter((x) => x.id !== c.id);
   const busyOf = (id: string) => (c.plan_time ? clashes(others, id, { dates: [date] }, c.plan_time, c.plan_minutes || 45) : []);
-  const local = therapists.filter((t) => t.branch === c.branch_name), away = therapists.filter((t) => t.branch !== c.branch_name);
+  // ทีมประจำเคสขึ้นก่อน (ส่งใครไปก็ได้) · แล้วคนอื่นในสาขา · สาขาอื่น
+  const crewIds = new Set((c.plan_slots?.team ?? []).map((x) => x.id));
+  const crew = therapists.filter((t) => crewIds.has(t.id));
+  const local = therapists.filter((t) => !crewIds.has(t.id) && t.branch === c.branch_name), away = therapists.filter((t) => !crewIds.has(t.id) && t.branch !== c.branch_name);
   const save = async (tid: string) => {
     setBusy(true);
     const r = await fetch("/api/clinic", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "slot_set", courseId: c.id, date, therapistId: tid }) }).catch(() => null);
@@ -67,14 +70,15 @@ export default function PhysioSlot({ target, cases, therapists, today, doneToday
           <span>{c.name}{/นาที/.test(c.name) ? "" : ` · ครั้งละ ${c.plan_minutes ?? 45} นาที`}</span>
           <span>คนทำนัดนี้: <b>{now?.name ?? "-"}</b>{covered ? ` (ทำแทน ${base?.name ?? ""})` : " (คนประจำ)"}</span>
         </div>
+        {c.plan_slots?.req?.[date] && <p className="pk-vwarn"><b>{c.plan_slots.req[date].by.name} ขอคนแทน</b> · {c.plan_slots.req[date].reason} · ส่งเมื่อ {c.plan_slots.req[date].at} · เลือกคนทำแทนด้านล่าง หรือยกเลิกนัดนี้</p>}
         <ul className="pa-rule">
           <li>เปลี่ยนคนทำ หรือ <b>ยกเลิกนัดนี้</b> (เลือกวันผิด) ได้<b>เฉพาะนัดนี้</b> · นัดวันอื่นไม่เปลี่ยน</li>
           <li>เปลี่ยนเวลา นาทีต่อครั้ง หรือวันทั้งคอร์ส → ปุ่ม <b>แก้แผนทั้งคอร์ส</b></li>
           <li>คนทำแทนเห็นนัดนี้ในคิวกายภาพของ KinApp และได้แจ้งเตือนบนมือถือ</li>
           <li>ทำแล้วนับเป็นผลงานของคนทำแทน · ถ้าไม่ได้ทำ ติดตามการส่งงานจะขึ้นชื่อคนทำแทน</li>
         </ul>
-        <section className="pa2-step"><h4><i>1</i>ใครทำนัดนี้</h4>
-          {[{ title: `สาขา${c.branch_name}`, list: local }, { title: "สาขาอื่น · รับงานข้ามสาขา", list: away }].filter((g) => g.list.length).map((g) => (
+        <section className="pa2-step"><h4><i>1</i>ส่งใครไปทำนัดนี้</h4>
+          {[{ title: "ทีมประจำเคส", list: crew }, { title: crew.length ? `คนอื่นในสาขา${c.branch_name}` : `สาขา${c.branch_name}`, list: local }, { title: "สาขาอื่น · รับงานข้ามสาขา", list: away }].filter((g) => g.list.length).map((g) => (
             <div key={g.title} className="pa-group">
               <p className="pa-group-h">{g.title}</p>
               <div className="pa-team">{g.list.map((t) => {
