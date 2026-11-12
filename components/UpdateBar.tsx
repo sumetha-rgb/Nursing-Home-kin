@@ -1,26 +1,43 @@
 "use client";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { notesFor, type Release } from "@/lib/releaseNotes";
+import { useEffect, useState } from "react";
+import { notesFor, RELEASE, type Release } from "@/lib/releaseNotes";
 
 /** เวอร์ชันของหน้าเว็บนี้ (ฝังตอน build · next.config.mjs) */
 const MINE = process.env.NEXT_PUBLIC_BUILD_ID ?? "";
 const EVERY = 5 * 60 * 1000;
 
 /**
- * แถบ "มีเวอร์ชันใหม่ · แตะเพื่ออัปเดต" หลัง deploy (ทั้งระบบจัดการ KinApp และแอปจัดยา)
- *  ตรวจกับ /api/version ทุก 5 นาที และทุกครั้งที่กลับมาเปิดแอป/แท็บ · แตะ = โหลดหน้าใหม่ (รายการที่ยังส่งไม่ถึงเก็บในเครื่อง ส่งต่อหลังโหลด)
- *  บอก "มีอะไรใหม่" จากเวอร์ชันใหม่ (2 ข้อแรก + กดดูทั้งหมด) เฉพาะเรื่องของแอปที่เปิดอยู่
- *  "ภายหลัง" = ซ่อนไว้ แล้วเตือนอีกครั้งตอนตรวจรอบถัดไป · ตอนพัฒนา (next dev) ไม่ตรวจ ยกเว้นเปิดดูตัวอย่างด้วย ?preview-update
- *  แถบแสดงอยู่: ตั้ง html[data-update] + --update-bottom ให้กล่องแนะนำของ KinApp เลื่อนลงใต้แถบ (ไม่ซ้อนกัน)
+ * แจ้ง "มีเวอร์ชันใหม่" หลัง deploy (ระบบจัดการ KinApp และแอปจัดยา) · ไม่บังหัวหน้าจอ
+ *  คอม = มุมล่างซ้าย (การแจ้งเตือนอื่นอยู่มุมขวาบน) · มือถือ = เหนือแถบเมนูล่าง · แถวเดียว กด "มีอะไรใหม่" จึงเปิดรายการ
+ *  ตรวจกับ /api/version ทุก 5 นาที และทุกครั้งที่กลับมาเปิดแอป/แท็บ · อัปเดต = โหลดหน้าใหม่ (รายการที่ยังส่งไม่ถึงเก็บในเครื่อง ส่งต่อหลังโหลด)
+ *  × = ซ่อนไว้ เตือนอีกครั้งรอบตรวจถัดไป · ตอนพัฒนา (next dev) ไม่ตรวจ ยกเว้นเปิดดูตัวอย่างด้วย ?preview-update
+ *  เปิดแอปครั้งแรกหลังมีเวอร์ชันใหม่ (รวมเข้าสู่ระบบใหม่) = "อัปเดตแล้ว · มีอะไรใหม่" 1 ครั้งต่อเครื่องต่อเวอร์ชัน (จำในเครื่อง) · ?preview-updated = ดูตัวอย่าง
  */
+const SEEN = "kin.seen-build";
 export default function UpdateBar() {
   const [fresh, setFresh] = useState(false);
   const [notes, setNotes] = useState<{ date: string; items: string[] } | null>(null);
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+  const [app, setApp] = useState(false);
+  /** เพิ่งอัปเดตเป็นเวอร์ชันนี้ (ยังไม่เคยเห็นในเครื่องนี้) */
+  const [just, setJust] = useState(false);
   useEffect(() => {
-    const preview = process.env.NODE_ENV !== "production" && window.location.search.includes("preview-update");
-    if (!preview && (process.env.NODE_ENV !== "production" || !MINE)) return;
+    setApp(/^\/(staff|pharmacy)/.test(window.location.pathname));
+    // อัปเดตแล้ว: เวอร์ชันนี้ยังไม่เคยแสดงในเครื่องนี้ → บอกมีอะไรใหม่ 1 ครั้ง
+    const q = new URLSearchParams(window.location.search), dev = process.env.NODE_ENV !== "production";
+    const previewJust = dev && q.has("preview-updated");
+    let seenTimer: ReturnType<typeof setTimeout> | undefined;
+    if ((MINE || previewJust) && notesFor(RELEASE, window.location.pathname).length) {
+      let seen: string | null = null;
+      try { seen = localStorage.getItem(SEEN); } catch { seen = MINE; }
+      if (previewJust || seen !== MINE) {
+        setNotes({ date: RELEASE.date, items: notesFor(RELEASE, window.location.pathname) }); setJust(true);
+        // แสดงแล้ว 20 วินาที = ถือว่าเห็นแล้ว (เปิดแอปครั้งถัดไปไม่ขึ้นซ้ำ แม้ไม่ได้กด ×)
+        seenTimer = setTimeout(() => { try { if (MINE) localStorage.setItem(SEEN, MINE); } catch { /* ไม่จำก็ได้ */ } }, 20_000);
+      }
+    }
+    const preview = dev && q.has("preview-update");
+    if (!preview && (dev || !MINE)) return () => clearTimeout(seenTimer);
     let busy = false;
     const check = async () => {
       if (busy || document.visibilityState !== "visible" || !navigator.onLine) return;
@@ -40,34 +57,25 @@ export default function UpdateBar() {
     const t = setInterval(check, EVERY);
     document.addEventListener("visibilitychange", check);
     window.addEventListener("online", check);
-    return () => { clearInterval(t); document.removeEventListener("visibilitychange", check); window.removeEventListener("online", check); };
+    return () => { clearTimeout(seenTimer); clearInterval(t); document.removeEventListener("visibilitychange", check); window.removeEventListener("online", check); };
   }, []);
-  // บอกหน้าอื่นว่าแถบแสดงอยู่ และขอบล่างของแถบอยู่ตรงไหน (กล่องแนะนำ KinApp เลื่อนลงตาม)
-  useLayoutEffect(() => {
-    const root = document.documentElement;
-    if (!fresh || !ref.current) { delete root.dataset.update; root.style.removeProperty("--update-bottom"); return; }
-    const set = () => { if (ref.current) root.style.setProperty("--update-bottom", `${Math.round(ref.current.getBoundingClientRect().bottom)}px`); };
-    root.dataset.update = "1"; set();
-    // วัดใหม่เมื่อขนาดเปลี่ยน และหลังแอนิเมชันเลื่อนเข้าจบ (ตอนแรกแถบยังเลื่อนไม่สุด)
-    const el = ref.current, ro = new ResizeObserver(set); ro.observe(el);
-    el.addEventListener("animationend", set); const t = setTimeout(set, 350);
-    return () => { ro.disconnect(); el.removeEventListener("animationend", set); clearTimeout(t); delete root.dataset.update; root.style.removeProperty("--update-bottom"); };
-  }, [fresh, open]);
-  if (!fresh) return null;
+  const seenNow = () => { try { if (MINE) localStorage.setItem(SEEN, MINE); } catch { /* ไม่จำก็ได้ */ } };
+  if (!fresh && !just) return null;
   const items = notes?.items ?? [];
-  const brief = items.length ? `${items.slice(0, 2).join(" · ")}${items.length > 2 ? ` · และอีก ${items.length - 2} เรื่อง` : ""}` : "แตะอัปเดต ข้อมูลที่กรอกไว้ไม่หาย";
   return (
-    <div className="update-bar" role="status" ref={ref}>
+    <div className={`update-bar ${app ? "is-app" : ""} ${open ? "is-open" : ""}`} role="status">
+      {open && items.length > 0 && <div className="update-list" id="update-list">
+        <p>มีอะไรใหม่{notes?.date ? ` · ${notes.date}` : ""}</p>
+        <ul>{items.map((x) => <li key={x}>{x}</li>)}</ul>
+        <small>อัปเดตแล้วข้อมูลที่กรอกไว้ไม่หาย</small>
+      </div>}
       <div className="update-row">
         <span className="update-dot" aria-hidden="true" />
-        <span className="update-text"><b>มีเวอร์ชันใหม่{notes?.date ? ` · ${notes.date}` : "ของระบบ"}</b><small>{brief}</small></span>
-        <button type="button" className="update-go" onClick={() => window.location.reload()}>อัปเดตเลย</button>
-        <button type="button" className="update-later" onClick={() => { setFresh(false); setOpen(false); }}>ภายหลัง</button>
+        <b className="update-title">{fresh ? "มีเวอร์ชันใหม่" : "อัปเดตแล้ว"}{notes?.date ? <small> · {notes.date}</small> : null}</b>
+        {items.length > 0 && <button type="button" className="update-more" aria-expanded={open} aria-controls="update-list" onClick={() => setOpen(!open)}>{open ? "ซ่อน" : `มีอะไรใหม่ ${items.length}`}</button>}
+        {fresh && <button type="button" className="update-go" onClick={() => { seenNow(); window.location.reload(); }}>อัปเดต</button>}
+        <button type="button" className="update-later" aria-label={fresh ? "ไว้ทีหลัง" : "ปิด"} title={fresh ? "ไว้ทีหลัง (เตือนอีกครั้งภายหลัง)" : "ปิด (ไม่แสดงอีกจนกว่าจะมีเวอร์ชันใหม่)"} onClick={() => { if (!fresh) seenNow(); setFresh(false); setJust(false); setOpen(false); }}>×</button>
       </div>
-      {items.length > 0 && <>
-        <button type="button" className="update-more" aria-expanded={open} aria-controls="update-list" onClick={() => setOpen(!open)}>{open ? "ซ่อนรายการ ▴" : "ดูว่ามีอะไรใหม่ ▾"}</button>
-        {open && <ul className="update-list" id="update-list">{items.map((x) => <li key={x}>{x}</li>)}<li className="is-note">อัปเดตแล้วข้อมูลที่กรอกไว้ไม่หาย</li></ul>}
-      </>}
     </div>
   );
 }
