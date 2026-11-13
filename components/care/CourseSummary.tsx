@@ -6,6 +6,7 @@ import Icon from "../Icon";
 import { docDate, money } from "@/lib/billing";
 import { downloadCsv } from "@/lib/store";
 import { useSession } from "@/lib/session";
+import PhysioHistoryModal from "./PhysioHistoryModal";
 
 type Course = { id: string; resident_name: string; branch_name: string; name: string; total: number; used: number; price: number; status: string; created_by: string; billed: boolean; day: string; last_used: string | null };
 const TABS = ["ยังเหลือ", "ใช้ครบแล้ว", "ทั้งหมด"];
@@ -19,6 +20,7 @@ export default function CourseSummary({ branch, compact, onTiles }: { branch: st
   const global = user?.role === "Global Admin";
   const [items, setItems] = useState<Course[] | null>(null);
   const [tab, setTab] = useState(TABS[0]);
+  const [hist, setHist] = useState<Course | null>(null);
   useEffect(() => {
     fetch(`/api/clinic?op=courses${branch ? `&branch=${encodeURIComponent(branch)}` : ""}`, { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : { items: [] })).then((d) => setItems(d.items ?? [])).catch(() => setItems([]));
@@ -50,8 +52,10 @@ export default function CourseSummary({ branch, compact, onTiles }: { branch: st
           <Tabs tabs={TABS} value={tab} onChange={setTab} />
           <button className="btn-soft" onClick={() => downloadCsv(`คอร์สกายภาพ-${tab}`, cols, rows)}><CsvIcon /> ส่งออก CSV</button>
         </>}>
-        <DataTable columns={cols} rows={rows} badgeCols={[cols.length - 1]} empty={items ? (tab === "ยังเหลือ" ? "ไม่มีคอร์สที่ยังใช้ไม่ครบ" : "ยังไม่มีคอร์สกายภาพ") : "กำลังโหลด…"} />
+        <DataTable columns={cols} rows={rows} badgeCols={[cols.length - 1]} empty={items ? (tab === "ยังเหลือ" ? "ไม่มีคอร์สที่ยังใช้ไม่ครบ" : "ยังไม่มีคอร์สกายภาพ") : "กำลังโหลด…"}
+          actions={[{ label: "ประวัติ / สรุปผล", hidden: (k) => !shown[k].used, onClick: (k) => setHist(shown[k]) }]} />
       </Section>
+      <PhysioHistoryModal courseId={hist?.id ?? null} title={hist?.resident_name ?? ""} onClose={() => setHist(null)} />
     </div>
   );
 }

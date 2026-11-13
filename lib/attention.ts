@@ -75,15 +75,20 @@ async function compute([tasks, health, billing, contracts, stock, rooms, roster,
     job(() => q(`SELECT count(*)::int AS n FROM clinical_notes WHERE kind = 'physio' AND data->>'nocourse' = 'true' AND invoice_id IS NULL ${w("branch_name")}`), (v) => { out.physio = n(v); });
     job(() => q(`SELECT count(*)::int AS n FROM invoices WHERE status = 'รอตรวจสอบยอด' ${w("branch_name")}`), (v) => { out.drafts = n(v); });
     job(() => q(`SELECT count(*)::int AS n FROM physio_courses WHERE coalesce(price, 0) > 0 AND invoice_id IS NULL ${w("branch_name")}`), (v) => { out.courses = n(v); });
-    // วันที่มีการรับเงินแต่ยังไม่ปิดยอด (7 วันก่อนหน้า ไม่รวมวันนี้) · ตารางปิดยอดยังไม่ถูกสร้าง = ไม่แสดง
-    job(() => q(`SELECT DISTINCT p.pay_date::text AS date, i.branch_name AS branch FROM invoice_payments p JOIN invoices i ON i.id = p.invoice_id
-          WHERE p.pay_date >= ${TODAY} - 7 AND p.pay_date < ${TODAY} ${w("i.branch_name")}
-            AND NOT EXISTS (SELECT 1 FROM cash_closes c WHERE c.branch_name = i.branch_name AND c.close_date = p.pay_date)
-          ORDER BY 1`).catch(() => undefined /* ยังไม่ได้รัน db:setup */), (v) => { if (v) out.unclosed = v; });
     // ครบรอบบิล (ตามวันเริ่มสัญญา) แล้วหรือภายใน 7 วัน ยังไม่ออกใบของรอบนั้น
     job(() => cyclesDue(br), (v) => { out.monthDue = v; });
   }
+  if (health) {
+    // เหตุการณ์ไม่พึงประสงค์ที่หัวหน้ายังไม่รับทราบ (30 วันล่าสุด) · ตารางยังไม่ถูกสร้าง = ไม่แสดง
+    job(() => q(`SELECT resident_name AS name, kind, severity, floor(extract(epoch FROM now() - created_at) / 60)::int AS mins FROM incidents
+        WHERE ack_by IS NULL AND created_at > now() - interval '30 days' ${w("branch_name")} ORDER BY created_at LIMIT 30`).catch(() => undefined), (v) => { if (v) out.incidents = v; });
+  }
   if (contracts) {
+    // ใบเสนอราคาถึงวันนัดโทรติดตาม (ยังไม่เปิดสัญญา และยังไม่หมดอายุ)
+    job(() => q(`SELECT coalesce(doc_no, '') AS no, resident_name AS name, follow_up::text AS due FROM care_assessments
+        WHERE follow_up IS NOT NULL AND follow_up <= ${TODAY} AND coalesce(contract_no, '') IN ('', '-')
+          AND (quote_date IS NULL OR quote_date + coalesce(valid_days, 30) >= ${TODAY}) ${w("branch_name")}
+        ORDER BY follow_up LIMIT 30`), (v) => { out.quoteCall = v; });
     job(() => q(`SELECT c.contract_no AS no, c.resident_name AS name,
         EXISTS (SELECT 1 FROM invoices i WHERE i.contract_no = c.contract_no AND i.status <> 'ยกเลิก') AS billed
       FROM contracts c WHERE c.status = 'รอชำระเงินมัดจำ' ${w("c.branch_name")} ORDER BY c.created_at LIMIT 20`), (v) => { out.deposit = v; });

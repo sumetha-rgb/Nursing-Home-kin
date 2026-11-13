@@ -56,7 +56,9 @@ export const isOpen = (x: { status: string }) => x.status === UNPAID || x.status
 export const balanceOf = (x: { net: number; paid?: number; kind?: string }) => (x.kind === CN_KIND ? 0 : Math.max(0, Math.round((x.net - (x.paid ?? 0)) * 100) / 100));
 /** รายการรับชำระ 1 งวด (จาก /api/billing) */
 /** amount = ยอดที่ตัดจากยอดค้าง (เงินที่รับ + ภาษีหัก ณ ที่จ่าย) · wht = ภาษีหัก ณ ที่จ่าย · kind: pay = รับเงิน · credit = ใบลดหนี้หักยอด */
-export type Payment = { id: string; n: number; date: string; cash: number; credit: number; transfer: number; amount: number; wht?: number; kind?: string; cashier: string; note: string; slip: string | null; slipAt: string | null; paidBefore: number };
+export type Payment = { id: string; n: number; date: string; cash: number; credit: number; transfer: number; amount: number; wht?: number; kind?: string; cashier: string; note: string; slip: string | null; slipAt: string | null; paidBefore: number;
+  /** เลขอ้างอิงการโอน */
+  transferRef?: string | null };
 /** เลขผู้เสียภาษี 13 หลักถูกต้องตามเลขตรวจสอบ */
 export const validTaxId = (v: string) => { const d = v.replace(/\D/g, ""); if (d.length !== 13) return false; let s = 0; for (let i = 0; i < 12; i++) s += Number(d[i]) * (13 - i); return (11 - (s % 11)) % 10 === Number(d[12]); };
 

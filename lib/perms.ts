@@ -18,7 +18,7 @@ export const PERM_GROUPS: { title: string; items: Item[] }[] = [
   { title: "เมนูขายและการเงิน", items: [
     { id: "prices", label: "ราคาสินค้าและบริการ", hint: "ดูราคากลาง · ผู้จัดการสาขาและผู้บริหารแก้ราคาและรหัสได้" },
     { id: "quotations", label: "ใบเสนอราคา / แผนดูแล" },
-    { id: "contracts", label: "สัญญาบริการ", hint: "เปิด/แก้/ต่อสัญญา D/C ยกเลิกสัญญา" }, { id: "billing", label: "ใบแจ้งหนี้และใบเสร็จ", hint: "ออกใบแจ้งหนี้ รับชำระ ใบเสร็จ ปิดยอดรายวัน" },
+    { id: "contracts", label: "สัญญาบริการ", hint: "เปิด/แก้/ต่อสัญญา D/C ยกเลิกสัญญา" }, { id: "billing", label: "ใบแจ้งหนี้และใบเสร็จ", hint: "ออกใบแจ้งหนี้ รับชำระ ใบเสร็จ" },
   ] },
   { title: "เมนูบริหาร", items: [
     { id: "dashboard", label: "ภาพรวมและรายงาน", hint: "แดชบอร์ดและส่งออก CSV" }, { id: "branches", label: "ข้อมูลสาขา" },

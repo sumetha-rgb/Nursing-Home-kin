@@ -1,6 +1,6 @@
 "use client";
 import { useBranchInfo } from "@/lib/branches";
-import { ReactNode, useEffect, useState, useId, useRef, Children, isValidElement, cloneElement, ReactElement } from "react";
+import { Fragment, ReactNode, useEffect, useState, useId, useRef, Children, isValidElement, cloneElement, ReactElement } from "react";
 import { createPortal } from "react-dom";
 import Icon from "./Icon";
 import { ResidentPicker, SearchSelect } from "./SearchSelect";
@@ -77,7 +77,8 @@ export function Upload({ text = "คลิกเพื่ออัปโหล�
 
 /** more: ย้ายไปอยู่ในปุ่ม "เพิ่มเติม" ของแถว (ปุ่มเยอะจนล้นจอ) */
 /** tone: primary = ปุ่มหลักสีทอง (ควรมีไม่เกิน 1 ปุ่มต่อแถว) · ghost = ปุ่มรอง · more = อยู่ในเมนู ⋯ (ปุ่มอันตรายอยู่ท้ายเมนู แยกด้วยเส้น) */
-export type RowAction = { label: string; onClick: (i: number) => void; danger?: boolean; hidden?: (i: number) => boolean; more?: boolean; tone?: "primary" | "ghost" };
+/** separate = ขึ้นเส้นคั่นก่อนปุ่มนี้ในเมนู ⋯ (เช่น "ลบ" แยกจาก "ยกเลิก" กันกดพลาด) */
+export type RowAction = { label: string; onClick: (i: number) => void; danger?: boolean; hidden?: (i: number) => boolean; more?: boolean; tone?: "primary" | "ghost"; separate?: boolean };
 
 /** เมนู "เพิ่มเติม" ของแถว · วางแบบ fixed เพื่อไม่ถูกกรอบตารางที่เลื่อนได้ตัด */
 export function RowMenu({ items, i }: { items: RowAction[]; i: number }) {
@@ -85,8 +86,9 @@ export function RowMenu({ items, i }: { items: RowAction[]; i: number }) {
   useEffect(() => {
     if (!at) return;
     const close = () => setAt(null);
-    window.addEventListener("scroll", close, true); window.addEventListener("resize", close);
-    return () => { window.removeEventListener("scroll", close, true); window.removeEventListener("resize", close); };
+    // เริ่มฟังการเลื่อนหลังเปิดเมนูสักครู่: หน้าที่ยังเลื่อนค้างจากการกด (เลื่อนปุ่มเข้าจอ) ไม่ปิดเมนูทันทีที่เพิ่งเปิด
+    const t = setTimeout(() => { window.addEventListener("scroll", close, true); window.addEventListener("resize", close); }, 250);
+    return () => { clearTimeout(t); window.removeEventListener("scroll", close, true); window.removeEventListener("resize", close); };
   }, [at]);
   const shownItems = items.filter((x) => !x.hidden?.(i));
   // ปุ่มอันตราย (ยกเลิก ลบ) อยู่ท้ายเมนู แยกด้วยเส้น
@@ -98,7 +100,7 @@ export function RowMenu({ items, i }: { items: RowAction[]; i: number }) {
     {at && <>
       <button type="button" aria-label="ปิดเมนู" className="fixed inset-0 z-40 cursor-default" onClick={() => setAt(null)} />
       <div role="menu" className="fixed z-50 min-w-44 rounded-2xl border border-cream-300 bg-white py-1 shadow-lg" style={{ left: at.x, top: at.y, transform: `translate(-100%, ${at.up ? "calc(-100% - 6px)" : "6px"})` }}>
-        {list.map((x, k) => <div key={x.label}>{x.danger && !list[k - 1]?.danger && k > 0 && <hr className="my-1 border-cream-200" />}<button type="button" role="menuitem" className={`block w-full whitespace-nowrap px-4 py-2 text-left text-sm hover:bg-cream-50 ${x.danger ? "text-red-700" : "text-gold-800"}`} onClick={() => { setAt(null); x.onClick(i); }}>{x.label}</button></div>)}
+        {list.map((x, k) => <div key={x.label}>{k > 0 && (x.separate || (x.danger && !list[k - 1]?.danger)) && <hr className="my-1 border-cream-200" />}<button type="button" role="menuitem" className={`block w-full whitespace-nowrap px-4 py-2 text-left text-sm hover:bg-cream-50 ${x.danger ? "text-red-700" : "text-gold-800"}`} onClick={() => { setAt(null); x.onClick(i); }}>{x.label}</button></div>)}
       </div>
     </>}
   </>;
@@ -129,7 +131,9 @@ export function MenuButton({ label, icon, items, primary }: { label: string; ico
 /** Table on desktop, stacked label/value cards on mobile. · render(แถว, คอลัมน์, ค่า) คืน element แทนข้อความ (undefined = แสดงแบบปกติ) */
 /** onRow = กดที่แถว (เช่น เปิดรายละเอียด) · rowLabel = คำอ่านของแถวสำหรับโปรแกรมอ่านหน้าจอ */
 /** minor = คอลัมน์รองที่ซ่อนเองเมื่อพื้นที่ตารางแคบ (โน้ตบุ๊กจอเล็ก) แทนการต้องเลื่อนแนวนอน · มือถือยังเห็นครบในการ์ด */
-export function DataTable({ columns, rows = [], empty = "ไม่พบข้อมูล", actions, badgeCols = [], search = true, render, onRow, rowLabel, minor = [] }: { columns: string[]; rows?: string[][]; empty?: string; actions?: RowAction[]; badgeCols?: number[]; search?: boolean; render?: (row: number, col: number, value: string) => ReactNode | undefined; onRow?: (i: number) => void; rowLabel?: string; minor?: number[] }) {
+/** mobileCard = การ์ดมือถือแบบย่อ: หัว = title + value (เช่น ชื่อ · ยอดคงเหลือ) · บรรทัดรอง = sub ต่อกันด้วย · + สถานะ · ช่องอื่นอยู่ใน "รายละเอียด" */
+export type MobileCard = { title: number; value: number; sub: number[] };
+export function DataTable({ columns, rows = [], empty = "ไม่พบข้อมูล", actions, badgeCols = [], search = true, render, onRow, rowLabel, minor = [], mobileCard }: { columns: string[]; rows?: string[][]; empty?: string; actions?: RowAction[]; badgeCols?: number[]; search?: boolean; render?: (row: number, col: number, value: string) => ReactNode | undefined; onRow?: (i: number) => void; rowLabel?: string; minor?: number[]; mobileCard?: MobileCard }) {
   const [query,setQuery]=useState("");
   const [page,setPage]=useState(0);
   const PAGE_SIZE=8;
@@ -150,6 +154,13 @@ export function DataTable({ columns, rows = [], empty = "ไม่พบข้�
     // มือถือ: ช่องแรกเป็นหัวการ์ด · สถานะมุมขวาบน · ช่องอื่น 2 คอลัมน์ (ซ่อนช่องที่ว่าง "-")
     const st=columns.findIndex((c,j)=>j>0&&(c.includes("สถานะ")||badgeCols.includes(j)));
     const label=(j:number)=>columns[j]?.replace(/\s*\([^)]*\)/g,"");
+    if(mobileCard){const mc=mobileCard,used=[mc.title,mc.value,...mc.sub,st],rest=r.map((c,j)=>j).filter(j=>!used.includes(j)&&String(r[j]??"").trim()&&r[j]!=="-");
+      return <div key={i} {...rowProps(i)} className={"mobile-data-row mdr mdr-compact"+(onRow?" is-clickable":"")}>
+        <div className="mdr-c-head"><b>{cell(r[mc.title],mc.title,i)}</b><b className="mdr-c-val">{cell(r[mc.value],mc.value,i)}</b></div>
+        <div className="mdr-c-sub"><span>{mc.sub.map(j=>r[j]).filter(v=>v&&v!=="-").map((v,k)=><Fragment key={k}>{k>0?" · ":""}<span className="whitespace-nowrap">{v}</span></Fragment>)}</span>{st>0&&cell(r[st],st,i)}</div>
+        <div className="mdr-c-foot">{rest.length>0?<details className="mdr-c-more" onClick={(e)=>e.stopPropagation()}><summary>รายละเอียด</summary><dl className="mdr-grid">{rest.map(j=><div key={j}><dt>{label(j)}</dt><dd>{cell(r[j],j,i)}</dd></div>)}</dl></details>:<span />}
+        {actions&&<div className="row-actions mdr-c-acts">{buttons(i)}</div>}</div>
+      </div>;}
     return <dl key={i} {...rowProps(i)} className={"mobile-data-row mdr"+(onRow?" is-clickable":"")}>
       <div className="mdr-head"><dt className="sr-only">{label(0)}</dt><dd className="mdr-title">{cell(r[0],0,i)}</dd>{st>0&&<dd className="mdr-status">{cell(r[st],st,i)}</dd>}</div>
       <div className="mdr-grid">{r.map((c,j)=>j===0||j===st||!String(c??"").trim()||c==="-"?null:<div key={j}><dt>{label(j)}</dt><dd>{cell(c,j,i)}</dd></div>)}</div>

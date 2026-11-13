@@ -77,7 +77,7 @@ function StatementDoc({ d, branch, today, by }: { d: Debtor; branch: DocBranch; 
       <div className="doc-tbl"><table>
         <thead><tr><th>เลขที่เอกสาร</th><th>วันที่</th><th>รายการ</th><th className="n">ยอดตามใบ</th><th className="n">ชำระแล้ว</th><th className="n">คงค้าง</th><th className="n">ค้างมา</th></tr></thead>
         <tbody>{docs.map(({ x, age }) => (
-          <tr key={x.id}><td>{x.no ?? "-"}</td><td>{docDate(x.date)}</td><td>{x.kind}{x.note ? ` · ${x.note}` : ""}</td><td className="n">{money(x.net)}</td><td className="n">{money(x.paid ?? 0)}</td><td className="n">{money(balanceOf(x))}</td><td className="n">{age} วัน</td></tr>
+          <tr key={x.id}><td style={{ whiteSpace: "nowrap" }}>{x.no ?? "-"}</td><td style={{ whiteSpace: "nowrap" }}>{docDate(x.date)}</td><td>{x.kind}{x.note ? ` · ${x.note}` : ""}</td><td className="n">{money(x.net)}</td><td className="n">{money(x.paid ?? 0)}</td><td className="n">{money(balanceOf(x))}</td><td className="n">{age} วัน</td></tr>
         ))}</tbody>
         <tfoot><tr><td colSpan={5}>รวมยอดค้างชำระ ({bahtText(d.total)})</td><td className="n">{money(d.total)}</td><td /></tr></tfoot>
       </table></div>

@@ -182,7 +182,7 @@ export function Rooms() {
 
   const card = (r: RoomInfo, pick?: () => void) => (
     <RoomCard key={r.i} room={r} onClick={pick} selected={!pick && sel === r.i}
-      people={!pick && r.people.length > 0 && <div className="room-people">{r.beds.filter((b) => b.who).map((b) => <span key={b.label}><i className="not-italic text-gold-500">{b.label}</i> {b.who}{(() => { const c = reservedOf(b.who!, r.branch); return c ? <button type="button" className="room-people-open" onClick={() => openContract(c)}>เปิดสัญญา</button> : null; })()}{move && <button type="button" aria-label={`ย้าย ${b.who} ออกจากห้อง`} onClick={() => moveOut(b.who!, r)}>✕</button>}</span>)}</div>}>
+      people={!pick && r.people.length > 0 && <div className="room-people">{r.beds.filter((b) => b.who).map((b) => <span key={b.label}><i className="not-italic text-gold-500">{b.label}</i> {b.who}{(() => { const c = reservedOf(b.who!, r.branch); return c ? <button type="button" className="room-people-open" onClick={() => openContract(c)}>เริ่มใช้สัญญา</button> : null; })()}{move && <button type="button" aria-label={`ย้าย ${b.who} ออกจากห้อง`} onClick={() => moveOut(b.who!, r)}>✕</button>}</span>)}</div>}>
       {(admin || move) && !pick && <div className="mt-1 flex flex-wrap items-center gap-2 border-t border-cream-200 pt-2">
         {admin && roomSwitch(r)}
         {move && !r.full && !r.closed && <button type="button" className="row-action" onClick={() => { setWho(""); setAssign({ room: r, bed: freeBed(r) }); }}>+ เพิ่มผู้รับบริการเข้าห้อง</button>}
@@ -207,7 +207,7 @@ export function Rooms() {
     <div className="mt-3">{selected.beds.map((b) => (
       <div key={b.label} className={`bed-row ${b.who ? "is-taken" : "is-free"}`}>
         <b>{b.label}</b>{b.who ? <button type="button" className="bed-who" onClick={() => openPerson(selected.i, b.label, b.who!)}>{b.who}</button> : <span>เตียงว่าง</span>}
-        {b.who && (() => { const c = reservedOf(b.who!, selected.branch); return c ? <button type="button" className="row-action is-primary" onClick={() => openContract(c)}>เปิดสัญญา</button> : null; })()}
+        {b.who && (() => { const c = reservedOf(b.who!, selected.branch); return c ? <button type="button" className="row-action is-primary" onClick={() => openContract(c)}>เริ่มใช้สัญญา (รับมัดจำ)</button> : null; })()}
         {b.who && move && <button type="button" className="row-action danger" onClick={() => moveOut(b.who!, selected)}>ย้ายออก</button>}
         {!b.who && move && !selected.closed && <button type="button" className="row-action" onClick={() => { setWho(""); setAssign({ room: selected, bed: b.label }); }}>+ เพิ่มผู้ป่วยเข้าเตียง</button>}
       </div>))}</div>
@@ -252,7 +252,7 @@ export function Rooms() {
                 {when && <span className={`rw-when ${when.bad ? "is-bad" : ""}`}>{when.t}</span>}
                 <div className="rw-act">
                   {admin && kept && <button type="button" className="row-action" onClick={() => setDlg({ mode: "add", preset: [kept, r[3]] })}>สร้างห้อง {kept}</button>}
-                  {reserved && c && can(user, "contracts") && (r[5] ?? "").startsWith("มัดจำ") && <button type="button" className="row-action is-primary" onClick={() => openContract(c)}>เปิดสัญญา</button>}
+                  {reserved && c && can(user, "contracts") && (r[5] ?? "").startsWith("มัดจำ") && <button type="button" className="row-action is-primary" onClick={() => openContract(c)}>เริ่มใช้สัญญา (รับมัดจำ)</button>}
                   {/* จองไว้ (รอชำระมัดจำ): ใช้ปุ่มเปิดสัญญาอย่างเดียว เลือกห้องในขั้นที่ 3 ของฟอร์มเปิดสัญญา */}
                   {move && !(reserved && c && can(user, "contracts") && (r[5] ?? "").startsWith("มัดจำ")) && <button type="button" className={kept && admin ? "row-action" : "row-action is-primary"} onClick={() => setPlace(i)}>{kept ? "จัดห้องอื่น" : "จัดห้อง"}</button>}
                 </div>
@@ -304,7 +304,7 @@ export function Rooms() {
               <div><dt>นัดหมายถัดไป</dt><dd>{next ? `${thDate(next.date, false)} ${String(next.time ?? "").slice(0, 5)} · ${next.purpose}` : prof || profErr ? "ไม่มี" : "กำลังโหลด…"}</dd></div>
             </dl> : <p className="rounded-xl bg-cream-50 px-4 py-3 text-sm text-gold-600">บัญชีนี้ไม่มีสิทธิ์ดูข้อมูลสุขภาพของผู้ป่วย (ต้องมีเมนูผู้รับบริการหรือบันทึกสุขภาพ)</p>}
             <div className="flex flex-wrap gap-2">
-              {(() => { const c = reservedOf(r[0], r[3]); return c ? <button type="button" className="row-action is-primary" onClick={() => { setPerson(null); openContract(c); }}>เปิดสัญญา (จองไว้ · รอชำระมัดจำ)</button> : null; })()}
+              {(() => { const c = reservedOf(r[0], r[3]); return c ? <button type="button" className="row-action is-primary" onClick={() => { setPerson(null); openContract(c); }}>เริ่มใช้สัญญา (จองไว้ · รอชำระมัดจำ)</button> : null; })()}
               {move && room && <button type="button" className="row-action danger" onClick={() => { setPerson(null); moveOut(r[0], room); }}>ย้ายออกจากห้อง</button>}
             </div>
           </div>;

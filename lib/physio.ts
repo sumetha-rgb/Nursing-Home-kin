@@ -58,7 +58,7 @@ export type PhysioLog = { course_id: string | null; date: string; at: string; ti
 export type PhysioRecord = { id: string; course_id: string | null; resident_name: string; author: string | null; date: string; at: string; title: string | null; by_id?: string | null };
 /** นักกายภาพที่ทำบันทึกนั้นจริง (รหัสจากเช็คอิน · ไม่มี = เทียบชื่อผู้บันทึก) · ไม่ผูกกับผู้รับผิดชอบเคสปัจจุบัน */
 export const recBy = (d: Pick<PhysioBoard, "therapists">, r: Pick<PhysioRecord, "by_id" | "author">) => r.by_id ?? d.therapists.find((t) => t.name === r.author)?.id ?? null;
-export type PhysioBoard = { cases: PhysioCase[]; therapists: Therapist[]; today: PhysioDone[]; month: { author: string; n: number }[]; visits?: PhysioVisit[]; mylog?: PhysioLog[];
+export type PhysioBoard = { cases: PhysioCase[]; therapists: Therapist[]; today: PhysioDone[]; month: { author: string; n: number; hours?: number; cases?: number; sub?: number }[]; visits?: PhysioVisit[]; mylog?: PhysioLog[];
   log?: PhysioRecord[];
   /** เช็คอินวันก่อน ๆ ที่ไม่ได้บันทึก */
   stale?: { course_id: string; resident_name: string; therapist_name: string | null; date: string; at: string }[];
@@ -111,6 +111,8 @@ export function trackRows(d: PhysioBoard, from: string, to: string): TrackRow[] 
 }
 /** ประวัติการทำกายภาพ 1 ครั้ง (op=physio_history) */
 export type PhysioHistory = { id: string; title: string | null; body: string | null; author: string | null; at: string; pain: string | null; mobility: string | null; plan: string | null;
+  /** ADL (Barthel 0–20) ไม่บังคับกรอก */
+  adl?: string | null;
   activities: string[] | null; visit_id: string | null; checkin: string | null; done: string | null; minutes: number | null; work_n: number | null;
   /** แก้ไขล่าสุด (เวลาไทย YYYY-MM-DD HH:MM) และผู้แก้ */
   edited?: string | null; edited_by?: string | null;

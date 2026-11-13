@@ -65,15 +65,6 @@ export function invoiceDocsCsv(list: Invoice[], branchOf: (x: Invoice) => string
   return rows.length;
 }
 
-/* ---------- ปิดยอดรายวัน ---------- */
-export type CloseRow = { branch: string; date: string; payments: number; cash: number; transfer: number; credit: number; counted: number; note: string; closedBy: string; closedAt: string; approvedBy: string | null; approvedAt: string | null };
-export function closesCsv(rows: CloseRow[], name: string) {
-  const r2 = (n: number) => Math.round(n * 100) / 100;
-  downloadCsv(name, ["วันที่", "สาขา", "รายการรับชำระ", "เงินสดในระบบ", "เงินโอน", "บัตรเครดิต", "รวมรับ", "เงินสดที่นับได้", "ส่วนต่างเงินสด", "หมายเหตุ", "ปิดยอดโดย", "เวลาปิดยอด", "ตรวจรับรองโดย", "เวลาตรวจรับรอง"],
-    rows.map((c) => [docDate(c.date), c.branch, String(c.payments), money(c.cash), money(c.transfer), money(c.credit), money(c.cash + c.transfer + c.credit), money(c.counted), money(r2(c.counted - c.cash)), c.note, c.closedBy, c.closedAt, c.approvedBy ?? "", c.approvedAt ?? ""]));
-  return rows.length;
-}
-
 /* ---------- ลูกหนี้ค้างชำระตามอายุหนี้ ---------- */
 export const AGE_BUCKETS = [
   { k: "b0", t: "0–30 วัน", min: 0, max: 30, c: "is-b0" },

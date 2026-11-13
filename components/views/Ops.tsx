@@ -18,6 +18,7 @@ import { useBranchInfo } from "./Billing";
 import { downloadCsv, useCrud } from "@/lib/store";
 import { useApp } from "@/lib/app";
 import ResidentProfile from "../care/ResidentProfile";
+import { IncidentBoard, IncidentStats } from "../care/Incidents";
 import VitalsDialog from "../care/VitalsDialog";
 import { fetchNurses, useResidents } from "@/lib/care";
 import { useSession } from "@/lib/session";
@@ -248,6 +249,7 @@ export function Dashboard() {
       {view === "กายภาพ" && <CourseSummary branch={shiftBranch} />}
 
       {view === "คุณภาพการดูแล" && <div className="space-y-6">
+        <IncidentStats branch={scopeBranch} showBranch={global && !shiftBranch} />
         {ins && <KpiGrid items={[
           { key: "t", label: "งานสำเร็จ", value: `${pctOf(done, total) ?? 0}%`, delta: deltaOf(pctOf(ins.care.cur.done, ins.care.cur.total), pctOf(ins.care.prev.done, ins.care.prev.total), true, "%"), target: targetOf(pctOf(done, total), T.tasks, true, "%"), note: `${done} จาก ${total} งาน` },
           { key: "o", label: "ส่งงานตรงเวลา", value: `${pctOf(ins.care.cur.ontime, ins.care.cur.done) ?? 0}%`, delta: deltaOf(pctOf(ins.care.cur.ontime, ins.care.cur.done), pctOf(ins.care.prev.ontime, ins.care.prev.done), true, "%"), target: targetOf(pctOf(ins.care.cur.ontime, ins.care.cur.done), T.ontime, true, "%") },
@@ -537,8 +539,9 @@ export function HealthLogs() {
   };
   return (
     <>
-      <PageHeader title="บันทึกสุขภาพ" sub="สัญญาณชีพและการประเมินทุกคน"
+      <PageHeader title="บันทึกสุขภาพ" sub="สัญญาณชีพ เหตุการณ์ไม่พึงประสงค์ และการประเมินทุกคน"
         actions={<button className="btn-primary" onClick={() => setRecord(true)}><Icon name="plus" className="h-4 w-4" /> บันทึกสัญญาณชีพ</button>} />
+      <IncidentBoard residents={residents.filter((r) => staying(r.status ?? "")).map((r) => ({ id: r.id, name: r.full_name, room: r.room }))} />
       <Section>
         <div className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {branchNames.length > 1 && <Select options={branchNames} placeholder="-- ทุกสาขา --" value={branch} onChange={setBranch} />}

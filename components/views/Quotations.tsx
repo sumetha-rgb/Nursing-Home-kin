@@ -11,6 +11,7 @@ import { handoff } from "@/lib/handoff";
 import { longDate, PrintModal, QuoteDoc, QuoteItem } from "../print/Docs";
 import { useBranchInfo } from "./Billing";
 import { DataTable, Field, Modal, PageHeader, Section, SuggestInput } from "../ui";
+import Waitlist, { WaitDraft } from "./Waitlist";
 import { ServiceLines } from "../ServicePicker";
 
 /**
@@ -28,6 +29,11 @@ const itemsOf = (r: string[]): QuoteItem[] => {
 const today = () => new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10);
 const expired = (r: string[]) => has(r[7]) && new Date(r[7]).getTime() + (Number(r[8]) || 30) * 864e5 < Date.now();
 const totalOf = (items: QuoteItem[]) => items.reduce((n, x) => n + svcNet(x), 0);
+/** วันสุดท้ายที่ใบยังใช้ได้ (วันที่ + ยืนราคา) และอีกกี่วัน */
+const validUntil = (r: string[]) => (has(r[7]) ? new Date(new Date(r[7]).getTime() + (Number(r[8]) || 30) * 864e5).toISOString().slice(0, 10) : "");
+const daysTo = (iso: string) => Math.round((Date.parse(iso) - Date.parse(today())) / 864e5);
+const addDays = (n: number) => new Date(Date.parse(today()) + n * 864e5).toISOString().slice(0, 10);
+const isOpenQuote = (r: string[]) => !has(r[12]) && !expired(r);
 type QForm = { i: number | null; plan: string; who: string; chronic: string; phone: string; payer: string; level: string; date: string; days: string; note: string; items: QuoteItem[] };
 
 export function Quotations() {
@@ -39,6 +45,19 @@ export function Quotations() {
   const [q, setQ] = useState("");
   const [f, setF] = useState<QForm | null>(null);
   const [print, setPrint] = useState<number | null>(null);
+  // นัดโทรติดตาม: [13] วันนัดโทร · [14] ผลการโทรล่าสุด
+  const [fu, setFu] = useState<{ i: number; date: string; note: string } | null>(null);
+  // ห้องเต็ม: เพิ่มคนจากใบเสนอราคาเข้า "คนรอเข้าพัก"
+  const [wait, setWait] = useState<WaitDraft | null>(null);
+  const saveFu = () => {
+    if (!fu) return;
+    const r = rows[fu.i], row = [...r];
+    while (row.length < 15) row.push("");
+    row[13] = fu.date; row[14] = fu.note.trim() || (has(r[14]) ? r[14] : "");
+    update(fu.i, row);
+    toast(`บันทึกการติดตามแล้ว · ${r[1]}${fu.date ? ` · นัดโทร ${longDate(fu.date, true)}` : " · ไม่มีนัดโทร"}`);
+    setFu(null);
+  };
   const shown = rows.map((r, i) => ({ r, i })).filter(({ r }) => !q || [r[0], r[1], r[6], r[9]].some((x) => (x ?? "").includes(q)));
   const resident = (name: string) => res.rows.find((x) => x[0] === name);
 
@@ -56,7 +75,7 @@ export function Quotations() {
     if (items.some((x) => !(x.qty > 0) || x.price < 0)) return toast("กรุณาตรวจจำนวนและราคาของแต่ละรายการ");
     const prev = f.i !== null ? rows[f.i] : [];
     const row = [f.plan.trim() || items[0].desc, f.who.trim(), f.chronic.trim() || "-", f.phone.trim() || "-", String(totalOf(items)), f.note.trim() || "-",
-      prev[6] ?? "", f.date, f.days || "30", f.payer.trim() || "-", f.level, JSON.stringify(items), prev[12] ?? "-"];
+      prev[6] ?? "", f.date, f.days || "30", f.payer.trim() || "-", f.level, JSON.stringify(items), prev[12] ?? "-", prev[13] ?? "", prev[14] ?? ""];
     if (f.i !== null) update(f.i, row); else add(row);
     toast(`${f.i !== null ? "แก้ไขใบเสนอราคาแล้ว" : "สร้างใบเสนอราคาแล้ว"} · ${row[1]} · ${money(totalOf(items))} บาท${f.i === null ? " · ระบบออกเลขที่ให้" : ""}`);
     setF(null);
@@ -87,13 +106,22 @@ export function Quotations() {
       <Section>
         <div className="mb-4 max-w-md"><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="ค้นหาเลขที่ ชื่อผู้รับบริการ หรือผู้ชำระ" aria-label="ค้นหาใบเสนอราคา" /></div>
         <DataTable search={false}
-          columns={["เลขที่", "วันที่", "ผู้รับบริการ", "ผู้ชำระ", "แผน", "รวม (บาท)", "สถานะ"]}
+          columns={["เลขที่", "วันที่", "ผู้รับบริการ", "ผู้ชำระ", "แผน", "รวม (บาท)", "ใช้ได้ถึง", "โทรติดตาม", "สถานะ"]}
           rows={shown.map(({ r }) => [r[6] || "กำลังออกเลข…", has(r[7]) ? longDate(r[7], true) : "-", r[1], has(r[9]) ? r[9] : "-", r[0], money(numOf(r[4])),
+            validUntil(r) ? longDate(validUntil(r), true) : "-", has(r[13]) ? longDate(r[13], true) : "-",
             has(r[12]) ? "เปิดสัญญาแล้ว" : expired(r) ? "หมดอายุ" : "รอตัดสินใจ"])}
+          render={(row, col, value) => {
+            const r = shown[row].r;
+            if (col === 6 && isOpenQuote(r) && validUntil(r)) { const n = daysTo(validUntil(r)); return n <= 3 ? <span className="q-chip is-late">{n <= 0 ? "หมดวันนี้" : `หมดใน ${n} วัน`}</span> : undefined; }
+            if (col === 7 && isOpenQuote(r) && has(r[13])) { const n = daysTo(r[13]); return <span title={has(r[14]) ? `ผลล่าสุด: ${r[14]}` : undefined} className={`q-chip ${n < 0 ? "is-late" : n === 0 ? "is-due" : ""}`}>{n < 0 ? `เลยมา ${-n} วัน` : n === 0 ? "วันนี้" : value}</span>; }
+            return undefined;
+          }}
           empty="ยังไม่มีใบเสนอราคา · กด สร้างใบเสนอราคา"
           onRow={(n) => setPrint(shown[n].i)} rowLabel="กดเพื่อดูและพิมพ์ใบเสนอราคา"
           actions={[
-            { label: "เปิดสัญญา", tone: "primary", hidden: (n) => has(shown[n].r[12]), onClick: (n) => toContract(shown[n].i) },
+            { label: "ทำสัญญาจากใบนี้", tone: "primary", hidden: (n) => has(shown[n].r[12]), onClick: (n) => toContract(shown[n].i) },
+            { label: "บันทึกการโทร / นัดโทร", more: true, hidden: (n) => !isOpenQuote(shown[n].r), onClick: (n) => { const r = shown[n].r; setFu({ i: shown[n].i, date: has(r[13]) && daysTo(r[13]) > 0 ? r[13] : addDays(3), note: "" }); } },
+            { label: "เพิ่มในคนรอเข้าพัก (ห้องเต็ม)", more: true, hidden: (n) => !isOpenQuote(shown[n].r), onClick: (n) => { const r = shown[n].r; setWait({ name: r[1], phone: has(r[3]) ? r[3] : "", roomType: "", quoteNo: r[6] || "", note: has(r[14]) ? r[14] : "", branch: resident(r[1])?.[3] ?? "" }); } },
             { label: "ดู / พิมพ์", more: true, onClick: (n) => setPrint(shown[n].i) },
             { label: "แก้ไข", more: true, onClick: (n) => open(shown[n].i) },
             { label: "ลบ", danger: true, more: true, onClick: (n) => confirm({ title: "ลบใบเสนอราคา", message: `ต้องการลบใบเสนอราคา ${shown[n].r[6] || ""} ของ ${shown[n].r[1]} ใช่หรือไม่`, danger: true, okLabel: "ลบ",
@@ -120,6 +148,21 @@ export function Quotations() {
             <ServiceLines items={f.items} onChange={(items) => setF({ ...f, items })} />
           </div>
           <Field label="หมายเหตุ / เงื่อนไขเพิ่มเติม"><textarea rows={2} value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} /></Field>
+        </div>}
+      </Modal>
+
+      <Waitlist draft={wait} onDraftDone={() => setWait(null)} onContract={(no) => { const k = rows.findIndex((x) => x[6] === no); if (k >= 0) toContract(k); else toast(`ไม่พบใบเสนอราคา ${no}`); }} />
+
+      <Modal open={!!fu} title={fu ? `ติดตามใบเสนอราคา · ${rows[fu.i]?.[1] ?? ""}` : ""} onClose={() => setFu(null)}
+        footer={<><button className="btn-soft" onClick={() => setFu(null)}>ยกเลิก</button><button className="btn-primary" onClick={saveFu}>บันทึก</button></>}>
+        {fu && <div className="space-y-4">
+          {has(rows[fu.i]?.[14]) && <p className="rounded-xl bg-cream-50 px-4 py-3 text-sm text-gold-700">ผลการโทรครั้งก่อน: {rows[fu.i][14]}</p>}
+          <Field label="ผลการโทรครั้งนี้"><textarea rows={2} value={fu.note} onChange={(e) => setFu({ ...fu, note: e.target.value })} placeholder="เช่น ขอคุยกับลูกก่อน · สนใจห้องเดี่ยว" /></Field>
+          <Field label="นัดโทรครั้งถัดไป"><div className="flex flex-wrap items-center gap-2">
+            <input type="date" className="!w-auto" min={today()} value={fu.date} onChange={(e) => setFu({ ...fu, date: e.target.value })} />
+            {[1, 3, 7].map((n) => <button key={n} type="button" className="row-action" onClick={() => setFu({ ...fu, date: addDays(n) })}>อีก {n} วัน</button>)}
+            {fu.date && <button type="button" className="row-action" onClick={() => setFu({ ...fu, date: "" })}>ไม่นัดแล้ว</button>}
+          </div><p className="field-hint">ถึงวันนัดแล้วขึ้นใน &quot;ต้องจัดการ&quot; ที่หน้าแรก</p></Field>
         </div>}
       </Modal>
 

@@ -262,9 +262,11 @@ export function Physio() {
               ...(boss ? [{ label: "ปิดคอร์ส (ไม่ทำต่อ)", more: true, danger: true, hidden: (k: number) => cases[k].used === 0, onClick: (k: number) => { const c = cases[k]; setCloseT({ id: c.id, name: c.name, used: c.used, total: c.total, resident: c.resident_name, billed: c.billed, team: teamText(c) || undefined }); } }] : []), ...(canAssign ? [{ label: "จ่ายเคส", onClick: (k: number) => setPick(cases[k]) }] : [])]} empty="ยังไม่มีคอร์สกายภาพที่ใช้ได้" />
         </Section>}
 
-        {pg === "ผลงานเดือนนี้" && <Section title="ผลงานเดือนนี้" sub="จำนวนครั้งที่บันทึกกายภาพ (ตัดคอร์ส) แยกตามผู้บันทึก">
+        {pg === "ผลงานเดือนนี้" && <Section title="ผลงานเดือนนี้" sub="บันทึกกายภาพ (ตัดคอร์ส) แยกตามผู้บันทึก · ชั่วโมง = เช็คอินถึงบันทึก (หรือนาทีที่แก้ไว้) · ทำแทน = เคสที่ไม่ได้เป็นผู้รับผิดชอบหลัก"
+          actions={d.month.length ? <button className="btn-soft" onClick={() => downloadCsv(`ผลงานกายภาพ-${d.date.slice(0, 7)}${br ? `-${br}` : ""}`, ["นักกายภาพ", "ครั้ง", "ชั่วโมง", "เคส", "ทำแทน (ครั้ง)"], d.month.map((m) => [m.author, String(m.n), String(m.hours ?? 0), String(m.cases ?? 0), String(m.sub ?? 0)]))}><CsvIcon /> ส่งออกให้บัญชี</button> : undefined}>
           {d.month.length === 0 ? <p className="rounded-xl bg-cream-50 px-4 py-6 text-center text-sm text-gold-600">ยังไม่มีบันทึกกายภาพเดือนนี้</p> : (
-            <ul className="pt-month">{d.month.map((m) => <li key={m.author}><span>{m.author}</span><b>{m.n}</b><small>ครั้ง</small></li>)}</ul>
+            <DataTable search={false} columns={["นักกายภาพ", "ครั้ง", "ชั่วโมง", "เคส", "ทำแทน"]}
+              rows={d.month.map((m) => [m.author, String(m.n), (m.hours ?? 0).toFixed(1), String(m.cases ?? 0), String(m.sub ?? 0)])} />
           )}
         </Section>}
       </div>}

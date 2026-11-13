@@ -20,7 +20,7 @@ export type RecordTarget = {
   /** แก้ไขบันทึกเดิม (ภายใน 7 วัน) · ไม่ตัดคอร์สเพิ่ม ไม่เปลี่ยนรูป */
   edit?: PhysioHistory;
 };
-type F = { activities: string[]; pain: string; mobility: string; photos: string[]; vit: Record<string, string>; cc: string; pe: string; dx: string; plan: string; showVit: boolean; minutes: string };
+type F = { activities: string[]; pain: string; adl: string; mobility: string; photos: string[]; vit: Record<string, string>; cc: string; pe: string; dx: string; plan: string; showVit: boolean; minutes: string };
 
 /** ท้ายรายการประวัติ: ตัวหนังสือแดงบอกเวลาที่ยังแก้ได้ + ปุ่มแก้ไข (ผู้บันทึก / ผู้จัดการสาขา) */
 export function EditNote({ h, onEdit }: { h: PhysioHistory; onEdit: () => void }) {
@@ -69,15 +69,16 @@ export default function PhysioRecordModal({ target, testMode = false, onClose, o
     if (e) {
       // แก้ไข: ค่าเดิมทั้งหมด · บันทึกแบบเก่าที่มีแต่ข้อความรวม = ใส่ไว้ช่องตรวจร่างกาย
       const plain = !(e.cc || e.pe || e.dx || e.plan);
-      setF({ activities: e.activities ?? [], pain: e.pain ?? "", mobility: e.mobility ?? "", photos: [], cc: e.cc ?? "", pe: e.pe ?? (plain ? e.body ?? "" : ""), dx: e.dx ?? "", plan: e.plan ?? "",
+      setF({ activities: e.activities ?? [], pain: e.pain ?? "", adl: e.adl ?? "", mobility: e.mobility ?? "", photos: [], cc: e.cc ?? "", pe: e.pe ?? (plain ? e.body ?? "" : ""), dx: e.dx ?? "", plan: e.plan ?? "",
         vit: Object.fromEntries(Object.entries(e.vitals ?? {}).filter(([k]) => k !== "bmi").map(([k, v]) => [k, String(v)])), showVit: true, minutes: e.minutes != null ? String(e.minutes) : "" });
       return;
     }
-    setF({ activities: [], pain: target.last?.pain ?? "", mobility: target.last?.mobility ?? "", photos: [], vit: {}, cc: target.last?.cc ?? "", pe: "", dx: target.last?.dx ?? "", plan: "", showVit: true, minutes: "" });
+    setF({ activities: [], pain: target.last?.pain ?? "", adl: "", mobility: target.last?.mobility ?? "", photos: [], vit: {}, cc: target.last?.cc ?? "", pe: "", dx: target.last?.dx ?? "", plan: "", showVit: true, minutes: "" });
   }, [target]);
   if (!target || !f) return null;
   const t = target, ed = t.edit, needPhoto = !!t.visit && !ed, left = ed ? editLeft(ed) : null;
   const set = (p: Partial<F>) => setF({ ...f, ...p });
+  const adlN = Number(f.adl), adlOk = f.adl.trim() !== "" && Number.isInteger(adlN) && adlN >= 0 && adlN <= 20 ? String(adlN) : "";
   const stamp = (u: string) => stampFor(u, "กายภาพ", t.residentName, t.room, user?.name ?? "");
   const vitals = (): Vitals => {
     const o: Vitals = {};
@@ -96,7 +97,7 @@ export default function PhysioRecordModal({ target, testMode = false, onClose, o
     setBusy(true);
     if (ed) {
       const r = await fetch("/api/clinic", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
-        op: "physio_edit", id: ed.id, body, data: { pain: f.pain, plan: f.plan, mobility: f.mobility, activities: f.activities, vitals: v, cc: f.cc, pe: f.pe, dx: f.dx, minutes: f.minutes.trim() ? Number(f.minutes) : null },
+        op: "physio_edit", id: ed.id, body, data: { pain: f.pain, adl: adlOk, plan: f.plan, mobility: f.mobility, activities: f.activities, vitals: v, cc: f.cc, pe: f.pe, dx: f.dx, minutes: f.minutes.trim() ? Number(f.minutes) : null },
       }) });
       const x = await r.json().catch(() => ({}));
       setBusy(false);
@@ -106,7 +107,7 @@ export default function PhysioRecordModal({ target, testMode = false, onClose, o
     }
     const r = await fetch("/api/clinic", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
       op: "course_use", courseId: t.courseId, ...(t.visit ? { visitId: t.visit.id, photos: f.photos } : {}), body,
-      data: { pain: f.pain, plan: f.plan, mobility: f.mobility, minutes: t.visit ? since(t.visit.iso) || null : null, activities: f.activities, vitals: v, cc: f.cc, pe: f.pe, dx: f.dx },
+      data: { pain: f.pain, adl: adlOk, plan: f.plan, mobility: f.mobility, minutes: t.visit ? since(t.visit.iso) || null : null, activities: f.activities, vitals: v, cc: f.cc, pe: f.pe, dx: f.dx },
     }) });
     const x = await r.json().catch(() => ({}));
     setBusy(false);
@@ -179,6 +180,7 @@ export default function PhysioRecordModal({ target, testMode = false, onClose, o
           <div className="pk-pain">{Array.from({ length: 11 }, (_, i) => String(i)).map((v) => (
             <button key={v} type="button" aria-pressed={f.pain === v} className={f.pain === v ? "is-on" : ""} onClick={() => set({ pain: f.pain === v ? "" : v })}>{v}</button>
           ))}</div>
+          <label className="pk-num pk-mins"><span>ADL (Barthel 0–20) · ไม่บังคับ</span><span className="pk-num-in"><input type="number" inputMode="numeric" min={0} max={20} value={f.adl} onChange={(e) => set({ adl: e.target.value })} aria-label="ADL Barthel 0 ถึง 20" placeholder="-" /><em>คะแนน</em></span></label>
         </section>
 
         {needPhoto && <section className="pk-step">

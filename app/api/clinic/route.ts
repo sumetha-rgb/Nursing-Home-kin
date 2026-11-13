@@ -94,6 +94,15 @@ export async function GET(req: NextRequest) {
   const q = req.nextUrl.searchParams;
   try {
     switch (q.get("op")) {
+      case "home_program": {
+        // โปรแกรมออกกำลังกายที่บ้าน (ใช้อยู่) + ญาติติ๊กทำแล้วกี่ท่าต่อวัน 14 วันล่าสุด
+        if (!canRead(me) && !canPhysio(me)) return forbidden();
+        const o = await residentOf(me, q.get("resident") ?? "");
+        if (!o.r) return o.res;
+        const [pg] = (await sql`SELECT id, items, created_by, to_char(updated_at AT TIME ZONE 'Asia/Bangkok', 'YYYY-MM-DD HH24:MI') AS at FROM home_programs WHERE resident_id = ${o.r.id} AND active ORDER BY updated_at DESC LIMIT 1`) as { id: string; items: unknown; created_by: string; at: string }[];
+        const log = pg ? await sql`SELECT done_date::text AS d, count(*)::int AS n FROM home_program_logs WHERE program_id = ${pg.id} AND done_date > (now() AT TIME ZONE 'Asia/Bangkok')::date - 14 GROUP BY 1 ORDER BY 1 DESC` : [];
+        return NextResponse.json({ program: pg ?? null, log });
+      }
       case "physio_board": {
         if (!canPhysio(me)) return forbidden();
         const br = scoped(me) ? me.branch : q.get("branch") || null;
@@ -119,7 +128,13 @@ export async function GET(req: NextRequest) {
               ORDER BY s.full_name`),
           sql(`SELECT n.data->>'course_id' AS course_id, n.resident_name, n.author, to_char(n.created_at AT TIME ZONE 'Asia/Bangkok', 'HH24:MI') AS at, n.data->>'pain' AS pain
               FROM clinical_notes n WHERE n.kind = 'physio' AND (n.created_at AT TIME ZONE 'Asia/Bangkok')::date = ${BKK_TODAY} ${wOr("n.branch_name", "n.author")} ${br ? "" : "AND $1::text IS NOT NULL"} ORDER BY n.created_at`, pn),
-          sql(`SELECT coalesce(n.author, '-') AS author, count(*)::int AS n FROM clinical_notes n
+          // ผลงานเดือนนี้ต่อผู้บันทึก: ครั้ง · ชั่วโมงที่ทำ (นาทีที่แก้ไว้ > เช็คอินถึงบันทึก > นาทีที่บันทึก) · จำนวนเคส · ครั้งที่ทำแทน (ไม่ใช่ผู้รับผิดชอบหลักของคอร์ส)
+          sql(`SELECT coalesce(n.author, '-') AS author, count(*)::int AS n,
+                round(coalesce(sum(coalesce((n.data->>'minutes_fixed')::numeric, extract(epoch FROM v.done_at - v.checkin_at) / 60, (n.data->>'minutes')::numeric)), 0) / 60, 1)::float AS hours,
+                count(DISTINCT n.data->>'course_id')::int AS cases,
+                count(*) FILTER (WHERE c.therapist_id IS NOT NULL AND s.full_name IS DISTINCT FROM n.author)::int AS sub
+              FROM clinical_notes n LEFT JOIN physio_visits v ON v.note_id = n.id
+                LEFT JOIN physio_courses c ON c.id = n.data->>'course_id' LEFT JOIN staff_users s ON s.id = c.therapist_id
               WHERE n.kind = 'physio' AND date_trunc('month', n.created_at AT TIME ZONE 'Asia/Bangkok') = date_trunc('month', now() AT TIME ZONE 'Asia/Bangkok') ${wOr("n.branch_name", "n.author")} ${br ? "" : "AND $1::text IS NOT NULL"} GROUP BY 1 ORDER BY 2 DESC`, pn),
         ]);
         const [{ d }] = (await sql(`SELECT ${BKK_TODAY}::text AS d`)) as { d: string }[];
@@ -155,11 +170,11 @@ export async function GET(req: NextRequest) {
       }
       case "physio_history": {
         if (!canRead(me) && !canPhysio(me)) return forbidden();
-        const [c] = (await sql`SELECT id, branch_name, therapist_id, plan_slots FROM physio_courses WHERE id = ${q.get("course") ?? ""}`) as { id: string; branch_name: string; therapist_id: string | null; plan_slots: unknown }[];
+        const [c] = (await sql`SELECT id, branch_name, therapist_id, plan_slots, resident_name, name, total, used FROM physio_courses WHERE id = ${q.get("course") ?? ""}`) as { id: string; branch_name: string; therapist_id: string | null; plan_slots: unknown; resident_name: string; name: string; total: number; used: number }[];
         if (!c) return bad("ไม่พบคอร์ส", 404);
         if (scoped(me) && c.branch_name !== me.branch && !inTeam(c, me.id)) return forbidden();
         if (onlyMine(me) && !inTeam(c, me.id)) return forbidden("ดูได้เฉพาะเคสของคุณ");
-        const items = await sql(`SELECT n.id, n.title, n.body, n.author, ${TH_AT("n.created_at")} AS at, n.data->>'pain' AS pain, n.data->>'mobility' AS mobility, n.data->>'plan' AS plan,
+        const items = await sql(`SELECT n.id, n.title, n.body, n.author, ${TH_AT("n.created_at")} AS at, n.data->>'pain' AS pain, n.data->>'adl' AS adl, n.data->>'mobility' AS mobility, n.data->>'plan' AS plan,
               n.data->'activities' AS activities, n.data->'vitals' AS vitals, n.data->>'cc' AS cc, n.data->>'pe' AS pe, n.data->>'dx' AS dx,
               v.id AS visit_id, ${HM("v.checkin_at")} AS checkin, ${HM("v.done_at")} AS done,
               coalesce((n.data->>'minutes_fixed')::int, round(extract(epoch FROM v.done_at - v.checkin_at) / 60)::int, (n.data->>'minutes')::int) AS minutes, ${WORK_N("v.work_photo")} AS work_n,
@@ -167,7 +182,7 @@ export async function GET(req: NextRequest) {
               to_char(n.created_at + interval '7 days', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS edit_until
             FROM clinical_notes n LEFT JOIN physio_visits v ON v.note_id = n.id
             WHERE n.kind = 'physio' AND n.data->>'course_id' = $1 ORDER BY n.created_at DESC`, [c.id]);
-        return NextResponse.json({ items });
+        return NextResponse.json({ items, course: { name: c.name, total: c.total, used: c.used, branch: c.branch_name, resident: c.resident_name } });
       }
       case "physio_photo": {
         if (!canRead(me) && !canPhysio(me)) return forbidden();
@@ -276,6 +291,25 @@ export async function POST(req: NextRequest) {
   const b = (await req.json().catch(() => ({}))) as Record<string, unknown>;
   try {
     switch (b.op) {
+      case "home_program_save": {
+        // ตั้ง/แก้โปรแกรมออกกำลังกายที่บ้าน: นักกายภาพ (สิทธิ์บันทึกกายภาพ) หรือผู้จัดการ · items ว่าง = หยุดโปรแกรม
+        if (!can(me, "physio.record") && !isBoss(me)) return forbidden("ตั้งโปรแกรมได้เฉพาะนักกายภาพหรือผู้จัดการสาขา");
+        const o = await residentOf(me, String(b.residentId ?? ""));
+        if (!o.r) return o.res;
+        const items = (Array.isArray(b.items) ? b.items : []).slice(0, 12).map((x) => obj(x)).map((x) => ({ name: text(x.name, 80), reps: text(x.reps, 60), note: text(x.note, 200) })).filter((x) => x.name);
+        const [cur] = (await sql`SELECT id FROM home_programs WHERE resident_id = ${o.r.id} AND active ORDER BY updated_at DESC LIMIT 1`) as { id: string }[];
+        if (!items.length) {
+          if (cur) await sql`UPDATE home_programs SET active = false, updated_at = now() WHERE id = ${cur.id}`;
+          await audit(req, me, [{ area: "home_programs", action: "delete", recordId: cur?.id ?? null, summary: `หยุดโปรแกรมออกกำลังกายที่บ้าน · ${o.r.full_name}`, branch: o.r.branch_name }]);
+          return NextResponse.json({ ok: true });
+        }
+        // แก้ท่าเดิม = แถวเดิม (ประวัติการติ๊กของญาติยังอยู่) · ยังไม่มี = สร้างใหม่
+        const id = cur?.id ?? randomUUID();
+        if (cur) await sql`UPDATE home_programs SET items = ${JSON.stringify(items)}::jsonb, created_by = ${me.name}, updated_at = now() WHERE id = ${id}`;
+        else await sql`INSERT INTO home_programs (id, resident_id, resident_name, branch_name, items, created_by) VALUES (${id}, ${o.r.id}, ${o.r.full_name}, ${o.r.branch_name}, ${JSON.stringify(items)}::jsonb, ${me.name})`;
+        await audit(req, me, [{ area: "home_programs", action: cur ? "update" : "create", recordId: id, summary: `โปรแกรมออกกำลังกายที่บ้าน ${items.length} ท่า · ${o.r.full_name}`, branch: o.r.branch_name }]);
+        return NextResponse.json({ ok: true, id });
+      }
       case "admission": {
         if (!canRead(me)) return forbidden();
         const o = await residentOf(me, String(b.residentId ?? ""));
@@ -329,9 +363,11 @@ export async function POST(req: NextRequest) {
           if (!why) return bad("กรุณาระบุเหตุผลที่ให้คอร์สฟรี");
           name = `${name} (ฟรี: ${why})`.slice(0, 200);
         }
+        // รหัสในใบราคา (เลือกคอร์สจากใบราคา)
+        const code = text(b.priceCode, 20) || null;
         const id = randomUUID();
-        await sql`INSERT INTO physio_courses (id, resident_id, resident_name, branch_name, name, total, price, created_by) VALUES (${id}, ${o.r.id}, ${o.r.full_name}, ${o.r.branch_name}, ${name}, ${total}, ${price}, ${me.name})`;
-        await audit(req, me, [{ area: "physio", action: "create", recordId: id, summary: `คอร์ส ${name} ${total} ครั้ง · ${o.r.full_name}`, branch: o.r.branch_name }]);
+        await sql`INSERT INTO physio_courses (id, resident_id, resident_name, branch_name, name, total, price, created_by, price_code) VALUES (${id}, ${o.r.id}, ${o.r.full_name}, ${o.r.branch_name}, ${name}, ${total}, ${price}, ${me.name}, ${code})`;
+        await audit(req, me, [{ area: "physio", action: "create", recordId: id, summary: `คอร์ส ${name} ${total} ครั้ง${code ? ` (${code})` : ""} · ${o.r.full_name}`, branch: o.r.branch_name }]);
         return NextResponse.json({ ok: true, id });
       }
       case "course_use": {
@@ -514,7 +550,7 @@ export async function POST(req: NextRequest) {
         if (!n.fresh) return bad("แก้ไขได้ภายใน 7 วันหลังบันทึกเท่านั้น", 409);
         if (n.author !== me.name && !isBoss(me)) return forbidden("แก้ไขได้เฉพาะผู้บันทึก หรือผู้จัดการสาขา");
         if (scoped(me) && n.branch_name !== me.branch && n.author !== me.name) return forbidden();
-        const d = obj(b.data), KEYS = ["pain", "plan", "mobility", "activities", "vitals", "cc", "pe", "dx"] as const;
+        const d = obj(b.data), KEYS = ["pain", "adl", "plan", "mobility", "activities", "vitals", "cc", "pe", "dx"] as const;
         const changed: Record<string, unknown> = Object.fromEntries(KEYS.filter((k) => k in d).map((k) => [k, d[k]]));
         const mins = Number(d.minutes);
         if (d.minutes !== undefined && d.minutes !== null && d.minutes !== "") {

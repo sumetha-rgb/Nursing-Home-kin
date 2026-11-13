@@ -12,7 +12,7 @@ import { usePriceList } from "@/lib/usePrices";
 import { downloadCsv, fetchKey } from "@/lib/store";
 import { DRAFT, Invoice, invoiceBranch, isCN, isOpen, todayIso, VOID } from "@/lib/billing";
 import { exportInvoiceLines, exportPayments } from "@/lib/billingExport";
-import { closesCsv, CloseRow, debtorsCsv, debtorsOf, personKey, salesItemsCsv, spendLines, spendLinesCsv, spendPeople, spendSummaryCsv, serviceLinesCsv } from "@/lib/exportsCsv";
+import { debtorsCsv, debtorsOf, personKey, salesItemsCsv, spendLines, spendLinesCsv, spendPeople, spendSummaryCsv, serviceLinesCsv } from "@/lib/exportsCsv";
 import { CATS, PriceItem, rateCode } from "@/lib/priceList";
 import { apptIso, apptKey, nowTh } from "@/lib/appointments";
 import { invoiceDocsCsv } from "@/lib/exportsCsv";
@@ -61,13 +61,6 @@ const GROUPS: Group[] = [
       run: async (c) => { const { list, branchOf } = await invoicesWithBranch(c); return exportInvoiceLines(list.filter((x) => c.inRange(x.date)), branchOf, `การเงิน-รายการในใบ-${c.tag}`); } },
     { id: "pays", t: "การรับเงินรายงวด", d: "วันที่รับ เงินสด โอน บัตร ผู้รับเงิน และมีสลิปไหม", rng: true, perms: ["billing"],
       run: (c) => exportPayments(c.branch, `การเงิน-การรับเงินรายงวด-${c.tag}`, c.inRange) },
-    { id: "closes", t: "ปิดยอดรายวัน", d: "เงินสดในระบบเทียบที่นับได้ ส่วนต่าง ผู้ปิดยอด ผู้รับรอง (ย้อนหลังได้ 3 เดือน)", rng: true, perms: ["billing"],
-      run: async (c) => {
-        const r = await fetch(`/api/billing?op=closes${c.branch ? `&branch=${encodeURIComponent(c.branch)}` : ""}`, { cache: "no-store" });
-        const d = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(d.error || "ดึงข้อมูลการปิดยอดไม่สำเร็จ");
-        return closesCsv(((d.items ?? []) as CloseRow[]).filter((x) => (!c.branch || x.branch === c.branch) && c.inRange(x.date)), `ปิดยอดรายวัน-${c.tag}`);
-      } },
     { id: "aging", t: "ลูกหนี้ค้างชำระตามอายุหนี้", d: "ใบที่ยังชำระไม่ครบ แยก 0–30 / 31–60 / 61–90 / เกิน 90 วัน รายคน", perms: ["billing"],
       run: async (c) => { const { list, branchOf } = await invoicesWithBranch(c); return debtorsCsv(debtorsOf(list.filter((x) => x.status !== VOID), branchOf).debtors, `ลูกหนี้ตามอายุหนี้-${todayIso()}${c.branch ? `-${c.branch}` : ""}`); } },
     { id: "monthly", t: "สรุปการเงินรายเดือน (12 เดือน)", d: "ยอดออกใบ ส่วนลด รับชำระ ต่อเดือน", perms: ["dashboard"], link: { view: "dashboard", where: "ภาพรวมและรายงาน › แท็บการเงิน" } },
@@ -217,7 +210,7 @@ export function Exports() {
               <select className="!w-auto" value={branch} onChange={(e) => setBranch(e.target.value)}><option value="">ทุกสาขา</option>{branches.map((b) => <option key={b}>{b}</option>)}</select></label>}
             <label className="relative block"><span className="label">ค้นหาไฟล์</span>
               <Icon name="search" className="pointer-events-none absolute bottom-3 left-3 h-4 w-4 text-gold-400" />
-              <input type="search" className="!pl-9" value={q} onChange={(e) => setQ(e.target.value)} placeholder="เช่น ปิดยอด สัญญา เวร" /></label>
+              <input type="search" className="!pl-9" value={q} onChange={(e) => setQ(e.target.value)} placeholder="เช่น ลูกหนี้ สัญญา เวร" /></label>
           </div>
           <p className="ex-note">ไฟล์ที่มีป้าย "ตามช่วงวันที่" ส่งออกช่วง <b>{rangeText}</b> · สาขา <b>{branchText}</b> · ไฟล์อื่นส่งออกข้อมูลปัจจุบันทั้งหมด</p>
         </section>

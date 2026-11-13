@@ -45,7 +45,7 @@ type Step = { t: string; d: string; link?: string; href?: string; go?: ViewId };
 
 const ADMISSION: Step[] = [
   { t: "ประเมินและเสนอราคา", d: "ทำใบประเมินระดับการดูแลและใบเสนอราคา พิมพ์ให้ญาติพิจารณา", link: "ใบเสนอราคา / แผนดูแล", go: "quotations" },
-  { t: "เปิดสัญญา", d: "กด \"เปิดสัญญา\" จากใบเสนอราคา ข้อมูลผู้รับบริการและราคาตามไปให้ ไม่ต้องกรอกซ้ำ", link: "สัญญาบริการ", go: "contracts" },
+  { t: "เปิดสัญญา", d: "กด \"ทำสัญญาจากใบนี้\" ที่ใบเสนอราคา ข้อมูลผู้รับบริการและราคาตามไปให้ ไม่ต้องกรอกซ้ำ", link: "สัญญาบริการ", go: "contracts" },
   { t: "เพิ่มผู้รับบริการเข้าห้อง", d: "เลือกห้องและเตียงที่ว่าง แล้วกด \"เพิ่มผู้รับบริการเข้าห้อง\"", link: "ห้องพักและเตียง", go: "rooms" },
   { t: "แรกรับและประเมิน", d: "เปิดประวัติผู้รับบริการ แท็บ \"แรกรับ/ประเมิน\" บันทึกอาการแรกรับ โรคประจำตัว และความเสี่ยง", link: "ผู้รับบริการ", go: "residents" },
   { t: "นำยาเข้าตะกร้า", d: "ยาที่ญาตินำมา ถ่ายรูปฉลากแล้วกรอกมื้อยา · ยาของศูนย์ เลือกเบิกจากคลังกลาง", link: "เปิดห้องยา", href: "/pharmacy?page=inventory" },
@@ -393,6 +393,8 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, co
   const branchNames = useBranchNames();
   const { go, toast } = useApp();
   const { user } = useSession();
+  /** ผู้จัดการ/พนักงานสาขาเดียว: เลือกสาขาของตัวเองไว้ให้ (ผู้บริหารเลือกเอง) */
+  const myBranch = user?.role !== "Global Admin" && user?.branch && branchNames.includes(user.branch) ? user.branch : branchNames.length === 1 ? branchNames[0] : "";
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
   /** ห้องที่กด "ราคาถูกแล้ว" (ไม่เตือนค่าห้องไม่ตรงซ้ำ) */
   const [priceOk, setPriceOk] = useState("");
@@ -463,21 +465,47 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, co
   const liveOf = (name: string, branch: string) => (!renewing ? contracts.find((c) => c !== initial && !(completing && c[0] && c[0] === initial?.[0]) && norm(c[2] ?? "") === name && c[1] === branch && isLive(c)) : undefined);
   const curBranch = () => String((formRef.current?.elements.namedItem("branch") as HTMLSelectElement | null)?.value ?? "").trim();
   /** ขั้น 1: ปัญหาแรกที่ต้องแก้ก่อนไปกรอกค่าใช้จ่าย (ลำดับเดิม) · ชื่อผู้จ้าง/ผู้รับบริการเป็นช่องบังคับ (*) ตรวจด้วยกันที่นี่ */
-  const check1 = (): FormProblem | null => {
-    if (!booking && endDate && endDate < start) return { msg: "วันสิ้นสุดสัญญาต้องไม่ก่อนวันเริ่มสัญญา", field: "วันสิ้นสุดสัญญา" };
-    if (booking) { /* มัดจำค่าห้อง: ประวัติแพ้ยา/อาหารกรอกตอนเปิดสัญญา */ }
-    else if (!drugA.trim()) return { msg: `กรุณาระบุประวัติแพ้ยา หรือกด "${NO_ALLERGY}"`, field: "ประวัติแพ้ยา" };
-    else if (!foodA.trim()) return { msg: `กรุณาระบุประวัติแพ้อาหาร หรือกด "${NO_ALLERGY}"`, field: "ประวัติแพ้อาหาร" };
+  const check1All = (): FormProblem[] => {
+    const out: FormProblem[] = [];
+    if (!booking && endDate && endDate < start) out.push({ msg: "วันสิ้นสุดสัญญาต้องไม่ก่อนวันเริ่มสัญญา", field: "วันสิ้นสุดสัญญา" });
+    // มัดจำค่าห้อง: ประวัติแพ้ยา/อาหารกรอกตอนเปิดสัญญา
+    if (!booking && !drugA.trim()) out.push({ msg: `ประวัติแพ้ยา (หรือกด "${NO_ALLERGY}")`, field: "ประวัติแพ้ยา" });
+    if (!booking && !foodA.trim()) out.push({ msg: `ประวัติแพ้อาหาร (หรือกด "${NO_ALLERGY}")`, field: "ประวัติแพ้อาหาร" });
     const branch = curBranch();
-    if (!branch) return { msg: "กรุณาเลือกสาขา", field: "สาขา (Branch)" };
-    if (!norm(boss)) return { msg: "กรุณากรอกชื่อ นามสกุล ผู้จ้าง", field: renewing ? "ชื่อ นามสกุล ผู้จ้าง" : "ชื่อผู้ว่าจ้าง" };
-    if (!norm(who)) return { msg: "กรุณากรอกชื่อ นามสกุล ผู้รับบริการ", field: "ชื่อผู้รับบริการ" };
-    const live = liveOf(norm(who), branch);
-    return live ? { msg: "", live } : null;
+    if (!branch) out.push({ msg: "สาขา", field: "สาขา (Branch)" });
+    if (!norm(boss)) out.push({ msg: "ชื่อ นามสกุล ผู้จ้าง", field: renewing ? "ชื่อ นามสกุล ผู้จ้าง" : "ชื่อผู้ว่าจ้าง" });
+    if (!norm(who)) out.push({ msg: "ชื่อ นามสกุล ผู้รับบริการ", field: "ชื่อผู้รับบริการ" });
+    if (!out.length) { const live = liveOf(norm(who), branch); if (live) out.push({ msg: "", live }); }
+    return out;
   };
-  /** ขั้น 2: รายการค่าบริการ */
-  const check2 = (): FormProblem | null =>
-    !booking && items.some((x) => x.desc.trim() && (!(x.qty > 0) || x.price < 0)) ? { msg: "กรุณาตรวจจำนวนและราคาของรายการค่าบริการ · จำนวนต้องมากกว่า 0 และราคาต้องไม่ติดลบ" } : null;
+  const check1 = (): FormProblem | null => check1All()[0] ?? null;
+  /** ขั้น 2: รายการค่าบริการ · ค่าห้องต้องไม่เป็น 0 (ยกเว้นสัญญาที่มีแต่รายการบริการที่คิดเงิน) */
+  const check2All = (): FormProblem[] => {
+    const out: FormProblem[] = [];
+    if (booking) return out;
+    if (!(feeN > 0) && !items.some((x) => x.desc.trim() && svcNet(x) > 0)) out.push({ msg: "ค่าห้อง (ยังเป็น 0 · เลือกห้องจากใบราคา หรือกำหนดราคาเอง)", field: "ค่าห้อง" });
+    if (items.some((x) => x.desc.trim() && (!(x.qty > 0) || x.price < 0))) out.push({ msg: "จำนวนและราคาของรายการค่าบริการ (จำนวนต้องมากกว่า 0 ราคาต้องไม่ติดลบ)" });
+    return out;
+  };
+  /** ช่องบังคับที่ยังว่าง/ไม่ถูกต้องในขั้นที่เห็นอยู่ (อ่านจากหน้าจอ ไม่ให้เบราว์เซอร์เด้งทีละช่อง) */
+  const nativeMissing = (): FormProblem[] => {
+    const f = formRef.current;
+    if (!f) return [];
+    return [...f.querySelectorAll<HTMLInputElement>("input, select, textarea")]
+      .filter((el) => !el.disabled && el.offsetParent !== null && !el.validity.valid)
+      .map((el) => { const field = el.getAttribute("aria-label") ?? ""; return { msg: field ? (el.validity.valueMissing ? field : `${field} · ${el.title || el.validationMessage}`) : "ช่องที่มีเครื่องหมาย *", field: field || undefined, el }; });
+  };
+  /** รวมปัญหาทั้งหมดของขั้น เรียงตามตำแหน่งบนหน้าจอ (บนลงล่าง) · ช่องเดียวกันไม่ซ้ำ */
+  const stepProblems = (): FormProblem[] => {
+    const own = step === 1 ? check1All() : step === 2 ? check2All() : [];
+    const live = own.find((p) => p.live);
+    if (live) return [live];
+    const nat = nativeMissing();
+    const all = [...nat, ...own.filter((p) => !p.field || !nat.some((n) => n.field === p.field))];
+    const at = (p: FormProblem) => p.el ?? (p.field ? formRef.current?.querySelector<HTMLElement>(`[aria-label="${p.field}"]`) : null) ?? null;
+    return all.map((p, i) => ({ p, i, el: at(p) }))
+      .sort((a, b) => (a.el && b.el && a.el !== b.el ? (a.el.compareDocumentPosition(b.el) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1) : a.i - b.i)).map((x) => x.p);
+  };
   /** ไปขั้นอื่น: ล้างกล่องแจ้งปัญหาของขั้นเดิม */
   const goStep = (s: 1 | 2 | 3 | 4) => { setStep(s); setTried(0); setInvalid(null); setSaveLive(null); window.scrollTo(0, 0); };
   /** เลื่อนไปและโฟกัสช่องที่ต้องแก้ (หาจาก aria-label) */
@@ -497,7 +525,7 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, co
 
   /** ขั้น 1 → 2: ตรวจรายละเอียดแล้วไปกรอกค่าใช้จ่าย */
   const toCosts = () => {
-    if (check1()) { setTried((n) => n + 1); return; }
+    if (stepProblems().length) { setTried((n) => n + 1); return; }
     const r = buildRow();
     if (r[2] !== row?.[2] || r[1] !== row?.[1]) { setSamePerson(""); setSuffix(""); }
     setRow(r);
@@ -508,7 +536,7 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, co
 
   /** ขั้น 2 → 3: ตรวจค่าใช้จ่ายแล้วไปเลือกห้อง */
   const toRooms = () => {
-    if (check2()) { setTried((n) => n + 1); return; }
+    if (stepProblems().length) { setTried((n) => n + 1); return; }
     const r = buildRow();
     setRow(r);
     // ผู้รับบริการที่มีห้องอยู่แล้ว (ต่อสัญญา): เลือกห้องเดิมไว้ให้
@@ -617,8 +645,7 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, co
   const roomMsg = pickIssue?.msg || (tried && triedRoom ? roomIssue() : "");
   const live3 = (step === 3 || step === 4) && tried && row ? liveOf(finalName, row[1]) ?? saveLive ?? undefined : undefined;
   /** ปัญหาของขั้น 1-2 ที่แสดงเหนือปุ่ม (ช่องที่เบราว์เซอร์ตรวจไม่ผ่านก่อน) */
-  const stepProblem: FormProblem | null = invalid ? { msg: invalid.msg, el: invalid.el, field: invalid.field || undefined }
-    : !tried ? null : step === 1 ? check1() : step === 2 ? check2() : null;
+  const problems = tried && step <= 2 ? stepProblems() : [];
   const backToName = () => { goStep(1); setTimeout(() => focusField("ชื่อผู้รับบริการ"), 50); };
   /** ชื่อนี้มีสัญญาใช้งานอยู่แล้ว: ทางออก = ต่อสัญญาฉบับเดิม / ดูสัญญาเดิม / แก้ชื่อ (คนละคนที่ชื่อซ้ำ) */
   const liveBox = (live: string[]) => {
@@ -648,7 +675,7 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, co
           .map(([s, t], k) => <span key={s} className={step === s ? "is-active" : ""} aria-current={step === s ? "step" : undefined}><b>{k + 1}</b>{t}</span>)}
       </div>
 
-      <form ref={formRef} className={`space-y-8 ${step >= 3 ? "hidden" : ""}`} onSubmit={(e) => { e.preventDefault(); if (step === 1) toCosts(); else toRooms(); }}
+      <form ref={formRef} noValidate className={`space-y-8 ${step >= 3 ? "hidden" : ""}`} onSubmit={(e) => { e.preventDefault(); if (step === 1) toCosts(); else toRooms(); }}
         onInvalidCapture={onInvalid} onChangeCapture={() => { if (invalid?.el.validity.valid) setInvalid(null); if (tried) rerender((n) => n + 1); }}>
         <div className={step === 1 ? "space-y-8" : "hidden"}>
         {!renewing && !completing && <label className={`booking-toggle ${booking ? "is-on" : ""}`}>
@@ -657,7 +684,7 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, co
             <small>กรอกแค่สาขา ผู้ว่าจ้าง ผู้รับบริการ แล้วเลือกห้อง/เตียงที่จะจอง · ระบบออกใบแจ้งหนี้มัดจำให้ · ข้อมูลอื่นกรอกตอนกด &quot;เปิดสัญญา&quot; ทีหลัง</small></span>
         </label>}
         <div className="grid gap-4 md:grid-cols-2">
-          <Field label="สาขา (Branch)" required className="md:col-span-2"><select name="branch" defaultValue={d(1) ?? ""}><option value="">-- กรุณาเลือกสาขา --</option>{branchNames.map((b) => <option key={b}>{b}</option>)}</select></Field>
+          <Field label="สาขา (Branch)" required className="md:col-span-2"><select key={myBranch} name="branch" aria-label="สาขา (Branch)" required defaultValue={d(1) ?? myBranch}><option value="">-- กรุณาเลือกสาขา --</option>{branchNames.map((b) => <option key={b} value={b}>{b}{b === myBranch ? " (สาขาของคุณ)" : ""}</option>)}</select></Field>
           {booking && <h3 className="booking-group md:col-span-2">ผู้ว่าจ้าง (ผู้วางมัดจำ)</h3>}
           <Field label="ชื่อ นามสกุล ผู้จ้าง" required>{lockNames ? <input value={boss} onChange={(e) => setBoss(e.target.value)} required />
             : <SuggestText value={boss} onChange={setBoss} options={[...new Set(contracts.map((c) => c[3]).filter((x) => x && x !== "-"))]} onPick={pickEmployer} label="ชื่อผู้ว่าจ้าง" placeholder="เช่น นายสมชาย ใจดี"
@@ -753,6 +780,7 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, co
                       className={`room-opt ${on ? "is-on" : ""}`} onClick={() => { setFeePick(String(i)); setFee(String(v)); setRoomPart(String(x.part[stay])); setRoomName(x.name); }}>
                       <span className="room-opt-name"><b>{th}</b>{en && <small>{en}</small>}</span>
                       <span className="room-opt-price"><b>{v ? v.toLocaleString() : "-"}</b><small>/{stay}{stay === "สัปดาห์" && !x.weekSet ? " (7 วัน)" : ""}</small>
+                        {stay === "เดือน" && x.promo > 0 && x.promo < x.month && <i className="room-opt-promo">ราคาโปร · ปกติ {x.month.toLocaleString()}</i>}
                         {stay !== "เดือน" && v > 0 && nStay > 0 && <em>{nStay} {stay} = {(v * nStay).toLocaleString()}</em>}</span>
                     </button>
                   );
@@ -844,7 +872,10 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, co
         </div>
 
         {/* ปัญหาที่ทำให้ไปขั้นถัดไปไม่ได้: ค้างไว้เหนือปุ่มจนกว่าจะแก้ */}
-        {stepProblem && calloutOf(stepProblem)}
+        {problems.length === 1 && calloutOf({ ...problems[0], msg: problems[0].live ? "" : `กรุณาแก้: ${problems[0].msg}` })}
+        {problems.length > 1 && <FormCallout focus="step" title={`ยังขาด ${problems.length} ช่อง · กดชื่อช่องเพื่อไปแก้`}>
+          <ul className="form-missing">{problems.map((p, i) => <li key={i}>{p.el || p.field ? <button type="button" onClick={() => focusField(p.el ?? p.field ?? "")}>{p.msg}</button> : <span>{p.msg}</span>}</li>)}</ul>
+        </FormCallout>}
         {step === 1 ? <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           <button type="button" className="btn-soft" onClick={onClose}>ยกเลิก</button>
           <button className="btn-primary" onClick={() => setInvalid(null)}>{booking ? "ถัดไป: เลือกห้องพัก" : "ถัดไป: ค่าใช้จ่าย"} <Icon name="arrow" className="h-4 w-4" /></button>
@@ -982,14 +1013,14 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, co
             <aside className="bill4-sum" aria-label="สรุป">
               <p className="bill4-sum-t">{booking ? "สรุปการจอง" : "สรุปใบแจ้งหนี้แรกเข้า"}</p>
               <dl>
-                <div><dt>ผู้เข้าพัก</dt><dd>{finalName}</dd></div>
+                <div><dt>ผู้รับบริการ</dt><dd>{finalName}</dd></div>
                 <div><dt>ผู้ว่าจ้าง</dt><dd>{r[3]}</dd></div>
                 <div><dt>สาขา</dt><dd>{r[1]}</dd></div>
                 <div><dt>ห้อง</dt><dd>{chosen === NO_ROOM ? "ยังไม่เลือก" : chosen}</dd></div>
                 <div><dt>{booking ? "เข้าพัก" : "เริ่มสัญญา"}</dt><dd>{start ? docDate(start) : "ยังไม่กำหนด"}</dd></div>
               </dl>
               <div className="bill4-total">
-                {vat > 0 && <p><span>รวม VAT</span><span>{money(vat)}</span></p>}
+                {vat > 0 && <p><span>ภาษีมูลค่าเพิ่ม (VAT)</span><span>{money(vat)}</span></p>}
                 <p className="is-big"><span>ยอดที่ต้องชำระ</span><b>{money(t.net)}</b></p>
                 {!booking && parts > 1 && t.net > 0 && <ol className="bill4-parts">{splitInstallments(t.net, parts).map((x, k) => <li key={k}><span>งวดที่ {k + 1}</span><span>{money(x)}</span></li>)}</ol>}
                 <span className={`bill4-out ${billMode === "pay" && b.items.length ? "is-pay" : ""}`}>{outcome}</span>
@@ -1404,7 +1435,7 @@ export function Contracts() {
    */
   const editFields = (c?: string[]) => withBranches(CONTRACT_FIELDS, branchNames).map((f, k) =>
     k === 1 || k === 2 ? { ...f, readOnly: true }
-    : k === 5 ? (c && ended(c) ? { ...f, readOnly: true } : { ...f, label: "สถานะ (สิ้นสุดใช้ปุ่ม D/C กลับบ้าน · ยกเลิกใช้ปุ่มยกเลิกสัญญา)", options: LIVE_CONTRACT })
+    : k === 5 ? (c && ended(c) ? { ...f, readOnly: true } : { ...f, label: "สถานะ (สิ้นสุดใช้ปุ่ม จำหน่ายออก (D/C) · ยกเลิกใช้ปุ่มยกเลิกสัญญา)", options: LIVE_CONTRACT })
     : f);
   const shown = rows.map((r, i) => ({ r, i })).filter(({ r }) => filter.startsWith("ทั้งหมด") || r[5] === filter);
   /** ส่งออกทะเบียนสัญญาตามแท็บที่เลือก (ผู้จัดการขึ้นไป) · มีเลขบัตรประชาชนและที่อยู่ จึงบันทึกในบันทึกการใช้งานระบบทุกครั้ง */
@@ -1440,22 +1471,22 @@ export function Contracts() {
           onRow={(k) => setDlg({ mode: "view", i: shown[k].i })} rowLabel="กดเพื่อดูรายละเอียดสัญญา"
           actions={[
             // ปุ่มหลักปุ่มเดียวตามสถานะ: รอชำระมัดจำ (ยังไม่มีใบ) = ออกใบแจ้งหนี้ · ใช้งานอยู่แต่เดือนนี้ยังไม่ออกใบ = ออกใบเดือนนี้ · ใช้งานปกติ = พิมพ์สัญญา (ปุ่มรอง)
-            { label: "เปิดสัญญา", tone: "primary", hidden: (k) => primaryOf(shown[k].r) !== "complete", onClick: (k) => { setComplete(shown[k].i); window.scrollTo(0, 0); } },
+            { label: "เริ่มใช้สัญญา (รับมัดจำ)", tone: "primary", hidden: (k) => primaryOf(shown[k].r) !== "complete", onClick: (k) => { setComplete(shown[k].i); window.scrollTo(0, 0); } },
             { label: "ออกใบแจ้งหนี้", tone: "primary", hidden: (k) => primaryOf(shown[k].r) !== "deposit", onClick: (k) => billContract(shown[k].i) },
             { label: "ออกใบเดือนนี้", tone: "primary", hidden: (k) => primaryOf(shown[k].r) !== "month", onClick: (k) => billContract(shown[k].i) },
             { label: "พิมพ์สัญญา", tone: "ghost", hidden: (k) => primaryOf(shown[k].r) !== "print", onClick: (k) => setDoc({ kind: "contract", i: shown[k].i }) },
             { label: "รายละเอียด", more: true, onClick: (k) => setDlg({ mode: "view", i: shown[k].i }) },
             { label: "พิมพ์สัญญา", more: true, hidden: (k) => ["print", "complete"].includes(primaryOf(shown[k].r)), onClick: (k) => setDoc({ kind: "contract", i: shown[k].i }) },
             { label: "พิมพ์ใบมัดจำค่าห้อง", more: true, hidden: (k) => !bookingInvoiceOf(shown[k].r, invoices), onClick: (k) => setDoc({ kind: "deposit", id: ids[shown[k].i] }) },
-            { label: "เปิดสัญญา (กรอกให้ครบ)", more: true, hidden: (k) => shown[k].r[5] !== WAIT_DEPOSIT || primaryOf(shown[k].r) === "complete", onClick: (k) => { setComplete(shown[k].i); window.scrollTo(0, 0); } },
+            { label: "เริ่มใช้สัญญา (กรอกให้ครบ)", more: true, hidden: (k) => shown[k].r[5] !== WAIT_DEPOSIT || primaryOf(shown[k].r) === "complete", onClick: (k) => { setComplete(shown[k].i); window.scrollTo(0, 0); } },
             { label: "ออกใบแจ้งหนี้", more: true, hidden: (k) => !can(user, "billing") || ended(shown[k].r) || ["deposit", "month", "complete"].includes(primaryOf(shown[k].r)), onClick: (k) => billContract(shown[k].i) },
             { label: "แก้ไข", more: true, onClick: (k) => setDlg({ mode: "edit", i: shown[k].i }) },
             { label: "ปรับเป็นราคาห้องรวม VAT", more: true, hidden: (k) => ended(shown[k].r) || !isOldRoomPricing(shown[k].r) || !can(user, "billing"), onClick: (k) => repriceRoom(shown[k].i) },
             { label: "รูปบัตร", more: true, onClick: (k) => openCards(shown[k].i) },
             { label: "ต่อสัญญา", more: true, hidden: (k) => ended(shown[k].r) || isBookingRow(shown[k].r), onClick: (k) => setRenew(shown[k].i) },
-            { label: "D/C กลับบ้าน", more: true, hidden: (k) => ended(shown[k].r), onClick: (k) => [CANCELLED, "สิ้นสุดสัญญา"].includes(shown[k].r[5]) ? toast("ไม่สามารถ D/C ได้ สัญญานี้สิ้นสุดหรือถูกยกเลิกแล้ว") : setDc({ i: shown[k].i, date: todayIso(), reason: DC_REASONS[0] }) },
+            { label: "จำหน่ายออก (D/C)", more: true, hidden: (k) => ended(shown[k].r), onClick: (k) => [CANCELLED, "สิ้นสุดสัญญา"].includes(shown[k].r[5]) ? toast("ไม่สามารถจำหน่ายออกได้ สัญญานี้สิ้นสุดหรือถูกยกเลิกแล้ว") : setDc({ i: shown[k].i, date: todayIso(), reason: DC_REASONS[0] }) },
             { label: "ยกเลิกสัญญา", danger: true, more: true, hidden: (k) => shown[k].r[5] === CANCELLED, onClick: (k) => cancel(shown[k].i) },
-            ...(can(user, "contracts.delete") ? [{ label: "ลบ", danger: true, more: true, onClick: (k: number) => confirm({ title: "ลบสัญญา", message: `ต้องการลบสัญญา ${shown[k].r[0]} (${shown[k].r[2]}) ออกจากระบบใช่หรือไม่ ลบแล้วกู้คืนไม่ได้ (ดูย้อนหลังได้ที่บันทึกการใช้งานระบบ) ถ้าแค่ไม่ใช้สัญญานี้แล้ว แนะนำให้กด "ยกเลิกสัญญา" แทน`, danger: true, okLabel: "ลบ", onOk: () => { const c = shown[k].r; remove(shown[k].i); toast(`ลบสัญญาแล้ว · ${c[0] || ""} ${c[2]}`.trim()); } }) }] : []),
+            ...(can(user, "contracts.delete") ? [{ label: "ลบสัญญา…", danger: true, separate: true, more: true, onClick: (k: number) => confirm({ title: "ลบสัญญา", message: `ต้องการลบสัญญา ${shown[k].r[0]} (${shown[k].r[2]}) ออกจากระบบใช่หรือไม่ ลบแล้วกู้คืนไม่ได้ (ดูย้อนหลังได้ที่บันทึกการใช้งานระบบ) ถ้าแค่ไม่ใช้สัญญานี้แล้ว แนะนำให้กด "ยกเลิกสัญญา" แทน`, danger: true, okLabel: "ลบ", onOk: () => { const c = shown[k].r; remove(shown[k].i); toast(`ลบสัญญาแล้ว · ${c[0] || ""} ${c[2]}`.trim()); } }) }] : []),
           ]}
         />
       </Section>}
@@ -1482,7 +1513,7 @@ export function Contracts() {
           <p className="text-xs leading-6 text-gold-500 md:col-span-2">ข้อมูลส่วนบุคคล: การเปิดดูและเปลี่ยนรูปบันทึกไว้ในบันทึกการใช้งานระบบทุกครั้ง</p>
         </div>)}
       </Modal>
-      <Modal open={!!dc} title="D/C กลับบ้าน" onClose={() => setDc(null)}
+      <Modal open={!!dc} title="จำหน่ายออก (D/C)" onClose={() => setDc(null)}
         footer={<><button className="btn-soft" onClick={() => setDc(null)}>ยกเลิก</button><button className="btn-primary" onClick={discharge}>ยืนยัน D/C และพิมพ์ใบจำหน่าย</button></>}>
         {dc && dcRow && <div className="space-y-4">
           <p className="rounded-xl bg-cream-50 px-4 py-3 text-sm text-gold-700">{dcRow[2]} · สัญญา {dcRow[0]} · ห้อง {dcRow[6] || "-"} · สาขา{dcRow[1]}</p>
@@ -1616,7 +1647,7 @@ export function Residents() {
           actions={[
             // กดแถว = ประวัติ · จัดห้องขึ้นเฉพาะคนที่ยังพักอยู่แต่ยังไม่มีห้อง · ที่เหลืออยู่ใน ⋯ (ลบท้ายสุด)
             // จองห้องไว้ (สัญญารอชำระมัดจำ): ปุ่มหลัก = เปิดสัญญา (ฟอร์มเปิดสัญญาที่ดึงข้อมูลตอนจองมาให้ เลือกห้องในขั้นที่ 3)
-            { label: "เปิดสัญญา", tone: "primary", hidden: (k) => !reservedOf(shown[k].r), onClick: (k) => { const c = reservedOf(shown[k].r); if (!c) return; contractHandoff.set(conIds[conRows.indexOf(c)]); go("contracts"); } },
+            { label: "เริ่มใช้สัญญา (รับมัดจำ)", tone: "primary", hidden: (k) => !reservedOf(shown[k].r), onClick: (k) => { const c = reservedOf(shown[k].r); if (!c) return; contractHandoff.set(conIds[conRows.indexOf(c)]); go("contracts"); } },
             { label: "จัดห้อง", tone: "primary", hidden: (k) => !noRoomOf(shown[k].r) || !can(user, "rooms") || !!reservedOf(shown[k].r), onClick: () => go("rooms") },
             { label: "ประวัติ", more: true, onClick: (k) => setProfile(ids[shown[k].i]) },
             { label: "ลิงก์ครอบครัว", more: true, onClick: (k) => setFamily(ids[shown[k].i]) },
@@ -1641,7 +1672,7 @@ export function Residents() {
           if (v[3] !== rows[dlg.i][3] && live.length) return toast(`${rows[dlg.i][0]} ยังมีสัญญา ${live[0][0] || ""} (${live[0][5]}) ที่สาขา${rows[dlg.i][3]} จึงย้ายสาขาไม่ได้ · ให้ D/C สิ้นสุดสัญญาที่สาขาเดิมก่อน แล้วเปิดสัญญาใหม่ที่สาขา${v[3]}`);
           // ย้ายออกระหว่างมีสัญญา: ต้อง D/C หรือยกเลิกสัญญาก่อน (ระบบย้ายออก คืนห้อง และปิดลิงก์ครอบครัวให้เอง)
           if (v[5].startsWith("ย้ายออก") && !rows[dlg.i][5].startsWith("ย้ายออก") && live.length) {
-            const msg = `${rows[dlg.i][0]} ยังมีสัญญา ${live[0][0] || ""} (${live[0][5]}) · ให้ "D/C กลับบ้าน" หรือ "ยกเลิกสัญญา" ที่เมนูสัญญาบริการก่อน ระบบจะเปลี่ยนเป็นย้ายออกและคืนห้องให้เอง`;
+            const msg = `${rows[dlg.i][0]} ยังมีสัญญา ${live[0][0] || ""} (${live[0][5]}) · ให้ "จำหน่ายออก (D/C)" หรือ "ยกเลิกสัญญา" ที่เมนูสัญญาบริการก่อน ระบบจะเปลี่ยนเป็นย้ายออกและคืนห้องให้เอง`;
             return can(user, "contracts") ? confirm({ title: "ยังมีสัญญาที่ใช้งานอยู่", message: msg, okLabel: "ไปที่สัญญาบริการ", onOk: () => { setDlg(null); go("contracts"); } }) : toast(`${msg} (แจ้งผู้ดูแลสัญญา)`);
           }
           // ห้องที่สร้างไว้ในเมนูห้องพักและเตียง: เต็มหรือปิดปรับปรุงย้ายเข้าไม่ได้

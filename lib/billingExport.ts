@@ -78,7 +78,7 @@ export function exportInvoiceLines(list: Invoice[], branchOf: (x: Invoice) => st
   return rows.length;
 }
 
-type PayRow = { date: string; no: string | null; n: number; branch: string; who: string; hn: string | null; payer: string | null; kind: string; status: string; cash: number; transfer: number; credit: number; amount: number; wht?: number; pkind?: string; cashier: string; note: string; slip: boolean };
+type PayRow = { date: string; no: string | null; n: number; branch: string; who: string; hn: string | null; payer: string | null; kind: string; status: string; cash: number; transfer: number; credit: number; amount: number; wht?: number; pkind?: string; cashier: string; note: string; slip: boolean; transferRef?: string };
 
 /** การรับเงินทุกงวด: กระทบยอดเงินสด / เงินโอน / บัตร กับบัญชีธนาคารรายวัน */
 export async function exportPayments(branch: string, name: string, inRange: (d: string) => boolean = () => true) {
@@ -86,7 +86,7 @@ export async function exportPayments(branch: string, name: string, inRange: (d: 
   const d = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(d.error || "ดึงข้อมูลการรับเงินไม่สำเร็จ");
   const items = ((d.items ?? []) as PayRow[]).filter((p) => inRange(String(p.date ?? "").slice(0, 10)));
-  downloadCsv(name, ["วันที่รับเงิน", "เลขที่เอกสาร", "งวดที่", "สาขา", "ผู้รับบริการ", "HN", "ผู้ชำระ", "ประเภทใบ", "สถานะใบ", "ประเภทรายการ", "เงินสด", "เงินโอน", "บัตรเครดิต", "รวมรับเงิน", "ภาษีหัก ณ ที่จ่าย", "ตัดยอดค้างรวม", "ผู้รับเงิน", "มีสลิป", "หมายเหตุ"],
-    items.map((p) => [docDate(p.date), p.no ?? "", String(p.n), p.branch ?? "", p.who ?? "", p.hn ?? "", p.payer ?? "", p.kind ?? "", p.status ?? "", p.pkind === "credit" ? "ใบลดหนี้หักยอด" : "รับเงิน", money(p.cash), money(p.transfer), money(p.credit), money(p.cash + p.transfer + p.credit), money(p.wht ?? 0), money(p.amount), p.cashier, p.slip ? "มี" : "", p.note]));
+  downloadCsv(name, ["วันที่รับเงิน", "เลขที่เอกสาร", "งวดที่", "สาขา", "ผู้รับบริการ", "HN", "ผู้ชำระ", "ประเภทใบ", "สถานะใบ", "ประเภทรายการ", "เงินสด", "เงินโอน", "บัตรเครดิต", "รวมรับเงิน", "ภาษีหัก ณ ที่จ่าย", "ตัดยอดค้างรวม", "เลขอ้างอิงการโอน", "ผู้รับเงิน", "มีสลิป", "หมายเหตุ"],
+    items.map((p) => [docDate(p.date), p.no ?? "", String(p.n), p.branch ?? "", p.who ?? "", p.hn ?? "", p.payer ?? "", p.kind ?? "", p.status ?? "", p.pkind === "credit" ? "ใบลดหนี้หักยอด" : "รับเงิน", money(p.cash), money(p.transfer), money(p.credit), money(p.cash + p.transfer + p.credit), money(p.wht ?? 0), money(p.amount), p.transferRef ?? "", p.cashier, p.slip ? "มี" : "", p.note]));
   return items.length;
 }

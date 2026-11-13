@@ -1119,3 +1119,94 @@ CREATE TABLE IF NOT EXISTS branch_targets (
   PRIMARY KEY (branch_name, month)
 );
 COMMENT ON TABLE branch_targets IS 'เป้ายอดขายรายเดือนของแต่ละสาขา';
+
+-- ---------------------------------------------------------------- ข้อเสนอปรับปรุงตามตำแหน่ง (13 พ.ย. 2569)
+-- รับชำระ: เลขอ้างอิงการโอน (เทียบรายการธนาคาร) · card_ref เพิ่มไว้แล้วแต่ไม่ใช้ (13 พ.ย. 2569 ไม่เก็บเลขอนุมัติบัตร)
+ALTER TABLE invoice_payments ADD COLUMN IF NOT EXISTS transfer_ref text;
+ALTER TABLE invoice_payments ADD COLUMN IF NOT EXISTS card_ref text;
+-- คอร์สกายภาพ: รหัสในใบราคา · expires_on เพิ่มไว้แล้วแต่ยังไม่ใช้ (13 พ.ย. 2569 ให้พักเรื่องวันหมดอายุคอร์สไว้ก่อน)
+ALTER TABLE physio_courses ADD COLUMN IF NOT EXISTS price_code text;
+ALTER TABLE physio_courses ADD COLUMN IF NOT EXISTS expires_on date;
+-- ใบเสนอราคา: วันนัดโทรติดตาม และผลการโทรล่าสุด
+ALTER TABLE care_assessments ADD COLUMN IF NOT EXISTS follow_up date;
+ALTER TABLE care_assessments ADD COLUMN IF NOT EXISTS follow_note text;
+
+-- รายงานเหตุการณ์ไม่พึงประสงค์ (หกล้ม ยาผิด แผลใหม่ สำลัก อื่นๆ) · พยาบาลรายงานจาก KinApp · หัวหน้าพยาบาล/ผู้จัดการรับทราบพร้อมการแก้ไข
+CREATE TABLE IF NOT EXISTS incidents (
+  id              text PRIMARY KEY,
+  resident_id     text REFERENCES residents(id) ON DELETE SET NULL,
+  resident_name   text NOT NULL,
+  branch_name     text,
+  kind            text NOT NULL,
+  severity        text NOT NULL,
+  detail          text,
+  photo           text,
+  occurred_at     timestamptz NOT NULL DEFAULT now(),
+  reported_by     text,
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  ack_by          text,
+  ack_at          timestamptz,
+  action          text,
+  family_at       timestamptz,
+  family_by       text
+);
+CREATE INDEX IF NOT EXISTS incidents_branch ON incidents (branch_name, created_at DESC);
+CREATE INDEX IF NOT EXISTS incidents_resident ON incidents (resident_id, created_at DESC);
+COMMENT ON TABLE incidents IS 'รายงานเหตุการณ์ไม่พึงประสงค์ และการรับทราบของหัวหน้า';
+
+-- บันทึกแผลเป็นลำดับเวลา (รูป + ขนาด) ทุกครั้งที่ทำแผล
+CREATE TABLE IF NOT EXISTS wound_logs (
+  id            text PRIMARY KEY,
+  resident_id   text REFERENCES residents(id) ON DELETE CASCADE,
+  resident_name text NOT NULL,
+  branch_name   text,
+  site          text NOT NULL,
+  stage         text,
+  length_cm     numeric(5,1),
+  width_cm      numeric(5,1),
+  photo         text,
+  note          text,
+  author        text,
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS wound_logs_resident ON wound_logs (resident_id, created_at DESC);
+COMMENT ON TABLE wound_logs IS 'บันทึกแผล (รูป ขนาด ระดับ) เรียงตามเวลา';
+
+-- โปรแกรมออกกำลังกายที่บ้าน (นักกายภาพตั้ง · ญาติเห็นและติ๊กว่าทำแล้วผ่านลิงก์ครอบครัว)
+CREATE TABLE IF NOT EXISTS home_programs (
+  id            text PRIMARY KEY,
+  resident_id   text REFERENCES residents(id) ON DELETE CASCADE,
+  resident_name text NOT NULL,
+  branch_name   text,
+  items         jsonb NOT NULL DEFAULT '[]',
+  active        boolean NOT NULL DEFAULT true,
+  created_by    text,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  updated_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS home_programs_resident ON home_programs (resident_id, active);
+CREATE TABLE IF NOT EXISTS home_program_logs (
+  program_id  text NOT NULL REFERENCES home_programs(id) ON DELETE CASCADE,
+  item_idx    int NOT NULL,
+  done_date   date NOT NULL,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (program_id, item_idx, done_date)
+);
+COMMENT ON TABLE home_programs IS 'โปรแกรมออกกำลังกายที่บ้านของผู้รับบริการ';
+
+-- คนรอเข้าพัก (ห้องเต็ม) ต่อจากใบเสนอราคา
+CREATE TABLE IF NOT EXISTS waitlist (
+  id          text PRIMARY KEY,
+  branch_name text NOT NULL,
+  name        text NOT NULL,
+  phone       text,
+  room_type   text,
+  quote_no    text,
+  note        text,
+  status      text NOT NULL DEFAULT 'รอ',
+  created_by  text,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  done_at     timestamptz
+);
+CREATE INDEX IF NOT EXISTS waitlist_branch ON waitlist (branch_name, status, created_at);
+COMMENT ON TABLE waitlist IS 'คนรอเข้าพัก เรียงตามลำดับที่ขอ';

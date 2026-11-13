@@ -69,7 +69,7 @@ const SPECS: Record<string, Omit<Spec, "scope">> = {
   facility: { table: "facility_tasks", kind: "rows", ...own, cols: [c("task_name"), c("category"), c("schedule"), c("dispatch_mode")] },
   master: { table: "master_tasks", kind: "rows", branchCol: "branch_name", cols: [c("task_code"), c("task_name"), c("instruction"), c("category"), c("shift"), c("branch_name"), c("profession")] },
   assessments: { table: "care_assessments", kind: "rows", ...own, cols: [c("plan_name"), c("resident_name"), c("chronic_diseases"), c("relative_phone"), c("estimated_price", "money"), c("note"),
-    ro("doc_no"), c("quote_date", "date"), c("valid_days", "int"), c("payer_name"), c("care_level"), c("items_json"), c("contract_no")] },
+    ro("doc_no"), c("quote_date", "date"), c("valid_days", "int"), c("payer_name"), c("care_level"), c("items_json"), c("contract_no"), c("follow_up", "date"), c("follow_note")] },
   "pharmacy-master": { table: "drug_catalog", kind: "rows", cols: [c("drug_name"), c("properties")] },
   "pharmacy-drugs": {
     table: "resident_medications", kind: "object", numericId: true, ...own,

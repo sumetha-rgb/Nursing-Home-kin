@@ -2,7 +2,7 @@
 // (ยอดเงินในรายการเตือนไม่มีทศนิยม · วันที่แบบสั้น "30 ต.ค.")
 import { bkkToday, thDateText } from "@/lib/servicePeriod";
 import { can } from "@/lib/perms";
-import { cashHandoff, taskHandoff } from "@/lib/handoff";
+import { taskHandoff } from "@/lib/handoff";
 import type { ViewId } from "@/lib/nav";
 import type { SessionUser } from "@/lib/roles";
 import { wantStaffFilter } from "@/lib/staffIntent";
@@ -11,7 +11,8 @@ import { wantStaffFilter } from "@/lib/staffIntent";
 export type HomeData = {
   late?: { task: string; name: string }[]; review?: { shift: string; n: number }[]; alerts?: { n: number; oldest: number };
   bills?: { n: number; sum: number; oldest: string | null }; debt60?: { n: number; sum: number }; physio?: number; drafts?: number; courses?: number;
-  unclosed?: { date: string; branch: string }[]; monthDue?: { no: string; name: string; due: string }[]; deposit?: { no: string; name: string; billed: boolean }[];
+  incidents?: { name: string; kind: string; severity: string; mins: number }[];
+  monthDue?: { no: string; name: string; due: string }[]; quoteCall?: { no: string; name: string; due: string }[]; deposit?: { no: string; name: string; billed: boolean }[];
   stock?: { meds: number; supplies: number; central: number }; noRoom?: { name: string }[]; checkin?: { name: string; shift: string }[];
   rosterGap?: { n: number; first: string | null; soon: number; branches: number };
   /** คอร์สกายภาพที่ยังไม่มีผู้รับผิดชอบ (คนที่มีสิทธิ์จ่ายเคส) */
@@ -34,16 +35,16 @@ export type TodoItem = { key: string; title: string; short: string; meta?: strin
 
 /** ด้านของงาน (ใช้ทั้งหน้าแรกและแถบต้องจัดการ) · ตำแหน่งที่ไม่มีสิทธิ์ด้านนั้นจะไม่เห็นกล่อง */
 export const TODO_AREAS = [
-  { name: "การดูแลและทีม", keys: ["alerts", "late", "review", "gap", "checkin", "signup", "physioReq", "physioCase", "physioMissed"] },
-  { name: "การเงิน", keys: ["bills", "debt60", "unclosed", "monthDue", "drafts", "courses", "deposit", "physio", "physioLow"] },
+  { name: "การดูแลและทีม", keys: ["alerts", "incidents", "late", "review", "gap", "checkin", "signup", "physioReq", "physioCase", "physioMissed"] },
+  { name: "การเงิน", keys: ["bills", "debt60", "monthDue", "drafts", "courses", "deposit", "quoteCall", "physio", "physioLow"] },
   { name: "ห้อง ยา และคลัง", keys: ["room", "stock"] },
 ];
 /** เรื่องด่วนด้านความปลอดภัยผู้รับบริการ (ขึ้นก่อนเรื่องด่วนด้านงานเอกสาร/เงิน) */
-export const SAFETY_KEYS = ["alerts", "late", "checkin"];
+export const SAFETY_KEYS = ["alerts", "incidents", "late", "checkin"];
 /** ปุ่มสั้นด้านขวาของแต่ละเรื่อง */
 export const TODO_ACT: Record<string, string> = {
-  alerts: "ดูรายการ", signup: "อนุมัติ", physioCase: "จ่ายเคส", physioMissed: "ดูงาน", physioReq: "จัดคนแทน", physioLow: "เสนอต่อ", late: "ตามงาน", review: "ตรวจงาน", gap: "จัดเวร", checkin: "ดูเวร", bills: "รับชำระ", debt60: "ดูลูกหนี้", unclosed: "ปิดยอด",
-  monthDue: "ออกใบ", drafts: "ตรวจยอด", courses: "ออกใบ", deposit: "ดูสัญญา", physio: "ใส่ราคา", room: "จัดห้อง", stock: "ห้องยา",
+  alerts: "ดูรายการ", signup: "อนุมัติ", physioCase: "จ่ายเคส", physioMissed: "ดูงาน", physioReq: "จัดคนแทน", physioLow: "เสนอต่อ", late: "ตามงาน", review: "ตรวจงาน", gap: "จัดเวร", checkin: "ดูเวร", bills: "รับชำระ", debt60: "ดูลูกหนี้",
+  monthDue: "ออกใบ", quoteCall: "โทรติดตาม", incidents: "รับทราบ", drafts: "ตรวจยอด", courses: "ออกใบ", deposit: "ดูสัญญา", physio: "ใส่ราคา", room: "จัดห้อง", stock: "ห้องยา",
 };
 
 /** พรุ่งนี้ (YYYY-MM-DD เวลาไทย) · คำขอคนแทนของวันนี้/พรุ่งนี้ = ด่วน */
@@ -75,10 +76,6 @@ export function buildTodos(d: HomeData, user: SessionUser | null | undefined): T
   if (d.checkin) c.push({ key: "checkin", short: "ยังไม่เช็คชื่อ", title: "ยังไม่เช็คชื่อเข้าเวร", brief: d.checkin.length ? `${d.checkin.slice(0, 2).map((x) => x.name).join(", ")}${d.checkin.length > 2 ? ` และอีก ${d.checkin.length - 2} คน` : ""}` : undefined, n: d.checkin.length, unit: "คน", detail: d.checkin.length ? `${d.checkin.slice(0, 3).map((x) => `${x.name} (เวร${x.shift})`).join(", ")}${d.checkin.length > 3 ? ` และอีก ${d.checkin.length - 3} คน` : ""} · เลยเวลาผ่อนผันแล้ว` : "ทุกคนในเวรเช็คชื่อแล้ว", cta: "ไปที่ตารางเวร", urgent: true, view: "roster" });
   if (d.bills) c.push({ key: "bills", short: "ใบค้างชำระ", meta: d.bills.n ? `${baht(d.bills.sum)} บาท` : undefined, warn: true, title: "ใบแจ้งหนี้ค้างชำระ", brief: d.bills.n ? `รวม ${baht(d.bills.sum)} บาท · เก่าสุด ${d.bills.oldest ? dayText(d.bills.oldest) : "-"}` : undefined, n: d.bills.n, unit: "ใบ", detail: d.bills.n ? `รวม ${baht(d.bills.sum)} บาท · เก่าสุดออกเมื่อ ${d.bills.oldest ? thDateText(d.bills.oldest) : "-"}` : "ไม่มีใบค้างชำระ", cta: "ไปรับชำระ", view: "billing" });
   if (d.debt60) c.push({ key: "debt60", short: "หนี้ค้างเกิน 60 วัน", meta: d.debt60.n ? `${baht(d.debt60.sum)} บาท` : undefined, title: "ลูกหนี้ค้างเกิน 60 วัน", brief: d.debt60.n ? `รวม ${baht(d.debt60.sum)} บาท` : undefined, hot: d.debt60.n > 0, n: d.debt60.n, unit: "ใบ", detail: d.debt60.n ? `รวม ${baht(d.debt60.sum)} บาท · ส่งใบแจ้งยอดค้างชำระให้ญาติ` : "ไม่มีหนี้ค้างนาน", cta: "ไปที่ลูกหนี้", warn: true, view: "billing" });
-  if (d.unclosed) {
-    const days = [...new Set(d.unclosed.map((x) => x.date))];
-    c.push({ key: "unclosed", short: "ยังไม่ปิดยอดเงิน", title: "ยังไม่ปิดยอดรายวัน", brief: days.length ? days.slice(0, 3).map((x) => dayText(x)).join(", ") : undefined, n: days.length, unit: "วัน", detail: days.length ? `มีรับเงินแล้วยังไม่นับเงินสดปิดยอด · ${days.slice(0, 3).map((x) => dayText(x)).join(", ")}${days.length > 3 ? ` และอีก ${days.length - 3} วัน` : ""}` : "ปิดยอดครบทุกวันแล้ว", cta: "ไปปิดยอด", warn: true, open: () => cashHandoff.set(), view: "billing" });
-  }
   if (d.monthDue) {
     // รอบบิลนับตามวันเริ่มสัญญา · เลยวันครบรอบแล้ว = ด่วน · จะครบใน 7 วัน = ควรเตรียมออกใบ
     const m = d.monthDue, t = bkkToday(), late = m.filter((x) => x.due <= t).length, who = m.map((x) => `${x.name} (${x.due <= t ? "ครบแล้ว" : `ครบ ${dayText(x.due)}`})`);
@@ -86,6 +83,16 @@ export function buildTodos(d: HomeData, user: SessionUser | null | undefined): T
   }
   if (d.drafts !== undefined) c.push({ key: "drafts", short: "ใบรอตรวจยอด", title: "ใบแจ้งหนี้รอตรวจสอบยอด", n: d.drafts, unit: "ใบ", detail: d.drafts ? "ออกจากสัญญาอัตโนมัติ · ตรวจรายการแล้วกด ยืนยันยอด จึงรับชำระได้" : "ไม่มีใบรอตรวจสอบ", cta: "ไปตรวจยอด", view: "billing" });
   if (d.courses !== undefined) c.push({ key: "courses", short: "คอร์สรอออกใบ", title: "คอร์สกายภาพรอออกใบ", n: d.courses, unit: "คอร์ส", detail: d.courses ? "ซื้อคอร์สแล้วแต่ยังไม่ออกใบแจ้งหนี้ · นักกายภาพเริ่มทำได้แล้ว อย่าลืมออกใบเรียกเก็บ" : "ไม่มีคอร์สรอออกใบ", cta: "ไปออกใบ", view: "billing" });
+  if (d.incidents?.length) {
+    const l = d.incidents, hurt = l.filter((x) => x.severity !== "ไม่บาดเจ็บ").length, old = Math.max(...l.map((x) => x.mins));
+    c.push({ key: "incidents", short: "เหตุการณ์รอรับทราบ", title: "เหตุการณ์ไม่พึงประสงค์ รอหัวหน้ารับทราบ", brief: `${l[0].kind} · ${l[0].name}${l.length > 1 ? ` และอีก ${l.length - 1} เรื่อง` : ""}`, n: l.length, unit: "เรื่อง",
+      detail: `${l.slice(0, 3).map((x) => `${x.kind} · ${x.name} (${x.severity})`).join(", ")}${l.length > 3 ? ` และอีก ${l.length - 3} เรื่อง` : ""} · กดรับทราบพร้อมบันทึกการแก้ไข`, hot: hurt > 0 || old >= 120, cta: "ไปที่บันทึกสุขภาพ", urgent: true, top: true, view: "health_logs" });
+  }
+  if (d.quoteCall?.length) {
+    const l = d.quoteCall;
+    c.push({ key: "quoteCall", short: "โทรติดตามใบเสนอราคา", title: "ถึงวันโทรติดตามใบเสนอราคา", brief: namesOf(l.map((x) => x.name)), n: l.length, unit: "ใบ",
+      detail: `${l.slice(0, 3).map((x) => `${x.name}${x.no ? ` (${x.no})` : ""} · นัด ${dayText(x.due)}`).join(", ")}${l.length > 3 ? ` และอีก ${l.length - 3} ใบ` : ""} · โทรแล้วบันทึกผลที่ใบเสนอราคา`, cta: "ไปที่ใบเสนอราคา", view: "quotations" });
+  }
   if (d.deposit) {
     const nb = d.deposit.filter((x) => !x.billed).length, first = d.deposit[0];
     c.push({ key: "deposit", short: "รอชำระมัดจำ", title: "สัญญารอชำระมัดจำ", brief: first ? `${first.name}${d.deposit.length > 1 ? ` และอีก ${d.deposit.length - 1} สัญญา` : ""}` : undefined, n: d.deposit.length, unit: "สัญญา", detail: first ? `${first.no} · ${first.name}${d.deposit.length > 1 ? ` และอีก ${d.deposit.length - 1} สัญญา` : ""}${nb ? ` · ยังไม่มีใบแจ้งหนี้ ${nb} สัญญา` : ""}` : "ไม่มีสัญญารอชำระ", cta: nb ? "ออกใบแจ้งหนี้" : "ไปที่สัญญาบริการ", view: "contracts" });

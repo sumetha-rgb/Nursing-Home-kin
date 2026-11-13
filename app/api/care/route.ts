@@ -23,6 +23,7 @@ export const fetchCache = "force-no-store";
  *  GET  ?op=alerts              แจ้งเตือนสัญญาณชีพที่ยังไม่มีคนรับทราบ
  *  POST { op: "ack", id, note } รับทราบแจ้งเตือน (บันทึกประวัติการใช้งาน)
  *  GET  ?op=routines            งานประจำ (ทำซ้ำทุกวัน) ที่ยังใช้อยู่
+ *  GET  ?op=turning_risk        ผู้เสี่ยงแผลกดทับ (Braden < 13 หรือติดเตียง) สำหรับตารางพลิกตัวทุก 2 ชม.
  *  POST { op: "routines_add", items: [{ resident, task, ins, shift, time }], skipDate? }  เพิ่มงานประจำ (ผู้จัดการขึ้นไป)
  *       ใส่งานให้วันที่ระบบสร้างไปแล้ว (วันนี้ถึง +14 วัน) ด้วย ยกเว้น skipDate (วันที่หน้าจอมอบหมายเองแล้ว)
  *  POST { op: "routine_stop", id }  หยุดทำซ้ำ
@@ -214,6 +215,16 @@ export async function GET(req: NextRequest) {
         if (!t) return bad("ไม่พบงานนี้", 404);
         if (scoped(me) && t.branch_name !== me.branch) return forbidden();
         return NextResponse.json({ photo: t.photo, at: t.at, share: t.share, stars: t.stars, note: t.rnote, by: t.rby });
+      }
+      case "turning_risk": {
+        // เสี่ยงแผลกดทับ: Braden ต่ำกว่า 13 หรือติดเตียง (ประเมินแรกรับ) · ยังพักอยู่
+        const rows = await sql(
+          `SELECT r.full_name AS name, r.room, r.branch_name AS branch, a.data->>'braden' AS braden, a.data->>'mobility' AS mobility
+           FROM residents r JOIN resident_admissions a ON a.resident_id = r.id
+           WHERE coalesce(r.status, '') NOT LIKE 'ย้ายออก%' AND coalesce(r.status, '') NOT LIKE 'มัดจำ%'
+             AND (a.data->>'mobility' = 'ติดเตียง' OR (a.data->>'braden' ~ '^[0-9]{1,2}$' AND (a.data->>'braden')::int < 13))
+             ${scoped(me) ? "AND r.branch_name = $1" : ""} ORDER BY r.branch_name, r.room NULLS LAST, r.full_name`, scoped(me) ? [me.branch] : []);
+        return NextResponse.json({ items: rows });
       }
       case "routines": {
         const rows = await sql(

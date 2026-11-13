@@ -12,15 +12,15 @@ import { useApp } from "@/lib/app";
 import { useSession } from "@/lib/session";
 import { can } from "@/lib/perms";
 import { staying } from "@/lib/rooms";
-import { billHandoff, cashHandoff, CourseBill, courseHandoff, invoiceHandoff } from "@/lib/handoff";
+import { billHandoff, CourseBill, courseHandoff, invoiceHandoff } from "@/lib/handoff";
 import StatusExport from "../billing/StatusExport";
 import { invoiceDocsCsv } from "@/lib/exportsCsv";
 import Receivables from "../billing/Receivables";
-import CashClose from "../billing/CashClose";
+import { copyToClipboard, lineMessage } from "@/lib/lineMessage";
 import { exportInvoiceLines, exportPayments, usePaidDays } from "@/lib/billingExport";
 import { DataTable, Field, MenuButton, Modal, PageHeader, Section, StatFilter, StatusBadge, Tabs } from "../ui";
 import { ResidentPicker } from "../SearchSelect";
-import { lineCode, pickName, rateCode, rateText, roomPartByCode, rooms as priceRooms, searchPrices } from "@/lib/priceList";
+import { lineCode, pickName, priceList, rateCode, rateText, roomPartByCode, rooms as priceRooms, searchPrices } from "@/lib/priceList";
 import { ServicePicker } from "../ServicePicker";
 import { usePriceList } from "@/lib/usePrices";
 import { refreshTaxInfo, saveTaxInfo, useTaxInfo } from "@/lib/taxInfo";
@@ -58,12 +58,10 @@ const num = (x: string) => Number(String(x).replace(/,/g, "")) || 0;
 const CN_REASONS = ["คิดค่าบริการเกิน", "กลับบ้านก่อนกำหนด คืนค่าบริการส่วนที่ไม่ได้อยู่", "ให้ส่วนลดเพิ่มภายหลัง", "คิดรายการซ้ำ", "อื่น ๆ"];
 const val = (x?: string) => num(x && x !== "-" ? x : "");
 
-/** ใบที่ยังชำระไม่ครบ: ค้างมากี่วันนับจากวันที่ออกใบ · เกิน 30 วัน = เกินกำหนด */
-const overdue = (x: Invoice) => {
-  if (!isOpen(x)) return "-";
-  const d = Math.max(0, Math.floor((new Date(todayIso()).getTime() - new Date(x.date).getTime()) / 864e5));
-  return d > 30 ? `เกินกำหนด ${d} วัน` : `ค้าง ${d} วัน`;
-};
+/** ใบที่ยังชำระไม่ครบ: ค้างมากี่วันนับจากวันที่ออกใบ (ต่อท้ายป้ายสถานะ "ค้างชำระ · 3 วัน") · เกิน 30 วัน = สีแดง */
+const overdueDays = (x: Invoice) => (isOpen(x) ? Math.max(0, Math.floor((new Date(todayIso()).getTime() - new Date(x.date).getTime()) / 864e5)) : -1);
+/** ชื่อประเภทใบแบบสั้นในตาราง (ค่าที่เก็บในระบบไม่เปลี่ยน) */
+const kindShort = (k: string) => (k === "ค่าบริการรายเดือน" ? "รายเดือน" : k === "มัดจำ / แรกเข้า" ? "แรกเข้า" : /D\/C/.test(k) ? "จำหน่ายออก" : k === "เวชภัณฑ์และอื่น ๆ" ? "เวชภัณฑ์" : k);
 
 // ค่าบริการต่อเดือนตามสัญญา (contractMonthLines) อยู่ที่ lib/billing ใช้ร่วมกับเอกสารพิมพ์สัญญา
 
@@ -272,7 +270,7 @@ export function Billing() {
   /** อัตรา VAT ของใบที่กำลังออก (%) · ใช้กับบรรทัดที่ติ๊ก VAT */
   const [vatRate, setVatRate] = useState(DEFAULT_VAT);
   const [pay, setPay] = useState<Invoice | null>(null);
-  const [amt, setAmt] = useState({ cash: "", credit: "", transfer: "", wht: "", date: todayIso() });
+  const [amt, setAmt] = useState({ cash: "", credit: "", transfer: "", wht: "", date: todayIso(), tref: "" });
   /** ใบลดหนี้: ใบเดิม ยอด เหตุผล · คืนเงินตามใบลดหนี้: วิธีคืน */
   const [cn, setCn] = useState<{ x: Invoice; amount: string; reason: string; other: string; busy?: boolean } | null>(null);
   const [refund, setRefund] = useState<{ x: Invoice; method: string; busy?: boolean } | null>(null);
@@ -280,7 +278,7 @@ export function Billing() {
   const [view, setView] = useState<Invoice | null>(null);
   /**
    * ตัวอย่างใบเสร็จที่ชำระแล้ว ห้องละ 1 ใบ จากราคาห้องในใบราคา (ค่าห้องรวม VAT + ค่าบริการทางการแพทย์)
-   *  สร้างในหน้าจอเท่านั้น ไม่บันทึกลงระบบ (ไม่เข้ายอดรับเงิน ปิดยอด หรือรายงาน) · เลขที่เอกสารขึ้นต้นด้วย "ตัวอย่าง"
+   *  สร้างในหน้าจอเท่านั้น ไม่บันทึกลงระบบ (ไม่เข้ายอดรับเงินหรือรายงาน) · เลขที่เอกสารขึ้นต้นด้วย "ตัวอย่าง"
    */
   const [sampleOpen, setSampleOpen] = useState(false);
   const [sampleOf, setSampleOf] = useState<{ room: string; period: string } | null>(null);
@@ -305,8 +303,6 @@ export function Billing() {
   const [pays, setPays] = useState<Payment[]>([]);
   const [which, setWhich] = useState(0); // 0 = ใบรวม, n = ใบรับเงินงวดที่ n
   const [busy, setBusy] = useState(false);
-  // ปิดยอดรายวัน (มาจากการ์ดหน้าแรก = เปิดให้ทันที)
-  const [cashOpen, setCashOpen] = useState(() => cashHandoff.take());
   // เปิดดู/พิมพ์เอกสารที่ส่งมาจากหน้าอื่น (เช่น ใบเสร็จที่รับชำระตอนเปิดสัญญา) · รอรายการโหลดก่อน
   const [viewFor, setViewFor] = useState(() => invoiceHandoff.take());
   useEffect(() => {
@@ -413,7 +409,9 @@ export function Billing() {
     if (c && lines.length === 1 && !lines[0].desc && form.kind === BILL_KINDS[1]) { const m = contractMonthLines(c); if (m.length) setLines(m); }
   };
   // ขายคอร์สกายภาพจากหน้าใบแจ้งหนี้และใบเสร็จ: สร้างคอร์ส (นักกายภาพตัดครั้งที่แท็บกายภาพ) แล้วเปิดใบแจ้งหนี้ที่ใส่คอร์สไว้ให้
-  const [course, setCourse] = useState<{ who: string; name: string; total: string; price: string; busy: boolean } | null>(null);
+  const [course, setCourse] = useState<{ who: string; name: string; total: string; price: string; busy: boolean; code?: string } | null>(null);
+  /** คอร์สกายภาพในใบราคา (หมวด PT) · 1 ตัวเลือกต่อราคา */
+  const ptCourses = priceList().filter((x) => x.cat === "PT").flatMap((x) => x.rates.map((r, i) => ({ code: rateCode(x, i), name: x.name, price: r.price, unit: r.unit, n: Number(x.name.match(/(\d+)\s*ครั้ง/)?.[1] ?? 0) })));
   const saveCourse = async () => {
     if (!course || course.busy) return;
     const k = res.rows.findIndex((r) => r[0] === course.who);
@@ -425,7 +423,7 @@ export function Billing() {
     setCourse({ ...course, busy: true });
     let id = "";
     try {
-      const r = await fetch("/api/clinic", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "course", residentId: res.ids[k], name, total, price }) });
+      const r = await fetch("/api/clinic", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "course", residentId: res.ids[k], name, total, price, priceCode: course.code || undefined }) });
       const d = await r.json().catch(() => ({}));
       if (!r.ok || !d.id) throw new Error(d.error || "บันทึกคอร์สไม่สำเร็จ");
       id = d.id;
@@ -485,8 +483,17 @@ export function Billing() {
       toast(`ยกเลิกเอกสารแล้ว · ${x.no ?? ""} · ${x.who}`);
     } catch (e) { toast((e as Error).message); refreshData("invoices"); }
   };
-  const openPay = (x: Invoice) => { setPay(x); setSlip(""); setAmt({ cash: "", credit: "", transfer: "", wht: "", date: todayIso() }); };
-  const left = pay ? balanceOf(pay) : 0;
+  const openPay = (x: Invoice) => { setPay(x); setExtra([]); setSlip(""); setAmt({ cash: "", credit: "", transfer: "", wht: "", date: todayIso(), tref: "" }); };
+  /**
+   * รับเงินหลายใบในครั้งเดียว: ใบค้างอื่นของคนเดียวกันในสาขาเดียวกัน ติ๊กรวมได้
+   *  เงินที่รับตัดใบเก่าก่อน (เงินสด → โอน → บัตร) และบันทึกเป็นการรับชำระของแต่ละใบ (ใบเสร็จแยกตามใบ)
+   */
+  const [extra, setExtra] = useState<string[]>([]);
+  const payOthers = pay ? list.filter((y) => y.id !== pay.id && isOpen(y) && !isCN(y) && y.who === pay.who && invBranch(y) === invBranch(pay) && balanceOf(y) > 0)
+    .sort((a, b) => a.date.localeCompare(b.date)) : [];
+  const batch = pay ? [pay, ...payOthers.filter((y) => extra.includes(y.id))].sort((a, b) => a.date.localeCompare(b.date)) : [];
+  const multi = batch.length > 1;
+  const left = multi ? Math.round(batch.reduce((n, y) => n + balanceOf(y), 0) * 100) / 100 : pay ? balanceOf(pay) : 0;
   const got = num(amt.cash) + num(amt.credit) + num(amt.transfer), wht = num(amt.wht);
   /** ยอดที่ตัดจากยอดค้าง = เงินที่รับ + ภาษีหัก ณ ที่จ่าย */
   const now = got + wht;
@@ -497,15 +504,41 @@ export function Billing() {
     const base = its.filter((i) => !/^เงินประกัน/.test(i.desc.trim())).reduce((n, i) => n + lineNet(i), 0);
     return g > 0 ? Math.round(left * (base / g) * 3) / 100 : 0;
   })();
+  /** รับหลายใบ: แบ่งเงินตัดใบเก่าก่อน แล้วบันทึกทีละใบ · ใบไหนไม่สำเร็จ หยุดและบอกว่าบันทึกไปแล้วกี่ใบ */
+  const savePayMany = async () => {
+    const pool = { cash: num(amt.cash), transfer: num(amt.transfer), credit: num(amt.credit) };
+    const r2 = (n: number) => Math.round(n * 100) / 100;
+    const plan = batch.map((x) => {
+      let need = balanceOf(x);
+      const take = (k: keyof typeof pool) => { const t = r2(Math.min(need, pool[k])); pool[k] = r2(pool[k] - t); need = r2(need - t); return t; };
+      return { x, cash: take("cash"), transfer: take("transfer"), credit: take("credit") };
+    }).filter((p) => p.cash + p.transfer + p.credit > 0);
+    let done = 0;
+    try {
+      for (const p of plan) {
+        const r = await fetch("/api/billing", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "pay", id: p.x.id, cash: p.cash, credit: p.credit, transfer: p.transfer, wht: 0, date: amt.date, slip: p.transfer > 0 ? slip : undefined, transferRef: amt.tref }) });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(`${p.x.no ?? ""}: ${d.error || "รับชำระไม่สำเร็จ"}`);
+        done++;
+      }
+      setPay(null);
+      toast(`รับชำระ ${done} ใบแล้ว · ${pay?.who ?? ""} · รวม ${money(got)} บาท · ใบเสร็จแยกตามใบ`);
+      setTab(PAID);
+    } catch (e) {
+      toast(`${(e as Error).message}${done ? ` · บันทึกไปแล้ว ${done} ใบ` : ""}`);
+    } finally { refreshData("invoices"); setBusy(false); }
+  };
   const savePay = async () => {
     if (!pay || busy) return;
     const cash = num(amt.cash), credit = num(amt.credit), transfer = num(amt.transfer);
     if (got <= 0) return toast("กรุณาระบุยอดที่รับชำระครั้งนี้");
     if (now > left + 0.005) return toast(`ยอดรับชำระ ${money(now)} บาท เกินยอดคงเหลือ ${money(left)} บาท`);
     if (transfer > 0 && !slip) return toast("กรุณาแนบหลักฐานการโอนเงิน");
+    if (multi && wht > 0) return toast("หัก ณ ที่จ่ายใช้ได้เมื่อรับทีละใบ");
     setBusy(true);
+    if (multi) return savePayMany();
     // ใบแจ้งหนี้ที่เพิ่งสร้างอาจยังบันทึกขึ้นระบบไม่เสร็จ (404) ลองซ้ำก่อนแจ้งว่าไม่สำเร็จ
-    const send = () => fetch("/api/billing", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "pay", id: pay.id, cash, credit, transfer, wht, date: amt.date, slip: slip || undefined }) });
+    const send = () => fetch("/api/billing", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "pay", id: pay.id, cash, credit, transfer, wht, date: amt.date, slip: slip || undefined, transferRef: amt.tref }) });
     try {
       let r = await send();
       for (let i = 0; i < 3 && r.status === 404; i++) { await new Promise((x) => setTimeout(x, 1500)); r = await send(); }
@@ -540,18 +573,27 @@ export function Billing() {
     fetch(`/api/billing?id=${encodeURIComponent(view.id)}`).then((r) => (r.ok ? r.json() : null)).then((d) => d && setPays(d.payments ?? [])).catch(() => {});
   }, [view?.id, view?.paid]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const rows = useMemo(() => shown.map((x) => [x.no ?? "กำลังออกเลข…", docDate(x.status === PAID ? x.paidDate || x.date : x.date), x.hn || "-", x.who, x.kind, money(x.net), money(x.paid ?? 0), money(balanceOf(x)), overdue(x), x.status]), [shown]);
+  const branchOfInv = (x: Invoice) => invBranch(x) || residentOf(x.who)?.[3] || user?.branch || "";
+  // ผู้บริหารดูทุกสาขา: มีคอลัมน์สาขา · ใบยกเลิก: คงเหลือ "-" (ไม่ใช่หนี้) · วันที่แบบ "10 พ.ย. 2569"
+  const allBranches = user?.role === "Global Admin";
+  const invCols = ["เลขที่เอกสาร", "วันที่", ...(allBranches ? ["สาขา"] : []), "HN", "ผู้รับบริการ", "ประเภท", "ยอดสุทธิ (บาท)", "ชำระแล้ว", "คงเหลือ", "สถานะ"];
+  const rows = useMemo(() => shown.map((x) => [x.no ?? "กำลังออกเลข…", thDateText((x.status === PAID ? x.paidDate || x.date : x.date).slice(0, 10)), ...(allBranches ? [branchOfInv(x) || "-"] : []), x.hn || "-", x.who, kindShort(x.kind), money(x.net), money(x.paid ?? 0), x.status === VOID ? "-" : money(balanceOf(x)), x.status]), [shown, allBranches]); // eslint-disable-line react-hooks/exhaustive-deps
   /**
    * หน้า 2 ของใบ: ห้องจากสัญญา · ระยะเวลาบริการ (ใช้ invoicePeriod ตัวเดียวกับ CSV และ Dashboard)
    *  ใบแรกเข้า = วันเริ่มสัญญา ถึงวันก่อนครบจำนวนเดือนที่ชำระล่วงหน้า (พักรายวัน/สัปดาห์ = ตามจำนวนวัน) · ใบรายเดือน = รอบเดือนตามวันเริ่มสัญญา
    */
+  /** คัดลอกข้อความแจ้งยอดส่ง LINE (ใบที่ยังค้าง) */
+  const copyLine = async (x: Invoice) => {
+    const b = branchInfo(branchOfInv(x));
+    const ok = await copyToClipboard(lineMessage(x, { branch: b.name || branchOfInv(x), legal: b.legal, period: billDetail(x).period }));
+    toast(ok ? `คัดลอกข้อความแจ้งยอดแล้ว · ${x.who} · วางในแชท LINE ได้เลย` : "คัดลอกไม่ได้ในเบราว์เซอร์นี้");
+  };
   const billDetail = (x: Invoice) => {
     const c = x.contract ? con.rows.find((r) => r[0] === x.contract) : undefined;
     const room = c?.[6] && c[6] !== "-" ? c[6] : res.rows.find((r) => r[0] === x.who)?.[2] ?? "";
     const period = periodText(invoicePeriod(x, con.rows));
     return { room: room && room !== "-" ? room : "", period };
   };
-  const branchOfInv = (x: Invoice) => invBranch(x) || residentOf(x.who)?.[3] || user?.branch || "";
 
   return (
     <>
@@ -563,15 +605,14 @@ export function Billing() {
             { label: "รายการในใบ", hint: "แยกค่าห้อง คอร์ส ยา", onClick: () => { const n = exportInvoiceLines(list, invBranch, "การเงิน-รายการในใบ"); toast(`ส่งออกรายการในใบแล้ว ${n} บรรทัด`); } },
             { label: "การรับเงิน", hint: "แยกเงินสด โอน บัตร", onClick: () => exportPayments("", "การเงิน-การรับเงินรายงวด").then((n) => toast(`ส่งออกการรับเงินแล้ว ${n} งวด`)).catch((e) => toast((e as Error).message)) },
           ]} />
-          <button className="btn-soft" title="ดูหน้าตาใบเสร็จของแต่ละห้อง (ไม่บันทึกในระบบ)" onClick={() => setSampleOpen(true)}><Icon name="receipt" className="h-4 w-4" /> ตัวอย่างใบเสร็จ</button>
-          <button className="btn-soft" title="นับเงินสดสิ้นวันเทียบกับยอดรับชำระในระบบ" onClick={() => setCashOpen(true)}><Icon name="check" className="h-4 w-4" /> ปิดยอดรายวัน</button>
-          <button className="btn-soft" onClick={() => setCourse({ who: "", name: "กายภาพบำบัด (ครั้งละ 45 นาที)", total: "10", price: "", busy: false })}><Icon name="plus" className="h-4 w-4" /> ขายคอร์สกายภาพ</button>
+          <button className="btn-soft" title="ดูหน้าตาใบเสร็จของแต่ละห้อง (ไม่บันทึกในระบบ)" onClick={() => setSampleOpen(true)}><Icon name="receipt" className="h-4 w-4" /> <span>ตัวอย่าง<span className="hidden sm:inline">ใบเสร็จ</span></span></button>
+          <button className="btn-soft" onClick={() => setCourse({ who: "", name: "กายภาพบำบัด (ครั้งละ 45 นาที)", total: "10", price: "", busy: false })}><Icon name="plus" className="h-4 w-4" /> <span>ขายคอร์ส<span className="hidden sm:inline">กายภาพ</span></span></button>
           <button className="btn-primary" onClick={startNew}><Icon name="plus" className="h-4 w-4" /> ออกใบแจ้งหนี้</button>
         </>} />
-      {due.length > 0 && <Section title="ครบรอบบิล" sub={`${due.length} สัญญาครบรอบแล้วหรือจะครบภายใน ${DUE_AHEAD} วัน · ยังไม่มีใบของรอบนั้น`}
-        actions={<button className="btn-primary" onClick={makeDue}><Icon name="plus" className="h-4 w-4" /> สร้างใบรอตรวจสอบยอดทั้งหมด ({due.length})</button>}>
-        <DataTable search={false} columns={["ครบรอบ", "เลขที่สัญญา", "ผู้รับบริการ", "ผู้ว่าจ้าง", "ห้อง", "ค่าบริการ/เดือน (บาท)"]}
-          rows={due.map(({ c, next }) => [thDateText(next), c[0], c[2], c[3] || "-", c[6] && c[6] !== "-" ? c[6] : "-", money(totals(contractMonthLines(c)).net)])}
+      {due.length > 0 && <Section title="ครบรอบบิล" sub={`${due.length} สัญญาครบรอบแล้วหรือจะครบภายใน ${DUE_AHEAD} วัน · ยังไม่มีใบของรอบนั้น · ออกเป็นใบร่างให้การเงินตรวจยอดก่อนส่งให้ญาติ`}
+        actions={<button className="btn-primary" onClick={makeDue}><Icon name="plus" className="h-4 w-4" /> ออกใบแจ้งหนี้รอบนี้ {due.length} ใบ (ร่าง)</button>}>
+        <DataTable search={false} columns={["ครบรอบ", "เลขที่สัญญา", ...(allBranches ? ["สาขา"] : []), "ผู้รับบริการ", "ผู้ชำระ", "ห้อง", "ค่าบริการ/เดือน (บาท)"]}
+          rows={due.map(({ c, next }) => [thDateText(next), c[0], ...(allBranches ? [c[1] || "-"] : []), c[2], c[3] || "-", c[6] && c[6] !== "-" ? c[6] : "-", money(totals(contractMonthLines(c)).net)])}
           actions={[{ label: "ออกใบ", onClick: (k) => setBillFor({ id: due[k].id }) }]} />
       </Section>}
 
@@ -584,7 +625,16 @@ export function Billing() {
           { k: VOID, t: VOID, n: list.filter((x) => x.status === VOID).length, tone: "muted" },
           ...(list.some(isCN) ? [{ k: CN_KIND, t: CN_KIND, n: list.filter(isCN).length, tone: "warn" as const }] : []),
         ]} summary={<>ค้างรวม <b>{money(unpaid.reduce((n, x) => n + balanceOf(x), 0))}</b> · รับเดือนนี้ <b>{money(paidMonthSum)}</b> บาท</>} />
-        <DataTable columns={["เลขที่เอกสาร", "วันที่", "HN", "ผู้รับบริการ", "ประเภท", "ยอดสุทธิ (บาท)", "ชำระแล้ว", "คงเหลือ", "ค้างมา", "สถานะ"]} rows={rows} badgeCols={[8]} minor={[2]}
+        <DataTable columns={invCols} rows={rows} minor={[invCols.indexOf("HN")]}
+          mobileCard={{ title: invCols.indexOf("ผู้รับบริการ"), value: invCols.indexOf("คงเหลือ"), sub: [0, 1, invCols.indexOf("ประเภท")] }}
+          render={(k, col, v) => {
+            const c = invCols[col], x = shown[k];
+            if (!x) return undefined;
+            if (c === "สถานะ") { const d = overdueDays(x); return <span className="inv-status"><StatusBadge value={v} />{d >= 0 && <small className={d > 30 ? "is-late" : ""}>{d > 30 ? `เกินกำหนด ${d} วัน` : `${d} วัน`}</small>}</span>; }
+            if (c === "ผู้รับบริการ" || c === "ประเภท" || c === "สาขา" || c === "วันที่") return <span className="whitespace-nowrap">{v}</span>;
+            if (c === "ยอดสุทธิ (บาท)" && x.status === VOID) return <span className="whitespace-nowrap text-gold-400 line-through">{v}</span>;
+            return undefined;
+          }}
           empty={meta.loaded ? "ยังไม่มีเอกสาร" : "กำลังโหลด…"}
           onRow={(k) => { setFormat("customer"); setCopy(false); setView(shown[k]); }} rowLabel="กดเพื่อดูหรือพิมพ์เอกสาร"
           actions={[
@@ -593,6 +643,7 @@ export function Billing() {
             { label: "รับชำระ", tone: "primary", hidden: (k) => !isOpen(shown[k]), onClick: (k) => openPay(shown[k]) },
             { label: "บันทึกคืนเงิน", tone: "primary", hidden: (k) => shown[k].status !== CN_REFUND, onClick: (k) => setRefund({ x: shown[k], method: "โอนเงิน" }) },
             { label: "ดู / พิมพ์", more: true, onClick: (k) => { setFormat("customer"); setCopy(false); setView(shown[k]); } },
+            { label: "คัดลอกข้อความแจ้งยอด (LINE)", more: true, hidden: (k) => !isOpen(shown[k]) || isCN(shown[k]), onClick: (k) => copyLine(shown[k]) },
             ...(admin ? [{ label: "ออกใบลดหนี้…", more: true, hidden: (k: number) => isCN(shown[k]) || ![UNPAID, PARTIAL, PAID].includes(shown[k].status), onClick: (k: number) => setCn({ x: shown[k], amount: "", reason: CN_REASONS[0], other: "" }) }] : []),
             ...(admin ? [{ label: "ยกเลิกใบนี้…", danger: true, more: true, hidden: (k: number) => isCN(shown[k]) || shown[k].status === VOID || shown[k].status === PAID || shown[k].status === PARTIAL, onClick: (k: number) => { const x = shown[k]; if (x.status === VOID) return; if (x.status === PAID || x.status === PARTIAL) return toast("เอกสารที่รับชำระแล้วยกเลิกไม่ได้"); confirm({ title: "ยกเลิกเอกสาร", message: `ต้องการยกเลิก ${x.no ?? ""} (${money(x.net)} บาท) ใช่หรือไม่ เอกสารยังเก็บไว้ในระบบพร้อมสถานะยกเลิก`, danger: true, okLabel: "ยกเลิกเอกสาร", onOk: () => voidInv(x) }); } }] : []),
           ]} />
@@ -613,7 +664,6 @@ export function Billing() {
       <StatusExport open={exp} onClose={() => setExp(false)} list={list} contracts={con.rows} branchOf={invBranch} />
 
       <Receivables list={list} branchOf={invBranch} branchInfo={branchInfo} by={user?.name} />
-      <CashClose open={cashOpen} onClose={() => setCashOpen(false)} isGlobal={user?.role === "Global Admin"} />
 
       {/* ออกใบแจ้งหนี้ */}
       <Modal open={!!form} wide title="ออกใบแจ้งหนี้" onClose={() => setForm(null)}
@@ -755,6 +805,12 @@ export function Billing() {
         {course && <div className="space-y-4">
           <div className="form-grid">
             <Field label="ผู้รับบริการ" required className="md:col-span-2"><ResidentPicker value={course.who} names={people.map((r) => r[0])} onChange={(v) => setCourse({ ...course, who: v })} /></Field>
+            {ptCourses.length > 0 && <Field label="เลือกคอร์สจากใบราคา" className="md:col-span-2"><select value={course.code ?? ""} onChange={(e) => {
+              const p = ptCourses.find((x) => x.code === e.target.value);
+              if (!p) return setCourse({ ...course, code: "" });
+              setCourse({ ...course, code: p.code, name: p.name, price: String(p.price), total: p.n ? String(p.n) : p.unit === "ครั้ง" ? "1" : course.total });
+            }}><option value="">-- กำหนดเอง --</option>{ptCourses.map((p) => <option key={p.code} value={p.code}>{p.code} · {p.name} · {money(p.price)}{p.unit === "ครั้ง" ? "/ครั้ง" : ""}</option>)}</select>
+              <p className="field-hint">เลือกแล้วระบบเติมชื่อ จำนวนครั้ง และราคาให้ · แก้ได้ถ้าตกลงราคาพิเศษ</p></Field>}
             <Field label="ชื่อคอร์ส" required className="md:col-span-2"><input value={course.name} onChange={(e) => setCourse({ ...course, name: e.target.value })} /></Field>
             <Field label="จำนวนครั้ง" required><input type="number" min={1} max={500} value={course.total} onChange={(e) => setCourse({ ...course, total: e.target.value })} /></Field>
             <Field label="ราคาคอร์ส (บาท)" required><input type="number" min={0} value={course.price} onChange={(e) => setCourse({ ...course, price: e.target.value })} placeholder="เช่น 8000" /></Field>
@@ -764,19 +820,34 @@ export function Billing() {
       </Modal>
 
       {/* รับชำระ */}
-      <Modal open={!!pay} title={`รับชำระ ${pay?.no ?? ""}`} onClose={() => setPay(null)}
+      <Modal open={!!pay} title={multi ? `รับชำระ ${batch.length} ใบ` : `รับชำระ ${pay?.no ?? ""}`} onClose={() => setPay(null)}
         footer={<><button className="btn-soft" onClick={() => setPay(null)}>ยกเลิก</button><button className="btn-primary" disabled={busy} onClick={savePay}>{busy ? "กำลังบันทึก…" : "ยืนยันรับชำระ"}</button></>}>
         {pay && <div className="space-y-4">
           <div className="rounded-xl bg-cream-50 px-4 py-3 text-sm text-gold-700">
             <p>{pay.who} · ผู้ชำระ {pay.payer}</p>
-            <p className="mt-1">ยอดสุทธิ {money(pay.net)} · ชำระแล้ว {money(pay.paid ?? 0)} · <b className="text-gold-800">คงเหลือ {money(left)} บาท</b></p>
+            {multi ? <p className="mt-1">{batch.length} ใบ · <b className="text-gold-800">คงเหลือรวม {money(left)} บาท</b></p>
+              : <p className="mt-1">ยอดสุทธิ {money(pay.net)} · ชำระแล้ว {money(pay.paid ?? 0)} · <b className="text-gold-800">คงเหลือ {money(left)} บาท</b></p>}
           </div>
+          {payOthers.length > 0 && <div className="rounded-xl border border-cream-300 bg-white px-4 py-3 text-sm text-gold-700">
+            <p className="font-medium text-gold-900">{pay.who} มีใบค้างอื่นอีก {payOthers.length} ใบ · ติ๊กเพื่อรับเงินรวมครั้งเดียว</p>
+            <ul className="mt-2 space-y-1.5">
+              {[pay, ...payOthers].sort((a, b) => a.date.localeCompare(b.date)).map((y) => (
+                <li key={y.id}><label className="flex cursor-pointer items-center gap-2">
+                  <input type="checkbox" className="h-4 w-4 accent-[#8B6E3E]" checked={y.id === pay.id || extra.includes(y.id)} disabled={y.id === pay.id}
+                    onChange={(e) => setExtra(e.target.checked ? [...extra, y.id] : extra.filter((id) => id !== y.id))} />
+                  <span className="min-w-0 flex-1">{y.no ?? "-"} · {thDateText(y.date.slice(0, 10))} · {kindShort(y.kind)}</span>
+                  <b className="tabular-nums">{money(balanceOf(y))}</b>
+                </label></li>
+              ))}
+            </ul>
+            {multi && <p className="field-hint mt-2">ตัดใบเก่าก่อน · ออกใบเสร็จแยกตามใบ · จ่ายไม่ครบ ใบท้ายๆ จะเป็นชำระบางส่วนหรือยังค้าง</p>}
+          </div>}
           <p className="text-xs text-gold-600">กรอกยอดที่ลูกค้าจ่ายในครั้งนี้ แยกตามวิธีชำระ · จ่ายไม่ครบได้ (ระบบเก็บเป็น "ชำระบางส่วน" และกลับมารับเพิ่มได้ภายหลัง)</p>
           {/* ช่องรับเงินเริ่มว่างทุกช่อง (เดิมเติมยอดลงช่องโอนให้เอง ทำให้รับเงินสดแล้วบันทึกผิดช่องทาง) · กดปุ่มลัดเพื่อรับเต็มยอดด้วยวิธีเดียว */}
           {/* ใบที่ตกลงแบ่งชำระ: บอกงวดถัดไปและยอดของงวด กดใส่ยอดงวดนี้ได้ทันที */}
           {(() => {
             const n = installmentsOf(pay.note);
-            if (n < 2) return null;
+            if (n < 2 || multi) return null;
             const parts = splitInstallments(pay.net, n);
             let k = 0, acc = 0;
             while (k < n - 1 && acc + parts[k] <= (pay.paid ?? 0) + 0.005) acc += parts[k++];
@@ -797,11 +868,12 @@ export function Billing() {
           </div>
           <div className="grid gap-3 sm:grid-cols-3">
             <Field label="เงินสด"><input type="number" min={0} value={amt.cash} onChange={(e) => setAmt({ ...amt, cash: e.target.value })} /></Field>
-            <Field label="บัตรเครดิต"><input type="number" min={0} value={amt.credit} onChange={(e) => setAmt({ ...amt, credit: e.target.value })} /></Field>
             <Field label="โอนเงิน"><input type="number" min={0} value={amt.transfer} onChange={(e) => setAmt({ ...amt, transfer: e.target.value })} /></Field>
+            <Field label="บัตรเครดิต"><input type="number" min={0} value={amt.credit} onChange={(e) => setAmt({ ...amt, credit: e.target.value })} /></Field>
           </div>
-          {/* บริษัทจ่ายแทนและหักภาษีไว้: ตัดยอดค้างด้วย แต่ไม่ใช่เงินที่รับเข้า (ไม่นับในปิดยอดรายวัน) */}
-          <div className="rounded-xl border border-cream-300 bg-cream-50 px-4 py-3">
+          {num(amt.transfer) > 0 && <Field label="เลขอ้างอิงการโอน (ไม่บังคับ)"><input value={amt.tref} maxLength={40} placeholder="เลขที่รายการ / Ref. No. จากสลิป" onChange={(e) => setAmt({ ...amt, tref: e.target.value })} /></Field>}
+          {/* บริษัทจ่ายแทนและหักภาษีไว้: ตัดยอดค้างด้วย แต่ไม่ใช่เงินที่รับเข้า (ไม่นับเป็นเงินรับ) */}
+          {!multi && <div className="rounded-xl border border-cream-300 bg-cream-50 px-4 py-3">
             <Field label="ภาษีหัก ณ ที่จ่าย (ถ้าผู้ชำระเป็นบริษัทและหักภาษีไว้)">
               <div className="flex flex-wrap items-center gap-2">
                 <input type="number" min={0} className="!w-40" value={amt.wht} placeholder="0" onChange={(e) => setAmt({ ...amt, wht: e.target.value })} />
@@ -810,7 +882,7 @@ export function Billing() {
               </div>
             </Field>
             <p className="field-hint mt-1">คิด 3% จากค่าบริการก่อน VAT (ไม่รวมเงินประกัน) · ขอหนังสือรับรองการหักภาษี (50 ทวิ) จากผู้ชำระเก็บไว้ให้ฝ่ายบัญชี</p>
-          </div>
+          </div>}
           <p className={`rounded-xl px-4 py-2 text-sm ${now > left + 0.005 ? "bg-red-50 text-red-700" : "bg-gold-50 text-gold-800"}`}>
             รับเงินครั้งนี้ <b>{money(got)}</b> บาท{wht > 0 ? <> + หัก ณ ที่จ่าย <b>{money(wht)}</b> = ตัดยอด <b>{money(now)}</b> บาท</> : ""} · {now > left + 0.005 ? "เกินยอดคงเหลือ" : now >= left - 0.005 && got > 0 ? "ชำระครบ" : `คงเหลือหลังรับ ${money(Math.max(0, left - now))} บาท`}
           </p>
@@ -827,7 +899,7 @@ export function Billing() {
             <div><span>สถานะ</span><StatusBadge value={view.status} /></div>
             <div><span>ยอดสุทธิ</span><b>{money(view.net)}</b></div>
             <div><span>ชำระแล้ว</span><b>{money(view.paid ?? 0)}</b></div>
-            <div><span>คงเหลือ</span><b className={balanceOf(view) > 0 ? "text-red-700" : ""}>{money(balanceOf(view))}</b>{isOpen(view) && <small>{overdue(view)}</small>}</div>
+            <div><span>คงเหลือ</span><b className={balanceOf(view) > 0 ? "text-red-700" : ""}>{money(balanceOf(view))}</b>{isOpen(view) && <small>{overdueDays(view) > 30 ? `เกินกำหนด ${overdueDays(view)} วัน` : `ค้าง ${overdueDays(view)} วัน`}</small>}</div>
             {isOpen(view) && <button className="btn-primary !py-2" onClick={() => { const x = view; setView(null); openPay(x); }}>รับชำระ</button>}
             {view.status === DRAFT && <span className="text-sm text-amber-800">ยังรับชำระไม่ได้ · กด ยืนยันยอด ในตารางก่อน</span>}
           </div>
@@ -835,6 +907,7 @@ export function Billing() {
             <Tabs tabs={["สำหรับผู้ชำระ", "สำหรับฝ่ายการเงิน"]} value={format === "customer" ? "สำหรับผู้ชำระ" : "สำหรับฝ่ายการเงิน"} onChange={(t) => setFormat(t === "สำหรับผู้ชำระ" ? "customer" : "finance")} />
             <Tabs tabs={["ต้นฉบับ", "สำเนา"]} value={copy ? "สำเนา" : "ต้นฉบับ"} onChange={(t) => setCopy(t === "สำเนา")} />
             {view.status === VOID && <span className="status-badge status-danger">เอกสารนี้ถูกยกเลิก</span>}
+            {isOpen(view) && !isCN(view) && !view.id.startsWith("sample-") && <button type="button" className="btn-soft !min-h-0 !py-2 !text-sm" onClick={() => copyLine(view)}>คัดลอกข้อความแจ้งยอด (LINE)</button>}
             {canTax && <button type="button" className="btn-soft !min-h-0 !py-2 !text-sm sm:ml-auto" onClick={() => {
               const b = branchInfo(branchOfInv(view));
               setTaxDlg({ branch: b.name, taxId: b.taxId ?? "", office: b.office && b.office !== "สำนักงานใหญ่" ? b.office.replace(/\D/g, "") : "", hq: !b.office || b.office === "สำนักงานใหญ่" });
@@ -851,7 +924,7 @@ export function Billing() {
               <ul className="pay-history">
                 {pays.map((p) => p.kind === "credit"
                   ? <li key={p.id}><b>หักด้วยใบลดหนี้</b> · {docDate(p.date)} · {money(p.amount)} บาท <small>· {p.note} · โดย {p.cashier || "-"}</small></li>
-                  : <li key={p.id}><b>งวดที่ {p.n}</b> · {docDate(p.date)} · {money(p.amount - (p.wht ?? 0))} บาท <small>({[p.cash && `เงินสด ${money(p.cash)}`, p.credit && `บัตร ${money(p.credit)}`, p.transfer && `โอน ${money(p.transfer)}`, p.wht && `หัก ณ ที่จ่าย ${money(p.wht)}`].filter(Boolean).join(" · ")}) · รับโดย {p.cashier || "-"}</small></li>)}
+                  : <li key={p.id}><b>งวดที่ {p.n}</b> · {docDate(p.date)} · {money(p.amount - (p.wht ?? 0))} บาท <small>({[p.cash && `เงินสด ${money(p.cash)}`, p.credit && `บัตร ${money(p.credit)}`, p.transfer && `โอน ${money(p.transfer)}`, p.wht && `หัก ณ ที่จ่าย ${money(p.wht)}`].filter(Boolean).join(" · ")}){p.transferRef ? ` · อ้างอิงโอน ${p.transferRef}` : ""} · รับโดย {p.cashier || "-"}</small></li>)}
                 {view.status === PARTIAL && <li className="is-left"><b>คงเหลือ {money(balanceOf(view))} บาท</b> <small>กด "รับชำระ" ที่รายการเพื่อรับงวดถัดไป</small></li>}
               </ul>
             </div>
@@ -915,7 +988,7 @@ export function Billing() {
         <div className="space-y-4">
           <p className="text-sm text-gold-700">{refund.x.who} · {refund.x.note}</p>
           <Field label="คืนเงินด้วย"><select value={refund.method} onChange={(e) => setRefund({ ...refund, method: e.target.value })}>{["โอนเงิน", "เงินสด", "หักจากเงินประกัน", "อื่น ๆ"].map((x) => <option key={x}>{x}</option>)}</select></Field>
-          <p className="field-hint">คืนเป็นเงินสดจากลิ้นชัก ให้ใส่หมายเหตุตอนปิดยอดรายวันด้วย (ระบบไม่หักเงินสดในลิ้นชักให้เอง)</p>
+          <p className="field-hint">คืนเป็นเงินสดจากลิ้นชัก ให้ใส่หมายเหตุไว้ด้วย (ระบบไม่หักเงินสดในลิ้นชักให้เอง)</p>
         </div>
       </Modal>}
 

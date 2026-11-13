@@ -8,11 +8,9 @@ import { downloadCsv, useCrud, useRecords } from "@/lib/store";
 import { CONTRACTS, RESIDENTS } from "@/lib/mock";
 import { useApp } from "@/lib/app";
 import { exportInvoiceLines, exportPayments, usePaidDays } from "@/lib/billingExport";
-import { cashHandoff } from "@/lib/handoff";
 import { useSession } from "@/lib/session";
 import { useBranchInfo } from "../views/Billing";
 import Receivables from "../billing/Receivables";
-import { CashCloseStatus } from "../billing/CashClose";
 import StatusExport from "../billing/StatusExport";
 import { revenueIn } from "@/lib/servicePeriod";
 import { invoiceDocsCsv } from "@/lib/exportsCsv";
@@ -81,7 +79,7 @@ export default function FinanceAnalytics({ branch, compact, onTiles, month, prev
   const [all, , meta] = useRecords<Invoice>("invoices", []);
   const res = useCrud("residents", RESIDENTS);
   const con = useCrud("contracts", CONTRACTS);
-  const { go, toast } = useApp();
+  const { toast } = useApp();
   const { user } = useSession();
   const branchInfo = useBranchInfo();
   // ใบแจ้งหนี้ไม่มีสาขาฝั่งหน้าจอ: ดูจากสัญญา หรือผู้รับบริการ หรือสาขาของผู้ใช้ (เหมือนหน้าใบแจ้งหนี้และใบเสร็จ)
@@ -161,10 +159,9 @@ export default function FinanceAnalytics({ branch, compact, onTiles, month, prev
           <ShareBars rows={byKind} />
         </Section>
       </div>
-      {/* อายุลูกหนี้ (ชุดเดียวกับหน้าใบแจ้งหนี้และใบเสร็จ) และสถานะการปิดยอดรายสาขา */}
+      {/* อายุลูกหนี้ (ชุดเดียวกับหน้าใบแจ้งหนี้และใบเสร็จ)  */}
       {open.length ? <Receivables list={list} branchOf={branchOf} branchInfo={branchInfo} by={user?.name} />
         : <Section title="ลูกหนี้ค้างชำระตามอายุหนี้"><p className="rounded-xl bg-cream-50 px-4 py-6 text-center text-sm text-gold-600">{meta.loaded ? "ไม่มีใบค้างชำระ" : "กำลังโหลด…"}</p></Section>}
-      <CashCloseStatus branch={branch} onOpen={() => { cashHandoff.set(); go("billing"); }} />
     </div>
   );
 }

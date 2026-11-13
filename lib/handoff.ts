@@ -20,13 +20,6 @@ export const taskHandoff = {
   take: () => { const h = taskFilter; taskFilter = null; return h; },
 };
 
-/** หน้าแรก → การเงิน: เปิดหน้าต่างปิดยอดรายวันให้ทันที */
-let cashOpen = false;
-export const cashHandoff = {
-  set: () => { cashOpen = true; },
-  take: () => { const h = cashOpen; cashOpen = false; return h; },
-};
-
 /** date = วันที่ D/C (YYYY-MM-DD) ใช้คิดค่าบริการเดือนสุดท้าย */
 let bill: { id: string; dc?: boolean; date?: string } | null = null;
 export const billHandoff = {

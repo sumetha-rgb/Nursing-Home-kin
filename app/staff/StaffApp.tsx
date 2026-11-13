@@ -24,6 +24,7 @@ import { daysLeft, Drug, DRUGS0, iso, MEALS, nowTh, Pack } from "@/lib/pharmacy"
 import AlertsBell from "@/components/care/AlertsBell";
 import BranchNotice from "@/components/BranchNotice";
 import ResidentProfile from "@/components/care/ResidentProfile";
+import { IncidentReport } from "@/components/care/Incidents";
 import VitalsDialog from "@/components/care/VitalsDialog";
 import FamilyLinkDialog from "@/components/care/FamilyLinkDialog";
 import PhotoPicker from "@/components/PhotoPicker";
@@ -339,6 +340,8 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   const [resQ, setResQ] = useState("");
   const [resTodo, setResTodo] = useState(false);
   const [resPick, setResPick] = useState<(typeof RESIDENTS)[number] | null>(null);
+  // รายงานเหตุการณ์ไม่พึงประสงค์ (หกล้ม ยาผิด แผลใหม่) · แจ้งหัวหน้าพยาบาลทันที
+  const [incOpen, setIncOpen] = useState(false);
   const resList = RESIDENTS.filter((r) => (!resQ.trim() || `${r.name} ${r.room}`.toLowerCase().includes(resQ.trim().toLowerCase())) && (!resTodo || !measured[r.name]));
   // จ่ายยา: เปิดที่มื้อตามเวลาตอนนี้ · กรองตามสถานะซอง
   const [meal, setMeal] = useState(() => { const h = new Date().getHours() + new Date().getMinutes() / 60; return h < 10.5 ? MEALS[0] : h < 15 ? MEALS[1] : h < 19.5 ? MEALS[2] : MEALS[3]; });
@@ -409,7 +412,8 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
                 {/* งานที่หัวหน้าให้ดาวต่ำ (ต้องแก้) · กดไปดูที่แท็บ "ฉัน" */}
                 {fixCount > 0 && <button type="button" className="ka-fix" onClick={() => { setTab("perf"); setPerfView("me"); window.scrollTo(0, 0); }} aria-label={`งานต้องแก้ ${fixCount} งาน · ดูที่แท็บฉัน`}><Icon name="alert" className="h-3.5 w-3.5" />ต้องแก้ {fixCount}</button>}
               </div><p>{new Date().toLocaleDateString("th-TH", { weekday: "short", day: "numeric", month: "short" })} · {myShiftText}</p></div>
-              <div className="relative" onClick={(e) => e.stopPropagation()}>
+              <div className="relative flex flex-wrap justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
+                <button type="button" className="ka-pill is-alert" onClick={() => setIncOpen(true)}><Icon name="alert" className="h-4 w-4" />รายงานเหตุการณ์</button>
                 <button type="button" className="ka-pill" aria-expanded={fab} onClick={() => setFab(!fab)}><Icon name="plus" className="h-4 w-4" />ผลงานพิเศษ</button>
                 {fab && (
                   <div className="absolute right-0 top-[calc(100%+6px)] z-20 w-64 overflow-hidden rounded-2xl border border-cream-300 bg-white shadow-soft">
@@ -872,6 +876,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
       <VitalsDialog open={vitalsFor !== null} residents={RESIDENTS.map((r) => r.name)} resident={vitalsFor ?? undefined} recorder={user.name}
         onClose={() => setVitalsFor(null)} onSave={(row) => addHealth(row)} />
       <ResidentProfile id={profile} onClose={() => setProfile(null)} />
+      <IncidentReport open={incOpen} compact residents={RESIDENTS} onClose={() => setIncOpen(false)} />
 
       {/* วิธีติดตั้ง KinApp บน iPhone (เปิดจากแถบติดตั้งบนหน้างานวันนี้) */}
       <Modal open={iosHelp} title="ติดตั้ง KinApp บน iPhone" onClose={() => setIosHelp(false)} footer={<button type="button" className="btn-primary w-full" onClick={() => setIosHelp(false)}>เข้าใจแล้ว</button>}>

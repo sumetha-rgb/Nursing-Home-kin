@@ -87,9 +87,18 @@ export default function BillDoc({ inv, branch, format, copy, slips = [], payment
       el.style.width = "";
       el.style.zoom = h > avail ? String(Math.max(0.6, avail / h)) : "";
     };
-    const reset = () => { el.style.zoom = ""; };
+    // จอแคบ (มือถือ): ย่อทั้งใบให้พอดีความกว้าง ไม่ให้ยอดเงินหลุดขอบ · พิมพ์ใช้ขนาดจริง
+    const screen = () => {
+      el.style.zoom = "";
+      const box = el.parentElement?.parentElement?.clientWidth ?? 0, w = el.scrollWidth;
+      if (box && w > box + 1) el.style.zoom = String(Math.max(0.45, box / w));
+    };
+    const reset = () => { el.style.zoom = ""; screen(); };
+    screen();
+    const ro = typeof ResizeObserver !== "undefined" && el.parentElement?.parentElement ? new ResizeObserver(screen) : null;
+    if (ro && el.parentElement?.parentElement) ro.observe(el.parentElement.parentElement);
     window.addEventListener("beforeprint", fit); window.addEventListener("afterprint", reset);
-    return () => { window.removeEventListener("beforeprint", fit); window.removeEventListener("afterprint", reset); };
+    return () => { ro?.disconnect(); window.removeEventListener("beforeprint", fit); window.removeEventListener("afterprint", reset); };
   }, []);
 
   const attach = <>
@@ -146,6 +155,7 @@ export default function BillDoc({ inv, branch, format, copy, slips = [], payment
             <dt>รหัสผู้รับบริการ :</dt><dd>{inv.hn || "-"}</dd>
             <dt>ผู้รับบริการ :</dt><dd>{inv.who || "-"}</dd>
             <dt>เลขที่สัญญา :</dt><dd>{inv.contract || "-"}</dd>
+            {detail?.period && <><dt>รอบบริการ / Period :</dt><dd>{detail.period}</dd></>}
             <dt>ที่อยู่ :</dt><dd className="whitespace-pre-line">{inv.address || "-"}</dd>
             {inv.payerTaxId?.replace(/\D/g, "") && <><dt>เลขผู้เสียภาษี / Tax ID :</dt><dd>{taxIdText(inv.payerTaxId)}{inv.payerBranch ? ` (${inv.payerBranch})` : ""}</dd></>}
           </dl>
@@ -200,7 +210,7 @@ export default function BillDoc({ inv, branch, format, copy, slips = [], payment
         </div>}
         {cust && inv.note && <p className="bill-note2"><span>หมายเหตุ / NOTE :</span> {inv.note}</p>}
         <div className="bill-sign2">
-          <div><p>{inv.payer}</p><span>{cust ? "ผู้จ่ายเงิน (PAYER'S SIGNATURE)" : "ชื่อผู้รับบริการ (CLIENT'S SIGNATURE)"}</span></div>
+          <div><p>{inv.payer}</p><span>ผู้จ่ายเงิน (PAYER&apos;S SIGNATURE)</span></div>
           <div className="bill-seal">ตราประทับบริษัท</div>
           <div><p>{cashier}</p><span>{cn ? "ผู้อนุมัติ (AUTHORIZED)" : cust && paid ? "ผู้รับเงิน (COLLECTOR)" : "เจ้าหน้าที่การเงิน (CASHIER)"}</span></div>
         </div>
@@ -210,8 +220,9 @@ export default function BillDoc({ inv, branch, format, copy, slips = [], payment
         <div className="bd-head">
           <dl>
             <dt>ห้องพัก</dt><dd>{detail?.room || "-"}</dd>
-            <dt>รหัสลูกค้า</dt><dd>{inv.hn || "-"}</dd>
+            <dt>HN</dt><dd>{inv.hn || "-"}</dd>
             <dt>ชื่อ - สกุล</dt><dd>{inv.who || "-"}</dd>
+            {detail?.period && <><dt>รอบบริการ</dt><dd>{detail.period}</dd></>}
           </dl>
           <dl>
             <dt>วันที่</dt><dd>{date}</dd>

@@ -2,7 +2,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Icon from "../Icon";
 import { MASTER_TASKS } from "@/lib/mock";
-import { SYNC_ERROR_EVENT, useCrud } from "@/lib/store";
+import { refreshData, SYNC_ERROR_EVENT, useCrud } from "@/lib/store";
+import TurningBoard from "../care/TurningBoard";
+import { useSession } from "@/lib/session";
+import { can } from "@/lib/perms";
 import { taskHandoff } from "@/lib/handoff";
 import { useApp } from "@/lib/app";
 import { fetchNurses, useResidents } from "@/lib/care";
@@ -91,6 +94,8 @@ export function DailyTasks() {
   const [assignErr, setAssignErr] = useState("");
   const [repeat, setRepeat] = useState(true);
   const [routineOpen, setRoutineOpen] = useState(false);
+  const { user: me } = useSession();
+  const canRoutine = can(me, "tasks.review");
   type Routine = { id: string; resident_name: string; branch_name: string; task_name: string; shift: string; sched_time: string; created_by: string };
   const [routines, setRoutines] = useState<Routine[]>([]);
   const loadRoutines = useCallback(() => { fetch("/api/care?op=routines", { cache: "no-store" }).then((r) => r.json()).then((d) => setRoutines(d.routines ?? [])).catch(() => {}); }, []);
@@ -244,6 +249,9 @@ export function DailyTasks() {
           ]} />
         </>}
       />
+
+      <TurningBoard rows={rows} phase={phase} routineTasks={routines} isToday={date === todayIso()} canSetup={canRoutine}
+        onChanged={() => { loadRoutines(); refreshData(`daily-${date}`); }} />
 
       <Section>
         {/* ตัวกรองแถวเดียว: สถานะ (พร้อมจำนวน) · กะ · ค้นหา */}

@@ -5,6 +5,8 @@ import { AvatarEdit } from "@/components/Avatar";
 import { useApp } from "@/lib/app";
 import { DataTable, Field, Modal, StatusBadge } from "@/components/ui";
 import ClinicalPanel, { ClinicalTab, useClinic } from "./Clinical";
+import WoundLog from "./WoundLog";
+import HomeProgram from "./HomeProgram";
 import { PrintModal, ProfileDoc, ReferralDoc } from "@/components/print/Docs";
 import { MedPhotoModal } from "@/components/pharmacy/MedPhotos";
 import { useBranchInfo } from "@/components/views/Billing";
@@ -60,11 +62,11 @@ const limitLines = (k: keyof Vitals) => {
   return out;
 };
 
-const TABS = ["ภาพรวม", "แรกรับ/ประเมิน", "บันทึกพยาบาล", "สัญญาณชีพ", "ยาและการให้ยา", "กายภาพ", "เวชภัณฑ์", "งานดูแลและนัดหมาย", "สมุดส่งเวร", "ค่าใช้จ่าย"];
+const TABS = ["ภาพรวม", "แรกรับ/ประเมิน", "บันทึกพยาบาล", "แผล", "สัญญาณชีพ", "ยาและการให้ยา", "กายภาพ", "เวชภัณฑ์", "งานดูแลและนัดหมาย", "สมุดส่งเวร", "ค่าใช้จ่าย"];
 /** แท็บแบ่ง 2 แถวตามกลุ่ม ไม่ต้องเลื่อนซ้ายขวา */
 const TAB_GROUPS = [
   { label: "ข้อมูลทั่วไป", tabs: ["ภาพรวม", "แรกรับ/ประเมิน", "งานดูแลและนัดหมาย", "สมุดส่งเวร"] },
-  { label: "การดูแลรายวัน", tabs: ["บันทึกพยาบาล", "สัญญาณชีพ", "ยาและการให้ยา", "กายภาพ", "เวชภัณฑ์"] },  { label: "การเงิน", tabs: ["ค่าใช้จ่าย"], money: true },
+  { label: "การดูแลรายวัน", tabs: ["บันทึกพยาบาล", "แผล", "สัญญาณชีพ", "ยาและการให้ยา", "กายภาพ", "เวชภัณฑ์"] },  { label: "การเงิน", tabs: ["ค่าใช้จ่าย"], money: true },
 ];
 const CLINICAL: Record<string, ClinicalTab> = { "แรกรับ/ประเมิน": "admission", "บันทึกพยาบาล": "nursing", "กายภาพ": "physio", "เวชภัณฑ์": "supplies" };
 
@@ -138,6 +140,8 @@ export default function ResidentProfile({ id, onClose, initialTab }: { id: strin
             </div>)}
           </div>
 
+          {tab === "แผล" && id && <WoundLog residentId={id} />}
+          {tab === "กายภาพ" && id && <HomeProgram residentId={id} canEdit={can(user, "physio.record") || user?.role === "Branch Admin" || user?.role === "Global Admin"} />}
           {tab === "ค่าใช้จ่าย" && canMoney && <ResidentBilling name={r.full_name} hn={r.hn as string | null | undefined} />}
           {tab === TABS[0] && (
             <div className="grid gap-4 md:grid-cols-2">

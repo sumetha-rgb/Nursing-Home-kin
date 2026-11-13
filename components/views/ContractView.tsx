@@ -2,7 +2,13 @@
 import { ReactNode } from "react";
 import Icon from "../Icon";
 import { Modal, StatusBadge } from "../ui";
-import { contractVat, money, svcNet } from "@/lib/billing";
+import { balanceOf, contractVat, Invoice, isCN, isOpen, money, svcNet, VOID } from "@/lib/billing";
+import { useRecords } from "@/lib/store";
+import { useApp } from "@/lib/app";
+import { useSession } from "@/lib/session";
+import { can } from "@/lib/perms";
+import { invoiceHandoff } from "@/lib/handoff";
+import { bkkToday, nextCycle, thDateText } from "@/lib/servicePeriod";
 import { isNoAllergy } from "@/lib/medicalLists";
 import { contractLines, contractRoomTitle, longDate } from "../print/Docs";
 import { contractMonthTotal, prepaidMonths } from "./Billing";
@@ -30,6 +36,19 @@ export default function ContractView({ r, onClose, onEdit, onPrint, onBill }: {
   const lines = r ? contractLines(r) : [];
   const fee = r ? num(r[4]) : 0, rate = r ? contractVat(r) : 0, vat = Math.round(fee * rate) / 100;
   const monthly = r ? contractMonthTotal(r) : 0, months = r ? prepaidMonths(r) : 1;
+  // กล่องเงิน: ค้างชำระ · จ่ายล่าสุด · รอบบิลถัดไป (จากใบแจ้งหนี้ของสัญญานี้)
+  const [invoices] = useRecords<Invoice>("invoices", []);
+  const { go } = useApp();
+  const { user } = useSession();
+  const canBill = can(user, "billing");
+  const mine = r?.[0] ? invoices.filter((x) => x.contract === r[0] && x.status !== VOID && !isCN(x)) : [];
+  const open = mine.filter(isOpen).sort((a, b) => a.date.localeCompare(b.date));
+  const owe = open.reduce((n, x) => n + balanceOf(x), 0);
+  const oldDays = open.length ? Math.max(0, Math.floor((Date.parse(bkkToday()) - Date.parse(open[0].date.slice(0, 10))) / 864e5)) : 0;
+  const last = mine.filter((x) => (x.paid ?? 0) > 0 && x.paidDate).sort((a, b) => String(b.paidDate).localeCompare(String(a.paidDate)))[0];
+  const next = r && r[5] === "ใช้งานอยู่" ? nextCycle(r, invoices) : null;
+  const nextIn = next ? Math.round((Date.parse(next) - Date.parse(bkkToday())) / 864e5) : 0;
+  const openInv = (x: Invoice) => { invoiceHandoff.set(x.id); onClose(); go("billing"); };
   return (
     <Modal open={!!r} wide title="รายละเอียดสัญญา" onClose={onClose}
       footer={<>
@@ -51,6 +70,21 @@ export default function ContractView({ r, onClose, onEdit, onPrint, onBill }: {
             <p className="text-xl font-semibold tabular-nums text-gold-900">{money(monthly)} <small className="text-xs font-normal text-gold-500">บาท</small></p>
           </div>
         </div>
+
+        {r[0] && <div className="cv-money">
+          <button type="button" className={owe > 0 ? "is-owe" : ""} disabled={!open.length || !canBill} onClick={() => open[0] && openInv(open[0])}>
+            <span>ค้างชำระ</span><b>{money(owe)}</b>
+            <small>{open.length ? `${open.length} ใบ · ใบเก่าสุด ${oldDays} วัน${canBill ? " · กดดูใบ" : ""}` : "ไม่มียอดค้าง"}</small>
+          </button>
+          <button type="button" disabled={!last || !canBill} onClick={() => last && openInv(last)}>
+            <span>จ่ายล่าสุด</span><b>{last ? money(last.paid ?? 0) : "-"}</b>
+            <small>{last ? `${thDateText(String(last.paidDate))} · ${last.no ?? ""}` : "ยังไม่มีการรับชำระ"}</small>
+          </button>
+          <div>
+            <span>รอบบิลถัดไป</span><b>{next ? thDateText(next) : "-"}</b>
+            <small>{next ? (nextIn > 0 ? `อีก ${nextIn} วัน` : nextIn === 0 ? "วันนี้" : `เลยมา ${-nextIn} วัน · ยังไม่ออกใบ`) : r[5] === "ใช้งานอยู่" ? "ไม่มีรอบรายเดือน" : "สัญญายังไม่ได้ใช้งาน"}</small>
+          </div>
+        </div>}
 
         <Group title="ผู้รับบริการ">
           <Item k="ชื่อ - นามสกุล" v={r[2]} />
