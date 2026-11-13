@@ -6,8 +6,7 @@ import Icon from "@/components/Icon";
 import { COMPANY, CompanyFoot } from "@/components/ui";
 
 type Task = { time: string | null; title: string; note: string | null; by: string | null; photo: string | null };
-type Program = { items: { name: string; reps: string; note: string }[]; done: number[] };
-type Diary = { resident: string; branch: string; date: string; today: string; days: string[]; tasks: Task[]; meds: { meal: string; given: boolean; at: string | null }[]; program?: Program | null };
+type Diary = { resident: string; branch: string; date: string; today: string; days: string[]; tasks: Task[]; meds: { meal: string; given: boolean; at: string | null }[] };
 const dayLabel = (iso: string, today: string) => {
   const d = new Date(iso + "T00:00:00");
   const diff = Math.round((new Date(today + "T00:00:00").getTime() - d.getTime()) / 864e5);
@@ -23,13 +22,6 @@ export default function FamilyApp({ token }: { token: string }) {
   const [fail, setFail] = useState("");
   const [loading, setLoading] = useState(true);
   const [big, setBig] = useState<Task | null>(null);
-  /** ติ๊ก/ยกเลิกท่าที่ทำแล้ววันนี้ (อัปเดตหน้าจอก่อน ส่งไม่สำเร็จค่อยคืนค่า) */
-  const tickProg = (i: number, done: boolean) => {
-    setD((x) => (x?.program ? { ...x, program: { ...x.program, done: done ? [...x.program.done, i] : x.program.done.filter((k) => k !== i) } } : x));
-    fetch("/api/public/family", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ t: token, item: i, done }) })
-      .then((r) => { if (!r.ok) throw new Error(); })
-      .catch(() => setD((x) => (x?.program ? { ...x, program: { ...x.program, done: done ? x.program.done.filter((k) => k !== i) : [...x.program.done, i] } } : x)));
-  };
 
   useEffect(() => {
     setLoading(true);
@@ -110,24 +102,6 @@ export default function FamilyApp({ token }: { token: string }) {
               ))}
             </ol>
           </section>
-
-          {d.program && d.program.items.length > 0 && (
-            <section className="survey-card">
-              <h2 className="family-h"><Icon name="heart" className="h-4 w-4" /> โปรแกรมออกกำลังกายที่บ้าน <small>ทำแล้ววันนี้ {d.program.done.length}/{d.program.items.length} ท่า</small></h2>
-              <ul className="family-prog">
-                {d.program.items.map((x, i) => {
-                  const done = d.program!.done.includes(i);
-                  return (
-                    <li key={i} className={done ? "is-done" : ""}>
-                      <div><b>{i + 1}. {x.name}</b>{x.reps && <span>{x.reps}</span>}{x.note && <small>{x.note}</small>}</div>
-                      <button type="button" aria-pressed={done} onClick={() => tickProg(i, !done)}>{done ? "ทำแล้ว ✓" : "ติ๊กว่าทำแล้ว"}</button>
-                    </li>
-                  );
-                })}
-              </ul>
-              <p className="mt-2 text-xs text-gold-500">นักกายภาพเห็นว่าทำไปกี่ท่าในแต่ละวัน · ทำไม่ไหวหรือเจ็บให้หยุดแล้วแจ้งสาขา</p>
-            </section>
-          )}
 
           <section className="survey-card text-center">
             <p className="text-sm text-gold-700">ประทับใจพนักงานคนไหน ส่งคำชมได้ที่นี่</p>

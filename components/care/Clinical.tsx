@@ -13,6 +13,8 @@ import PhysioAssign from "./PhysioAssign";
 import PhysioRecordModal, { RecordTarget } from "./PhysioRecord";
 import PhysioSessions from "./PhysioSessions";
 import PhysioCloseCourse, { CloseTarget } from "./PhysioCloseCourse";
+import { courseOptText, fillFromCourse, physioCourses } from "@/lib/priceList";
+import { usePriceList } from "@/lib/usePrices";
 import { closedInfo, PhysioBoard, PhysioCase, PhysioHistory, schedText, teamText } from "@/lib/physio";
 
 /**
@@ -159,7 +161,7 @@ function Physio({ id, c, reload, name }: P & { name: string }) {
     if (!buy) return;
     if (buy.free ? !buy.why.trim() : !(Number(buy.price) > 0)) return toast(buy.free ? "กรุณาระบุเหตุผลที่ให้ฟรี" : "กรุณากรอกราคาคอร์ส");
     const total = Number(buy.total), price = buy.free ? 0 : Number(buy.price) || 0;
-    const r = await fetch("/api/clinic", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "course", residentId: id, name: buy.name, total, price, freeReason: buy.free ? buy.why : "" }) }).catch(() => null);
+    const r = await fetch("/api/clinic", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "course", residentId: id, name: buy.name, total, price, freeReason: buy.free ? buy.why : "", priceCode: buy.code || undefined }) }).catch(() => null);
     const d = r ? await r.json().catch(() => ({})) : {};
     if (!r?.ok) return toast(d.error || "บันทึกคอร์สไม่สำเร็จ");
     setBuy(null); reload();
@@ -178,7 +180,9 @@ function Physio({ id, c, reload, name }: P & { name: string }) {
     const x = b.cases.find((k) => k.id === courseId);
     x ? setAssign(x) : toast("คอร์สนี้ใช้ครบแล้วหรือยังไม่พร้อมจ่ายเคส");
   };
-  const [buy, setBuy] = useState<{ name: string; total: string; price: string; free: boolean; why: string } | null>(null);
+  const [buy, setBuy] = useState<{ name: string; total: string; price: string; free: boolean; why: string; code?: string } | null>(null);
+  usePriceList();
+  const ptCourses = physioCourses();
   const boss = user?.role === "Branch Admin" || user?.role === "Global Admin";
   const { confirm } = useApp();
   /** ใช้คอร์สได้: คอร์สฟรี หรือออกใบแจ้งหนี้แล้ว */
@@ -260,7 +264,12 @@ function Physio({ id, c, reload, name }: P & { name: string }) {
             <button className="btn-primary" onClick={() => buyCourse(true)}>บันทึกคอร์สและออกใบแจ้งหนี้</button>
           </> : <button className="btn-primary" onClick={() => buyCourse(false)}>บันทึกคอร์ส</button>}</>}>
         {buy && <div className="form-grid">
-          <Field label="ชื่อคอร์ส" className="md:col-span-2"><input value={buy.name} onChange={(e) => setBuy({ ...buy, name: e.target.value })} /></Field>
+          {ptCourses.length > 0 && <Field label="เลือกคอร์สจากใบราคา" className="md:col-span-2"><select value={buy.code ?? ""} onChange={(e) => {
+            const p = ptCourses.find((x) => x.code === e.target.value);
+            setBuy(p ? { ...buy, code: p.code, ...fillFromCourse(p, buy.total) } : { ...buy, code: "" });
+          }}><option value="">คอร์สอื่น (พิมพ์ชื่อและราคาเอง)</option>{ptCourses.map((p) => <option key={p.code} value={p.code}>{courseOptText(p)}</option>)}</select>
+            <p className="field-hint">เลือกแล้วระบบเติมชื่อ จำนวนครั้ง และราคาให้ · แก้ได้ถ้าตกลงราคาพิเศษ · ไม่มีในใบราคา เลือก "คอร์สอื่น" แล้วพิมพ์เองด้านล่าง</p></Field>}
+          <Field label={buy.code ? "ชื่อคอร์ส (เติมจากใบราคา · แก้ได้)" : "ชื่อคอร์ส · พิมพ์เอง"} className="md:col-span-2"><input value={buy.name} onChange={(e) => setBuy({ ...buy, name: e.target.value })} /></Field>
           <Field label="จำนวนครั้ง"><input type="number" min={1} value={buy.total} onChange={(e) => setBuy({ ...buy, total: e.target.value })} /></Field>
           <Field label="ราคาคอร์ส (บาท)" required={!buy.free}><input type="number" min={0} value={buy.free ? "" : buy.price} disabled={buy.free} onChange={(e) => setBuy({ ...buy, price: e.target.value })} placeholder="เช่น 8000" />
             <p className="field-hint">ซื้อแล้วนักกายภาพเริ่มทำได้ทันที · กด &quot;บันทึกคอร์สและออกใบแจ้งหนี้&quot; เพื่อออกใบต่อเลย (ผู้ชำระ ส่วนลด เลขผู้เสียภาษี และรวมรายการอื่นได้)</p></Field>

@@ -412,7 +412,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
                 {/* งานที่หัวหน้าให้ดาวต่ำ (ต้องแก้) · กดไปดูที่แท็บ "ฉัน" */}
                 {fixCount > 0 && <button type="button" className="ka-fix" onClick={() => { setTab("perf"); setPerfView("me"); window.scrollTo(0, 0); }} aria-label={`งานต้องแก้ ${fixCount} งาน · ดูที่แท็บฉัน`}><Icon name="alert" className="h-3.5 w-3.5" />ต้องแก้ {fixCount}</button>}
               </div><p>{new Date().toLocaleDateString("th-TH", { weekday: "short", day: "numeric", month: "short" })} · {myShiftText}</p></div>
-              <div className="relative flex flex-wrap justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
+              <div className="ka-head-acts relative flex flex-wrap justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
                 <button type="button" className="ka-pill is-alert" onClick={() => setIncOpen(true)}><Icon name="alert" className="h-4 w-4" />รายงานเหตุการณ์</button>
                 <button type="button" className="ka-pill" aria-expanded={fab} onClick={() => setFab(!fab)}><Icon name="plus" className="h-4 w-4" />ผลงานพิเศษ</button>
                 {fab && (

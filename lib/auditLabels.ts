@@ -26,7 +26,7 @@ export const AREA_LABEL: Record<string, string> = {
   "staff-handover": "KinApp · สมุดส่งเวร", alerts: "แจ้งเตือนสัญญาณชีพ", routines: "งานประจำ (ทำซ้ำทุกวัน)", roster: "ตารางเวร", attendance: "เช็คชื่อเข้า-ออกงาน",
   admissions: "ประเมินแรกรับ", clinical: "บันทึกทางคลินิก", physio: "กายภาพ / คอร์สกายภาพ", supplies: "เวชภัณฑ์", stock: "คลังยากลาง", bonus: "ผลงานพิเศษ", cheers: "ส่งกำลังใจ", doc_settings: "ข้อความในเอกสาร", family_updates: "อัปเดตถึงครอบครัว",
   review_links: "ลิงก์ครอบครัว (สมุดภาพ/รีวิว)", family_photos: "สมุดภาพครอบครัว", kpi: "น้ำหนัก KPI พนักงาน", rooms: "ห้องพักและเตียง", invoices: "ใบแจ้งหนี้และใบเสร็จ", prices: "ราคาสินค้าและบริการ", branch_targets: "เป้ายอดขายสาขา",
-  incidents: "เหตุการณ์ไม่พึงประสงค์", wounds: "บันทึกแผล", home_programs: "โปรแกรมออกกำลังกายที่บ้าน", waitlist: "คนรอเข้าพัก",
+  incidents: "เหตุการณ์ไม่พึงประสงค์", wounds: "บันทึกแผล", waitlist: "คนรอเข้าพัก",
 };
 export function areaLabel(area: string) {
   const d = area.match(/^daily-(\d{4})-(\d{2})-(\d{2})$/);

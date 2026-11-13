@@ -14,24 +14,6 @@ export const fetchCache = "force-no-store";
 const bad = (msg: string, status = 400) => NextResponse.json({ error: msg }, { status });
 const MEALS = ["เช้า", "กลางวัน", "เย็น", "ก่อนนอน"];
 
-/** ญาติติ๊กว่าทำท่าออกกำลังกายแล้ววันนี้ (กดซ้ำ = ยกเลิก) · POST { t, item, done } */
-export async function POST(req: NextRequest) {
-  try {
-    const b = (await req.json().catch(() => ({}))) as { t?: string; item?: number; done?: boolean };
-    const l = await familyLinkOf(String(b.t ?? "").slice(0, 64));
-    if (!l) return bad("ลิงก์นี้ใช้ไม่ได้แล้ว", 404);
-    const [p] = (await sql`SELECT id, jsonb_array_length(items) AS n FROM home_programs WHERE resident_id = ${l.resident_id} AND active ORDER BY updated_at DESC LIMIT 1`) as { id: string; n: number }[];
-    const i = Math.floor(Number(b.item));
-    if (!p || !(i >= 0 && i < p.n)) return bad("ไม่พบท่านี้", 404);
-    if (b.done === false) await sql`DELETE FROM home_program_logs WHERE program_id = ${p.id} AND item_idx = ${i} AND done_date = (now() AT TIME ZONE 'Asia/Bangkok')::date`;
-    else await sql`INSERT INTO home_program_logs (program_id, item_idx, done_date) VALUES (${p.id}, ${i}, (now() AT TIME ZONE 'Asia/Bangkok')::date) ON CONFLICT DO NOTHING`;
-    return NextResponse.json({ ok: true });
-  } catch (e) {
-    console.error("[api/public/family POST]", e);
-    return bad("database error", 500);
-  }
-}
-
 export async function GET(req: NextRequest) {
   try {
     const q = req.nextUrl.searchParams;
@@ -66,11 +48,7 @@ export async function GET(req: NextRequest) {
         SELECT DISTINCT (created_at AT TIME ZONE 'Asia/Bangkok')::date::text FROM family_updates
         WHERE resident_id = $1 AND branch_name = $3 AND (created_at AT TIME ZONE 'Asia/Bangkok')::date > $4::date - 14
       ) x ORDER BY d DESC`, [...p, l.branch_name, today])) as { d: string }[];
-    // โปรแกรมออกกำลังกายที่บ้าน (นักกายภาพตั้งให้) + ท่าที่ติ๊กว่าทำแล้ววันนี้ · ยังไม่มีตาราง = ไม่แสดง
-    const program = await sql`SELECT p.id, p.items, coalesce((SELECT array_agg(item_idx) FROM home_program_logs g WHERE g.program_id = p.id AND g.done_date = ${today}::date), '{}') AS done
-        FROM home_programs p WHERE p.resident_id = ${l.resident_id} AND p.active ORDER BY p.updated_at DESC LIMIT 1`
-      .then((r) => (r[0] ? { items: r[0].items, done: r[0].done } : null)).catch(() => null);
-    return NextResponse.json({ resident: l.resident_name, branch: l.branch_name, date, today, days: days.map((x) => x.d), tasks, meds, program });
+    return NextResponse.json({ resident: l.resident_name, branch: l.branch_name, date, today, days: days.map((x) => x.d), tasks, meds });
   } catch (e) {
     console.error("[api/public/family]", e);
     return bad("database error", 500);

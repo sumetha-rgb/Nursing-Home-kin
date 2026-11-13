@@ -182,6 +182,18 @@ export const ROOM_SERVICES = ["การพยาบาลขั้นพื้�
 const isPackage = (x: PriceItem) => x.rates.length > 0 && x.rates.every((r) => r.unit === "แพ็กเกจ");
 /** ค่าบริการเพิ่มเติม (ตารางอัตราในสัญญา) */
 export const extraServices = () => priceList().filter((x) => x.cat !== "RM" && !isPackage(x));
+/** คอร์สกายภาพในใบราคา (หมวด PT) สำหรับช่อง "เลือกคอร์สจากใบราคา" · 1 ตัวเลือกต่อราคา · n = จำนวนครั้งรวมจากชื่อ เช่น "วิชาชีพ 1 ครั้ง + พื้นฐาน 25 ครั้ง" = 26 (ไม่มี = 0) */
+export const physioCourses = () => priceList().filter((x) => x.cat === "PT").flatMap((x) => x.rates.map((r, i) => ({ code: rateCode(x, i), name: x.name, price: r.price, unit: r.unit, n: [...x.name.matchAll(/(\d+)\s*ครั้ง/g)].reduce((t, m) => t + Number(m[1]), 0) })));
+export type PhysioCourseOpt = ReturnType<typeof physioCourses>[number];
+/** ข้อความในรายการเลือกคอร์ส · ชื่อยาว ตัดวงเล็บคำอธิบายออก (เช่น PT-02) แต่เก็บรายละเอียดแพ็กเกจไว้ครบ · ยาวเกิน 90 ตัวค่อยย่อ */
+const shortCourse = (n: string) => { const t = n.length > 60 ? n.replace(/\s*\([^)]*\)/g, "").trim() : n; return t.length > 90 ? `${t.slice(0, 88).trim()}…` : t; };
+export const courseOptText = (p: PhysioCourseOpt) => `${p.code} · ${shortCourse(p.name)} · ${p.price.toLocaleString("en-US", { minimumFractionDigits: 2 })}${p.unit === "ครั้ง" ? "/ครั้ง" : ""}`;
+/** เลือกคอร์สแล้วเติม ชื่อ · จำนวนครั้ง · ราคา (รายครั้ง = ราคาต่อครั้ง × จำนวนครั้งที่กรอกไว้) */
+export const fillFromCourse = (p: PhysioCourseOpt, total: string) => {
+  const n = p.n || (p.unit === "ครั้ง" ? Math.max(1, Math.floor(Number(total) || 1)) : Math.floor(Number(total) || 1));
+  return { name: p.name, total: String(n), price: String(p.unit === "ครั้ง" && !p.n ? p.price * n : p.price) };
+};
+
 /** แพ็กเกจฟื้นฟู */
 export const packages = () => priceList().filter((x) => x.cat !== "RM" && isPackage(x));
 

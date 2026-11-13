@@ -6,7 +6,6 @@ import { useApp } from "@/lib/app";
 import { DataTable, Field, Modal, StatusBadge } from "@/components/ui";
 import ClinicalPanel, { ClinicalTab, useClinic } from "./Clinical";
 import WoundLog from "./WoundLog";
-import HomeProgram from "./HomeProgram";
 import { PrintModal, ProfileDoc, ReferralDoc } from "@/components/print/Docs";
 import { MedPhotoModal } from "@/components/pharmacy/MedPhotos";
 import { useBranchInfo } from "@/components/views/Billing";
@@ -141,7 +140,6 @@ export default function ResidentProfile({ id, onClose, initialTab }: { id: strin
           </div>
 
           {tab === "แผล" && id && <WoundLog residentId={id} />}
-          {tab === "กายภาพ" && id && <HomeProgram residentId={id} canEdit={can(user, "physio.record") || user?.role === "Branch Admin" || user?.role === "Global Admin"} />}
           {tab === "ค่าใช้จ่าย" && canMoney && <ResidentBilling name={r.full_name} hn={r.hn as string | null | undefined} />}
           {tab === TABS[0] && (
             <div className="grid gap-4 md:grid-cols-2">

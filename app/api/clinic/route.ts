@@ -94,15 +94,6 @@ export async function GET(req: NextRequest) {
   const q = req.nextUrl.searchParams;
   try {
     switch (q.get("op")) {
-      case "home_program": {
-        // โปรแกรมออกกำลังกายที่บ้าน (ใช้อยู่) + ญาติติ๊กทำแล้วกี่ท่าต่อวัน 14 วันล่าสุด
-        if (!canRead(me) && !canPhysio(me)) return forbidden();
-        const o = await residentOf(me, q.get("resident") ?? "");
-        if (!o.r) return o.res;
-        const [pg] = (await sql`SELECT id, items, created_by, to_char(updated_at AT TIME ZONE 'Asia/Bangkok', 'YYYY-MM-DD HH24:MI') AS at FROM home_programs WHERE resident_id = ${o.r.id} AND active ORDER BY updated_at DESC LIMIT 1`) as { id: string; items: unknown; created_by: string; at: string }[];
-        const log = pg ? await sql`SELECT done_date::text AS d, count(*)::int AS n FROM home_program_logs WHERE program_id = ${pg.id} AND done_date > (now() AT TIME ZONE 'Asia/Bangkok')::date - 14 GROUP BY 1 ORDER BY 1 DESC` : [];
-        return NextResponse.json({ program: pg ?? null, log });
-      }
       case "physio_board": {
         if (!canPhysio(me)) return forbidden();
         const br = scoped(me) ? me.branch : q.get("branch") || null;
@@ -291,25 +282,6 @@ export async function POST(req: NextRequest) {
   const b = (await req.json().catch(() => ({}))) as Record<string, unknown>;
   try {
     switch (b.op) {
-      case "home_program_save": {
-        // ตั้ง/แก้โปรแกรมออกกำลังกายที่บ้าน: นักกายภาพ (สิทธิ์บันทึกกายภาพ) หรือผู้จัดการ · items ว่าง = หยุดโปรแกรม
-        if (!can(me, "physio.record") && !isBoss(me)) return forbidden("ตั้งโปรแกรมได้เฉพาะนักกายภาพหรือผู้จัดการสาขา");
-        const o = await residentOf(me, String(b.residentId ?? ""));
-        if (!o.r) return o.res;
-        const items = (Array.isArray(b.items) ? b.items : []).slice(0, 12).map((x) => obj(x)).map((x) => ({ name: text(x.name, 80), reps: text(x.reps, 60), note: text(x.note, 200) })).filter((x) => x.name);
-        const [cur] = (await sql`SELECT id FROM home_programs WHERE resident_id = ${o.r.id} AND active ORDER BY updated_at DESC LIMIT 1`) as { id: string }[];
-        if (!items.length) {
-          if (cur) await sql`UPDATE home_programs SET active = false, updated_at = now() WHERE id = ${cur.id}`;
-          await audit(req, me, [{ area: "home_programs", action: "delete", recordId: cur?.id ?? null, summary: `หยุดโปรแกรมออกกำลังกายที่บ้าน · ${o.r.full_name}`, branch: o.r.branch_name }]);
-          return NextResponse.json({ ok: true });
-        }
-        // แก้ท่าเดิม = แถวเดิม (ประวัติการติ๊กของญาติยังอยู่) · ยังไม่มี = สร้างใหม่
-        const id = cur?.id ?? randomUUID();
-        if (cur) await sql`UPDATE home_programs SET items = ${JSON.stringify(items)}::jsonb, created_by = ${me.name}, updated_at = now() WHERE id = ${id}`;
-        else await sql`INSERT INTO home_programs (id, resident_id, resident_name, branch_name, items, created_by) VALUES (${id}, ${o.r.id}, ${o.r.full_name}, ${o.r.branch_name}, ${JSON.stringify(items)}::jsonb, ${me.name})`;
-        await audit(req, me, [{ area: "home_programs", action: cur ? "update" : "create", recordId: id, summary: `โปรแกรมออกกำลังกายที่บ้าน ${items.length} ท่า · ${o.r.full_name}`, branch: o.r.branch_name }]);
-        return NextResponse.json({ ok: true, id });
-      }
       case "admission": {
         if (!canRead(me)) return forbidden();
         const o = await residentOf(me, String(b.residentId ?? ""));

@@ -20,7 +20,7 @@ import { copyToClipboard, lineMessage } from "@/lib/lineMessage";
 import { exportInvoiceLines, exportPayments, usePaidDays } from "@/lib/billingExport";
 import { DataTable, Field, MenuButton, Modal, PageHeader, Section, StatFilter, StatusBadge, Tabs } from "../ui";
 import { ResidentPicker } from "../SearchSelect";
-import { lineCode, pickName, priceList, rateCode, rateText, roomPartByCode, rooms as priceRooms, searchPrices } from "@/lib/priceList";
+import { courseOptText, fillFromCourse, lineCode, physioCourses, pickName, rateCode, rateText, roomPartByCode, rooms as priceRooms, searchPrices } from "@/lib/priceList";
 import { ServicePicker } from "../ServicePicker";
 import { usePriceList } from "@/lib/usePrices";
 import { refreshTaxInfo, saveTaxInfo, useTaxInfo } from "@/lib/taxInfo";
@@ -410,8 +410,7 @@ export function Billing() {
   };
   // ขายคอร์สกายภาพจากหน้าใบแจ้งหนี้และใบเสร็จ: สร้างคอร์ส (นักกายภาพตัดครั้งที่แท็บกายภาพ) แล้วเปิดใบแจ้งหนี้ที่ใส่คอร์สไว้ให้
   const [course, setCourse] = useState<{ who: string; name: string; total: string; price: string; busy: boolean; code?: string } | null>(null);
-  /** คอร์สกายภาพในใบราคา (หมวด PT) · 1 ตัวเลือกต่อราคา */
-  const ptCourses = priceList().filter((x) => x.cat === "PT").flatMap((x) => x.rates.map((r, i) => ({ code: rateCode(x, i), name: x.name, price: r.price, unit: r.unit, n: Number(x.name.match(/(\d+)\s*ครั้ง/)?.[1] ?? 0) })));
+  const ptCourses = physioCourses();
   const saveCourse = async () => {
     if (!course || course.busy) return;
     const k = res.rows.findIndex((r) => r[0] === course.who);
@@ -808,10 +807,10 @@ export function Billing() {
             {ptCourses.length > 0 && <Field label="เลือกคอร์สจากใบราคา" className="md:col-span-2"><select value={course.code ?? ""} onChange={(e) => {
               const p = ptCourses.find((x) => x.code === e.target.value);
               if (!p) return setCourse({ ...course, code: "" });
-              setCourse({ ...course, code: p.code, name: p.name, price: String(p.price), total: p.n ? String(p.n) : p.unit === "ครั้ง" ? "1" : course.total });
-            }}><option value="">-- กำหนดเอง --</option>{ptCourses.map((p) => <option key={p.code} value={p.code}>{p.code} · {p.name} · {money(p.price)}{p.unit === "ครั้ง" ? "/ครั้ง" : ""}</option>)}</select>
-              <p className="field-hint">เลือกแล้วระบบเติมชื่อ จำนวนครั้ง และราคาให้ · แก้ได้ถ้าตกลงราคาพิเศษ</p></Field>}
-            <Field label="ชื่อคอร์ส" required className="md:col-span-2"><input value={course.name} onChange={(e) => setCourse({ ...course, name: e.target.value })} /></Field>
+              setCourse({ ...course, code: p.code, ...fillFromCourse(p, course.total) });
+            }}><option value="">คอร์สอื่น (พิมพ์ชื่อและราคาเอง)</option>{ptCourses.map((p) => <option key={p.code} value={p.code}>{courseOptText(p)}</option>)}</select>
+              <p className="field-hint">เลือกแล้วระบบเติมชื่อ จำนวนครั้ง และราคาให้ · แก้ได้ถ้าตกลงราคาพิเศษ · ไม่มีในใบราคา เลือก "คอร์สอื่น" แล้วพิมพ์เองด้านล่าง</p></Field>}
+            <Field label={course.code ? "ชื่อคอร์ส (เติมจากใบราคา · แก้ได้)" : "ชื่อคอร์ส · พิมพ์เอง"} required className="md:col-span-2"><input value={course.name} onChange={(e) => setCourse({ ...course, name: e.target.value })} /></Field>
             <Field label="จำนวนครั้ง" required><input type="number" min={1} max={500} value={course.total} onChange={(e) => setCourse({ ...course, total: e.target.value })} /></Field>
             <Field label="ราคาคอร์ส (บาท)" required><input type="number" min={0} value={course.price} onChange={(e) => setCourse({ ...course, price: e.target.value })} placeholder="เช่น 8000" /></Field>
           </div>

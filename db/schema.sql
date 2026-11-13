@@ -1172,7 +1172,7 @@ CREATE TABLE IF NOT EXISTS wound_logs (
 CREATE INDEX IF NOT EXISTS wound_logs_resident ON wound_logs (resident_id, created_at DESC);
 COMMENT ON TABLE wound_logs IS 'บันทึกแผล (รูป ขนาด ระดับ) เรียงตามเวลา';
 
--- โปรแกรมออกกำลังกายที่บ้าน (นักกายภาพตั้ง · ญาติเห็นและติ๊กว่าทำแล้วผ่านลิงก์ครอบครัว)
+-- โปรแกรมออกกำลังกายที่บ้าน: เอาออกจากระบบแล้ว 13 พ.ย. 2569 (ไม่ใช้) · ตารางคงไว้ ไม่มีที่ไหนอ่าน/เขียน
 CREATE TABLE IF NOT EXISTS home_programs (
   id            text PRIMARY KEY,
   resident_id   text REFERENCES residents(id) ON DELETE CASCADE,
