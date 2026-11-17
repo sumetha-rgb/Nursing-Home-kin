@@ -9,7 +9,7 @@
  * บรรทัดที่กระจาย = ค่าห้อง ค่าบริการทางการแพทย์ และบริการรายเดือนตามสัญญา · ไม่กระจาย = เงินประกัน มัดจำ ยา เวชภัณฑ์ คอร์ส บรรทัดหักเงิน
  * ยอดในช่วงที่เลือก = ยอดบรรทัด (รวม VAT) × จำนวนวันที่ทับช่วง ÷ จำนวนวันของช่วงบริการ
  */
-import { BillItem, BILL_KINDS, contractLines, contractMonthLines, groupOf, inclNet, Invoice, isCN, isStayContract, lineSign, parseItems, totals } from "./billing";
+import { BillItem, BILL_KINDS, contractLines, contractMonthLines, groupOf, hasExtraMonthLines, inclNet, Invoice, isCN, isRoomFeeLine, isStayContract, lineSign, parseItems, prepaidMonthsOf, roomOnlyPrepay, totals } from "./billing";
 import { lineCode } from "./priceList";
 
 export type Period = { from: string; to: string };
@@ -37,7 +37,6 @@ export function contractDateIso(v?: string) {
 }
 const num = (v?: string) => Number(String(v ?? "").replace(/,/g, "")) || 0;
 /** จำนวนเดือนที่ชำระล่วงหน้าของสัญญา (เหมือน prepaidMonths ในหน้าใบแจ้งหนี้) */
-function prepaidMonthsOf(c: string[]) { const p = num(c[18]), m = totals(contractMonthLines(c)).net; return p && m ? Math.min(12, Math.max(1, Math.round(p / m))) : 1; }
 /** บรรทัดที่กระจายตามช่วงบริการ */
 export function spreads(i: BillItem) {
   if (i.credit) return false;
@@ -92,10 +91,17 @@ export function nextCycle(c: string[], invoices: Invoice[]): string | null {
   let until = "";
   for (const x of invoices) {
     if (x.contract !== c[0] || x.status === "ยกเลิก" || isCN(x) || (x.kind !== BILL_KINDS[0] && x.kind !== BILL_KINDS[1])) continue;
-    const p = invoicePeriod(x, [c]);
+    let p = invoicePeriod(x, [c]);
+    if (p && x.kind === BILL_KINDS[0] && roomOnlyPrepay(c) && hasExtraMonthLines(c)) p = { from: p.from, to: addDaysIso(addMonthsIso(p.from, 1), -1) };
     if (p && p.to > until) until = p.to;
   }
   return until ? addDaysIso(until, 1) : start;
+}
+/** สัญญาที่ล่วงหน้าเฉพาะค่าห้อง: วันแรกที่ต้องเก็บค่าห้องอีก (วันเริ่ม + จำนวนเดือนล่วงหน้า) · สัญญาอื่น = "" */
+export function roomPaidUntil(c: string[]) {
+  if (!roomOnlyPrepay(c)) return "";
+  const start = contractDateIso(c[7]);
+  return start ? addMonthsIso(start, prepaidMonthsOf(c)) : "";
 }
 /** ครบรอบบิลแล้วหรือจะครบภายใน DUE_AHEAD วัน */
 export const cycleDue = (next: string | null, today = bkkToday()) => !!next && next <= addDaysIso(today, DUE_AHEAD);
@@ -108,10 +114,13 @@ export type AllocLine = { line: BillItem; k: number; grp: string; incl: number; 
  *  บรรทัดที่ไม่กระจาย นับเต็มถ้าวันที่ออกใบอยู่ในช่วง
  */
 export function allocate(x: Invoice, contracts: string[][], from = "", to = ""): AllocLine[] {
-  const p = invoicePeriod(x, contracts), sg = lineSign(x), inR = (d: string) => !from || (d >= from && d <= to);
+  const p0 = invoicePeriod(x, contracts), sg = lineSign(x), inR = (d: string) => !from || (d >= from && d <= to);
+  // ใบแรกเข้าของสัญญาที่ล่วงหน้าเฉพาะค่าห้อง: บริการเพิ่มเติมครอบคลุมแค่เดือนแรก
+  const c = x.kind === BILL_KINDS[0] && x.contract ? contracts.find((r) => r[0] === x.contract) : undefined;
+  const p1 = p0 && c && roomOnlyPrepay(c) ? { from: p0.from, to: addDaysIso(addMonthsIso(p0.from, 1), -1) } : null;
   return parseItems(x.items).map((l, k) => ({ l, k })).filter(({ l }) => !l.credit && l.desc.trim()).map(({ l, k }) => {
     const incl = Math.round(sg * inclNet(l) * 100) / 100, vatPart = l.vat ? Math.round((incl - incl / (1 + l.vat / 100)) * 100) / 100 : 0;
-    const g = groupOf(l);
+    const g = groupOf(l), p = p1 && !isRoomFeeLine(l) ? p1 : p0;
     if (p && spreads(l)) {
       const days = Math.round((d0(p.to) - d0(p.from)) / DAY) + 1;
       const a = from && from > p.from ? from : p.from, b = to && to < p.to ? to : p.to;

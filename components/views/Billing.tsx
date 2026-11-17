@@ -4,8 +4,8 @@ import CsvIcon from "@/components/CsvIcon";
 import Icon from "../Icon";
 import PhotoPicker from "../PhotoPicker";
 import BillDoc, { Branch, DocFormat } from "../billing/BillDoc";
-import { balanceOf, baseOfIncl, BILL_KINDS, contractLines, contractMeta, inclOf, creditOf, installmentsOf, splitInstallments, grandOf, BillItem, docDate, Invoice, isOpen, lineAmount, lineDiscount, money, PAID, PARTIAL, parseItems, Payment, todayIso, totals, UNPAID, DEFAULT_VAT, contractVat, DRAFT, lineNet, vatOf, VOID, contractMonthLines, invoiceBranch, isRoomLine, isCN, CN_KIND, CN_REFUND, validTaxId } from "@/lib/billing";
-import { cycleDue, cycleNote, DUE_AHEAD, invoicePeriod, nextCycle, periodText, thDateText } from "@/lib/servicePeriod";
+import { balanceOf, baseOfIncl, BILL_KINDS, contractLines, contractMeta, inclOf, creditOf, installmentsOf, splitInstallments, grandOf, BillItem, docDate, Invoice, isOpen, lineAmount, lineDiscount, money, PAID, PARTIAL, parseItems, Payment, todayIso, totals, UNPAID, DEFAULT_VAT, contractVat, DRAFT, lineNet, vatOf, VOID, contractMonthLines, invoiceBranch, isRoomLine, isCN, CN_KIND, CN_REFUND, validTaxId, cycleMonthLines, hasExtraMonthLines, prepaidMonthsOf, roomOnlyPrepay, isRoomFeeLine } from "@/lib/billing";
+import { cycleDue, cycleNote, DUE_AHEAD, invoicePeriod, nextCycle, periodText, roomPaidUntil, thDateText } from "@/lib/servicePeriod";
 import { CONTRACTS, RESIDENTS } from "@/lib/mock";
 import { newId, useCrud, useRecords, downloadCsv, refreshData } from "@/lib/store";
 import { useApp } from "@/lib/app";
@@ -72,6 +72,8 @@ const kindShort = (k: string) => (k === "ค่าบริการรายเ
 export function contractStartLines(r: string[], prior: Invoice[] = []): BillItem[] {
   const prepaid = val(r[18]), deposit = val(r[19]), dep = roomDepositDue(r, prior);
   const months = prepaidMonths(r), pct = Math.min(100, Math.max(0, Math.floor(contractMeta(r).prepaidPct ?? 0)));
+  // สัญญาใหม่: ล่วงหน้าเฉพาะค่าห้องและค่าบริการทางการแพทย์ · บริการเพิ่มเติมเก็บเดือนแรก (เดือนถัดไปออกใบรายเดือน)
+  const roomOnly = roomOnlyPrepay(r);
   // ล่วงหน้าหลายเดือน: คูณจำนวนในแต่ละบรรทัด (VAT คิดตามยอดจริง) · ส่วนลดชำระล่วงหน้า (%) เฉพาะบรรทัดค่าห้อง
   const isRoomFee = (l: BillItem) => !!l.vat || isRoomLine(l.desc) || /^RM-/.test(lineCode(l));
   /** ส่วนลดค่าห้องลดเฉพาะค่าบริการห้องพัก (ไม่ลดค่าบริการทางการแพทย์ RM-MD) */
@@ -80,14 +82,14 @@ export function contractStartLines(r: string[], prior: Invoice[] = []): BillItem
   /** ยอดรวม VAT ที่ตั้งใจเก็บของแต่ละบรรทัดค่าห้อง (ใช้เก็บเศษสตางค์จากการถอด VAT) */
   const want: number[] = [];
   const service = contractMonthLines(r).map((l, k) => {
-    const off = pct && isRoomPart(l) ? pct : 0;
-    if (months <= 1 && !off) return l;
-    const desc = months > 1 ? `${l.desc} (ล่วงหน้า ${months} เดือน)` : l.desc;
-    if (isRoomFee(l)) { const f = r2((l.vat ? inclOf(lineNet(l), l.vat) : lineNet(l)) * months); want[k] = off ? r2((f * (100 - off)) / 100) : f; }
-    if (!l.vat && !off) return { ...l, qty: l.qty * months, desc };
+    const off = pct && isRoomPart(l) ? pct : 0, mo = roomOnly && !isRoomFee(l) ? 1 : months;
+    if (mo <= 1 && !off) return l;
+    const desc = mo > 1 ? `${l.desc} (ล่วงหน้า ${mo} เดือน)` : l.desc;
+    if (isRoomFee(l)) { const f = r2((l.vat ? inclOf(lineNet(l), l.vat) : lineNet(l)) * mo); want[k] = off ? r2((f * (100 - off)) / 100) : f; }
+    if (!l.vat && !off) return { ...l, qty: l.qty * mo, desc };
     // บรรทัดที่มี VAT / มีส่วนลด: คิดจากราคารวม VAT ต่อเดือน × จำนวนเดือน (− ส่วนลด %) แล้วถอด VAT กลับ
     //  ยอดรวม VAT ตรงกับราคาที่ตกลง (เช่น 40,000 × 3 − 10% = 108,000.00) ไม่มีเศษสตางค์จากการปัด VAT ทีละเดือน
-    const rate = l.vat ?? 0, full = r2(inclOf(lineNet(l), rate) * months), gross = baseOfIncl(full, rate);
+    const rate = l.vat ?? 0, full = r2(inclOf(lineNet(l), rate) * mo), gross = baseOfIncl(full, rate);
     const net = off ? baseOfIncl(r2((full * (100 - off)) / 100), rate) : gross;
     return { ...l, qty: 1, price: gross, discount: r2(gross - net), pct: 0, desc: off ? `${desc} · ส่วนลดค่าห้อง ${off}%` : desc };
   });
@@ -232,17 +234,14 @@ export function buildBilledIndex(invoices: Invoice[]): BilledIndex {
 }
 /** ค่าบริการต่อเดือนตามสัญญา (รวม VAT) */
 export const contractMonthTotal = (r: string[]) => totals(contractMonthLines(r)).net;
-/** จำนวนเดือนที่ชำระล่วงหน้า: ยอดล่วงหน้าในสัญญา ÷ ค่าบริการต่อเดือน (ระบบคำนวณยอดจากจำนวนเดือนตอนเปิดสัญญา) · ไม่ระบุ = 1 เดือน */
-export function prepaidMonths(r: string[]) {
-  const prepaid = val(r[18]), m = contractMonthTotal(r);
-  return prepaid && m ? Math.min(12, Math.max(1, Math.round(prepaid / m))) : 1;
-}
+/** จำนวนเดือนที่ชำระล่วงหน้า (lib/billing prepaidMonthsOf) · สัญญาใหม่เก็บใน meta · สัญญาเก่า = ยอดล่วงหน้า ÷ ค่าบริการต่อเดือน */
+export const prepaidMonths = prepaidMonthsOf;
 
 /** หมายเหตุใบแจ้งหนี้แรกเข้า: มัดจำห้องที่หักแล้ว และยอดชำระล่วงหน้าที่ตกลงในสัญญา */
 export function contractStartNote(r: string[], prior: Invoice[] = []): string {
   const prepaid = val(r[18]), dep = roomDepositDue(r, prior), months = prepaidMonths(r), m = contractMeta(r);
   const pct = Math.floor(m.prepaidPct ?? 0), n = Math.floor(m.installments ?? 1), off = !pct ? Math.floor(m.prepaidOff ?? 0) : 0;
-  return [prepaid && contractMonthLines(r).length ? `ชำระค่าบริการล่วงหน้า ${months} เดือน` : "", pct ? `ลดค่าบริการห้องพัก ${pct}%` : off ? `ลดค่าบริการห้องพัก ${money(off)} บาท` : "", dep ? `หักมัดจำห้องพักที่ชำระตอนจอง ${money(dep)} บาท` : "", n > 1 ? `แบ่งชำระ ${n} งวด` : ""].filter(Boolean).join(" · ");
+  return [prepaid && contractMonthLines(r).length ? (roomOnlyPrepay(r) ? `ชำระค่าห้องและค่าบริการทางการแพทย์ล่วงหน้า ${months} เดือน${hasExtraMonthLines(r) ? " · บริการเพิ่มเติมเก็บรายเดือน" : ""}` : `ชำระค่าบริการล่วงหน้า ${months} เดือน`) : "", pct ? `ลดค่าบริการห้องพัก ${pct}%` : off ? `ลดค่าบริการห้องพัก ${money(off)} บาท` : "", dep ? `หักมัดจำห้องพักที่ชำระตอนจอง ${money(dep)} บาท` : "", n > 1 ? `แบ่งชำระ ${n} งวด` : ""].filter(Boolean).join(" · ");
 }
 
 /** ข้อมูลหัวกระดาษของสาขา จากหน้า "ข้อมูลสาขา" (แถว: รหัส, ชื่อ, นิติบุคคล, โทร, ที่อยู่, ...) */
@@ -330,7 +329,7 @@ export function Billing() {
     message: `สร้างใบแจ้งหนี้ค่าบริการรายเดือนตามสัญญา ${due.length} ใบ เป็นสถานะ "${DRAFT}" · ตรวจรายการแต่ละใบ (เช่น ค่ายา เวชภัณฑ์เพิ่ม) แล้วกด ยืนยันยอด ก่อนรับชำระ`,
     onOk: () => {
       const made = due.map(({ c, next }) => {
-        const items = contractMonthLines(c), p = res.rows.find((r) => r[0] === c[2] && r[3] === c[1]);
+        const items = cycleMonthLines(c, next, roomPaidUntil(c)), p = res.rows.find((r) => r[0] === c[2] && r[3] === c[1]);
         return { id: newId(), date: todayIso(), who: c[2], hn: p?.[6] ?? "", payer: c[3] ?? "", address: c[10] ?? "", kind: BILL_KINDS[1], contract: c[0], items: JSON.stringify(items), ...totals(items), status: DRAFT, note: cycleNote(next) };
       }).filter((x) => x.net > 0);
       if (!made.length) return toast("สัญญาที่ครบรอบไม่มีรายการค่าบริการ");
@@ -369,7 +368,7 @@ export function Billing() {
     // สัญญาใช้งานอยู่ที่ออกใบแรกเข้าแล้ว = ใบค่าบริการรายเดือน (ไม่มีเงินประกัน ค่าล่วงหน้า หักมัดจำ) · ยังไม่มีใบแรกเข้า = ใบแรกเข้า
     const monthly = c[5] === "ใช้งานอยู่" && list.some((x) => x.contract === c[0] && x.status !== VOID && isStartInvoice(x));
     const prior = list.filter((x) => invBranch(x) === c[1]);
-    const items = monthly ? contractMonthLines(c) : contractStartLines(c, prior);
+    const items = monthly ? cycleMonthLines(c, nextCycle(c, list), roomPaidUntil(c)) : contractStartLines(c, prior);
     setForm({ id: newId(), date: todayIso(), who: c[2], hn: p?.[6] ?? "", payer: c[3] ?? "", address: c[10] ?? "", kind: monthly ? BILL_KINDS[1] : BILL_KINDS[0], contract: c[0] ?? "", items: "[]", total: 0, discount: 0, net: 0, status: UNPAID,
       note: monthly ? cycleNote(nextCycle(c, list) ?? todayIso()) : contractStartNote(c, prior) });
     setLines(items.length ? items : [blankItem()]); setVatRate(contractVat(c) || DEFAULT_VAT);
@@ -406,7 +405,7 @@ export function Billing() {
     loadUnbilled(name);
     const r = residentOf(name), c = contractOf(name);
     setForm({ ...form, who: name, hn: r?.[6] ?? "", payer: c?.[3] ?? form.payer, address: c?.[10] ?? form.address, contract: c?.[0] ?? "" });
-    if (c && lines.length === 1 && !lines[0].desc && form.kind === BILL_KINDS[1]) { const m = contractMonthLines(c); if (m.length) setLines(m); }
+    if (c && lines.length === 1 && !lines[0].desc && form.kind === BILL_KINDS[1]) { const m = cycleMonthLines(c, nextCycle(c, list), roomPaidUntil(c)); if (m.length) setLines(m); }
   };
   // ขายคอร์สกายภาพจากหน้าใบแจ้งหนี้และใบเสร็จ: สร้างคอร์ส (นักกายภาพตัดครั้งที่แท็บกายภาพ) แล้วเปิดใบแจ้งหนี้ที่ใส่คอร์สไว้ให้
   const [course, setCourse] = useState<{ who: string; name: string; total: string; price: string; busy: boolean; code?: string } | null>(null);
@@ -610,8 +609,8 @@ export function Billing() {
         </>} />
       {due.length > 0 && <Section title="ครบรอบบิล" sub={`${due.length} สัญญาครบรอบแล้วหรือจะครบภายใน ${DUE_AHEAD} วัน · ยังไม่มีใบของรอบนั้น · ออกเป็นใบร่างให้การเงินตรวจยอดก่อนส่งให้ญาติ`}
         actions={<button className="btn-primary" onClick={makeDue}><Icon name="plus" className="h-4 w-4" /> ออกใบแจ้งหนี้รอบนี้ {due.length} ใบ (ร่าง)</button>}>
-        <DataTable search={false} columns={["ครบรอบ", "เลขที่สัญญา", ...(allBranches ? ["สาขา"] : []), "ผู้รับบริการ", "ผู้ชำระ", "ห้อง", "ค่าบริการ/เดือน (บาท)"]}
-          rows={due.map(({ c, next }) => [thDateText(next), c[0], ...(allBranches ? [c[1] || "-"] : []), c[2], c[3] || "-", c[6] && c[6] !== "-" ? c[6] : "-", money(totals(contractMonthLines(c)).net)])}
+        <DataTable search={false} columns={["ครบรอบ", "เลขที่สัญญา", ...(allBranches ? ["สาขา"] : []), "ผู้รับบริการ", "ผู้ชำระ", "ห้อง", "ยอดรอบนี้ (บาท)"]}
+          rows={due.map(({ c, next }) => [thDateText(next), c[0], ...(allBranches ? [c[1] || "-"] : []), c[2], c[3] || "-", c[6] && c[6] !== "-" ? c[6] : "-", money(totals(cycleMonthLines(c, next, roomPaidUntil(c))).net)])}
           actions={[{ label: "ออกใบ", onClick: (k) => setBillFor({ id: due[k].id }) }]} />
       </Section>}
 
@@ -712,12 +711,28 @@ export function Billing() {
             };
             // คืนเงิน: แยกตามใบที่เรียกเก็บแต่ละเดือน (ใบลดหนี้ออกต่อใบ)
             const refunds = new Map<string, { x: Invoice; amount: number; what: string[] }>();
+            // สัญญาที่ล่วงหน้าเฉพาะค่าห้อง: ค่าห้องคืนจากใบแรกเข้า · บริการเพิ่มเติมคืนจากใบรายเดือนของเดือนนั้น (ถ้าออกไปแล้ว)
+            const roomOnly = roomOnlyPrepay(c), roomT = totals(mLines.filter(isRoomFeeLine)).net, extraT = Math.round((mTotal - roomT) * 100) / 100;
+            const extraInv = (m2: string) => list.find((x) => x.contract === c[0] && x.status !== VOID && !isCN(x) && !isStartInvoice(x) && x.date.slice(0, 7) === m2 && hasMonthLine(parseItems(x.items), c));
+            const addRefundTo = (x: Invoice | undefined, amount: number, what: string) => {
+              if (!x || amount <= 0) return;
+              const r = refunds.get(x.id) ?? { x, amount: 0, what: [] }; r.amount = Math.round((r.amount + amount) * 100) / 100; r.what.push(what); refunds.set(x.id, r);
+            };
+            const refundMonth = (m2: string, ratio: number, what: string) => {
+              const own = contractInvoiceFor(c, m2, list);
+              if (roomOnly && own && isStartInvoice(own) && extraT > 0) {
+                addRefundTo(own, Math.round(roomT * ratio * 100) / 100, `${what} · ค่าห้อง`);
+                addRefundTo(extraInv(m2), Math.round(extraT * ratio * 100) / 100, `${what} · บริการเพิ่มเติม`);
+                return;
+              }
+              addRefund(m2, Math.round(mTotal * ratio * 100) / 100, what);
+            };
             const addRefund = (m2: string, amount: number, what: string) => {
               const x = contractInvoiceFor(c, m2, list); if (!x || amount <= 0) return;
               const r = refunds.get(x.id) ?? { x, amount: 0, what: [] }; r.amount = Math.round((r.amount + amount) * 100) / 100; r.what.push(what); refunds.set(x.id, r);
             };
-            if (mode === "actual" && billed && days < dim) addRefund(month, Math.round(mTotal * (dim - days) / dim * 100) / 100, `เดือน ${label} ไม่ได้อยู่ ${dim - days} วัน`);
-            if (mode === "actual") future.forEach((m2) => addRefund(m2, mTotal, `เดือน ${m2.slice(5, 7)}/${Number(m2.slice(0, 4)) + 543} ทั้งเดือน`));
+            if (mode === "actual" && billed && days < dim) refundMonth(month, (dim - days) / dim, `เดือน ${label} ไม่ได้อยู่ ${dim - days} วัน`);
+            if (mode === "actual") future.forEach((m2) => refundMonth(m2, 1, `เดือน ${m2.slice(5, 7)}/${Number(m2.slice(0, 4)) + 543} ทั้งเดือน`));
             return (
               <div className="dc-month">
                 <div className="flex flex-wrap items-start justify-between gap-3">

@@ -122,7 +122,9 @@ export type ContractLine = { desc: string; qty: number; unit: string; price: num
  */
 export type ContractMeta = { prepaidPct?: number; installments?: number;
   /** ส่วนลดค่าห้องชำระล่วงหน้าเป็นบาท (รวม VAT · ใช้แทน prepaidPct) */
-  prepaidOff?: number };
+  prepaidOff?: number;
+  /** ชำระล่วงหน้ากี่เดือน (สัญญาใหม่ตั้งแต่ 17 พ.ย. 2569) · มีค่านี้ = ล่วงหน้าเฉพาะค่าห้องและค่าบริการทางการแพทย์ บริการเพิ่มเติมเก็บรายเดือน */
+  prepaidMonths?: number };
 const rawLines = (r: string[]): ContractLine[] | null => { try { const x = JSON.parse(r[23] || "[]"); if (Array.isArray(x)) return x; } catch { /* สัญญาเก่า */ } return null; };
 /** รายการค่าบริการของสัญญา · สัญญาเก่าที่ยังไม่มีรายการ: แปลงจากค่าบริการเพิ่มเติมรายเดือนเดิม */
 export function contractLines(r: string[]): ContractLine[] {
@@ -164,6 +166,25 @@ export function splitOldRoomLines(items: BillItem[], part: number) {
 /** สัญญาพักระยะสั้น (ค่าห้องรายวัน/รายสัปดาห์): ไม่สร้างใบค่าบริการรายเดือนให้อัตโนมัติ */
 export const isStayContract = (r: string[]) => !!rawLines(r)?.some((l) => l.stay);
 export const contractMeta = (r: string[]): ContractMeta => rawLines(r)?.find((l) => l.meta)?.meta ?? {};
+/** บรรทัดราคาห้อง: ค่าบริการห้องพัก (มี VAT) และค่าบริการทางการแพทย์ส่วนของราคาห้อง (RM-MD) · ที่เหลือ = บริการเพิ่มเติม */
+export const isRoomFeeLine = (l: { desc: string; vat?: number; code?: string }) => !!l.vat || isRoomLine(l.desc) || /^RM-/.test(lineCode(l as BillItem));
+/**
+ * จำนวนเดือนที่ชำระล่วงหน้า · สัญญาใหม่ = meta.prepaidMonths · สัญญาเก่า = ยอดล่วงหน้า ÷ ค่าบริการต่อเดือน · ไม่ระบุ = 1
+ */
+export function prepaidMonthsOf(r: string[]) {
+  const m = Math.floor(contractMeta(r).prepaidMonths ?? 0);
+  if (m > 0) return Math.min(12, m);
+  const prepaid = numOf(r[18]), t = totals(contractMonthLines(r)).net;
+  return prepaid && t ? Math.min(12, Math.max(1, Math.round(prepaid / t))) : 1;
+}
+/** สัญญาใหม่ที่ชำระล่วงหน้าเฉพาะค่าห้อง (บริการเพิ่มเติมเก็บรายเดือน) และเลือกล่วงหน้าเกิน 1 เดือน */
+export const roomOnlyPrepay = (r: string[]) => (contractMeta(r).prepaidMonths ?? 0) > 1;
+/** สัญญานี้มีบริการเพิ่มเติมรายเดือน (นอกจากราคาห้อง) */
+export const hasExtraMonthLines = (r: string[]) => contractMonthLines(r).some((l) => !isRoomFeeLine(l));
+/** รายการรายเดือนของรอบที่เริ่มวันที่ cycle · ค่าห้องยังอยู่ในช่วงที่จ่ายล่วงหน้า (roomUntil = วันแรกที่ต้องเก็บค่าห้องอีก) = เอาเฉพาะบริการเพิ่มเติม */
+export const cycleMonthLines = (r: string[], cycle: string | null, roomUntil: string) =>
+  contractMonthLines(r).filter((l) => !(roomUntil && cycle && cycle < roomUntil && isRoomFeeLine(l)));
+
 /** แบ่งยอดเป็น n งวด: งวดละเท่ากัน (ปัดสตางค์) งวดสุดท้ายรับเศษ */
 export function splitInstallments(total: number, n: number) {
   const k = Math.max(1, Math.floor(n)), per = Math.floor((total / k) * 100) / 100;

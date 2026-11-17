@@ -13,7 +13,7 @@ import { bookingInvoiceOf, bookingPaid, contractMonthTotal, contractStartLines, 
 import ContractView from "./ContractView";
 import { contractsCsv } from "../billing/contractsCsv";
 import ContractSummary from "../care/ContractSummary";
-import { ContractDoc, contractLines, contractRoomName, DcData, dcRefund, DepositDoc, DischargeDoc, PrintModal, RenewDoc } from "../print/Docs";
+import { ContractDoc, contractLines, longDate, contractRoomName, DcData, dcRefund, DepositDoc, DischargeDoc, PrintModal, RenewDoc } from "../print/Docs";
 import { ServiceLine, ServiceLines } from "../ServicePicker";
 import { AddressFinder, ChipChoice, SuggestText, TagInput } from "../ContractInputs";
 import { addMonthsIso, ALLERGY_DRUGS, COMMON_MEDS, FOOD_ALLERGENS, HEALTH_RIGHTS, HOSP_LATER, isNoAllergy, NO_ALLERGY, RELATIONS } from "@/lib/medicalLists";
@@ -37,7 +37,7 @@ import { useSession } from "@/lib/session";
 import { can } from "@/lib/perms";
 import { findRoom, freeBed, RoomInfo, roomInfos, roomKey, roomProblem, staying, withRoom } from "@/lib/rooms";
 import { Avatar } from "../Avatar";
-import { BlankForm, DataTable, Field, FieldDef, FormDialog, MenuButton, Modal, MetricGrid, PageHeader, PrintSignatures, Section, Select, StatFilter, Tabs } from "../ui";
+import { BlankForm, DataTable, Field, ThaiDateInput, FieldDef, FormDialog, MenuButton, Modal, MetricGrid, PageHeader, PrintSignatures, Section, Select, StatFilter, Tabs } from "../ui";
 
 /* ---------- ขั้นตอนการทำงาน ---------- */
 /** link ว่าง = ขั้นที่ไม่มีเมนูให้ไป (เช่น กระดิ่งแจ้งเตือนมุมขวาบน) */
@@ -383,13 +383,18 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, co
   const [roomDep, setRoomDep] = useState(() => completing ? (paidDeposit ? String(paidDeposit) : "") : initial?.[27] && initial[27] !== "-" ? initial[27].replace(/,/g, "") : "");
   const sum = feeN + medPay + items.reduce((n, x) => n + svcNet(x), 0);
   const monthly = Math.round((sum - feeN + partPay) * 100) / 100;
-  const prepaid = months > 0 && monthly > 0 ? String(Math.round(monthly * months * 100) / 100) : "";
+  // ชำระล่วงหน้า: คูณเฉพาะค่าห้อง + ค่าบริการทางการแพทย์ (ราคาห้อง) · บริการเพิ่มเติมเก็บเดือนแรก แล้วออกใบรายเดือนต่อ
+  const roomMonthly = Math.round((partPay + medPay) * 100) / 100, extraMonthly = Math.round((monthly - roomMonthly) * 100) / 100;
+  const prepaid = months > 0 && monthly > 0 ? String(Math.round((months > 1 ? roomMonthly * months + extraMonthly : monthly) * 100) / 100) : "";
   // ส่วนลดค่าห้อง: ลดเฉพาะค่าบริการห้องพัก (ไม่ลดค่าบริการทางการแพทย์) · ได้ตั้งแต่ 1 เดือน (ไม่เก็บล่วงหน้า = เดือนแรก)
   const pctN = stay === "เดือน" && offMode === "pct" ? Math.min(100, Math.max(0, Math.floor(Number(roomPct) || 0))) : 0;
   const offN = stay === "เดือน" && offMode === "baht" ? Math.max(0, Math.floor(Number(offAmt) || 0)) : 0;
   /** ส่วนลดค่าห้องชำระล่วงหน้า (รวม VAT · ประมาณ ยอดจริงคิดตามบรรทัดในขั้นที่ 4) */
   const mOff = Math.max(1, months), roomOff = offN ? Math.min(offN, partPay * mOff) : Math.round(partPay * mOff * pctN) / 100;
-  const firstBill = (months || 1) * monthly - roomOff + (Number(deposit) || 0) - (Number(roomDep) || 0);
+  /** ช่องจำนวนเดือนที่จะอยู่ระหว่างพิมพ์ (null = แสดงตามวันสิ้นสุดสัญญา) · ลบจนว่างได้ */
+  const [termText, setTermText] = useState<string | null>(null);
+  const termMonths = start && endDate ? Array.from({ length: 60 }, (_, i) => i + 1).find((n) => addMonthsIso(start, n) === endDate) ?? 0 : 0;
+  const firstBill = (months > 1 ? roomMonthly * months + extraMonthly : monthly) - roomOff + (Number(deposit) || 0) - (Number(roomDep) || 0);
   const branchNames = useBranchNames();
   const { go, toast } = useApp();
   const { user } = useSession();
@@ -456,7 +461,7 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, co
       g("resident_id"), g("age"), initial?.[14] ?? "", lines.map((x) => x.desc).join(", "), lines.length ? String(lines.reduce((n, x) => n + svcNet(x), 0)) : "", initial?.[17] ?? "",
       booking ? "" : prepaid, booking ? "" : deposit, g("note"),
       booking ? "" : g("program"), booking ? "" : endDate, JSON.stringify([...lines, ...(fee4 !== "-" && roomName.trim() ? [{ desc: roomName.trim(), qty: 1, unit: "เดือน", price: 0, room: true }] : []),
-        ...(!booking && (pctN > 0 || offN > 0 || parts > 1) ? [{ desc: "", qty: 0, unit: "", price: 0, meta: { ...(pctN > 0 ? { prepaidPct: pctN } : {}), ...(offN > 0 ? { prepaidOff: offN } : {}), ...(parts > 1 ? { installments: parts } : {}) } }] : [])]), [hosp.trim(), right ? `(${right})` : ""].filter(Boolean).join(" "), drugA.trim(), foodA.trim(), booking ? String(Number(depAmt) || 0) : roomDep, meds.trim(), hospAlt.trim(),
+        ...(!booking && (pctN > 0 || offN > 0 || parts > 1 || (stay === "เดือน" && months > 1)) ? [{ desc: "", qty: 0, unit: "", price: 0, meta: { ...(pctN > 0 ? { prepaidPct: pctN } : {}), ...(offN > 0 ? { prepaidOff: offN } : {}), ...(parts > 1 ? { installments: parts } : {}), ...(stay === "เดือน" && months > 1 ? { prepaidMonths: months } : {}) } }] : [])]), [hosp.trim(), right ? `(${right})` : ""].filter(Boolean).join(" "), drugA.trim(), foodA.trim(), booking ? String(Number(depAmt) || 0) : roomDep, meds.trim(), hospAlt.trim(),
       String(rateN),
     ];
   };
@@ -467,7 +472,6 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, co
   /** ขั้น 1: ปัญหาแรกที่ต้องแก้ก่อนไปกรอกค่าใช้จ่าย (ลำดับเดิม) · ชื่อผู้จ้าง/ผู้รับบริการเป็นช่องบังคับ (*) ตรวจด้วยกันที่นี่ */
   const check1All = (): FormProblem[] => {
     const out: FormProblem[] = [];
-    if (!booking && endDate && endDate < start) out.push({ msg: "วันสิ้นสุดสัญญาต้องไม่ก่อนวันเริ่มสัญญา", field: "วันสิ้นสุดสัญญา" });
     // มัดจำค่าห้อง: ประวัติแพ้ยา/อาหารกรอกตอนเปิดสัญญา
     if (!booking && !drugA.trim()) out.push({ msg: `ประวัติแพ้ยา (หรือกด "${NO_ALLERGY}")`, field: "ประวัติแพ้ยา" });
     if (!booking && !foodA.trim()) out.push({ msg: `ประวัติแพ้อาหาร (หรือกด "${NO_ALLERGY}")`, field: "ประวัติแพ้อาหาร" });
@@ -483,6 +487,8 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, co
   const check2All = (): FormProblem[] => {
     const out: FormProblem[] = [];
     if (booking) return out;
+    // วันเริ่ม/วันสิ้นสุดสัญญาอยู่ในขั้นค่าใช้จ่าย (ขั้นที่ 2)
+    if (endDate && start && endDate < start) out.push({ msg: "วันสิ้นสุดสัญญาต้องไม่ก่อนวันเริ่มสัญญา", field: "วันสิ้นสุดสัญญา" });
     if (!(feeN > 0) && !items.some((x) => x.desc.trim() && svcNet(x) > 0)) out.push({ msg: "ค่าห้อง (ยังเป็น 0 · เลือกห้องจากใบราคา หรือกำหนดราคาเอง)", field: "ค่าห้อง" });
     if (items.some((x) => x.desc.trim() && (!(x.qty > 0) || x.price < 0))) out.push({ msg: "จำนวนและราคาของรายการค่าบริการ (จำนวนต้องมากกว่า 0 ราคาต้องไม่ติดลบ)" });
     return out;
@@ -706,18 +712,14 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, co
             {!lockNames && (oldRes ? <PastBox c={oldRes} pulled={pulledRes} kind="res" onPull={() => pickResident(oldRes[2])} /> : null)}</Field>
           <Field label="เลขที่บัตรประชาชนผู้รับบริการ" className={hide}><DigitsInput kind="id" name="resident_id" defaultValue={d(12)} /></Field>
           <Field label="อายุ (ปี) ผู้รับบริการ"><input name="age" type="number" min={0} max={130} placeholder="เช่น 78" defaultValue={dn(13)} /></Field>
-          <Field label={booking ? "วันที่จะเข้าพัก (ใส่ทีหลังได้)" : "วันเริ่มสัญญา"} required={!booking}><input type="date" required={!booking} value={start} onChange={(e) => setStart(e.target.value)} aria-label="วันเริ่มสัญญา" />
+          {booking && <Field label="วันที่จะเข้าพัก (ใส่ทีหลังได้)" required={!booking}><input type="date" required={!booking} value={start} onChange={(e) => setStart(e.target.value)} aria-label="วันเริ่มสัญญา" />
             {booking && <div className="mt-2 flex flex-wrap items-center gap-2">
               {start ? <button type="button" onClick={() => setStart("")} className="rounded-full px-3 py-1 text-xs text-gold-500 underline-offset-2 hover:underline">ล้างวันที่ (ยังไม่กำหนด)</button>
                 : <button type="button" onClick={() => setStart(todayIso())} className="rounded-full border border-cream-300 bg-white px-3 py-1 text-xs text-gold-700 hover:border-gold-300">ใส่วันนี้</button>}
               <p className="field-hint !mt-0">ว่าง = ยังไม่กำหนด · สัญญายังไม่เริ่มจนกว่าจะกด &quot;เปิดสัญญา&quot; และใส่วันเริ่มสัญญา</p>
-            </div>}</Field>
+            </div>}</Field>}
           <Field label="รูปถ่ายบัตรประชาชนผู้รับบริการ (ไม่บังคับ · แนบทีหลังได้)" className={`md:col-span-2 ${hide}`}><PhotoPicker value={photos.resident} onChange={(v) => setPhotos({ ...photos, resident: v })} label={renewing ?"ไม่แนบใหม่ = ใช้รูปจากสัญญาเดิม" : "ถ่ายหรือเลือกรูป · ให้เห็นชื่อ เลขบัตร รูปหน้า"} /></Field>
           <Field label="เลขที่สัญญา" className={hide}><input value={completing ? initial?.[0] || "ออกเลขอัตโนมัติ" : initial && fromQuote === undefined ? `ออกเลขใหม่อัตโนมัติ (สัญญาเดิม ${initial[0]})` : "ออกเลขอัตโนมัติ เช่น CT-2569-0001"} readOnly tabIndex={-1} className="field-locked" /></Field>
-          <Field label="วันสิ้นสุดสัญญา" className={hide}><input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} aria-label="วันสิ้นสุดสัญญา" />
-            <div className="mt-2 flex flex-wrap gap-1.5">{[[1, "1 เดือน"], [3, "3 เดือน"], [6, "6 เดือน"], [12, "1 ปี"]].map(([n, t]) => <button key={t} type="button" disabled={!start} onClick={() => setEndDate(addMonthsIso(start, Number(n)))} className="rounded-full border border-cream-300 bg-white px-3 py-1 text-xs text-gold-700 hover:border-gold-300">+{t}</button>)}
-              {endDate && <button type="button" onClick={() => setEndDate("")} className="rounded-full px-3 py-1 text-xs text-gold-500 underline-offset-2 hover:underline">ไม่กำหนดวันสิ้นสุด</button>}</div>
-            <p className="field-hint">ว่าง = มีผลต่อเนื่องจนกว่าจะจำหน่าย</p></Field>
           <Field label="สถานะสัญญา" required className={hide}><select name="status" defaultValue={CONTRACT_STATUSES[0]}>{CONTRACT_STATUSES.slice(0, 2).map((x) => <option key={x}>{x}</option>)}</select></Field>
         </div>
 
@@ -748,6 +750,26 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, co
           {row && <div className="mb-5 rounded-2xl border border-cream-200 bg-cream-50/60 px-4 py-3 text-sm text-gold-700">
             <p><span className="text-gold-500">ผู้รับบริการ</span> <b className="font-medium text-gold-800">{row[2]}</b> · <span className="text-gold-500">สาขา</span> {row[1]} · <span className="text-gold-500">ผู้ว่าจ้าง</span> {row[3]}</p>
           </div>}
+          {/* ระยะเวลาสัญญา: วันเริ่ม → วันสิ้นสุด แถวเดียว · ปุ่มระยะเวลา + กรอกจำนวนเดือน · สรุปช่วงสัญญาเป็นข้อความ */}
+          <section className="term-box" aria-label="ระยะเวลาสัญญา">
+            <h3>ระยะเวลาสัญญา</h3>
+            <div className="term-row">
+              <label className="term-f"><span>วันเริ่มสัญญา <i>*</i></span><ThaiDateInput label="วันเริ่มสัญญา" required={!booking} value={start} onChange={setStart} /></label>
+              <span className="term-arrow" aria-hidden>→</span>
+              <label className="term-f"><span>วันสิ้นสุดสัญญา</span><ThaiDateInput label="วันสิ้นสุดสัญญา" value={endDate} min={start || undefined} onChange={setEndDate} /></label>
+              <div className="term-quick" role="group" aria-label="ระยะเวลาที่จะอยู่">
+                {[[1, "1 เดือน"], [3, "3 เดือน"], [6, "6 เดือน"], [12, "1 ปี"]].map(([n, t]) => <button key={t} type="button" disabled={!start} aria-pressed={termMonths === n} className={termMonths === n ? "is-on" : ""} onClick={() => setEndDate(addMonthsIso(start, Number(n)))}>{t}</button>)}
+                <span className="term-n"><input id="stay-months" type="text" inputMode="numeric" maxLength={2} placeholder="-" disabled={!start}
+                  value={termText ?? (termMonths && ![1, 3, 6, 12].includes(termMonths) ? String(termMonths) : "")}
+                  onFocus={() => setTermText(termMonths && ![1, 3, 6, 12].includes(termMonths) ? String(termMonths) : "")} onBlur={() => setTermText(null)}
+                  onChange={(e) => { const t = e.target.value.replace(/\D/g, "").slice(0, 2), n = Math.min(60, Number(t) || 0); setTermText(t); if (n && start) setEndDate(addMonthsIso(start, n)); }} aria-label="จำนวนเดือนที่จะอยู่" /> เดือน</span>
+                {endDate && <button type="button" className="term-clear" onClick={() => setEndDate("")}>ไม่กำหนด</button>}
+              </div>
+            </div>
+            <p className="term-sum">{!start ? "เลือกวันเริ่มสัญญาก่อน" : endDate
+              ? <>สัญญา {termMonths ? <b>{termMonths} เดือน</b> : <b>{Math.max(1, Math.round((Date.parse(endDate) - Date.parse(start)) / 864e5) + 1)} วัน</b>} · {longDate(start, true)} – {longDate(endDate, true)}</>
+              : <>ไม่กำหนดวันสิ้นสุด · มีผลต่อเนื่องจนกว่าจะจำหน่าย (D/C)</>}</p>
+          </section>
           <h3 className="mb-3 font-semibold text-gold-800">โปรแกรมและค่าบริการ</h3>
           <div className="grid gap-4">
             <Field label="โปรแกรม"><input name="program" list="contract-programs" placeholder="เลือกหรือพิมพ์ชื่อโปรแกรม" defaultValue={d(21) ?? PROGRAMS[0]} /><datalist id="contract-programs">{PROGRAMS.map((x) => <option key={x} value={x} />)}</datalist></Field>
@@ -780,7 +802,6 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, co
                       className={`room-opt ${on ? "is-on" : ""}`} onClick={() => { setFeePick(String(i)); setFee(String(v)); setRoomPart(String(x.part[stay])); setRoomName(x.name); }}>
                       <span className="room-opt-name"><b>{th}</b>{en && <small>{en}</small>}</span>
                       <span className="room-opt-price"><b>{v ? v.toLocaleString() : "-"}</b><small>/{stay}{stay === "สัปดาห์" && !x.weekSet ? " (7 วัน)" : ""}</small>
-                        {stay === "เดือน" && x.promo > 0 && x.promo < x.month && <i className="room-opt-promo">ราคาโปร · ปกติ {x.month.toLocaleString()}</i>}
                         {stay !== "เดือน" && v > 0 && nStay > 0 && <em>{nStay} {stay} = {(v * nStay).toLocaleString()}</em>}</span>
                     </button>
                   );
@@ -814,17 +835,15 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, co
               </div>
             </Field>
           </div>
-          <p className="label mt-4">รายการบริการและค่าบริการเพิ่มเติม</p>
-          <ServiceLines items={items} onChange={setItems} total={false} exclude={["ห้องพัก"]} />
-          {/* การชำระ (ซ้าย) · สรุปใบแจ้งหนี้แรกเข้า (ขวา) */}
-          <div className="pay2">
-            <div className="pay2-main">
+          <div className="pay2-top">
               {stay === "เดือน" ? <div className="pay2-sec">
-                <p className="pay2-h">ชำระค่าบริการล่วงหน้า</p>
+                <p className="pay2-h">ชำระค่าห้องล่วงหน้า <small className="font-normal text-gold-500">(ค่าห้อง + ค่าบริการทางการแพทย์ · บริการเพิ่มเติมเก็บรายเดือน)</small></p>
                 <div className="pay2-chips" role="radiogroup" aria-label="ชำระค่าบริการล่วงหน้า">{[0, 1, 2, 3, 6].map((n) => (
                   <button key={n} type="button" role="radio" aria-checked={months === n} onClick={() => setMonths(n)} className={`pay2-chip ${months === n ? "is-on" : ""}`}>
                     {n ? `${n} เดือน` : "ไม่เก็บล่วงหน้า"}</button>
-                ))}</div>
+                ))}
+                  <span className="pay2-inline"><label htmlFor="prepay-n">หรือ</label><input id="prepay-n" type="text" inputMode="numeric" maxLength={2} placeholder="-"
+                    value={[0, 1, 2, 3, 6].includes(months) ? "" : String(months)} onChange={(e) => setMonths(Math.min(12, Number(e.target.value.replace(/\D/g, "")) || 0))} aria-label="จำนวนเดือนที่ชำระล่วงหน้า (1–12)" /><span>เดือน</span></span></div>
                 {/* ชำระล่วงหน้าตั้งแต่ 2 เดือน: ส่วนลดค่าห้องเป็น % (จำนวนเต็ม) · ลดเฉพาะค่าห้อง */}
                 {partPay > 0 && <div className="pay2-inline">
                   <label htmlFor="room-pct">ส่วนลดค่าห้อง</label>
@@ -839,6 +858,12 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, co
                   <small>{roomOff > 0 ? `ค่าห้อง ${money(partPay)} ${pctN ? `− ${pctN}%` : `− ${money(Math.min(offN, partPay * mOff) / mOff)}`} = ${money(Math.round((partPay - roomOff / mOff) * 100) / 100)}${mOff > 1 ? "/เดือน" : ""}` : "ลดเฉพาะค่าบริการห้องพัก"}</small>
                 </div>}
               </div> : <p className="pay2-note">พักระยะสั้น {nStay} {stay} · เก็บครั้งเดียวในใบแรกเข้า ไม่ออกใบรายเดือนให้อัตโนมัติ</p>}
+          </div>
+          <p className="label mt-4">รายการบริการและค่าบริการเพิ่มเติม</p>
+          <ServiceLines items={items} onChange={setItems} total={false} exclude={["ห้องพัก"]} />
+          {/* การชำระ (ซ้าย) · สรุปใบแจ้งหนี้แรกเข้า (ขวา) */}
+          <div className="pay2">
+            <div className="pay2-main">
               <div className="pay2-sec">
                 <p className="pay2-h">แบ่งชำระ</p>
                 <div className="pay2-chips" role="radiogroup" aria-label="แบ่งชำระใบแรกเข้า">{[1, 2, 3, 4, 6].map((n) => (
@@ -859,7 +884,7 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, co
                 {medPay > 0 && <div><dt>ค่าบริการทางการแพทย์</dt><dd>{money(medPay)}</dd></div>}
                 {sum - feeN - medPay > 0 && <div><dt>บริการเพิ่มเติม</dt><dd>{money(sum - feeN - medPay)}</dd></div>}
                 <div className="is-sub"><dt>{stay === "เดือน" ? "รวมต่อเดือน" : `รวม ${nStay} ${stay}`}</dt><dd>{money(monthly)}</dd></div>
-                {stay === "เดือน" && months > 1 && <div><dt>× {months} เดือน</dt><dd>{money(monthly * months)}</dd></div>}
+                {stay === "เดือน" && months > 1 && <div><dt>ค่าห้อง + ค่าบริการทางการแพทย์ × {months} เดือน<small>บริการเพิ่มเติมเก็บเดือนแรก · เดือนถัดไปออกใบรายเดือน</small></dt><dd>{money(roomMonthly * months + extraMonthly)}</dd></div>}
                 {roomOff > 0 && <div className="is-minus"><dt>ส่วนลดค่าบริการห้องพัก{pctN ? ` ${pctN}%` : ""}<small>ค่าห้องเหลือ {money(Math.round((partPay * mOff - roomOff) * 100) / 100)}{mOff > 1 ? ` (${money(Math.round((partPay - roomOff / mOff) * 100) / 100)}/เดือน)` : ""}</small></dt><dd>−{money(roomOff)}</dd></div>}
                 {Number(deposit) > 0 && <div><dt>เงินประกัน</dt><dd>{money(Number(deposit))}</dd></div>}
                 {Number(roomDep) > 0 && <div className="is-minus"><dt>หักมัดจำห้อง</dt><dd>−{money(Number(roomDep))}</dd></div>}

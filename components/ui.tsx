@@ -49,6 +49,25 @@ export function StatusBadge({value}:{value:string}) {
   return <span className={"status-badge "+(review?"status-warning":todo?"status-neutral":success?"status-success":warning?"status-warning":danger?"status-danger":"status-neutral")}>{value.replace(/\s*\([^)]*\)/g, "")}</span>;
 }
 
+/**
+ * ช่องวันที่แบบไทย: แสดง วว/ดด/ปปปป (พ.ศ.) ทับช่องวันที่ของเบราว์เซอร์ (ซึ่งแสดงตามภาษาเครื่อง เช่น mm/dd/yyyy)
+ *  กดที่ช่องเปิดปฏิทินของเบราว์เซอร์ · ค่าที่ส่งออกยังเป็น YYYY-MM-DD
+ */
+export function ThaiDateInput({ value, onChange, label, required, min, max, disabled, className = "" }: {
+  value: string; onChange: (v: string) => void; label: string; required?: boolean; min?: string; max?: string; disabled?: boolean; className?: string;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  const m = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const text = m ? `${m[3]}/${m[2]}/${Number(m[1]) + 543}` : "";
+  const open = () => { try { ref.current?.showPicker?.(); } catch { /* เบราว์เซอร์เก่า: โฟกัสช่องแทน */ ref.current?.focus(); } };
+  return (
+    <span className={`th-date ${disabled ? "is-off" : ""} ${className}`} onClick={() => !disabled && open()}>
+      <input ref={ref} type="date" aria-label={label} required={required} min={min} max={max} disabled={disabled} value={value} onChange={(e) => onChange(e.target.value)} />
+      <span className={`th-date-text ${text ? "" : "is-empty"}`} aria-hidden>{text || "วว/ดด/ปปปป"}</span>
+    </span>
+  );
+}
+
 export function Field({label,required,children,className=""}:{label:string;required?:boolean;children:ReactNode;className?:string}) {
  const labelId=useId();
  const controls=Children.map(children,child=>isValidElement(child)?cloneElement(child as ReactElement<{"aria-label"?:string}>, {"aria-label":(child.props as {"aria-label"?:string})["aria-label"]||label}):child);
