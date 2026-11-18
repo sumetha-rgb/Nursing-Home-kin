@@ -1,4 +1,4 @@
-export type ViewId = "careplan"|"contracts"|"residents"|"tasks_table"|"tasks"|"appointments"|"health_logs"|"feedbacks"|"dashboard"|"official-docs"|"branches"|"staff"|"facility_tasks"|"master_tasks"|"quotations"|"audit"|"roster"|"reviews"|"kpi"|"tutorials"|"rooms"|"billing"|"prices"|"exports"|"physio";
+export type ViewId = "careplan"|"contracts"|"residents"|"tasks_table"|"tasks"|"appointments"|"health_logs"|"feedbacks"|"dashboard"|"official-docs"|"branches"|"staff"|"facility_tasks"|"master_tasks"|"quotations"|"audit"|"roster"|"reviews"|"kpi"|"tutorials"|"rooms"|"billing"|"prices"|"exports"|"physio"|"settings"|"sales_tax"|"revenue";
 /** กลุ่มเมนู: 4 บริหาร · 0 งานดูแล · 1 ขายและการเงิน · 3 ทีมงาน · 2 เครื่องมือและระบบ (ลำดับที่แสดงอยู่ที่ GROUPS ใน Shell.tsx) */
 export type NavGroup = 0|1|2|3|4;
 export type NavItem = {kind:"view";id:ViewId;label:string;icon:string;group:NavGroup}|{kind:"link";href:string;label:string;icon:string;group:NavGroup;perm:"app.staff"|"app.pharmacy"};
@@ -19,6 +19,8 @@ export const NAV:NavItem[]=[
 {kind:"view",id:"quotations",label:"ใบเสนอราคา / แผนดูแล",icon:"flow",group:1},
 {kind:"view",id:"contracts",label:"สัญญาบริการ",icon:"doc",group:1},
 {kind:"view",id:"billing",label:"ใบแจ้งหนี้และใบเสร็จ",icon:"receipt",group:1},
+{kind:"view",id:"sales_tax",label:"รายงานภาษีขาย",icon:"table",group:1},
+{kind:"view",id:"revenue",label:"รายได้ตาม BU",icon:"chart",group:1},
 {kind:"view",id:"staff",label:"ทีมและสิทธิ์การใช้งาน",icon:"id",group:3},
 {kind:"view",id:"kpi",label:"KPI พนักงาน",icon:"trophy",group:3},
 {kind:"view",id:"reviews",label:"รีวิวพนักงาน",icon:"star",group:3},
@@ -28,6 +30,7 @@ export const NAV:NavItem[]=[
 {kind:"view",id:"official-docs",label:"เอกสารและระเบียบ",icon:"files",group:2},
 {kind:"view",id:"tutorials",label:"วิดีโอสอนใช้งาน",icon:"play",group:2},
 {kind:"view",id:"audit",label:"บันทึกการใช้งานระบบ",icon:"history",group:2},
+{kind:"view",id:"settings",label:"ตั้งค่า",icon:"wrench",group:2},
 {kind:"link",href:"/staff",label:"KinApp",icon:"phone",group:2,perm:"app.staff"},
 {kind:"link",href:"/pharmacy",label:"ห้องยา",icon:"pill",group:2,perm:"app.pharmacy"},
 ];

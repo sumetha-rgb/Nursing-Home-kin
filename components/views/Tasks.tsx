@@ -9,8 +9,9 @@ import { useApp } from "@/lib/app";
 import { useSession } from "@/lib/session";
 import { fetchNurses } from "@/lib/care";
 import { DataTable, FieldDef, FormDialog, Modal, PageHeader, Section, SearchBox, Select, Tabs, Field } from "../ui";
+import { OptionSettings, useOptions } from "../OptionSettings";
 
-const CATEGORIES = ["กิจวัตรประจำวัน (ADL)", "งานพยาบาล", "กายภาพบำบัด", "ส่งเสริมสุขภาพ", "กิจกรรมกลุ่ม", "งานทั่วไป", "งานอื่นๆ"];
+/* หมวดหมู่งาน: แก้ได้ที่ ตั้งค่าตัวเลือก (lib/optionLists task_categories) */
 type Dlg = { mode: "add" | "edit"; i: number } | null;
 
 /* ---------- งานทั่วไปประจำสาขา ---------- */
@@ -40,7 +41,7 @@ function periodsOf(schedule: string, month: string, today: string) {
 }
 const FAC_FIELDS: FieldDef[] = [
   { label: "เลือกงานจากคลังมาตรฐาน (Task Dictionary)", options: Array.from(new Set([...MASTER_TASKS, ...FACILITY_TASKS].map((t) => t[1] === undefined ? "" : t[0].startsWith("T-") ? t[1] : t[0]))), required: true, wide: true },
-  { label: "หมวดหมู่ (ดึงจากคลังอัตโนมัติ)", options: ["ความสะอาด NA", "งานทั่วไป / ซ่อมบำรุง", ...CATEGORIES] },
+  { label: "หมวดหมู่ (ดึงจากคลังอัตโนมัติ)", options: [] },
   { label: "วิธีจ่ายงาน", options: [AUTO, MANUAL], required: true },
   { label: "ความถี่", options: ["ทุกวัน (Daily)", "ทุกสัปดาห์ (Weekly)", "ทุกเดือน (Monthly)"], required: true },
   { label: "เวลาที่ต้องทำ (เช่น 07:00 หรือ กะเช้า)" },
@@ -48,6 +49,8 @@ const FAC_FIELDS: FieldDef[] = [
 ];
 
 export function FacilityTasks() {
+  // หมวดหมู่งานส่วนกลาง: ความสะอาด / ซ่อมบำรุง + หมวดหมู่งานที่ตั้งค่าไว้
+  const facCats = ["ความสะอาด NA", "งานทั่วไป / ซ่อมบำรุง", ...useOptions("task_categories").values];
   const { rows, ids, add, update, remove } = useCrud("facility", FACILITY_TASKS);
   const { toast, confirm, go } = useApp();
   // สถานะรอบนี้และคนทำล่าสุด (พยาบาลกดทำแล้ว · ถ่ายรูปใน KinApp)
@@ -121,7 +124,7 @@ export function FacilityTasks() {
       <Section>
         <div className="mb-4 grid gap-3 md:grid-cols-[1fr_16rem]">
           <div onChange={(e) => setQ((e.target as HTMLInputElement).value)}><SearchBox placeholder="ค้นหาชื่อ/รายละเอียดงาน" /></div>
-          <Select options={["ความสะอาด NA", "งานทั่วไป / ซ่อมบำรุง", ...CATEGORIES]} placeholder="หมวดหมู่" value={cat} onChange={setCat} />
+          <Select options={facCats} placeholder="หมวดหมู่" value={cat} onChange={setCat} />
         </div>
         <div className="mb-4 grid gap-3 rounded-2xl border border-cream-300 bg-cream-50 p-4 text-sm text-gold-700 md:grid-cols-2">
           <p><b className="text-gold-800">ขึ้นให้ทุกคน · ใครทำก่อนส่ง</b><br />งานขึ้นใน KinApp ของพยาบาลทุกคนในสาขาทุกรอบ ใครทำก่อนกดส่ง เหมาะกับงานที่ใครทำก็ได้ เช่น ทำความสะอาดห้องโถง</p>
@@ -180,7 +183,7 @@ export function FacilityTasks() {
       </Modal>
       <FormDialog
         open={!!dlg} mode={dlg?.mode ?? "add"} title={dlg?.mode === "edit" ? "แก้ไขงานการดูแล" : "เพิ่มงานทั่วไปประจำสาขา"}
-        fields={[...FAC_FIELDS, { label: "พยาบาลผู้รับผิดชอบ", options: nurses, pick: "search", placeholder: nurses.length ? "พิมพ์ชื่อพยาบาลเพื่อค้นหา" : "กำลังโหลดรายชื่อ…", showIf: (v) => isManual(v[2]), wide: true }]}
+        fields={[...FAC_FIELDS.map((f) => (f.label.startsWith("หมวดหมู่") ? { ...f, options: facCats } : f)), { label: "พยาบาลผู้รับผิดชอบ", options: nurses, pick: "search", placeholder: nurses.length ? "พิมพ์ชื่อพยาบาลเพื่อค้นหา" : "กำลังโหลดรายชื่อ…", showIf: (v) => isManual(v[2]), wide: true }]}
         value={dlg?.mode === "edit" ? [rows[dlg.i][0], rows[dlg.i][1], modeText(rows[dlg.i][3]), "", rows[dlg.i][2], "", facOf(dlg.i)?.assignee ?? ""] : undefined}
         onClose={() => setDlg(null)} saveLabel="บันทึกข้อมูล"
         onSave={(v) => {
@@ -211,7 +214,7 @@ const MT_FIELDS: FieldDef[] = [
   { label: "รหัสงาน" },
   { label: "ชื่องาน", required: true },
   { label: "คำสั่งงาน (Instruction)", area: true, required: true },
-  { label: "หมวดหมู่", options: CATEGORIES },
+  { label: "หมวดหมู่", options: [] },
   { label: "กะที่ต้องทำ", options: ["ทั้งสองกะ", "กะเช้า", "กะดึก"] },
   { label: "สาขา", options: ["ส่วนกลาง", ...BRANCH_NAMES] },
   { label: "วิชาชีพ", options: PROFESSIONS },
@@ -220,6 +223,7 @@ const MT_FIELDS: FieldDef[] = [
 export function MasterTasks() {
   const branchNames = useBranchNames();
   const { rows, add, update, remove } = useCrud("master", MASTER_TASKS);
+  const cats = useOptions("task_categories").values;
   const { toast, confirm } = useApp();
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("");
@@ -237,13 +241,14 @@ export function MasterTasks() {
         actions={<>
           <button className="btn-soft" onClick={() => downloadCsv("แม่แบบงานมาตรฐาน", MT_COLS, rows.map((r) => r.slice(0, 6)))}><CsvIcon /> ส่งออก CSV</button>
           <button className="btn-soft" onClick={() => setGroup(true)}>สร้างกลุ่มงานใหม่</button>
+          <OptionSettings group="tasks" lists={["task_categories"]} label="ตั้งค่าหมวดหมู่งาน" />
           <button className="btn-primary" onClick={() => setDlg({ mode: "add", i: -1 })}><Icon name="plus" className="h-4 w-4" /> เพิ่มงานมาตรฐาน</button>
         </>}
       />
       <Section>
         <div className="mb-4 grid gap-3 md:grid-cols-[1fr_16rem_12rem]">
           <div onChange={(e) => setQ((e.target as HTMLInputElement).value)}><SearchBox placeholder="ค้นหาชื่อ/คำสั่งงาน" /></div>
-          <Select options={CATEGORIES} placeholder="หมวดหมู่: ทั้งหมด" value={cat} onChange={setCat} />
+          <Select options={cats} placeholder="หมวดหมู่: ทั้งหมด" value={cat} onChange={setCat} />
           <Select options={["กะเช้า", "กะดึก", "ทั้งสองกะ"]} placeholder="กะ: ทั้งหมด" value={shift} onChange={setShift} />
         </div>
         <DataTable
@@ -257,7 +262,7 @@ export function MasterTasks() {
       </Section>
       <FormDialog
         open={!!dlg} mode={dlg?.mode ?? "add"} title={dlg?.mode === "edit" ? "แก้ไขงานมาตรฐาน" : "เพิ่มงานมาตรฐาน"}
-        fields={withBranches(MT_FIELDS, branchNames).map((f) => f.label === "วิชาชีพ" ? { ...f, options: [...new Set([...PROFESSIONS, ...rows.map((r) => r[6]).filter((v) => v && v !== "-")])] } : f)} value={dlg?.mode === "edit" ? rows[dlg.i] : undefined}
+        fields={withBranches(MT_FIELDS, branchNames).map((f) => f.label === "หมวดหมู่" ? { ...f, options: cats } : f).map((f) => f.label === "วิชาชีพ" ? { ...f, options: [...new Set([...PROFESSIONS, ...rows.map((r) => r[6]).filter((v) => v && v !== "-")])] } : f)} value={dlg?.mode === "edit" ? rows[dlg.i] : undefined}
         onClose={() => setDlg(null)} saveLabel="บันทึกข้อมูล"
         onSave={(v) => { const edit = dlg?.mode === "edit"; if (edit) update(dlg!.i, v); else add(v); setDlg(null); toast({ type: edit ? "edit" : "ok", title: edit ? "แก้ไขงานมาตรฐานแล้ว" : "เพิ่มงานมาตรฐานแล้ว", detail: [v[0], v[1]].filter(Boolean).join(" ") }); }}
       />

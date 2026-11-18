@@ -1,11 +1,12 @@
 "use client";
 import { useEffect, useState } from "react";
+import { seesAllBranches } from "@/lib/roles";
 import Icon from "./Icon";
 import type { SessionUser } from "@/lib/roles";
 
 /** ป้ายบนแถบด้านบน: สาขาที่กำลังดูอยู่ */
 export function BranchBadge({ user, compact = false }: { user: SessionUser; compact?: boolean }) {
-  const all = user.role === "Global Admin";
+  const all = seesAllBranches(user.role);
   const bad = user.branchCheck === "missing" || user.branchCheck === "closed";
   return (
     <span className={`branch-badge ${all ? "is-all" : ""} ${bad ? "is-bad" : ""}`} title={all ? "เห็นข้อมูลทุกสาขา" : `เห็นเฉพาะข้อมูลสาขา${user.branch}`}>

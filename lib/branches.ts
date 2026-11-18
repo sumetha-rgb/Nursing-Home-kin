@@ -1,4 +1,5 @@
 "use client";
+import { seesAllBranches } from "./roles";
 import { useEffect, useSyncExternalStore } from "react";
 import type { FieldDef } from "@/components/ui";
 import { BRANCH_NAMES as FALLBACK } from "./mock";
@@ -22,7 +23,7 @@ const notify = () => { scoped = scope ? [scope] : names; listeners.forEach((l) =
 
 /** เรียกเมื่อรู้ว่าใครเข้าสู่ระบบ (lib/session) */
 export function setBranchScope(u: { role: string; branch: string | null } | null) {
-  const next = u && u.role !== "Global Admin" && u.branch ? u.branch : null;
+  const next = u && !seesAllBranches(u.role) && u.branch ? u.branch : null;
   if (next !== scope) { scope = next; notify(); }
 }
 

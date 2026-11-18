@@ -33,6 +33,18 @@ export const CATS: Record<CatId, { name: string; subs: [string, number][] }> = {
   OT: { name: "อื่น ๆ", subs: [["อื่น ๆ", 1]] },
 };
 export const CAT_IDS = Object.keys(CATS) as CatId[];
+
+/** หมวดย่อยจากฐานข้อมูล (ตาราง price_subs ผ่าน /api/prices) · start = เลขเริ่มของช่วงรหัส · ยังไม่โหลด = ใช้ CATS */
+export type PriceSub = { id: string; cat: CatId; name: string; start: number; active: boolean; count?: number };
+let subsCur: PriceSub[] | null = null;
+export function setSubs(list: PriceSub[]) { subsCur = list; }
+/** หมวดย่อยของหมวด เรียงตามช่วงรหัส · keep = ชื่อที่ต้องแสดงแม้ปิดใช้ (หมวดย่อยของรายการที่กำลังแก้) */
+export function subsOf(cat: CatId, keep?: string): [string, number][] {
+  const l = subsCur?.filter((x) => x.cat === cat && (x.active || x.name === keep)).sort((a, b) => a.start - b.start).map((x) => [x.name, x.start] as [string, number]);
+  return l?.length ? l : CATS[cat].subs;
+}
+/** ป้ายช่วงรหัสของหมวดย่อย เช่น NS-5x (ห้องพักไม่แสดง) */
+export const subRange = (cat: CatId, start: number) => `${cat}-${Math.floor(start / 10)}x`;
 export const isCat = (c: unknown): c is CatId => typeof c === "string" && c in CATS;
 
 /** รหัสหลัก เช่น NS-21 */
@@ -51,7 +63,7 @@ export const rateCode = (x: { code: string; rates: Rate[] }, i: number) => `${x.
 /** รหัสถัดไปที่ว่างในหมวดย่อย (ไม่ซ้ำรหัสปัจจุบันและรหัสเดิมของทุกรายการ) */
 export function suggestCode(items: PriceItem[], cat: CatId, sub: string) {
   const used = new Set(items.flatMap((x) => [x.code, ...(x.old ?? [])]));
-  const start = CATS[cat].subs.find((s) => s[0] === sub)?.[1] ?? 1;
+  const start = (subsCur?.find((s) => s.cat === cat && s.name === sub)?.start) ?? CATS[cat].subs.find((s) => s[0] === sub)?.[1] ?? 1;
   for (let n = start; n <= 99; n++) { const c = `${cat}-${String(n).padStart(2, "0")}`; if (!used.has(c)) return c; }
   return "";
 }

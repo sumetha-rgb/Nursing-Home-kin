@@ -4,7 +4,7 @@ import { currentUser, forbidden, unauthorized } from "@/lib/auth";
 import { audit } from "@/lib/audit";
 import { can } from "@/lib/perms";
 import type { SessionUser } from "@/lib/roles";
-import { CATS, codeProblem, DEFAULT_ITEMS, isCat, PriceItem, Rate, RATE_UNITS, rateCode, RateUnit, sortItems } from "@/lib/priceList";
+import { CAT_IDS, CatId, CATS, codeProblem, DEFAULT_ITEMS, isCat, PriceItem, Rate, RATE_UNITS, rateCode, RateUnit, sortItems } from "@/lib/priceList";
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
@@ -18,10 +18,13 @@ export const fetchCache = "force-no-store";
  *  POST { op: "cancel_next", id, i }       ยกเลิกราคาที่ตั้งล่วงหน้าของราคาที่ i
  *  POST { op: "active", id, active, reason? }  ปิดใช้ / เปิดใช้
  *  POST { op: "import", rows: [{code, name?, price?, status?}], reason, apply }  นำเข้า CSV · apply = false ดูผลก่อน
+ *  POST { op: "sub_add", cat, name }             เพิ่มหมวดย่อย · ระบบจองช่วงรหัสว่างถัดไป (ช่วงละ 10 เลข เช่น NS-5x)
+ *  POST { op: "sub_edit", id, name?, active? }   เปลี่ยนชื่อ (รายการในหมวดย่อยเปลี่ยนตาม) · ปิด/เปิดใช้ (ยังมีรายการที่ใช้อยู่ = ปิดไม่ได้)
+ *  GET ตอบ subs: หมวดย่อยทั้งหมด (รวมที่ปิดใช้) พร้อมจำนวนรายการ
  */
 const bad = (msg: string, status = 400) => NextResponse.json({ error: msg }, { status });
 const NO_TABLE = "ยังไม่ได้สร้างตารางใบราคาในฐานข้อมูล · ให้ผู้ดูแลระบบรัน npm run db:setup ก่อน";
-const noTable = (e: unknown) => /price_(items|history)/.test(String((e as Error)?.message ?? "")) && /does not exist/.test(String((e as Error)?.message ?? ""));
+const noTable = (e: unknown) => /price_(items|history|subs)/.test(String((e as Error)?.message ?? "")) && /does not exist/.test(String((e as Error)?.message ?? ""));
 const today = () => new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10);
 const money = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 2 });
 const MON = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
@@ -45,6 +48,57 @@ async function log(entries: { item: Row; action: string; detail?: string; reason
 const write = (x: Row, by: string) =>
   sql(`UPDATE price_items SET code = $2, sub = $3, name = $4, rates = $5::jsonb, old_codes = $6, active = $7, updated_by = $8, updated_at = now() WHERE id = $1`,
     [x.id, x.code, x.sub, x.name, JSON.stringify(x.rates), x.old ?? [], x.active !== false, by]);
+
+/* ---------- หมวดย่อย ---------- */
+type SubRow = { id: string; cat: CatId; name: string; start: number; active: boolean; count: number };
+/** หมวดย่อยทั้งหมด + จำนวนรายการ (ทั้งหมด / ที่ใช้อยู่) · ตารางว่าง = ตั้งต้นจาก CATS และชื่อหมวดย่อยที่มีในใบราคาอยู่แล้ว */
+async function loadSubs(): Promise<(SubRow & { live: number })[]> {
+  const [{ n }] = (await sql("SELECT count(*)::int AS n FROM price_subs")) as { n: number }[];
+  if (!n) {
+    const rows = CAT_IDS.flatMap((c) => CATS[c].subs.map(([name, start]) => ({ id: `ps-${c}-${start}`, cat: c, name, start })));
+    await sql(`INSERT INTO price_subs (id, cat, name, start_no, updated_by) SELECT x.id, x.cat, x.name, x.start, 'ระบบ'
+      FROM jsonb_to_recordset($1::jsonb) AS x(id text, cat text, name text, start int) ON CONFLICT DO NOTHING`, [JSON.stringify(rows)]);
+  }
+  return (await sql(`SELECT s.id, s.cat, s.name, s.start_no AS start, s.active,
+      (SELECT count(*)::int FROM price_items i WHERE i.cat = s.cat AND i.sub = s.name) AS count,
+      (SELECT count(*)::int FROM price_items i WHERE i.cat = s.cat AND i.sub = s.name AND i.active) AS live
+    FROM price_subs s ORDER BY s.cat, s.start_no`)) as (SubRow & { live: number })[];
+}
+const subName = (v: unknown) => (typeof v === "string" ? v.trim().replace(/\s+/g, " ") : "");
+
+async function subAdd(me: SessionUser, b: Record<string, unknown>) {
+  const cat = b.cat, name = subName(b.name);
+  if (!isCat(cat)) return bad("กรุณาเลือกหมวด");
+  if (name.length < 2 || name.length > 60) return bad("ชื่อหมวดย่อย 2–60 ตัวอักษร");
+  const subs = (await loadSubs()).filter((x) => x.cat === cat);
+  if (subs.some((x) => x.name.toLowerCase() === name.toLowerCase())) return bad(`มีหมวดย่อย "${name}" ในหมวด${CATS[cat].name}แล้ว`, 409);
+  // ช่วงรหัสถัดไป: ต่อจากช่วงสุดท้าย (ช่วงละ 10 เลข) · เต็มที่ 90–99
+  const start = (Math.floor(Math.max(0, ...subs.map((x) => x.start)) / 10) + 1) * 10;
+  if (start > 90) return bad(`หมวด${CATS[cat].name}เพิ่มหมวดย่อยได้อีกไม่ได้ (รหัสเต็มถึง ${cat}-99)`);
+  const id = `ps-${cat}-${start}`;
+  await sql(`INSERT INTO price_subs (id, cat, name, start_no, updated_by) VALUES ($1, $2, $3, $4, $5)`, [id, cat, name, start, who(me)]);
+  return { sub: { id, cat, name, start, active: true }, summary: `เพิ่มหมวดย่อย ${CATS[cat].name} · ${name} (${cat}-${start / 10}x)` };
+}
+
+async function subEdit(me: SessionUser, b: Record<string, unknown>) {
+  const all = await loadSubs();
+  const x = all.find((s) => s.id === b.id);
+  if (!x) return bad("ไม่พบหมวดย่อย", 404);
+  const name = b.name === undefined ? x.name : subName(b.name);
+  const active = typeof b.active === "boolean" ? b.active : x.active;
+  if (name.length < 2 || name.length > 60) return bad("ชื่อหมวดย่อย 2–60 ตัวอักษร");
+  if (name !== x.name && all.some((s) => s.cat === x.cat && s.id !== x.id && s.name.toLowerCase() === name.toLowerCase())) return bad(`มีหมวดย่อย "${name}" ในหมวด${CATS[x.cat].name}แล้ว`, 409);
+  if (!active && x.active && x.live) return bad(`ยังมี ${x.live} รายการที่ใช้อยู่ในหมวดย่อยนี้ · ย้ายไปหมวดย่อยอื่นหรือปิดใช้รายการก่อน`, 409);
+  if (name === x.name && active === x.active) return bad("ยังไม่ได้แก้อะไร");
+  const by = who(me);
+  // เปลี่ยนชื่อ: รายการในหมวดย่อยนี้เปลี่ยนชื่อหมวดย่อยตาม (รหัสและราคาเดิม)
+  await sql.transaction([
+    sql(`UPDATE price_subs SET name = $2, active = $3, updated_by = $4, updated_at = now() WHERE id = $1`, [x.id, name, active, by]),
+    ...(name !== x.name ? [sql(`UPDATE price_items SET sub = $3, updated_at = now() WHERE cat = $1 AND sub = $2`, [x.cat, x.name, name])] : []),
+  ]);
+  const what = [name !== x.name ? `เปลี่ยนชื่อ ${x.name} → ${name}${x.count ? ` (${x.count} รายการ)` : ""}` : "", active !== x.active ? (active ? `เปิดใช้ ${name}` : `ปิดใช้ ${name}`) : ""].filter(Boolean).join(" · ");
+  return { summary: `หมวดย่อย ${CATS[x.cat].name} · ${what}` };
+}
 
 /** ตารางว่าง: ตั้งต้นจากใบราคาเดิม (รันซ้ำพร้อมกันได้ รหัสซ้ำจะข้าม) */
 async function seed() {
@@ -84,7 +138,8 @@ export async function GET(req: NextRequest) {
     await seed();
     const items = await all();
     await applyDue(items);
-    return NextResponse.json({ items: sortItems(items), canEdit: canEdit(me) });
+    const subs = await loadSubs().catch((e) => { if (noTable(e)) return null; throw e; });
+    return NextResponse.json({ items: sortItems(items), canEdit: canEdit(me), ...(subs ? { subs } : {}) });
   } catch (e) {
     if (noTable(e)) return NextResponse.json({ items: DEFAULT_ITEMS, missing: NO_TABLE, canEdit: false });
     throw e;
@@ -117,7 +172,10 @@ async function save(me: SessionUser, b: Record<string, unknown>) {
   const reason = typeof b.reason === "string" ? b.reason.trim().slice(0, 300) : "";
   const when = typeof b.when === "string" && /^\d{4}-\d{2}-\d{2}$/.test(b.when) && b.when > today() ? b.when : "";
   if (!isCat(cat)) return bad("กรุณาเลือกหมวด");
-  if (!CATS[cat].subs.some((s) => s[0] === sub)) return bad("กรุณาเลือกหมวดย่อย");
+  // หมวดย่อยต้องมีในตาราง (ใช้อยู่ · หรือเป็นหมวดย่อยเดิมของรายการที่แก้)
+  const subRows = (await loadSubs()).filter((s) => s.cat === cat);
+  const curSub = typeof b.id === "string" ? (await one(b.id))?.sub : undefined;
+  if (!subRows.some((s) => s.name === sub && (s.active || s.name === curSub))) return bad("กรุณาเลือกหมวดย่อย");
   if (name.length < 2 || name.length > 200) return bad("กรุณาใส่ชื่อรายการ (2–200 ตัวอักษร)");
   const rates = readRates(b.rates);
   if (typeof rates === "string") return bad(rates);
@@ -244,6 +302,10 @@ export async function POST(req: NextRequest) {
         await log([{ item: x, action: active ? "เปิดใช้" : "ปิดใช้", reason, by }]);
         out = { item: x, summary: `${active ? "เปิดใช้" : "ปิดใช้"} ${x.code} ${x.name}` };
       }
+    } else if (b.op === "sub_add" || b.op === "sub_edit") {
+      const r = b.op === "sub_add" ? await subAdd(me, b) : await subEdit(me, b);
+      if (r instanceof NextResponse) return r;
+      out = r;
     } else if (b.op === "import") {
       const r = await importRows(me, b);
       if (r instanceof NextResponse) return r;

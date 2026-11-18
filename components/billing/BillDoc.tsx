@@ -1,6 +1,7 @@
 "use client";
+import { receiptNoOf } from "@/lib/receiptNo";
 import { ReactNode, useEffect, useRef } from "react";
-import { bahtText, BillItem, creditOf, docDate, Invoice, isCN, lineAmount, lineDiscount, money, PAID, PARTIAL, parseItems, Payment, vatOf } from "@/lib/billing";
+import { bahtText, BillItem, creditOf, docDate, Invoice, isCN, lineAmount, lineDiscount, money, PAID, PARTIAL, parseItems, Payment, payTake, vatOf } from "@/lib/billing";
 import { COMPANY } from "../ui";
 import { taxIdText } from "@/lib/taxInfo";
 import { lineCode } from "@/lib/priceList";
@@ -26,6 +27,9 @@ function Logo() {
  *  customer : ใบเสร็จ/ใบแจ้งหนี้ให้ผู้ชำระ (หัวกระดาษกลาง + ช่องลงชื่อผู้จ่ายเงิน/ผู้รับชำระ) แนบหลักฐานการโอนหน้าถัดไป
  *  finance  : ส่วนที่ 2 สำหรับฝ่ายการเงิน/บัญชี (กรอบเดียว + ส่วนลดรายบรรทัด + ตราประทับ)
  */
+/** วิธีชำระของงวด เช่น "โอน 34,000.00" · "เงินสด 5,000.00 + EDC 6,000.00" */
+const payWay = (p: Payment) => [p.cash && `เงินสด ${money(p.cash)}`, p.transfer && `โอน ${money(p.transfer)}`, p.edc && `EDC ${money(p.edc)}`, p.credit - (p.edc ?? 0) > 0.005 && `บัตร ${money(p.credit - (p.edc ?? 0))}`, p.wht && `หัก ณ ที่จ่าย ${money(p.wht)}`].filter(Boolean).join(" + ") || "-";
+
 export default function BillDoc({ inv, branch, format, copy, slips = [], payment, printedBy, pays = [], detail }: {
   inv: Invoice; branch: Branch; format: DocFormat; copy: boolean; slips?: Payment[]; payment?: Payment; printedBy: string; pays?: Payment[]; detail?: BillDetail;
 }) {
@@ -33,7 +37,9 @@ export default function BillDoc({ inv, branch, format, copy, slips = [], payment
    * payment = ใบเสร็จของงวดนั้น · ไม่มี = เอกสารรวมของทั้งใบ
    * ใบกำกับภาษีออกทุกครั้งที่รับเงิน (ค่าบริการถึงกำหนดเสีย VAT เมื่อได้รับชำระ):
    *  รับครั้งเดียวครบ = ใบเสร็จรับเงิน / ใบกำกับภาษี ใบเดียว เลขที่เดียวกับใบแจ้งหนี้
-   *  รับหลายงวด = ใบกำกับภาษีแยกตามงวด เลขที่ "เลขใบ-งวด" แจกแจง VAT ตามสัดส่วนของยอดที่รับ · เอกสารรวมเป็น "สรุปการชำระ" (ไม่ใช่ใบกำกับภาษี)
+   *  รับหลายงวด = ใบกำกับภาษีแยกตามงวด เลขที่ "เลขใบ-งวด" · เงินแต่ละงวดตัดชำระรายการที่มี VAT ก่อน (ค่ารายการ + VAT ครบ) แล้วค่อยรายการไม่มี VAT (lib/billing payTake)
+   *  เอกสารรวมของใบที่รับหลายงวด = "ใบสรุปการชำระ / PAYMENT STATEMENT" ไม่ใช่ใบเสร็จ (ไม่มีต้นฉบับ/สำเนา · บอกเลขที่ใบเสร็จรายงวด)
+   *  กันลูกค้าใช้ใบรวมกับใบงวดยื่นเบิกประกันซ้ำ / ฝ่ายบัญชีนับรายรับซ้ำ
    * ใบลดหนี้ (CREDIT NOTE) อ้างอิงใบเดิม · ภาษีหัก ณ ที่จ่าย ตัดยอดค้างแต่ไม่ใช่เงินที่รับ
    */
   const cn = isCN(inv);
@@ -43,14 +49,20 @@ export default function BillDoc({ inv, branch, format, copy, slips = [], payment
   const partial = !payment && inv.status === PARTIAL;
   const paid = !cn && (inv.status === PAID || inv.status === PARTIAL || !!payment);
   const full = !payment && inv.status === PAID;
+  /** ใบสรุปการชำระ: เอกสารรวมของใบที่รับหลายงวด (ไม่ใช่ใบเสร็จ) */
+  const stmt = full && !singleFull && !cn;
   usePriceList();
   const items = parseItems(inv.items);
   const invTax = vatOf(items), hasVat = invTax.vat > 0;
   const RECEIPT = hasVat ? ["ใบเสร็จรับเงิน / ใบกำกับภาษี", "RECEIPT / TAX INVOICE"] : ["ใบเสร็จรับเงิน", "RECEIPT"];
   const title = cn ? ["ใบลดหนี้", "CREDIT NOTE"]
     : payment ? (singleFull ? RECEIPT : [`${RECEIPT[0]} (งวดที่ ${payN})`, RECEIPT[1]])
-    : full ? (singleFull ? RECEIPT : ["ใบเสร็จรับเงิน (สรุปการชำระ)", "RECEIPT SUMMARY"]) : partial ? ["ใบแจ้งหนี้ (ชำระบางส่วน)", "INVOICE"] : ["ใบแจ้งหนี้", "INVOICE"];
-  const docNo = payment && !singleFull ? `${inv.no ?? "-"}-${payN}` : inv.no ?? "-";
+    : full ? (singleFull ? RECEIPT : ["ใบสรุปการชำระ", "PAYMENT STATEMENT"]) : partial ? ["ใบแจ้งหนี้ (ชำระบางส่วน)", "INVOICE"] : ["ใบแจ้งหนี้", "INVOICE"];
+  /** เลขที่ใบเสร็จของงวด (KN-RC… / KO-RC… · งวดเก่าใช้เลขเดิม) · ใบแจ้งหนี้/ใบสรุป/ใบลดหนี้ = เลขใบ */
+  const rcNo = (p: Payment | undefined, n: number) => receiptNoOf(p, inv.no, n, singleFull);
+  const docNo = cn ? inv.no ?? "-" : payment ? rcNo(payment, payN) : full && singleFull ? rcNo(real[0], 1) : inv.no ?? "-";
+  /** ใบเสร็จที่มีเลขของตัวเอง: บอกเลขใบแจ้งหนี้ที่ชำระ */
+  const invRef = !cn && docNo !== (inv.no ?? "-") ? inv.no : null;
   // ใบเสร็จรายงวด: ตารางรายการแสดงยอดเต็มของใบ ส่วน VAT แจกแจงเฉพาะยอดของงวดนี้ (ด้านล่าง)
   const tax = vatOf(payment ? [] : items);
   // บรรทัดหักเงินที่รับไว้แล้ว (มัดจำห้องตอนจอง) แสดงใต้ยอดรวม VAT ไม่ใช่ในรายการสินค้า/บริการ
@@ -70,9 +82,9 @@ export default function BillDoc({ inv, branch, format, copy, slips = [], payment
   /** ภาษีหัก ณ ที่จ่าย ของงวดนี้ / ของทั้งใบ · เงินที่รับจริง = ยอดที่ตัด − ภาษีหัก ณ ที่จ่าย */
   const wht = payment ? payment.wht ?? 0 : real.reduce((n, p) => n + (p.wht ?? 0), 0);
   const got = Math.round(((payment ? thisAmt : real.reduce((n, p) => n + p.amount, 0)) - wht) * 100) / 100;
-  /** VAT ของยอดที่รับในงวดนี้ ตามสัดส่วนของใบ (ก่อน VAT / VAT / ไม่มี VAT) */
-  const share = (v: number) => Math.round(((thisAmt * v) / (invTax.base + invTax.vat + invTax.exempt || 1)) * 100) / 100;
-  const payVat = payment && hasVat ? { base: share(invTax.base), vat: share(invTax.vat), exempt: Math.round((thisAmt - share(invTax.base) - share(invTax.vat)) * 100) / 100 } : null;
+  /** งวดนี้ตัดชำระรายการไหน: รายการที่มี VAT ก่อน แล้วค่อยไม่มี VAT · ก่อนหน้า = เงินที่หักไว้ในใบ + งวดก่อน ๆ */
+  const take = payment ? payTake(items, creditOf(items) + (payment.paidBefore ?? 0), thisAmt) : null;
+  const payVat = take && hasVat ? { base: take.base, vat: take.vat, exempt: take.exempt } : null;
   const paidTo = payment ? payment.paidBefore + payment.amount : inv.paid ?? 0;
   const owe = Math.max(0, Math.round((inv.net - paidTo) * 100) / 100);
   const showBal = !!payment || partial;
@@ -148,8 +160,9 @@ export default function BillDoc({ inv, branch, format, copy, slips = [], payment
               {atSite && <span className="bill-site">สถานที่ให้บริการ: สาขา{branch.name}{branch.address ? ` · ${branch.address}` : ""}{branch.phone ? ` · โทร ${branch.phone}` : ""}</span>}</div>
           </div>
           <dl className="bill-meta">
-            <dt>วันที่ / Date :</dt><dd>{date}</dd>
+            <dt>{stmt ? "วันที่ชำระครบ / Paid in full :" : "วันที่ / Date :"}</dt><dd>{date}</dd>
             <dt>เลขที่เอกสาร / Document No :</dt><dd>{docNo}</dd>
+            {invRef && <><dt>อ้างอิงใบแจ้งหนี้ / Invoice Ref :</dt><dd>{invRef}</dd></>}
             {cn && <><dt>อ้างอิงเอกสาร / Ref. :</dt><dd>{inv.ref || "-"}</dd></>}
             <dt>ชื่อผู้ชำระ / Name :</dt><dd>{inv.payer || "-"}</dd>
             <dt>รหัสผู้รับบริการ :</dt><dd>{inv.hn || "-"}</dd>
@@ -159,7 +172,7 @@ export default function BillDoc({ inv, branch, format, copy, slips = [], payment
             <dt>ที่อยู่ :</dt><dd className="whitespace-pre-line">{inv.address || "-"}</dd>
             {inv.payerTaxId?.replace(/\D/g, "") && <><dt>เลขผู้เสียภาษี / Tax ID :</dt><dd>{taxIdText(inv.payerTaxId)}{inv.payerBranch ? ` (${inv.payerBranch})` : ""}</dd></>}
           </dl>
-          <div className="bill-title2"><b>{title[0]}</b><small>{title[1]}</small><span>{copy ? "สำเนา / COPY" : "ต้นฉบับ / ORIGINAL"}</span></div>
+          <div className="bill-title2"><b>{title[0]}</b><small>{title[1]}</small><span>{stmt ? "ไม่ใช่ใบเสร็จรับเงิน / NOT A RECEIPT" : copy ? "สำเนา / COPY" : "ต้นฉบับ / ORIGINAL"}</span></div>
         </div>
         <table className="bill-table bill-table2">
           <thead><tr>{cols.map(([th, en]) => <th key={th}>{th}{en && <><br />{en}</>}</th>)}</tr></thead>
@@ -185,11 +198,21 @@ export default function BillDoc({ inv, branch, format, copy, slips = [], payment
               {sumRow("pv", `ภาษีมูลค่าเพิ่ม (งวดนี้) / VAT`, money(payVat.vat))}
               {payVat.exempt > 0.005 && sumRow("pe", "มูลค่าที่ไม่มีภาษี (งวดนี้) / NON-VAT AMOUNT", money(payVat.exempt))}
             </>}
+            {/* รับหลายงวด: งวดนี้ชำระรายการไหน เท่าไร (ครบ / บางส่วน) */}
+            {take && !singleFull && take.lines.map((l) => sumRow(`pl${l.k}`, <>ชำระงวดนี้ · {lineCode(l.item) ? `${lineCode(l.item)} ` : ""}{l.item.desc}{l.item.vat ? ` (รวม VAT ${l.item.vat}%)` : ""} <small>{l.done ? "· ครบ" : `· บางส่วน จาก ${money(l.incl)}`}</small></>, money(l.take)))}
             {credits.map((c, k) => sumRow(`c${k}`, `${c.desc} / LESS: AMOUNT RECEIVED`, `-${money(c.qty * c.price)}`))}
             {credit > 0 && sumRow("due", <b>ยอดที่ต้องชำระ / AMOUNT DUE</b>, <b>{money(inv.net)}</b>)}
             {wht > 0 && <>
               {sumRow("wht", "หักภาษี ณ ที่จ่าย / WITHHOLDING TAX", `-${money(wht)}`)}
               {sumRow("got", <b>รับเงินสุทธิ / NET RECEIVED</b>, <b>{money(got)}</b>)}
+            </>}
+            {/* ใบสรุปการชำระ: รายการงวดที่รับ (เลขที่ใบเสร็จของแต่ละงวด) · รวมชำระ · คงเหลือ */}
+            {stmt && <>
+              {pays.map((p, k) => p.kind === "credit"
+                ? sumRow(`st${k}`, <>หักด้วยใบลดหนี้ · {docDate(p.date)}{p.note ? ` · ${p.note}` : ""}</>, money(p.amount))
+                : sumRow(`st${k}`, <>งวดที่ {real.indexOf(p) + 1} · {docDate(p.date)} · ใบเสร็จเลขที่ {rcNo(p, real.indexOf(p) + 1)} <small>· {payWay(p)}</small></>, money(p.amount)))}
+              {sumRow("stp", <b>รวมชำระ / TOTAL PAID</b>, <b>{money(pays.reduce((n, p) => n + p.amount, 0))}</b>)}
+              {sumRow("stb", <b>คงเหลือ / BALANCE</b>, <b>{money(Math.max(0, Math.round((inv.net - pays.reduce((n, p) => n + p.amount, 0)) * 100) / 100))}</b>)}
             </>}
             {cust && showBal && <>
               {payment && sumRow("this", <b>ชำระครั้งนี้{singleFull ? "" : ` (งวดที่ ${payN})`} / THIS PAYMENT</b>, <b>{money(thisAmt)}</b>)}
@@ -200,10 +223,16 @@ export default function BillDoc({ inv, branch, format, copy, slips = [], payment
           {/* ยอดเป็นตัวอักษร: อยู่ในตารางเดียวกัน เส้นแบ่งตรงกับคอลัมน์จำนวนเงินพอดี */}
           <tfoot><tr className="bill-words">
             <td colSpan={cols.length - 1}><small>จำนวนเงิน / TOTAL AMOUNT IN LETTERS</small><b>{bahtText(payment ? thisAmt : inv.net)}</b></td>
-            <td className="bill-words-total"><small>{cn ? "มูลค่าที่ลดลงรวม / CREDIT AMOUNT" : payment ? "ชำระครั้งนี้ / THIS PAYMENT" : paid && full ? "รับชำระแล้ว / PAID" : "รวมทั้งสิ้น / TOTAL"}</small><b>{money(payment ? thisAmt : inv.net)}</b>{showBal && <small>สะสม {money(paidTo)} · คงเหลือ {money(owe)}</small>}</td>
+            <td className="bill-words-total"><small>{cn ? "มูลค่าที่ลดลงรวม / CREDIT AMOUNT" : payment ? "ชำระครั้งนี้ / THIS PAYMENT" : stmt ? "รวมชำระทั้งสิ้น / TOTAL PAID" : paid && full ? "รับชำระแล้ว / PAID" : "รวมทั้งสิ้น / TOTAL"}</small><b>{money(payment ? thisAmt : inv.net)}</b>{showBal && <small>สะสม {money(paidTo)} · คงเหลือ {money(owe)}</small>}</td>
           </tr></tfoot>
         </table>
-        {full && !singleFull && hasVat && cust && <p className="bill-note2"><span>ใบกำกับภาษี :</span> ออกแยกตามงวดที่รับเงิน เลขที่ {real.map((_, k) => `${inv.no}-${k + 1}`).join(", ")}</p>}
+        {/* ใบสรุปการชำระ: บอกชัดว่าไม่ใช่ใบเสร็จ และให้ใช้ใบเสร็จรายงวด (เลขที่ไม่ตัดกลางคำ · มีภาษาอังกฤษสำหรับบริษัทประกัน) */}
+        {stmt && (() => {
+          const nos = real.map((p, k) => rcNo(p, k + 1));
+          const list = (and: string) => nos.map((n, k) => <span key={n}>{k ? (k === nos.length - 1 ? ` ${and} ` : ", ") : ""}<b className="whitespace-nowrap">{n}</b></span>);
+          return <p className="bill-note2 bill-stmt-note"><span>หมายเหตุ :</span> เอกสารนี้ใช้สรุปยอดเท่านั้น ไม่ใช่ใบเสร็จรับเงิน{hasVat ? " / ใบกำกับภาษี" : ""} · หลักฐานการชำระและการยื่นเบิกประกัน ให้ใช้ใบเสร็จรับเงินรายงวด เลขที่ {list("และ")}
+            <em className="bill-stmt-en">For reference only. Not a receipt{hasVat ? " or tax invoice" : ""}. Please use installment receipts No. {list("and")} for proof of payment and insurance claims.</em></p>;
+        })()}
         {!cn && <div className="bill-pay2">
           <span>วิธีการชำระ :</span>
           {methods.map(([th, en, v]) => <span key={en}>{box(paid && !!v)} {th}<small>{en}{paid && v ? ` - ${money(v)} บาท` : ""}</small></span>)}
@@ -212,7 +241,7 @@ export default function BillDoc({ inv, branch, format, copy, slips = [], payment
         <div className="bill-sign2">
           <div><p>{inv.payer}</p><span>ผู้จ่ายเงิน (PAYER&apos;S SIGNATURE)</span></div>
           <div className="bill-seal">ตราประทับบริษัท</div>
-          <div><p>{cashier}</p><span>{cn ? "ผู้อนุมัติ (AUTHORIZED)" : cust && paid ? "ผู้รับเงิน (COLLECTOR)" : "เจ้าหน้าที่การเงิน (CASHIER)"}</span></div>
+          <div><p>{cashier}</p><span>{cn ? "ผู้อนุมัติ (AUTHORIZED)" : cust && paid && !stmt ? "ผู้รับเงิน (COLLECTOR)" : "เจ้าหน้าที่การเงิน (CASHIER)"}</span></div>
         </div>
       </div>
       </div>

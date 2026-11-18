@@ -5,7 +5,7 @@ import CsvIcon from "../CsvIcon";
 import { Field, Modal, PageHeader, Tabs } from "../ui";
 import { useApp } from "@/lib/app";
 import { downloadCsv } from "@/lib/store";
-import { CAT_IDS, CATS, CatId, CODE_RE, codeProblem, PriceItem, Rate, RATE_UNITS, rateCode, RateUnit, roomPartOf, roomShareOf, setPrices, suggestCode } from "@/lib/priceList";
+import { CAT_IDS, CATS, CatId, CODE_RE, codeProblem, PriceItem, PriceSub, Rate, RATE_UNITS, rateCode, RateUnit, roomPartOf, roomShareOf, setPrices, setSubs, subRange, subsOf, suggestCode } from "@/lib/priceList";
 import { baseOfIncl, DEFAULT_VAT } from "@/lib/billing";
 
 /**
@@ -91,11 +91,15 @@ export function PriceList() {
   const [status, setStatus] = useState<Status>("all");
   const [edit, setEdit] = useState<{ item?: Item; tab: string } | null>(null);
   const [importing, setImporting] = useState(false);
+  const [subs, setSubRows] = useState<PriceSub[]>([]);
+  const [subsOpen, setSubsOpen] = useState(false);
 
   const load = async () => {
     const r = await fetch("/api/prices", { cache: "no-store" });
     const d = await r.json().catch(() => ({}));
     if (!r.ok) { toast(d.error || "โหลดใบราคาไม่สำเร็จ"); return; }
+    // หมวดย่อยก่อนใบราคา (setPrices แจ้งให้ช่องเลือกที่ใช้ subsOf แสดงใหม่)
+    if (d.subs) { setSubs(d.subs); setSubRows(d.subs); }
     setItems(d.items); setCanEdit(!!d.canEdit); setMissing(d.missing || ""); setLoaded(true);
     if (!d.missing) setPrices(d.items);
   };
@@ -144,6 +148,7 @@ export function PriceList() {
         actions={<>
           <button className="btn-soft" onClick={exportCsv} disabled={!items.length}><CsvIcon /> ส่งออก CSV</button>
           {canEdit && <button className="btn-soft" onClick={() => setImporting(true)}><CsvIcon /> นำเข้า CSV</button>}
+          {canEdit && subs.length > 0 && <button className="btn-soft" onClick={() => setSubsOpen(true)}><Icon name="wrench" className="h-4 w-4" /> ตั้งค่าหมวดย่อย</button>}
           {canEdit && <button className="btn-primary" onClick={() => setEdit({ tab: "แก้ไข" })}><Icon name="plus" className="h-4 w-4" /> เพิ่มรายการ</button>}
         </>} />
       {missing && <p role="alert" className="form-error"><Icon name="alert" className="h-4 w-4 shrink-0" />{missing}</p>}
@@ -213,20 +218,106 @@ export function PriceList() {
 
       {edit && <EditDialog key={edit.item?.id ?? "new"} item={edit.item} tab={edit.tab} items={items} canEdit={canEdit}
         onClose={() => setEdit(null)} onToggle={toggle} onSaved={(m) => { toast(m); setEdit(null); load(); }} onReload={load} />}
+      {subsOpen && <SubsDialog subs={subs} onClose={() => setSubsOpen(false)} onReload={load} />}
       {importing && <ImportDialog onClose={() => setImporting(false)} onDone={(m) => { toast(m); setImporting(false); load(); }} />}
     </div>
   );
 }
 
+const NEW_SUB = "__new_sub__";
+
+/**
+ * ตั้งค่าหมวดย่อย: เพิ่ม · เปลี่ยนชื่อ (รายการในหมวดย่อยเปลี่ยนตาม) · สวิตช์เปิด/ปิดใช้
+ *  ปิดใช้ = ไม่ขึ้นให้เลือกตอนเพิ่มรายการ · หมวดย่อยที่ยังมีรายการใช้อยู่ปิดไม่ได้ · ช่วงรหัสจองให้อัตโนมัติ (ช่วงละ 10 เลข)
+ */
+function SubsDialog({ subs, onClose, onReload }: { subs: PriceSub[]; onClose: () => void; onReload: () => Promise<void> | void }) {
+  return (
+    <Modal open wide title="ตั้งค่าหมวดย่อย" onClose={onClose} footer={<button className="btn-primary" onClick={onClose}>เสร็จ</button>}>
+      <SubsBody subs={subs} onReload={onReload} />
+    </Modal>
+  );
+}
+
+/** หมวดย่อยใบราคาในหน้า "ตั้งค่า": โหลดใบราคาเอง (แก้ได้เฉพาะผู้จัดการสาขาและผู้บริหาร) */
+export function PriceSubsPanel() {
+  const [subs, setSubRows] = useState<PriceSub[] | null>(null);
+  const [canEdit, setCanEdit] = useState(false);
+  const load = async () => {
+    const r = await fetch("/api/prices", { cache: "no-store" });
+    const d = await r.json().catch(() => ({}));
+    if (d.subs) { setSubs(d.subs); setSubRows(d.subs); } else setSubRows([]);
+    setCanEdit(!!d.canEdit);
+    if (d.items?.length && !d.missing) setPrices(d.items);
+  };
+  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!subs) return <p className="text-sm text-gold-500">กำลังโหลด…</p>;
+  if (!canEdit) return <p className="text-sm text-gold-600">หมวดย่อยใบราคาแก้ได้เฉพาะผู้จัดการสาขาและผู้บริหาร</p>;
+  return <SubsBody subs={subs} onReload={load} />;
+}
+
+function SubsBody({ subs, onReload }: { subs: PriceSub[]; onReload: () => Promise<void> | void }) {
+  const { toast } = useApp();
+  const [cat, setCat] = useState<CatId>("NS");
+  const [edit, setEdit] = useState<{ id: string; name: string } | null>(null);
+  const [adding, setAdding] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const run = async (body: Record<string, unknown>, done: string) => {
+    if (busy) return;
+    setBusy(true);
+    try { await post(body); await onReload(); toast(done); setEdit(null); setAdding(null); }
+    catch (e) { toast((e as Error).message); }
+    finally { setBusy(false); }
+  };
+  const rows = subs.filter((x) => x.cat === cat).sort((a, b) => a.start - b.start);
+  const full = (Math.floor(Math.max(0, ...rows.map((x) => x.start)) / 10) + 1) * 10 > 90;
+  return (
+      <div className="space-y-4">
+        <div className="pl-chips is-pick" role="radiogroup" aria-label="หมวด">
+          {CAT_IDS.map((c) => <button key={c} type="button" role="radio" aria-checked={cat === c} aria-pressed={cat === c} onClick={() => { setCat(c); setEdit(null); setAdding(null); }}><span className="pl-code">{c}</span> {CATS[c].name}</button>)}
+        </div>
+        <ul className="sub-list">
+          {rows.map((x) => (
+            <li key={x.id} className={x.active ? "" : "is-off"}>
+              <span className="pl-code">{cat === "RM" ? `${cat}-${String(x.start).padStart(2, "0")}` : subRange(cat, x.start)}</span>
+              {edit?.id === x.id
+                ? <span className="flex min-w-0 gap-2">
+                    <input autoFocus value={edit.name} maxLength={60} aria-label="ชื่อหมวดย่อย" onChange={(e) => setEdit({ ...edit, name: e.target.value })}
+                      onKeyDown={(e) => { if (e.key === "Enter") run({ op: "sub_edit", id: x.id, name: edit.name }, "เปลี่ยนชื่อหมวดย่อยแล้ว"); if (e.key === "Escape") setEdit(null); }} />
+                    <button type="button" className="btn-primary !min-h-0 shrink-0" disabled={busy} onClick={() => run({ op: "sub_edit", id: x.id, name: edit.name }, "เปลี่ยนชื่อหมวดย่อยแล้ว")}>บันทึก</button>
+                    <button type="button" className="btn-soft !min-h-0 shrink-0" onClick={() => setEdit(null)}>ยกเลิก</button>
+                  </span>
+                : <span className="sub-t"><b>{x.name}</b><small>{x.count ? `${x.count} รายการ` : "ยังไม่มีรายการ"}</small></span>}
+              <button type="button" role="switch" aria-checked={x.active} className="pl-switch" aria-label={`${x.name} ${x.active ? "เปิดใช้งาน" : "ปิดใช้งาน"}`}
+                disabled={busy} title={x.active ? "กดเพื่อปิดใช้ (ต้องไม่มีรายการที่ใช้อยู่)" : "กดเพื่อเปิดใช้"}
+                onClick={() => run({ op: "sub_edit", id: x.id, active: !x.active }, `${x.active ? "ปิดใช้" : "เปิดใช้"}หมวดย่อย ${x.name} แล้ว`)}>
+                <i aria-hidden="true" /><span>{x.active ? "เปิดใช้งาน" : "ปิดใช้งาน"}</span>
+              </button>
+              {edit?.id !== x.id ? <button type="button" className="row-action" onClick={() => setEdit({ id: x.id, name: x.name })}>เปลี่ยนชื่อ</button> : <span />}
+            </li>
+          ))}
+        </ul>
+        {adding === null
+          ? <button type="button" className="btn-soft" disabled={full} title={full ? `หมวดนี้รหัสเต็มถึง ${cat}-99 แล้ว` : undefined} onClick={() => setAdding("")}><Icon name="plus" className="h-4 w-4" /> เพิ่มหมวดย่อยใน{CATS[cat].name}</button>
+          : <div className="flex flex-wrap items-center gap-2">
+              <input autoFocus className="!w-auto min-w-0 flex-1" value={adding} maxLength={60} placeholder={`ชื่อหมวดย่อยใหม่ใน${CATS[cat].name}`} aria-label="ชื่อหมวดย่อยใหม่"
+                onChange={(e) => setAdding(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") run({ op: "sub_add", cat, name: adding }, `เพิ่มหมวดย่อย ${adding.trim()} แล้ว`); if (e.key === "Escape") setAdding(null); }} />
+              <button type="button" className="btn-primary" disabled={busy} onClick={() => run({ op: "sub_add", cat, name: adding }, `เพิ่มหมวดย่อย ${adding.trim()} แล้ว`)}>เพิ่ม</button>
+              <button type="button" className="btn-soft" onClick={() => setAdding(null)}>ยกเลิก</button>
+            </div>}
+        <p className="field-hint">ระบบจองช่วงรหัสให้หมวดย่อยใหม่ต่อจากช่วงสุดท้าย (ช่วงละ 10 เลข) · เปลี่ยนชื่อแล้วรายการในหมวดย่อยเปลี่ยนตาม รหัสและราคาเดิม · หมวดย่อยที่ยังมีรายการใช้อยู่ปิดไม่ได้</p>
+      </div>
+  );
+}
+
 function EditDialog({ item, tab: tab0, items, canEdit, onClose, onToggle, onSaved, onReload }: {
   item?: Item; tab: string; items: Item[]; canEdit: boolean;
-  onClose: () => void; onToggle: (x: Item) => void; onSaved: (msg: string) => void; onReload: () => void;
+  onClose: () => void; onToggle: (x: Item) => void; onSaved: (msg: string) => void; onReload: () => Promise<void> | void;
 }) {
   const { toast } = useApp();
   const isNew = !item;
   const first: Form = item
     ? { id: item.id, cat: item.cat, sub: item.sub, code: item.code, name: item.name, rates: item.rates.map((r, i) => ({ unit: r.unit, price: String(r.price), label: r.label ?? "", from: i, room: r.room !== undefined ? String(r.room) : "" })) }
-    : { cat: "NS", sub: CATS.NS.subs[0][0], code: suggestCode(items, "NS", CATS.NS.subs[0][0]), name: "", rates: [{ unit: "ครั้ง", price: "", label: "" }] };
+    : { cat: "NS", sub: subsOf("NS")[0][0], code: suggestCode(items, "NS", subsOf("NS")[0][0]), name: "", rates: [{ unit: "ครั้ง", price: "", label: "" }] };
   const [f, setF] = useState<Form>(first);
   const [tab, setTab] = useState(tab0);
   const [whenMode, setWhenMode] = useState<"now" | "date">("now");
@@ -243,8 +334,24 @@ function EditDialog({ item, tab: tab0, items, canEdit, onClose, onToggle, onSave
 
   const set = (p: Partial<Form>) => setF((x) => ({ ...x, ...p }));
   const setRate = (i: number, p: Partial<FRate>) => setF((x) => ({ ...x, rates: x.rates.map((r, j) => (j === i ? { ...r, ...p } : r)) }));
-  const pickCat = (c: CatId) => { const sub = CATS[c].subs[0][0]; set({ cat: c, sub, ...(codeTouched.current ? {} : { code: suggestCode(items, c, sub) }) }); };
-  const pickSub = (sub: string) => set({ sub, ...(isNew && !codeTouched.current ? { code: suggestCode(items, f.cat, sub) } : {}) });
+  const pickCat = (c: CatId) => { const sub = subsOf(c)[0][0]; setNewSub(null); set({ cat: c, sub, ...(codeTouched.current ? {} : { code: suggestCode(items, c, sub) }) }); };
+  const pickSub = (sub: string) => { if (sub === NEW_SUB) { setNewSub(""); return; } set({ sub, ...(isNew && !codeTouched.current ? { code: suggestCode(items, f.cat, sub) } : {}) }); };
+  // เพิ่มหมวดย่อยใหม่จากช่องเลือก: ระบบจองช่วงรหัสว่างถัดไป แล้วเลือกหมวดย่อยนั้นพร้อมเสนอรหัสแรก
+  const [newSub, setNewSub] = useState<string | null>(null);
+  const [subBusy, setSubBusy] = useState(false);
+  const addSub = async () => {
+    const name = (newSub ?? "").trim();
+    if (name.length < 2 || subBusy) return toast("ใส่ชื่อหมวดย่อยอย่างน้อย 2 ตัวอักษร");
+    setSubBusy(true);
+    try {
+      const d = await post({ op: "sub_add", cat: f.cat, name });
+      await onReload();
+      setNewSub(null);
+      set({ sub: d.sub.name, ...(isNew && !codeTouched.current ? { code: suggestCode(items, f.cat, d.sub.name) } : {}) });
+      toast(`เพิ่มหมวดย่อย ${d.sub.name} แล้ว · รหัส ${subRange(f.cat, d.sub.start)}`);
+    } catch (e) { toast((e as Error).message); }
+    finally { setSubBusy(false); }
+  };
 
   const code = f.code.trim().toUpperCase();
   const codeErr = codeProblem(items, code, f.cat, item?.id);
@@ -304,7 +411,17 @@ function EditDialog({ item, tab: tab0, items, canEdit, onClose, onToggle, onSave
             </div> : <p className="text-sm text-gold-700">หมวด <b className="font-semibold text-gold-800">{f.cat} · {CATS[f.cat].name}</b></p>}
             <div className="grid gap-3 sm:grid-cols-[1fr_150px]">
               <Field label="หมวดย่อย">
-                <select value={f.sub} onChange={(e) => pickSub(e.target.value)}>{CATS[f.cat].subs.map(([s, n]) => <option key={s} value={s}>{f.cat === "RM" ? s : `${s} · ${f.cat}-${Math.floor(n / 10)}x`}</option>)}</select>
+                {newSub === null
+                  ? <select value={f.sub} onChange={(e) => pickSub(e.target.value)}>
+                      {subsOf(f.cat, item?.sub).map(([s, n]) => <option key={s} value={s}>{f.cat === "RM" ? s : `${s} · ${subRange(f.cat, n)}`}</option>)}
+                      {canEdit && <option value={NEW_SUB}>+ เพิ่มหมวดย่อยใหม่…</option>}
+                    </select>
+                  : <div className="flex gap-2">
+                      <input autoFocus value={newSub} maxLength={60} placeholder={`ชื่อหมวดย่อยใหม่ใน${CATS[f.cat].name}`} aria-label="ชื่อหมวดย่อยใหม่"
+                        onChange={(e) => setNewSub(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addSub(); } if (e.key === "Escape") setNewSub(null); }} />
+                      <button type="button" className="btn-primary !min-h-0 shrink-0" disabled={subBusy} onClick={addSub}>{subBusy ? "กำลังเพิ่ม…" : "เพิ่ม"}</button>
+                      <button type="button" className="btn-soft !min-h-0 shrink-0" onClick={() => setNewSub(null)}>ยกเลิก</button>
+                    </div>}
               </Field>
               <Field label="รหัส" required>
                 <input value={f.code} onChange={(e) => { codeTouched.current = true; set({ code: e.target.value.toUpperCase() }); }} className={`font-mono ${codeErr ? "!border-red-400" : ""}`} maxLength={5} placeholder={`${f.cat}-00`} />

@@ -8,7 +8,7 @@ import { normValue } from "@/lib/auditLabels";
 import { accessOf, fromDb, RESIDENT_TABLES, selectExpr, SHARED_BRANCHES, specFor, Spec, toDb } from "@/lib/schema";
 import { evaluateVitals, flagText, levelOf, parseVitals } from "@/lib/vitals";
 import { RESIDENTS } from "@/lib/mock";
-import type { SessionUser } from "@/lib/roles";
+import { seesAllBranches, type SessionUser } from "@/lib/roles";
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
@@ -457,7 +457,7 @@ async function access(req: NextRequest, key: string) {
   if (!me) return { res: unauthorized() };
   const level = accessOf(me, key);
   if (level === "none") return { res: forbidden() };
-  return { s, me, level, branch: me.role !== "Global Admin" && s.branchCol ? me.branch : null };
+  return { s, me, level, branch: !seesAllBranches(me.role) && s.branchCol ? me.branch : null };
 }
 
 export async function GET(req: NextRequest, { params }: { params: { key: string } }) {
@@ -502,10 +502,11 @@ export async function POST(req: NextRequest, { params }: { params: { key: string
         break;
       }
       case "upsert": {
-        if (branch && !s.hiddenBranch && body.items.some((it) => branchOf(s, it.data) !== branch)) return forbidden("บันทึกได้เฉพาะข้อมูลของสาขาตัวเอง");
+        const sharedOk = (b: unknown) => !!s.sharedWrite && SHARED_BRANCHES.includes(String(b ?? ""));
+        if (branch && !s.hiddenBranch && body.items.some((it) => branchOf(s, it.data) !== branch && !sharedOk(branchOf(s, it.data)))) return forbidden("บันทึกได้เฉพาะข้อมูลของสาขาตัวเอง");
         await sql`INSERT INTO app_seed (collection) VALUES (${key}) ON CONFLICT DO NOTHING`;
         const prev = await snapshot(s, body.items.map((x) => x.id));
-        if (branch && [...prev.values()].some((r) => r.branch !== branch)) return forbidden("แก้ไขได้เฉพาะข้อมูลของสาขาตัวเอง (ข้อมูลส่วนกลางแก้ได้เฉพาะผู้บริหาร)");
+        if (branch && [...prev.values()].some((r) => r.branch !== branch && !sharedOk(r.branch))) return forbidden("แก้ไขได้เฉพาะข้อมูลของสาขาตัวเอง (ข้อมูลส่วนกลางแก้ได้เฉพาะผู้บริหาร)");
         if (key === "residents") { const dup = await duplicateResident(s, body.items); if (dup) return bad(dup, 409); }
         if (key === "residents") { const moved = await branchMoveDenied(s, body.items, prev); if (moved) return bad(moved, 409); }
         // งานประจำวัน / ซองยา: กันบันทึกทับข้อมูลที่เครื่องอื่นเพิ่งบันทึก (ดู guardDaily / guardPacks)
@@ -626,6 +627,12 @@ export async function POST(req: NextRequest, { params }: { params: { key: string
 const INV_PAID = ["ชำระแล้ว", "ชำระบางส่วน"], INV_VOID = "ยกเลิก";
 /** ใบลดหนี้ออกและเปลี่ยนสถานะผ่าน /api/billing เท่านั้น (สร้าง/แก้ยอด/เปลี่ยนสถานะผ่านชุดข้อมูลไม่ได้) */
 const INV_CN = ["ลดหนี้แล้ว", "รอคืนเงิน", "คืนเงินแล้ว"], CN_KIND = "ใบลดหนี้";
+/** ประเภทใบแรกเข้า (BILL_KINDS[0]) · ใบมัดจำห้องตอนจอง (ทุกบรรทัดเป็น DP-02 / มัดจำห้องพัก) ใช้ประเภทเดียวกันแต่ไม่ใช่ใบแรกเข้า */
+const START_KIND = "มัดจำ / แรกเข้า";
+const isBookingItems = (json: unknown) => {
+  try { const its = JSON.parse(String(json ?? "[]")) as { desc?: string; code?: string; credit?: boolean }[]; return its.length > 0 && its.every((i) => i.code === "DP-02" || /^มัดจำห้องพัก/.test(String(i.desc ?? "").trim())); }
+  catch { return false; }
+};
 const invNum = (v: unknown) => Math.round((Number(String(v ?? "").replace(/,/g, "")) || 0) * 100) / 100;
 /** รายการในใบ (JSON) เทียบแบบไม่สนรูปแบบการเว้นวรรค */
 const invItems = (v: unknown) => { try { return JSON.stringify(JSON.parse(String(v ?? "") || "[]")); } catch { return String(v ?? ""); } };
@@ -655,6 +662,13 @@ async function guardInvoices(s: Spec, me: SessionUser, items: Item[], prev: Map<
     const b = prev.get(it.id)?.rec;
     if (!b) {
       if (INV_PAID.includes(status)) return stop(`บันทึกใบแจ้งหนี้เป็นสถานะ "${status}" ไม่ได้ · รับชำระที่ปุ่ม รับชำระ`);
+      // ใบแรกเข้าซ้ำ: สัญญาเดียวกันมีใบแรกเข้าที่ยังไม่ยกเลิกอยู่แล้ว (กันกดออกซ้ำตอนหน้าจอยังโหลดไม่ทัน · 16 พ.ย. 2569 เคยเกิด)
+      const contract = String(at(it, "contract_no") ?? "").trim();
+      if (contract && contract !== "-" && String(at(it, "category") ?? "") === START_KIND && !isBookingItems(at(it, "items_json"))) {
+        const had = (await sql(`SELECT doc_no, items_json FROM invoices WHERE contract_no = $1 AND id <> $2 AND category = $3 AND coalesce(status, '') <> $4`, [contract, it.id, START_KIND, INV_VOID])) as { doc_no: string | null; items_json: string }[];
+        const dup = had.find((h) => !isBookingItems(h.items_json));
+        if (dup) return stop(`สัญญา ${contract} มีใบแรกเข้าแล้ว (${dup.doc_no ?? "กำลังออกเลข"}) · ออกซ้ำไม่ได้ · ถ้าต้องการเรียกเก็บรอบถัดไป ใช้ใบค่าบริการรายเดือน`);
+      }
       if (INV_CN.includes(status) || String(at(it, "category") ?? "") === CN_KIND) return stop("ออกใบลดหนี้ที่ปุ่ม ออกใบลดหนี้ ของใบเดิม");
       continue;
     }

@@ -3,6 +3,7 @@ import { usePushRefresh } from "@/lib/pushRefresh";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { DataTable, PageHeader, Section, Select, Tabs } from "@/components/ui";
 import CsvIcon from "@/components/CsvIcon";
+import { OptionSettings } from "@/components/OptionSettings";
 import PhysioAssign from "@/components/care/PhysioAssign";
 import PhysioHistoryModal from "@/components/care/PhysioHistoryModal";
 import PhysioReassign from "@/components/care/PhysioReassign";
@@ -131,6 +132,7 @@ export function Physio() {
           {canAssign && <button className="btn-soft" title="ย้ายเคสทั้งหมดของนักกายภาพคนหนึ่งไปให้อีกคน (ลา ลาออก ย้ายสาขา)" onClick={() => setMv(true)}>⇄ ย้ายเคส</button>}
           <button className="btn-soft" onClick={exportCases}><CsvIcon /> เคสทั้งหมด</button>
           <button className="btn-soft" onClick={exportMonth}><CsvIcon /> ผลงานเดือนนี้</button>
+          <OptionSettings group="physio" />
         </>} />
       {global && <div className="mb-4 max-w-xs"><Select aria-label="เลือกสาขา" placeholder="ทุกสาขา" options={branches} value={branch} onChange={setBranch} /></div>}
       {!d ? <p className="py-10 text-center text-sm text-gold-500">กำลังโหลด…</p> : <div className="space-y-5">

@@ -21,6 +21,7 @@ const DEMOS = [
   ["branch@kin.test", "ผู้จัดการสาขา (ทดลอง)", "Branch Admin", "สุขุมวิท 107"],
   ["staff@kin.test", "พนักงานดูแล (ทดลอง)", "Nurse", "สุขุมวิท 107"],
   ["cashier@kin.test", "แคชเชียร์ (ทดลอง)", "Cashier", "สุขุมวิท 107"],
+  ["finance@kin.test", "การเงิน (ทดลอง)", "Finance", "ทุกสาขา"],
   ["nurse@kin.test", "หัวหน้าพยาบาล (ทดลอง)", "Head Nurse", "สุขุมวิท 107"],
   ["branch2@kin.test", "ผู้จัดการสาขาลาดพร้าว 71 (ทดลอง)", "Branch Admin", "ลาดพร้าว 71"],
   ["physio@kin.test", "นักกายภาพ (ทดลอง)", "Physio", "สุขุมวิท 107"],

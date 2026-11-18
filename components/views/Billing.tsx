@@ -10,10 +10,14 @@ import { CONTRACTS, RESIDENTS } from "@/lib/mock";
 import { newId, useCrud, useRecords, downloadCsv, refreshData } from "@/lib/store";
 import { useApp } from "@/lib/app";
 import { useSession } from "@/lib/session";
+import { seesAllBranches, readOnlyRole } from "@/lib/roles";
 import { can } from "@/lib/perms";
 import { staying } from "@/lib/rooms";
 import { billHandoff, CourseBill, courseHandoff, invoiceHandoff } from "@/lib/handoff";
 import StatusExport from "../billing/StatusExport";
+import { AccountChoice } from "../billing/PayAccounts";
+import { OptionSettings, useOptions } from "../OptionSettings";
+import { OTHER } from "@/lib/optionLists";
 import { invoiceDocsCsv } from "@/lib/exportsCsv";
 import Receivables from "../billing/Receivables";
 import { copyToClipboard, lineMessage } from "@/lib/lineMessage";
@@ -25,6 +29,13 @@ import { ServicePicker } from "../ServicePicker";
 import { usePriceList } from "@/lib/usePrices";
 import { refreshTaxInfo, saveTaxInfo, useTaxInfo } from "@/lib/taxInfo";
 
+/** รายการใบล่าสุดจากเซิร์ฟเวอร์ (ไม่ใช้ข้อมูลที่โหลดเก็บไว้) · ใช้เช็กใบแรกเข้าซ้ำ */
+async function freshInvoices(): Promise<Invoice[]> {
+  const r = await fetch("/api/data/invoices", { cache: "no-store" });
+  if (!r.ok) throw new Error("load");
+  const d = await r.json();
+  return ((d.items ?? []) as { data: Invoice }[]).map((x) => x.data);
+}
 const blankItem = (): BillItem => ({ desc: "", qty: 1, price: 0, discount: 0, pct: 0 });
 
 /** ช่องชื่อรายการ: พิมพ์อย่างน้อย 2 ตัวแล้วขึ้นค่าบริการจากใบราคา กดราคาแล้วชื่อกับราคาลงให้ · ไม่มีในใบราคาพิมพ์เองได้ */
@@ -55,7 +66,7 @@ function LineDesc({ value, onText, onPick }: { value: string; onText: (v: string
 }
 const num = (x: string) => Number(String(x).replace(/,/g, "")) || 0;
 /** เหตุผลที่ใช้บ่อยของใบลดหนี้ */
-const CN_REASONS = ["คิดค่าบริการเกิน", "กลับบ้านก่อนกำหนด คืนค่าบริการส่วนที่ไม่ได้อยู่", "ให้ส่วนลดเพิ่มภายหลัง", "คิดรายการซ้ำ", "อื่น ๆ"];
+/* เหตุผลออกใบลดหนี้: แก้ได้ที่ ตั้งค่าตัวเลือก (lib/optionLists cn_reasons) · อื่น ๆ = พิมพ์เอง ต่อท้ายเสมอ */
 const val = (x?: string) => num(x && x !== "-" ? x : "");
 
 /** ใบที่ยังชำระไม่ครบ: ค้างมากี่วันนับจากวันที่ออกใบ (ต่อท้ายป้ายสถานะ "ค้างชำระ · 3 วัน") · เกิน 30 วัน = สีแดง */
@@ -258,6 +269,8 @@ export function useBranchInfo() {
 export function Billing() {
   const { user } = useSession();
   const admin = can(user, "invoices.void");
+  /** การเงิน/บัญชี: ดูและส่งออกอย่างเดียว (ซ่อนปุ่มออกใบ รับชำระ ยืนยันยอด คืนเงิน · server กันอีกชั้น) */
+  const ro = readOnlyRole(user?.role);
   const [list, setList, meta] = useRecords<Invoice>("invoices", []);
   const res = useCrud("residents", RESIDENTS);
   const con = useCrud("contracts", CONTRACTS);
@@ -269,9 +282,14 @@ export function Billing() {
   /** อัตรา VAT ของใบที่กำลังออก (%) · ใช้กับบรรทัดที่ติ๊ก VAT */
   const [vatRate, setVatRate] = useState(DEFAULT_VAT);
   const [pay, setPay] = useState<Invoice | null>(null);
-  const [amt, setAmt] = useState({ cash: "", credit: "", transfer: "", wht: "", date: todayIso(), tref: "" });
+  const [amt, setAmt] = useState({ cash: "", credit: "", transfer: "", wht: "", date: todayIso(), tref: "", tacc: "", cacc: "", edc: "", eacc: "" });
+  /** กดปุ่มลัด (รับเต็มยอด / งวดนี้) = รับช่องทางเดียว: ซ่อนช่องอื่นที่ว่าง · null = แสดงทุกช่อง (แบ่งจ่ายหลายช่องทาง) */
+  const [payOnly, setPayOnly] = useState<"cash" | "transfer" | "edc" | "credit" | null>(null);
   /** ใบลดหนี้: ใบเดิม ยอด เหตุผล · คืนเงินตามใบลดหนี้: วิธีคืน */
   const [cn, setCn] = useState<{ x: Invoice; amount: string; reason: string; other: string; busy?: boolean } | null>(null);
+  const CN_REASONS = [...useOptions("cn_reasons").values, OTHER];
+  // คืนเงินตอน D/C: ใช้เหตุผล "กลับบ้านก่อนกำหนด…" ถ้ายังเปิดใช้อยู่
+  const cnLeave = CN_REASONS.find((x) => /กลับบ้านก่อนกำหนด/.test(x)) ?? CN_REASONS[0];
   const [refund, setRefund] = useState<{ x: Invoice; method: string; busy?: boolean } | null>(null);
   const [slip, setSlip] = useState("");
   const [view, setView] = useState<Invoice | null>(null);
@@ -365,14 +383,19 @@ export function Billing() {
       setAutoPull(true); loadUnbilled(c[2]);
       return;
     }
+    // ใบในหน้าจออาจยังไม่รวมใบที่เพิ่งออกจากหน้าเปิดสัญญา: ใช้รายการล่าสุดจากเซิร์ฟเวอร์ (ไม่ใช้ข้อมูลที่เก็บไว้)
+    void (async () => {
+    const fresh = await freshInvoices().catch(() => list);
+    const list2 = fresh.length ? fresh : list;
     // สัญญาใช้งานอยู่ที่ออกใบแรกเข้าแล้ว = ใบค่าบริการรายเดือน (ไม่มีเงินประกัน ค่าล่วงหน้า หักมัดจำ) · ยังไม่มีใบแรกเข้า = ใบแรกเข้า
-    const monthly = c[5] === "ใช้งานอยู่" && list.some((x) => x.contract === c[0] && x.status !== VOID && isStartInvoice(x));
-    const prior = list.filter((x) => invBranch(x) === c[1]);
-    const items = monthly ? cycleMonthLines(c, nextCycle(c, list), roomPaidUntil(c)) : contractStartLines(c, prior);
+    const monthly = c[5] === "ใช้งานอยู่" && list2.some((x) => x.contract === c[0] && x.status !== VOID && !isCN(x) && isStartInvoice(x));
+    const prior = list2.filter((x) => invBranch(x) === c[1]);
+    const items = monthly ? cycleMonthLines(c, nextCycle(c, list2), roomPaidUntil(c)) : contractStartLines(c, prior);
     setForm({ id: newId(), date: todayIso(), who: c[2], hn: p?.[6] ?? "", payer: c[3] ?? "", address: c[10] ?? "", kind: monthly ? BILL_KINDS[1] : BILL_KINDS[0], contract: c[0] ?? "", items: "[]", total: 0, discount: 0, net: 0, status: UNPAID,
-      note: monthly ? cycleNote(nextCycle(c, list) ?? todayIso()) : contractStartNote(c, prior) });
+      note: monthly ? cycleNote(nextCycle(c, list2) ?? todayIso()) : contractStartNote(c, prior) });
     setLines(items.length ? items : [blankItem()]); setVatRate(contractVat(c) || DEFAULT_VAT);
     loadUnbilled(c[2]);
+    })();
   }, [billFor, con.ids, con.rows, res.rows]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const startNew = () => {
@@ -451,7 +474,7 @@ export function Billing() {
   }, [courseFor, res.loaded, con.loaded, res.ids]); // eslint-disable-line react-hooks/exhaustive-deps
   const sum = totals(lines.filter((l) => l.desc.trim()));
   const vatSum = vatOf(lines.filter((l) => l.desc.trim()));
-  const saveNew = () => {
+  const saveNew = async () => {
     if (!form) return;
     const items = lines.filter((l) => l.desc.trim());
     if (!form.who) return toast("กรุณาเลือกผู้รับบริการ");
@@ -461,6 +484,12 @@ export function Billing() {
     if (items.some((l) => l.desc.includes("(ยังไม่มีราคา)") && !(l.price > 0))) return toast("กรุณากรอกราคายาที่ยังไม่มีราคาขาย");
     if (items.some((l) => l.desc.startsWith("กายภาพรายครั้ง") && !(l.price > 0))) return toast("กรุณากรอกราคากายภาพรายครั้ง (ยังไม่มีคอร์ส)");
     if (items.some((l) => l.qty <= 0 || l.price < 0 || l.discount < 0 || (l.pct ?? 0) < 0 || (l.pct ?? 0) > 100 || lineDiscount(l) > l.qty * l.price)) return toast("กรุณาตรวจจำนวน ราคา และส่วนลดของแต่ละรายการ");
+    // ใบแรกเข้า: เช็กกับเซิร์ฟเวอร์ว่าสัญญานี้ยังไม่มีใบแรกเข้า (กันออกซ้ำ · server กันอีกชั้น)
+    if (form.contract && isStartInvoice(form, items)) {
+      const fresh = await freshInvoices().catch(() => list);
+      const had = fresh.find((x) => x.id !== form.id && x.contract === form.contract && x.status !== VOID && !isCN(x) && isStartInvoice(x));
+      if (had) return toast(`สัญญา ${form.contract} มีใบแรกเข้าแล้ว (${had.no ?? "กำลังออกเลข"}) · ออกซ้ำไม่ได้ · ถ้าจะเรียกเก็บรอบถัดไป ให้ออกใบค่าบริการรายเดือน`);
+    }
     setList([{ ...form, items: JSON.stringify(items), ...totals(items) }, ...list]);
     // เวชภัณฑ์ที่ดึงเข้าใบนี้: ทำเครื่องหมายว่าเรียกเก็บแล้ว (ไม่ดึงซ้ำในใบถัดไป)
     if (pulled.length) fetch("/api/clinic", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "supply_bill", ids: pulled.filter((id) => { const x = unbilled.find((y) => y.id === id); return x && !x.course && !x.med && !x.session; }), noteIds: pulled.filter((id) => unbilled.find((x) => x.id === id)?.session), medIds: pulled.filter((id) => unbilled.find((x) => x.id === id)?.med), courseIds: pulled.filter((id) => unbilled.find((x) => x.id === id)?.course), invoiceId: form.id }) }).catch(() => {});
@@ -481,7 +510,7 @@ export function Billing() {
       toast(`ยกเลิกเอกสารแล้ว · ${x.no ?? ""} · ${x.who}`);
     } catch (e) { toast((e as Error).message); refreshData("invoices"); }
   };
-  const openPay = (x: Invoice) => { setPay(x); setExtra([]); setSlip(""); setAmt({ cash: "", credit: "", transfer: "", wht: "", date: todayIso(), tref: "" }); };
+  const openPay = (x: Invoice) => { setPay(x); setExtra([]); setSlip(""); setAmt({ cash: "", credit: "", transfer: "", wht: "", date: todayIso(), tref: "", tacc: "", cacc: "", edc: "", eacc: "" }); setPayOnly(null); };
   /**
    * รับเงินหลายใบในครั้งเดียว: ใบค้างอื่นของคนเดียวกันในสาขาเดียวกัน ติ๊กรวมได้
    *  เงินที่รับตัดใบเก่าก่อน (เงินสด → โอน → บัตร) และบันทึกเป็นการรับชำระของแต่ละใบ (ใบเสร็จแยกตามใบ)
@@ -492,7 +521,7 @@ export function Billing() {
   const batch = pay ? [pay, ...payOthers.filter((y) => extra.includes(y.id))].sort((a, b) => a.date.localeCompare(b.date)) : [];
   const multi = batch.length > 1;
   const left = multi ? Math.round(batch.reduce((n, y) => n + balanceOf(y), 0) * 100) / 100 : pay ? balanceOf(pay) : 0;
-  const got = num(amt.cash) + num(amt.credit) + num(amt.transfer), wht = num(amt.wht);
+  const got = num(amt.cash) + num(amt.credit) + num(amt.edc) + num(amt.transfer), wht = num(amt.wht);
   /** ยอดที่ตัดจากยอดค้าง = เงินที่รับ + ภาษีหัก ณ ที่จ่าย */
   const now = got + wht;
   /** ภาษีหัก ณ ที่จ่าย 3% ของค่าบริการก่อน VAT ในยอดคงเหลือ (ไม่คิดจากเงินประกัน) */
@@ -504,17 +533,17 @@ export function Billing() {
   })();
   /** รับหลายใบ: แบ่งเงินตัดใบเก่าก่อน แล้วบันทึกทีละใบ · ใบไหนไม่สำเร็จ หยุดและบอกว่าบันทึกไปแล้วกี่ใบ */
   const savePayMany = async () => {
-    const pool = { cash: num(amt.cash), transfer: num(amt.transfer), credit: num(amt.credit) };
+    const pool = { cash: num(amt.cash), transfer: num(amt.transfer), edc: num(amt.edc), credit: num(amt.credit) };
     const r2 = (n: number) => Math.round(n * 100) / 100;
     const plan = batch.map((x) => {
       let need = balanceOf(x);
       const take = (k: keyof typeof pool) => { const t = r2(Math.min(need, pool[k])); pool[k] = r2(pool[k] - t); need = r2(need - t); return t; };
-      return { x, cash: take("cash"), transfer: take("transfer"), credit: take("credit") };
-    }).filter((p) => p.cash + p.transfer + p.credit > 0);
+      return { x, cash: take("cash"), transfer: take("transfer"), edc: take("edc"), credit: take("credit") };
+    }).filter((p) => p.cash + p.transfer + p.edc + p.credit > 0);
     let done = 0;
     try {
       for (const p of plan) {
-        const r = await fetch("/api/billing", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "pay", id: p.x.id, cash: p.cash, credit: p.credit, transfer: p.transfer, wht: 0, date: amt.date, slip: p.transfer > 0 ? slip : undefined, transferRef: amt.tref }) });
+        const r = await fetch("/api/billing", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "pay", id: p.x.id, cash: p.cash, credit: p.credit, transfer: p.transfer, wht: 0, date: amt.date, slip: p.transfer > 0 ? slip : undefined, transferRef: amt.tref, transferAccount: p.transfer > 0 ? amt.tacc : undefined, cardAccount: p.credit > 0 ? amt.cacc : undefined, edc: p.edc, edcAccount: p.edc > 0 ? amt.eacc : undefined }) });
         const d = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(`${p.x.no ?? ""}: ${d.error || "รับชำระไม่สำเร็จ"}`);
         done++;
@@ -528,15 +557,18 @@ export function Billing() {
   };
   const savePay = async () => {
     if (!pay || busy) return;
-    const cash = num(amt.cash), credit = num(amt.credit), transfer = num(amt.transfer);
+    const cash = num(amt.cash), credit = num(amt.credit), edc = num(amt.edc), transfer = num(amt.transfer);
     if (got <= 0) return toast("กรุณาระบุยอดที่รับชำระครั้งนี้");
     if (now > left + 0.005) return toast(`ยอดรับชำระ ${money(now)} บาท เกินยอดคงเหลือ ${money(left)} บาท`);
+    if (transfer > 0 && !amt.tacc) return toast("กรุณาเลือกบัญชีที่เงินโอนเข้า");
+    if (edc > 0 && !amt.eacc) return toast("กรุณาเลือกเครื่อง EDC ที่รูดบัตร");
+    if (credit > 0 && !amt.cacc) return toast("กรุณาเลือกช่องทางบัตรเครดิต");
     if (transfer > 0 && !slip) return toast("กรุณาแนบหลักฐานการโอนเงิน");
     if (multi && wht > 0) return toast("หัก ณ ที่จ่ายใช้ได้เมื่อรับทีละใบ");
     setBusy(true);
     if (multi) return savePayMany();
     // ใบแจ้งหนี้ที่เพิ่งสร้างอาจยังบันทึกขึ้นระบบไม่เสร็จ (404) ลองซ้ำก่อนแจ้งว่าไม่สำเร็จ
-    const send = () => fetch("/api/billing", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "pay", id: pay.id, cash, credit, transfer, wht, date: amt.date, slip: slip || undefined, transferRef: amt.tref }) });
+    const send = () => fetch("/api/billing", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "pay", id: pay.id, cash, credit, transfer, wht, date: amt.date, slip: slip || undefined, transferRef: amt.tref, transferAccount: transfer > 0 ? amt.tacc : undefined, cardAccount: credit > 0 ? amt.cacc : undefined, edc, edcAccount: edc > 0 ? amt.eacc : undefined }) });
     try {
       let r = await send();
       for (let i = 0; i < 3 && r.status === 404; i++) { await new Promise((x) => setTimeout(x, 1500)); r = await send(); }
@@ -568,12 +600,20 @@ export function Billing() {
   useEffect(() => {
     setPays([]); setWhich(0);
     if (!view || !(view.paid ?? 0)) return;
-    fetch(`/api/billing?id=${encodeURIComponent(view.id)}`).then((r) => (r.ok ? r.json() : null)).then((d) => d && setPays(d.payments ?? [])).catch(() => {});
+    // ชำระครบหลายงวด: เปิดที่ใบเสร็จงวดล่าสุด (ใบที่มักพิมพ์ให้ลูกค้า) · สรุปการชำระอยู่แท็บแรก
+    fetch(`/api/billing?id=${encodeURIComponent(view.id)}`).then((r) => (r.ok ? r.json() : null)).then((d) => {
+      if (!d) return;
+      const ps = (d.payments ?? []) as Payment[], real = ps.filter((p) => p.kind !== "credit");
+      setPays(ps);
+      if (view.status === PAID && real.length > 1) setWhich(real[real.length - 1].n);
+    }).catch(() => {});
   }, [view?.id, view?.paid]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const branchOfInv = (x: Invoice) => invBranch(x) || residentOf(x.who)?.[3] || user?.branch || "";
+  const multiPay = pays.filter((p) => p.kind !== "credit").length > 1;
+  const mainTab = view?.status === PAID ? (multiPay ? "สรุปการชำระ" : "ใบเสร็จรับเงิน") : "ใบแจ้งหนี้";
   // ผู้บริหารดูทุกสาขา: มีคอลัมน์สาขา · ใบยกเลิก: คงเหลือ "-" (ไม่ใช่หนี้) · วันที่แบบ "10 พ.ย. 2569"
-  const allBranches = user?.role === "Global Admin";
+  const allBranches = seesAllBranches(user?.role);
   const invCols = ["เลขที่เอกสาร", "วันที่", ...(allBranches ? ["สาขา"] : []), "HN", "ผู้รับบริการ", "ประเภท", "ยอดสุทธิ (บาท)", "ชำระแล้ว", "คงเหลือ", "สถานะ"];
   const rows = useMemo(() => shown.map((x) => [x.no ?? "กำลังออกเลข…", thDateText((x.status === PAID ? x.paidDate || x.date : x.date).slice(0, 10)), ...(allBranches ? [branchOfInv(x) || "-"] : []), x.hn || "-", x.who, kindShort(x.kind), money(x.net), money(x.paid ?? 0), x.status === VOID ? "-" : money(balanceOf(x)), x.status]), [shown, allBranches]); // eslint-disable-line react-hooks/exhaustive-deps
   /**
@@ -604,14 +644,14 @@ export function Billing() {
             { label: "การรับเงิน", hint: "แยกเงินสด โอน บัตร", onClick: () => exportPayments("", "การเงิน-การรับเงินรายงวด").then((n) => toast(`ส่งออกการรับเงินแล้ว ${n} งวด`)).catch((e) => toast((e as Error).message)) },
           ]} />
           <button className="btn-soft" title="ดูหน้าตาใบเสร็จของแต่ละห้อง (ไม่บันทึกในระบบ)" onClick={() => setSampleOpen(true)}><Icon name="receipt" className="h-4 w-4" /> <span>ตัวอย่าง<span className="hidden sm:inline">ใบเสร็จ</span></span></button>
-          <button className="btn-soft" onClick={() => setCourse({ who: "", name: "กายภาพบำบัด (ครั้งละ 45 นาที)", total: "10", price: "", busy: false })}><Icon name="plus" className="h-4 w-4" /> <span>ขายคอร์ส<span className="hidden sm:inline">กายภาพ</span></span></button>
-          <button className="btn-primary" onClick={startNew}><Icon name="plus" className="h-4 w-4" /> ออกใบแจ้งหนี้</button>
+          {!ro && <button className="btn-soft" onClick={() => setCourse({ who: "", name: "กายภาพบำบัด (ครั้งละ 45 นาที)", total: "10", price: "", busy: false })}><Icon name="plus" className="h-4 w-4" /> <span>ขายคอร์ส<span className="hidden sm:inline">กายภาพ</span></span></button>}
+          {!ro && <button className="btn-primary" onClick={startNew}><Icon name="plus" className="h-4 w-4" /> ออกใบแจ้งหนี้</button>}
         </>} />
       {due.length > 0 && <Section title="ครบรอบบิล" sub={`${due.length} สัญญาครบรอบแล้วหรือจะครบภายใน ${DUE_AHEAD} วัน · ยังไม่มีใบของรอบนั้น · ออกเป็นใบร่างให้การเงินตรวจยอดก่อนส่งให้ญาติ`}
-        actions={<button className="btn-primary" onClick={makeDue}><Icon name="plus" className="h-4 w-4" /> ออกใบแจ้งหนี้รอบนี้ {due.length} ใบ (ร่าง)</button>}>
+        actions={ro ? undefined : <button className="btn-primary" onClick={makeDue}><Icon name="plus" className="h-4 w-4" /> ออกใบแจ้งหนี้รอบนี้ {due.length} ใบ (ร่าง)</button>}>
         <DataTable search={false} columns={["ครบรอบ", "เลขที่สัญญา", ...(allBranches ? ["สาขา"] : []), "ผู้รับบริการ", "ผู้ชำระ", "ห้อง", "ยอดรอบนี้ (บาท)"]}
           rows={due.map(({ c, next }) => [thDateText(next), c[0], ...(allBranches ? [c[1] || "-"] : []), c[2], c[3] || "-", c[6] && c[6] !== "-" ? c[6] : "-", money(totals(cycleMonthLines(c, next, roomPaidUntil(c))).net)])}
-          actions={[{ label: "ออกใบ", onClick: (k) => setBillFor({ id: due[k].id }) }]} />
+          actions={ro ? [] : [{ label: "ออกใบ", onClick: (k) => setBillFor({ id: due[k].id }) }]} />
       </Section>}
 
       <Section title="เอกสารการเงิน">
@@ -637,9 +677,9 @@ export function Billing() {
           onRow={(k) => { setFormat("customer"); setCopy(false); setView(shown[k]); }} rowLabel="กดเพื่อดูหรือพิมพ์เอกสาร"
           actions={[
             // กดแถว = ดู/พิมพ์ · ปุ่มหลักขึ้นเฉพาะเมื่อมีงานต้องทำ (ยืนยันยอด / รับชำระ) · ยกเลิกอยู่ท้ายเมนู ⋯
-            { label: "ยืนยันยอด", tone: "primary", hidden: (k) => shown[k].status !== DRAFT, onClick: (k) => { const x = shown[k]; if (x.status !== DRAFT) return toast("เอกสารนี้ยืนยันยอดแล้ว"); confirm({ title: "ยืนยันยอดใบแจ้งหนี้", okLabel: "ยืนยันยอด", message: `ตรวจรายการและยอด ${money(x.net)} บาท ของ ${x.who} ถูกต้องแล้วใช่หรือไม่ · ยืนยันแล้วจะเป็น "${UNPAID}" และรับชำระได้ · ถ้ายอดไม่ถูกให้ยกเลิกใบนี้แล้วออกใบใหม่`, onOk: () => { setList(list.map((y) => (y.id === x.id ? { ...x, status: UNPAID } : y))); setTab(UNPAID); toast(`ยืนยันยอดแล้ว · ${x.no ?? ""} · ${x.who} · พร้อมรับชำระ`); } }); } },
-            { label: "รับชำระ", tone: "primary", hidden: (k) => !isOpen(shown[k]), onClick: (k) => openPay(shown[k]) },
-            { label: "บันทึกคืนเงิน", tone: "primary", hidden: (k) => shown[k].status !== CN_REFUND, onClick: (k) => setRefund({ x: shown[k], method: "โอนเงิน" }) },
+            { label: "ยืนยันยอด", tone: "primary", hidden: (k) => ro || shown[k].status !== DRAFT, onClick: (k) => { const x = shown[k]; if (x.status !== DRAFT) return toast("เอกสารนี้ยืนยันยอดแล้ว"); confirm({ title: "ยืนยันยอดใบแจ้งหนี้", okLabel: "ยืนยันยอด", message: `ตรวจรายการและยอด ${money(x.net)} บาท ของ ${x.who} ถูกต้องแล้วใช่หรือไม่ · ยืนยันแล้วจะเป็น "${UNPAID}" และรับชำระได้ · ถ้ายอดไม่ถูกให้ยกเลิกใบนี้แล้วออกใบใหม่`, onOk: () => { setList(list.map((y) => (y.id === x.id ? { ...x, status: UNPAID } : y))); setTab(UNPAID); toast(`ยืนยันยอดแล้ว · ${x.no ?? ""} · ${x.who} · พร้อมรับชำระ`); } }); } },
+            { label: "รับชำระ", tone: "primary", hidden: (k) => ro || !isOpen(shown[k]), onClick: (k) => openPay(shown[k]) },
+            { label: "บันทึกคืนเงิน", tone: "primary", hidden: (k) => ro || shown[k].status !== CN_REFUND, onClick: (k) => setRefund({ x: shown[k], method: "โอนเงิน" }) },
             { label: "ดู / พิมพ์", more: true, onClick: (k) => { setFormat("customer"); setCopy(false); setView(shown[k]); } },
             { label: "คัดลอกข้อความแจ้งยอด (LINE)", more: true, hidden: (k) => !isOpen(shown[k]) || isCN(shown[k]), onClick: (k) => copyLine(shown[k]) },
             ...(admin ? [{ label: "ออกใบลดหนี้…", more: true, hidden: (k: number) => isCN(shown[k]) || ![UNPAID, PARTIAL, PAID].includes(shown[k].status), onClick: (k: number) => setCn({ x: shown[k], amount: "", reason: CN_REASONS[0], other: "" }) }] : []),
@@ -752,7 +792,7 @@ export function Billing() {
                 {mode === "actual" && refunds.size > 0 && <div className="mt-3 space-y-2 text-sm">
                   {[...refunds.values()].map((r) => <div key={r.x.id} className="flex flex-wrap items-center gap-2">
                     <span>คืนให้ลูกค้า <b>{money(r.amount)}</b> บาท ({r.what.join(" · ")}) จากใบ {r.x.no}</span>
-                    {admin ? <button type="button" className="row-action" onClick={() => setCn({ x: r.x, amount: String(r.amount), reason: CN_REASONS[1], other: "" })}>ออกใบลดหนี้</button>
+                    {admin ? <button type="button" className="row-action" onClick={() => setCn({ x: r.x, amount: String(r.amount), reason: cnLeave, other: "" })}>ออกใบลดหนี้</button>
                       : <span className="text-xs text-gold-500">ให้ผู้จัดการสาขากด "ออกใบลดหนี้" ที่ใบ {r.x.no}</span>}
                   </div>)}
                 </div>}
@@ -869,29 +909,38 @@ export function Billing() {
             return <div className="rounded-xl border border-cream-300 bg-white px-4 py-3 text-sm text-gold-700">
               <p>ตกลงแบ่งชำระ {n} งวด · งวดละ {money(parts[0])} บาท{parts[n - 1] !== parts[0] ? ` (งวดสุดท้าย ${money(parts[n - 1])})` : ""}</p>
               <div className="mt-2 flex flex-wrap items-center gap-2"><b className="text-gold-900">งวดที่ {k + 1}/{n} · {money(due)} บาท</b>
-                {([["cash", "เงินสด"], ["transfer", "โอนเงิน"], ["credit", "บัตรเครดิต"]] as const).map(([key, t]) => (
-                  <button key={key} type="button" className="row-action" onClick={() => setAmt({ ...amt, cash: "", credit: "", transfer: "", [key]: String(due) })}>{t}</button>
+                {([["cash", "เงินสด"], ["transfer", "โอนเงิน"], ["edc", "รูดบัตร EDC"], ["credit", "บัตรเครดิตอื่น"]] as const).map(([key, t]) => (
+                  <button key={key} type="button" className="row-action" onClick={() => { setAmt({ ...amt, cash: "", credit: "", edc: "", transfer: "", [key]: String(due) }); setPayOnly(key); }}>{t}</button>
                 ))}</div>
             </div>;
           })()}
           <div className="flex flex-wrap items-center gap-2 text-sm">
             <span className="text-gold-600">รับเต็มยอด {money(left)} บาท เป็น:</span>
-            {([["cash", "เงินสด"], ["transfer", "โอนเงิน"], ["credit", "บัตรเครดิต"]] as const).map(([k, t]) => (
-              <button key={k} type="button" className="row-action" onClick={() => setAmt({ ...amt, cash: "", credit: "", transfer: "", [k]: String(Math.round((left - wht) * 100) / 100) })}>{t}</button>
+            {([["cash", "เงินสด"], ["transfer", "โอนเงิน"], ["edc", "รูดบัตร EDC"], ["credit", "บัตรเครดิตอื่น"]] as const).map(([k, t]) => (
+              <button key={k} type="button" aria-pressed={payOnly === k} className={`row-action ${payOnly === k ? "is-on" : ""}`} onClick={() => { setAmt({ ...amt, cash: "", credit: "", edc: "", transfer: "", [k]: String(Math.round((left - wht) * 100) / 100) }); setPayOnly(k); }}>{t}</button>
             ))}
           </div>
-          <div className="grid gap-3 sm:grid-cols-3">
-            <Field label="เงินสด"><input type="number" min={0} value={amt.cash} onChange={(e) => setAmt({ ...amt, cash: e.target.value })} /></Field>
-            <Field label="โอนเงิน"><input type="number" min={0} value={amt.transfer} onChange={(e) => setAmt({ ...amt, transfer: e.target.value })} /></Field>
-            <Field label="บัตรเครดิต"><input type="number" min={0} value={amt.credit} onChange={(e) => setAmt({ ...amt, credit: e.target.value })} /></Field>
+          {/* เลือกช่องทางเดียวจากปุ่มลัด: แสดงเฉพาะช่องนั้น (ช่องอื่นที่ว่างซ่อน) · กด "แบ่งจ่ายหลายช่องทาง" เพื่อแสดงครบ 4 ช่อง */}
+          <div className={`grid gap-3 ${payOnly ? "sm:grid-cols-2" : "sm:grid-cols-2 lg:grid-cols-4"}`}>
+            {([["cash", "เงินสด"], ["transfer", "โอนเงิน"], ["edc", "รูดบัตร EDC"], ["credit", "บัตรเครดิตอื่น"]] as const)
+              .filter(([k]) => !payOnly || k === payOnly || num(amt[k]) > 0)
+              .map(([k, t]) => <Field key={k} label={t}><input type="number" min={0} value={amt[k]} onChange={(e) => setAmt({ ...amt, [k]: e.target.value })} /></Field>)}
+            {payOnly && <div className="flex items-end"><button type="button" className="row-action" onClick={() => setPayOnly(null)}>+ แบ่งจ่ายหลายช่องทาง</button></div>}
           </div>
-          {num(amt.transfer) > 0 && <Field label="เลขอ้างอิงการโอน (ไม่บังคับ)"><input value={amt.tref} maxLength={40} placeholder="เลขที่รายการ / Ref. No. จากสลิป" onChange={(e) => setAmt({ ...amt, tref: e.target.value })} /></Field>}
+          {/* เงินเข้าส่วนไหนของบริษัท แยกกล่องตามช่องทาง: โอน → บัญชีรับโอน (+ เลขอ้างอิง) · EDC → เครื่องที่รูด · บัตรอื่น → ช่องทาง (ไม่เลือกให้ล่วงหน้า) */}
+          {num(amt.transfer) > 0 && <div className="pay-route"><p className="pay-route-h">โอนเงิน {money(num(amt.transfer))} บาท</p>
+            <AccountChoice kind="transfer" value={amt.tacc} onChange={(v) => setAmt({ ...amt, tacc: v })} branch={invoiceBranch(pay, con.rows, res.rows, user?.branch) || undefined} />
+            <Field label="เลขอ้างอิงการโอน (ไม่บังคับ)"><input value={amt.tref} maxLength={40} placeholder="เลขที่รายการ / Ref. No. จากสลิป" onChange={(e) => setAmt({ ...amt, tref: e.target.value })} /></Field></div>}
+          {num(amt.edc) > 0 && <div className="pay-route"><p className="pay-route-h">รูดบัตร EDC {money(num(amt.edc))} บาท</p>
+            <AccountChoice kind="edc" value={amt.eacc} onChange={(v) => setAmt({ ...amt, eacc: v })} branch={invoiceBranch(pay, con.rows, res.rows, user?.branch) || undefined} /></div>}
+          {num(amt.credit) > 0 && <div className="pay-route"><p className="pay-route-h">บัตรเครดิตอื่น {money(num(amt.credit))} บาท</p>
+            <AccountChoice kind="card" value={amt.cacc} onChange={(v) => setAmt({ ...amt, cacc: v })} branch={invoiceBranch(pay, con.rows, res.rows, user?.branch) || undefined} /></div>}
           {/* บริษัทจ่ายแทนและหักภาษีไว้: ตัดยอดค้างด้วย แต่ไม่ใช่เงินที่รับเข้า (ไม่นับเป็นเงินรับ) */}
           {!multi && <div className="rounded-xl border border-cream-300 bg-cream-50 px-4 py-3">
             <Field label="ภาษีหัก ณ ที่จ่าย (ถ้าผู้ชำระเป็นบริษัทและหักภาษีไว้)">
               <div className="flex flex-wrap items-center gap-2">
                 <input type="number" min={0} className="!w-40" value={amt.wht} placeholder="0" onChange={(e) => setAmt({ ...amt, wht: e.target.value })} />
-                <button type="button" className="row-action" disabled={!wht3} onClick={() => { const rest = Math.round((left - wht3) * 100) / 100; const key = num(amt.transfer) ? "transfer" : num(amt.credit) ? "credit" : num(amt.cash) ? "cash" : "transfer"; setAmt({ ...amt, wht: String(wht3), cash: "", credit: "", transfer: "", [key]: String(rest) }); }}>หัก 3% = {money(wht3)}</button>
+                <button type="button" className="row-action" disabled={!wht3} onClick={() => { const rest = Math.round((left - wht3) * 100) / 100; const key = num(amt.transfer) ? "transfer" : num(amt.edc) ? "edc" : num(amt.credit) ? "credit" : num(amt.cash) ? "cash" : "transfer"; setAmt({ ...amt, wht: String(wht3), cash: "", credit: "", edc: "", transfer: "", [key]: String(rest) }); if (payOnly) setPayOnly(key); }}>หัก 3% = {money(wht3)}</button>
                 {wht > 0 && <button type="button" className="row-action" onClick={() => setAmt({ ...amt, wht: "" })}>ไม่หัก</button>}
               </div>
             </Field>
@@ -914,7 +963,7 @@ export function Billing() {
             <div><span>ยอดสุทธิ</span><b>{money(view.net)}</b></div>
             <div><span>ชำระแล้ว</span><b>{money(view.paid ?? 0)}</b></div>
             <div><span>คงเหลือ</span><b className={balanceOf(view) > 0 ? "text-red-700" : ""}>{money(balanceOf(view))}</b>{isOpen(view) && <small>{overdueDays(view) > 30 ? `เกินกำหนด ${overdueDays(view)} วัน` : `ค้าง ${overdueDays(view)} วัน`}</small>}</div>
-            {isOpen(view) && <button className="btn-primary !py-2" onClick={() => { const x = view; setView(null); openPay(x); }}>รับชำระ</button>}
+            {isOpen(view) && !ro && <button className="btn-primary !py-2" onClick={() => { const x = view; setView(null); openPay(x); }}>รับชำระ</button>}
             {view.status === DRAFT && <span className="text-sm text-amber-800">ยังรับชำระไม่ได้ · กด ยืนยันยอด ในตารางก่อน</span>}
           </div>
           <div className="bill-switch mb-4 flex flex-wrap items-center gap-3">
@@ -932,13 +981,14 @@ export function Billing() {
           </p>}
           {pays.length > 0 && (
             <div className="mb-4 space-y-2">
-              <Tabs tabs={[view.status === PAID ? "ใบเสร็จรวม" : "ใบแจ้งหนี้", ...pays.filter((p) => p.kind !== "credit").map((p) => `ใบเสร็จ งวดที่ ${p.n}`)]}
-                value={which === 0 ? (view.status === PAID ? "ใบเสร็จรวม" : "ใบแจ้งหนี้") : `ใบเสร็จ งวดที่ ${which}`}
+              {/* รับหลายงวด: สรุปการชำระ (ไม่ใช่ใบเสร็จ) + ใบเสร็จรายงวด · รับครั้งเดียวครบ = ใบเสร็จใบเดียว ไม่มีแท็บงวด */}
+              <Tabs tabs={[mainTab, ...(view.status !== PAID || multiPay ? pays.filter((p) => p.kind !== "credit").map((p) => `ใบเสร็จ งวดที่ ${p.n}`) : [])]}
+                value={which === 0 ? mainTab : `ใบเสร็จ งวดที่ ${which}`}
                 onChange={(t) => setWhich(t.startsWith("ใบเสร็จ งวด") ? Number(t.split(" ").pop()) : 0)} />
               <ul className="pay-history">
                 {pays.map((p) => p.kind === "credit"
                   ? <li key={p.id}><b>หักด้วยใบลดหนี้</b> · {docDate(p.date)} · {money(p.amount)} บาท <small>· {p.note} · โดย {p.cashier || "-"}</small></li>
-                  : <li key={p.id}><b>งวดที่ {p.n}</b> · {docDate(p.date)} · {money(p.amount - (p.wht ?? 0))} บาท <small>({[p.cash && `เงินสด ${money(p.cash)}`, p.credit && `บัตร ${money(p.credit)}`, p.transfer && `โอน ${money(p.transfer)}`, p.wht && `หัก ณ ที่จ่าย ${money(p.wht)}`].filter(Boolean).join(" · ")}){p.transferRef ? ` · อ้างอิงโอน ${p.transferRef}` : ""} · รับโดย {p.cashier || "-"}</small></li>)}
+                  : <li key={p.id}><b>งวดที่ {p.n}</b>{p.receiptNo ? <> · ใบเสร็จ <b className="whitespace-nowrap">{p.receiptNo}</b></> : null} · {docDate(p.date)} · {money(p.amount - (p.wht ?? 0))} บาท <small>({[p.cash && `เงินสด ${money(p.cash)}`, p.edc && `EDC ${money(p.edc)}${p.edcAccount ? ` (${p.edcAccount})` : ""}`, p.credit - (p.edc ?? 0) > 0.005 && `บัตร ${money(p.credit - (p.edc ?? 0))}${p.cardAccount ? ` (${p.cardAccount})` : ""}`, p.transfer && `โอน ${money(p.transfer)}${p.transferAccount ? ` เข้า ${p.transferAccount}` : ""}`, p.wht && `หัก ณ ที่จ่าย ${money(p.wht)}`].filter(Boolean).join(" · ")}){p.transferRef ? ` · อ้างอิงโอน ${p.transferRef}` : ""} · รับโดย {p.cashier || "-"}</small></li>)}
                 {view.status === PARTIAL && <li className="is-left"><b>คงเหลือ {money(balanceOf(view))} บาท</b> <small>กด "รับชำระ" ที่รายการเพื่อรับงวดถัดไป</small></li>}
               </ul>
             </div>
@@ -982,7 +1032,7 @@ export function Billing() {
               </div>
             </Field>
             <Field label="เหตุผล" required>
-              <select value={cn.reason} onChange={(e) => setCn({ ...cn, reason: e.target.value })}>{CN_REASONS.map((x) => <option key={x}>{x}</option>)}</select>
+              <div className="flex gap-2"><select value={cn.reason} onChange={(e) => setCn({ ...cn, reason: e.target.value })}>{(CN_REASONS.includes(cn.reason) ? CN_REASONS : [cn.reason, ...CN_REASONS]).map((x) => <option key={x}>{x}</option>)}</select><OptionSettings group="billing" small label="ตั้งค่า" /></div>
               {cn.reason === "อื่น ๆ" && <input className="mt-2" value={cn.other} placeholder="ระบุเหตุผล" onChange={(e) => setCn({ ...cn, other: e.target.value })} />}
             </Field>
             {a > 0 && <p className={`rounded-xl px-4 py-2 text-sm ${a > max + 0.005 ? "bg-red-50 text-red-700" : "bg-gold-50 text-gold-800"}`}>

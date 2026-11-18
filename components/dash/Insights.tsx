@@ -16,8 +16,8 @@ type FlowStat = { quotes: number; contracts: number; admits: number; discharges:
 export type Insights = {
   range: { from: string; to: string; pfrom: string; pto: string };
   attention: HomeData;
-  health: { cur: Vit & { alerts: number; ackMin: number | null; meds: { total: number; given: number } }; prev: Vit & { alerts: number; ackMin: number | null; meds: { total: number; given: number } }; admitted: number; weekly: (Vit & { from: string; to: string })[]; repeat: { name: string; n: number; critical: number }[] };
-  care: { cur: CareStat; prev: CareStat; weekly: { from: string; to: string; total: number; done: number }[] };
+  health: { cur: Vit & { alerts: number; ackMin: number | null; meds: { total: number; given: number } }; prev: Vit & { alerts: number; ackMin: number | null; meds: { total: number; given: number } }; admitted: number; weekly: (Vit & { from: string; to: string })[]; repeat: { name: string; n: number; critical: number }[]; medsMonthly?: { month: string; total: number; given: number }[] };
+  care: { cur: CareStat; prev: CareStat; weekly: { from: string; to: string; total: number; done: number }[]; monthly?: { month: string; total: number; done: number; ontime: number }[] };
   team: { residents: number; cur: { shifts: Shift[]; late: number; lateMin: number; absent: number }; prev: { shifts: Shift[]; late: number; lateMin: number; absent: number } };
   flow: { cur: FlowStat; prev: FlowStat; monthly: { month: string; admits: number; discharges: number }[] };
   occupancy: { capacity: number; inBed: number; monthly: { month: string; people: number }[] };

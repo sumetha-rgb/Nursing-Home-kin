@@ -7,7 +7,7 @@ import { balanceOf, BILL_KINDS, docDate, DRAFT, Invoice, invoiceBranch, isOpen, 
 import { downloadCsv, useCrud, useRecords } from "@/lib/store";
 import { CONTRACTS, RESIDENTS } from "@/lib/mock";
 import { useApp } from "@/lib/app";
-import { exportInvoiceLines, exportPayments, usePaidDays } from "@/lib/billingExport";
+import { exportInvoiceLines, exportPayments, OwingAt, useOwingAt, usePaidDays } from "@/lib/billingExport";
 import { useSession } from "@/lib/session";
 import { useBranchInfo } from "../views/Billing";
 import Receivables from "../billing/Receivables";
@@ -73,7 +73,11 @@ export function ShareBars({ rows }: { rows: { label: string; value: number; note
  */
 /** สรุปการเงินของเดือนที่เลือกเทียบเดือนก่อน (การ์ดหน้าภาพรวม · รายงานผู้บริหาร) · collect = รับชำระ ÷ ยอดออกใบของเดือน (%) */
 /** prevLabel = ช่วงที่เอามาเทียบ เช่น "1–5 ต.ค. 69" (เดือนปัจจุบัน) หรือ "ต.ค. 69" */
-export type FinSummary = { month: string; prevMonth: string; prevLabel: string; paid: number; paidPrev: number; billed: number; billedPrev: number; collect: number | null; collectPrev: number | null; owe: number; openN: number; discPct: number | null };
+export type FinSummary = { month: string; prevMonth: string; prevLabel: string; paid: number; paidPrev: number; billed: number; billedPrev: number; collect: number | null; collectPrev: number | null; owe: number; openN: number; discPct: number | null;
+  /** เลือกเดือนที่ผ่านมา: ค้างชำระ ณ สิ้นเดือนนั้น (null = เดือนปัจจุบัน ใช้ยอด ณ วันนี้) */
+  oweAt?: OwingAt | null;
+  /** อัตราเก็บเงินได้ 6 เดือนจบที่เดือนที่เลือก (กราฟเทียบเดือน) */
+  collectMonthly?: { month: string; v: number | null }[] };
 
 export default function FinanceAnalytics({ branch, compact, onTiles, month, prevMonth, onSummary }: { branch: string; compact?: boolean; onTiles?: (t: Tile[]) => void; month?: string; prevMonth?: string; onSummary?: (s: FinSummary) => void }) {
   const [all, , meta] = useRecords<Invoice>("invoices", []);
@@ -93,6 +97,9 @@ export default function FinanceAnalytics({ branch, compact, onTiles, month, prev
   // เดือนปัจจุบันยังไม่จบ: เทียบกับเดือนก่อนช่วงวันเดียวกัน (เช่น 1–5 พ.ย. เทียบ 1–5 ต.ค.) · เดือนที่จบแล้วเทียบทั้งเดือน
   const today = new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10);
   const cut = now === today.slice(0, 7) ? Number(today.slice(8, 10)) : 0;
+  // เดือนที่ผ่านมา: ค้างชำระ ณ วันสุดท้ายของเดือนนั้น (คำนวณจากวันที่รับเงินแต่ละงวด) · เดือนปัจจุบัน = ยอด ณ วันนี้
+  const pastEnd = now < today.slice(0, 7) ? `${now}-${String(new Date(Date.UTC(Number(now.slice(0, 4)), Number(now.slice(5, 7)), 0)).getUTCDate()).padStart(2, "0")}` : null;
+  const oweAt = useOwingAt(pastEnd, branch);
   const upTo = (d: string | undefined, day: number) => !day || Number((d ?? "").slice(8, 10)) <= day;
   // รับชำระของเดือน = รวมเงินที่รับแต่ละงวดตามวันที่รับจริง (จาก /api/billing) · ยังโหลดไม่ได้ = ประมาณจากยอดสะสมของใบตามวันที่รับล่าสุด (แบบเดิม)
   const from = `${prev < months[0] ? prev : months[0]}-01`;
@@ -113,7 +120,7 @@ export default function FinanceAnalytics({ branch, compact, onTiles, month, prev
   const billedSum = (m: string, day = 0) => billedIn(m, day).reduce((n, x) => n + signedNet(x), 0);
   const collectOf = (m: string, day = 0) => (billedSum(m, day) ? Math.round((paidIn(m, day) / billedSum(m, day)) * 100) : null);
   const grossNow = billedNow.reduce((n, x) => n + (x.total || 0), 0);
-  const summary: FinSummary = { month: now, prevMonth: prev, paid: paidNow, paidPrev, billed: billedSum(now), billedPrev: billedSum(prev, cut), collect: collectOf(now), collectPrev: collectOf(prev, cut), prevLabel, owe, openN: open.length, discPct: grossNow ? Math.round((discNow / grossNow) * 1000) / 10 : null };
+  const summary: FinSummary = { month: now, prevMonth: prev, paid: paidNow, paidPrev, billed: billedSum(now), billedPrev: billedSum(prev, cut), collect: collectOf(now), collectPrev: collectOf(prev, cut), prevLabel, owe, openN: open.length, oweAt: pastEnd ? oweAt : null, collectMonthly: months.slice(-6).map((m) => ({ month: m, v: collectOf(m) })), discPct: grossNow ? Math.round((discNow / grossNow) * 1000) / 10 : null };
   const sumKey = JSON.stringify(summary);
   useEffect(() => { onSummary?.(summary); }, [sumKey]); // eslint-disable-line react-hooks/exhaustive-deps
   /** รายได้ตามช่วงบริการของเดือน (กระจายใบจ่ายล่วงหน้าตามวันที่พักจริง · วิธีเดียวกับ CSV ค้างชำระ / ชำระครบ) */
@@ -125,7 +132,9 @@ export default function FinanceAnalytics({ branch, compact, onTiles, month, prev
     { label: `ออกใบแจ้งหนี้ ${monLabel(now)}`, value: money(billedSum(now)), unit: "บาท", icon: "receipt", note: `${billedNow.length} ใบ · ส่วนลด ${money(discNow)} บาท${summary.discPct !== null ? ` (${summary.discPct}%)` : ""}` },
     { label: `รายได้ตามช่วงบริการ ${monLabel(now)}`, value: money(revNow), unit: "บาท", icon: "calendar", note: `กระจายยอดตามวันที่พักในเดือน · ${monLabel(prev)} ${money(revPrev)} บาท` },
     { label: "อัตราเก็บเงินได้", value: summary.collect === null ? "-" : `${summary.collect}%`, icon: "chart", note: `รับชำระ ÷ ยอดออกใบของเดือน${summary.collectPrev !== null ? ` · ${prevLabel} ${summary.collectPrev}%` : ""}` },
-    { label: "ค้างชำระ", value: money(owe), unit: "บาท", icon: "alert", note: `${open.length} ใบ` },
+    pastEnd
+      ? { label: `ค้างชำระ ณ สิ้น ${monLabel(now)}`, value: oweAt ? money(oweAt.sum) : "…", unit: "บาท", icon: "alert", note: oweAt ? `${oweAt.n} ใบ · ตอนนี้ค้าง ${money(owe)} บาท (${open.length} ใบ)` : "กำลังคำนวณ…" }
+      : { label: "ค้างชำระ", value: money(owe), unit: "บาท", icon: "alert", note: `${open.length} ใบ` },
     { label: "รอตรวจสอบยอด", value: drafts.length, unit: "ใบ", icon: "history", note: drafts.length ? `รวม ${money(drafts.reduce((n, x) => n + x.net, 0))} บาท` : "ไม่มีใบรอตรวจ" },
   ];
   const key = JSON.stringify(kpis.map((t) => [t.label, t.value, t.note]));

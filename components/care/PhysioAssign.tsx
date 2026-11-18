@@ -2,9 +2,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { Modal } from "../ui";
 import { useApp } from "@/lib/app";
-import { addMonth, clashes, DAY_FULL, DAY_TH, dayLabel, dowOf, leftOf, loadOf, monthCells, monthLabel, PhysioCase, projectDates, Sched, Therapist, TIME_SLOTS, WEEK } from "@/lib/physio";
+import { addMonth, clashes, DAY_FULL, DAY_TH, dayLabel, dowOf, leftOf, loadOf, monthCells, monthLabel, PhysioCase, projectDates, Sched, Therapist, WEEK } from "@/lib/physio";
+import { useOptions } from "../OptionSettings";
 
-const MINUTES = [30, 45, 60, 90];
 /** ปุ่มลัดเลือกวัน */
 const PRESETS: { label: string; days: number[] }[] = [
   { label: "จ. พ. ศ.", days: [1, 3, 5] },
@@ -22,6 +22,8 @@ const same = (a: number[], b: number[]) => a.length === b.length && a.every((x) 
 export default function PhysioAssign({ c, cases, therapists, today, doneToday, onClose, onSaved }: {
   c: PhysioCase | null; cases: PhysioCase[]; therapists: Therapist[]; today: string; doneToday?: boolean; onClose: () => void; onSaved: () => void;
 }) {
+  // ช่วงเวลานัดและความยาวต่อครั้ง แก้ได้ที่ ตั้งค่าตัวเลือก (เลือกเวลาอื่นเองได้เหมือนเดิม)
+  const TIME_SLOTS = useOptions("physio_slots").values, MINUTES = useOptions("physio_minutes").values.map(Number).filter((n) => n > 0);
   const { toast } = useApp();
   const [tid, setTid] = useState("");
   const [days, setDays] = useState<number[]>([]);

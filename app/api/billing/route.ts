@@ -3,6 +3,9 @@ import { sql } from "@/lib/db";
 import { currentUser, forbidden, unauthorized } from "@/lib/auth";
 import { audit } from "@/lib/audit";
 import { can } from "@/lib/perms";
+import { readOnlyRole, seesAllBranches } from "@/lib/roles";
+import { canSalesTax } from "@/lib/settingsAccess";
+import { receiptPrefix, thaiDateStamp } from "@/lib/receiptNo";
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
@@ -13,7 +16,7 @@ export const fetchCache = "force-no-store";
  *  GET  ?id=…                          รายการรับชำระทั้งหมดของใบนี้ (งวด วันที่ วิธี ยอด สลิป)
  *  GET  ?op=payments[&branch=]          การรับเงินทุกงวด (ส่งออก CSV กระทบยอดเงินสด/โอน) · ไม่ส่งรูปสลิป
  *  GET  ?op=paid_days[&from=][&branch=] ยอดรับเงินรายวันต่อสาขา (รวมเป็นรายรับรายเดือนตามวันที่รับของแต่ละงวด)
- *  POST { op: "pay", id, cash, credit, transfer, date, slip?, note? }  รับชำระ 1 งวด · ยอดรวมต้องไม่เกินยอดคงเหลือ
+ *  POST { op: "pay", id, cash, credit, transfer, date, slip?, note?, transferRef?, transferAccount?, cardAccount?, edc?, edcAccount? } · edc = ส่วนที่รูดเครื่อง EDC (นับรวมในยอดบัตร)  รับชำระ 1 งวด · ยอดรวมต้องไม่เกินยอดคงเหลือ
  *                                       ครบยอด = ชำระแล้ว (เป็นใบเสร็จ) · ยังไม่ครบ = ชำระบางส่วน
  *  POST { id, slip }                   แนบ/เปลี่ยนรูปของใบที่รับชำระครั้งเดียว (slip = "" ลบรูป)
  * ใบแจ้งหนี้อื่น ๆ บันทึกผ่าน /api/data/invoices
@@ -26,7 +29,7 @@ async function owned(req: NextRequest, id: string) {
   if (!can(me, "billing") && !can(me, "contracts")) return { res: forbidden() };
   const [inv] = (await sql`SELECT id, doc_no, branch_name, slip, to_char(slip_at AT TIME ZONE 'Asia/Bangkok', 'DD-MM-') || (extract(year FROM slip_at AT TIME ZONE 'Asia/Bangkok')::int + 543) AS at FROM invoices WHERE id = ${id}`) as { id: string; doc_no: string | null; branch_name: string | null; slip: string | null; at: string | null }[];
   if (!inv) return { res: bad("ไม่พบเอกสาร", 404) };
-  if (me.role !== "Global Admin" && inv.branch_name !== me.branch) return { res: forbidden() };
+  if (!seesAllBranches(me.role) && inv.branch_name !== me.branch) return { res: forbidden() };
   return { me, inv };
 }
 
@@ -40,7 +43,7 @@ async function paidDays(req: NextRequest) {
   if (!me) return unauthorized();
   if (!can(me, "billing") && !can(me, "dashboard")) return forbidden();
   const q = req.nextUrl.searchParams;
-  const br = me.role === "Global Admin" ? q.get("branch") || null : me.branch;
+  const br = seesAllBranches(me.role) ? q.get("branch") || null : me.branch;
   const fromQ = q.get("from") ?? "";
   const from = /^\d{4}-\d{2}-\d{2}$/.test(fromQ) ? fromQ : new Date(Date.now() + 7 * 3600e3 - 400 * 864e5).toISOString().slice(0, 10);
   const rows = await sql(`SELECT coalesce(i.branch_name, '') AS branch, p.pay_date::text AS date, sum(p.cash + p.credit + p.transfer)::float AS amount
@@ -50,17 +53,96 @@ async function paidDays(req: NextRequest) {
   return NextResponse.json({ items: rows });
 }
 
+/**
+ * ยอดค้างชำระ ณ วันที่ date (YYYY-MM-DD): ใบที่ออกถึงวันนั้น (ไม่นับใบยกเลิก ใบรอตรวจสอบยอด ใบลดหนี้) − เงินที่รับและหักด้วยใบลดหนี้ถึงวันนั้น
+ *  ใช้กับภาพรวม/แท็บการเงินเมื่อเลือกเดือนที่ผ่านมา (ค้างชำระ ณ สิ้นเดือน) · ใบที่ยกเลิกภายหลังไม่นับ (ไม่มีวันที่ยกเลิก)
+ */
+async function owingAt(req: NextRequest) {
+  const me = await currentUser(req);
+  if (!me) return unauthorized();
+  if (!can(me, "billing") && !can(me, "dashboard")) return forbidden();
+  const q = req.nextUrl.searchParams;
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(q.get("date") ?? "") ? q.get("date")! : "";
+  if (!date) return bad("วันที่ไม่ถูกต้อง");
+  const br = seesAllBranches(me.role) ? q.get("branch") || null : me.branch;
+  const [r] = (await sql(`SELECT count(*)::int AS n, coalesce(sum(bal), 0)::float AS sum, min(doc_date)::text AS oldest FROM (
+      SELECT i.doc_date, i.net - coalesce((SELECT sum(p.amount) FROM invoice_payments p WHERE p.invoice_id = i.id AND p.pay_date <= $1::date), 0) AS bal
+      FROM invoices i WHERE i.doc_date <= $1::date AND coalesce(i.status, '') NOT IN ('ยกเลิก', 'รอตรวจสอบยอด') AND coalesce(i.category, '') <> $2
+        ${br ? "AND i.branch_name = $3" : ""}
+    ) x WHERE bal > 0.005`, br ? [date, CN_KIND, br] : [date, CN_KIND])) as { n: number; sum: number; oldest: string | null }[];
+  return NextResponse.json({ date, n: r?.n ?? 0, sum: Math.round((r?.sum ?? 0) * 100) / 100, oldest: r?.oldest ?? null });
+}
+
+/**
+ * รายงานภาษีขายของเดือน (YYYY-MM): ใบกำกับภาษีที่ออกในเดือน = งวดรับเงิน (ไม่รวมใบลดหนี้หักยอด) + ใบลดหนี้ที่ออกในเดือน
+ *  หน้าเว็บแบ่ง VAT ของแต่ละงวดตามลำดับตัดชำระ (lib/billing payTake) และจัดกลุ่มตามบริษัทของสาขา
+ *  n = งวดที่ (นับเฉพาะงวดรับเงิน) · realN = จำนวนงวดรับเงินทั้งหมดของใบ · paidBefore = ยอดที่ตัดไปก่อนงวดนี้ (รวมใบลดหนี้หักยอด)
+ */
+async function salesTax(req: NextRequest) {
+  const me = await currentUser(req);
+  if (!me) return unauthorized();
+  if (!canSalesTax(me)) return forbidden("รายงานภาษีขายดูได้เฉพาะผู้บริหาร ผู้จัดการสาขา และการเงิน");
+  const q = req.nextUrl.searchParams;
+  const month = /^\d{4}-\d{2}$/.test(q.get("month") ?? "") ? q.get("month")! : "";
+  if (!month) return bad("เดือนไม่ถูกต้อง");
+  const from = `${month}-01`, to = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).toISOString().slice(0, 10);
+  const br = seesAllBranches(me.role) ? q.get("branch") || null : me.branch;
+  const pays = await sql(`SELECT p.id, p.pay_date::text AS date, p.amount::float, i.id AS "invId", i.doc_no AS no, p.receipt_no AS "receiptNo", i.items_json AS items, i.net::float,
+      i.payer_name AS payer, i.resident_name AS who, coalesce(i.payer_tax_id, '') AS "taxId", coalesce(i.payer_branch, '') AS "payerBranch", i.branch_name AS branch, i.status,
+      (SELECT count(*) FROM invoice_payments q WHERE q.invoice_id = i.id AND coalesce(q.kind, 'pay') <> 'credit')::int AS "realN",
+      (SELECT count(*) FROM invoice_payments q WHERE q.invoice_id = i.id AND coalesce(q.kind, 'pay') <> 'credit' AND (q.created_at, q.id) <= (p.created_at, p.id))::int AS n,
+      coalesce((SELECT sum(q.amount) FROM invoice_payments q WHERE q.invoice_id = i.id AND (q.created_at, q.id) < (p.created_at, p.id)), 0)::float AS "paidBefore"
+    FROM invoice_payments p JOIN invoices i ON i.id = p.invoice_id
+    WHERE coalesce(p.kind, 'pay') <> 'credit' AND p.pay_date BETWEEN $1::date AND $2::date
+      AND coalesce(i.status, '') <> 'ยกเลิก' AND coalesce(i.category, '') <> $3 ${br ? "AND i.branch_name = $4" : ""}
+    ORDER BY p.pay_date, p.created_at, p.id`, br ? [from, to, CN_KIND, br] : [from, to, CN_KIND]);
+  const cns = await sql(`SELECT i.id, i.doc_date::text AS date, i.doc_no AS no, i.items_json AS items, i.net::float, i.payer_name AS payer, i.resident_name AS who,
+      coalesce(i.payer_tax_id, '') AS "taxId", coalesce(i.payer_branch, '') AS "payerBranch", i.branch_name AS branch, coalesce(i.ref_no, '') AS ref
+    FROM invoices i WHERE i.category = $3 AND i.doc_date BETWEEN $1::date AND $2::date AND coalesce(i.status, '') <> 'ยกเลิก' ${br ? "AND i.branch_name = $4" : ""}
+    ORDER BY i.doc_date, i.doc_no`, br ? [from, to, CN_KIND, br] : [from, to, CN_KIND]);
+  return NextResponse.json({ month, from, to, pays, cns });
+}
+
+/**
+ * รายได้ตาม BUของเดือน: invs = ใบที่ออกในเดือน (ไม่รวมยกเลิก/ร่าง · ใบลดหนี้เป็นยอดลบ) · pays = งวดรับเงินในเดือน (ไม่รวมใบลดหนี้หักยอด)
+ *  หน้าเว็บแบ่งลงรายการ → ฝ่าย → บริษัท (lib/bu) · paid = ยอดที่ตัดแล้วถึงตอนนี้ (ใช้คิดค้างรับของแต่ละรายการ)
+ */
+async function revenue(req: NextRequest) {
+  const me = await currentUser(req);
+  if (!me) return unauthorized();
+  if (!canSalesTax(me)) return forbidden("รายงานนี้ดูได้เฉพาะผู้บริหาร ผู้จัดการสาขา และการเงิน");
+  const q = req.nextUrl.searchParams;
+  const month = /^\d{4}-\d{2}$/.test(q.get("month") ?? "") ? q.get("month")! : "";
+  if (!month) return bad("เดือนไม่ถูกต้อง");
+  const from = `${month}-01`, to = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).toISOString().slice(0, 10);
+  const br = seesAllBranches(me.role) ? q.get("branch") || null : me.branch;
+  const invs = await sql(`SELECT i.id, i.doc_no AS no, i.doc_date::text AS date, i.items_json AS items, i.net::float, coalesce(i.paid_total, 0)::float AS paid,
+      i.branch_name AS branch, i.status, (coalesce(i.category, '') = $3) AS cn
+    FROM invoices i WHERE i.doc_date BETWEEN $1::date AND $2::date AND coalesce(i.status, '') NOT IN ('ยกเลิก', 'รอตรวจสอบยอด') ${br ? "AND i.branch_name = $4" : ""}`, br ? [from, to, CN_KIND, br] : [from, to, CN_KIND]);
+  const pays = await sql(`SELECT p.id, p.pay_date::text AS date, p.amount::float, i.items_json AS items, i.branch_name AS branch,
+      coalesce((SELECT sum(q.amount) FROM invoice_payments q WHERE q.invoice_id = i.id AND (q.created_at, q.id) < (p.created_at, p.id)), 0)::float AS "paidBefore"
+    FROM invoice_payments p JOIN invoices i ON i.id = p.invoice_id
+    WHERE coalesce(p.kind, 'pay') <> 'credit' AND p.pay_date BETWEEN $1::date AND $2::date AND coalesce(i.status, '') <> 'ยกเลิก' AND coalesce(i.category, '') <> $3
+      ${br ? "AND i.branch_name = $4" : ""}`, br ? [from, to, CN_KIND, br] : [from, to, CN_KIND]);
+  return NextResponse.json({ month, invs, pays });
+}
+
 export async function GET(req: NextRequest) {
   if (req.nextUrl.searchParams.get("op") === "paid_days") return paidDays(req);
+  if (req.nextUrl.searchParams.get("op") === "revenue") return revenue(req);
+  if (req.nextUrl.searchParams.get("op") === "sales_tax") return salesTax(req);
+  if (req.nextUrl.searchParams.get("op") === "owing_at") return owingAt(req);
   if (req.nextUrl.searchParams.get("op") === "payments") {
     const me = await currentUser(req);
     if (!me) return unauthorized();
     if (!can(me, "billing")) return forbidden();
-    const br = me.role === "Global Admin" ? req.nextUrl.searchParams.get("branch") || null : me.branch;
+    const br = seesAllBranches(me.role) ? req.nextUrl.searchParams.get("branch") || null : me.branch;
+    // items + paidBefore: ให้หน้าเว็บแบ่งยอดแต่ละงวดตามลำดับตัดชำระ (รายการที่มี VAT ก่อน · lib/billing payTake)
     const rows = await sql(`SELECT p.pay_date::text AS date, i.doc_no AS no, row_number() OVER (PARTITION BY p.invoice_id ORDER BY p.created_at, p.id)::int AS n,
+        coalesce(sum(p.amount) OVER (PARTITION BY p.invoice_id ORDER BY p.created_at, p.id ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), 0)::float AS "paidBefore", i.items_json AS items,
         i.branch_name AS branch, i.resident_name AS who, i.hn, i.payer_name AS payer, i.category AS kind, i.status,
         p.cash::float, p.transfer::float, p.credit::float, p.amount::float, p.wht::float, p.kind AS pkind, coalesce(p.cashier, '') AS cashier, coalesce(p.note, '') AS note, (p.slip IS NOT NULL AND p.slip <> '') AS slip,
-        coalesce(p.transfer_ref, '') AS "transferRef"
+        coalesce(p.transfer_ref, '') AS "transferRef", coalesce(p.transfer_account, '') AS "transferAccount", coalesce(p.card_account, '') AS "cardAccount", p.edc::float, coalesce(p.edc_account, '') AS "edcAccount", coalesce(p.receipt_no, '') AS "receiptNo"
       FROM invoice_payments p JOIN invoices i ON i.id = p.invoice_id ${br ? "WHERE i.branch_name = $1" : ""}
       ORDER BY p.pay_date DESC NULLS LAST, p.created_at DESC LIMIT 5000`, br ? [br] : []);
     return NextResponse.json({ items: rows });
@@ -69,7 +151,7 @@ export async function GET(req: NextRequest) {
   if (!o.inv) return o.res;
   const payments = await sql`
     SELECT id, pay_date::text AS date, cash::float, credit::float, transfer::float, amount::float, wht::float, kind, coalesce(cashier, '') AS cashier, coalesce(note, '') AS note, slip,
-           transfer_ref AS "transferRef",
+           transfer_ref AS "transferRef", transfer_account AS "transferAccount", card_account AS "cardAccount", edc::float, edc_account AS "edcAccount", receipt_no AS "receiptNo",
            to_char(slip_at AT TIME ZONE 'Asia/Bangkok', 'DD-MM-') || (extract(year FROM slip_at AT TIME ZONE 'Asia/Bangkok')::int + 543) AS "slipAt"
     FROM invoice_payments WHERE invoice_id = ${o.inv.id} ORDER BY created_at, id`;
   let before = 0;
@@ -83,6 +165,7 @@ export async function POST(req: NextRequest) {
   if (!o.inv) return o.res;
   // รับชำระ / แนบหลักฐานการโอน = งานการเงิน: ต้องมีสิทธิ์ใบแจ้งหนี้และใบเสร็จ (สิทธิ์สัญญาอย่างเดียวดูได้แต่รับเงินไม่ได้)
   if (!can(o.me, "billing")) return forbidden("บัญชีนี้ไม่มีสิทธิ์รับชำระเงิน (ต้องมีสิทธิ์ใบแจ้งหนี้และใบเสร็จ)");
+  if (readOnlyRole(o.me.role)) return forbidden("บัญชีการเงิน/บัญชี ดูและส่งออกข้อมูลได้อย่างเดียว");
   if (b.op === "pay") return pay(req, o.me, o.inv.id, b);
   if (b.op === "credit_note") return creditNote(req, o.me, o.inv.id, b);
   if (b.op === "refund_done") return refundDone(req, o.me, o.inv.id, b);
@@ -96,8 +179,10 @@ export async function POST(req: NextRequest) {
 const money = (v: unknown) => { const n = Number(v); return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : NaN; };
 
 async function pay(req: NextRequest, me: import("@/lib/roles").SessionUser, id: string, b: Record<string, unknown>) {
-  const cash = money(b.cash || 0), credit = money(b.credit || 0), transfer = money(b.transfer || 0), wht = money(b.wht || 0);
-  if ([cash, credit, transfer, wht].some(Number.isNaN)) return bad("ยอดเงินไม่ถูกต้อง");
+  // edc = รูดบัตรผ่านเครื่อง EDC (แยกจากบัตรเครดิตช่องทางอื่น) · เก็บในยอดบัตร (credit) รวมด้วย รายงานเดิมที่นับยอดบัตรไม่เปลี่ยน
+  const cash = money(b.cash || 0), card = money(b.credit || 0), edc = money(b.edc || 0), transfer = money(b.transfer || 0), wht = money(b.wht || 0);
+  if ([cash, card, edc, transfer, wht].some(Number.isNaN)) return bad("ยอดเงินไม่ถูกต้อง");
+  const credit = Math.round((card + edc) * 100) / 100;
   // ภาษีหัก ณ ที่จ่าย ตัดยอดค้างด้วย (ผู้ชำระนำส่งสรรพากรแทน) แต่ไม่ใช่เงินที่รับเข้า · ต้องมีเงินรับจริงในงวดเดียวกัน
   const amount = Math.round((cash + credit + transfer + wht) * 100) / 100;
   if (cash + credit + transfer <= 0) return bad("กรุณาระบุยอดรับชำระ");
@@ -108,6 +193,14 @@ async function pay(req: NextRequest, me: import("@/lib/roles").SessionUser, id: 
   const note = typeof b.note === "string" ? b.note.trim().slice(0, 200) || null : null;
   // เลขอ้างอิงการโอน (ไม่บังคับ) · เก็บเฉพาะเมื่อมียอดโอน
   const transferRef = transfer > 0 && typeof b.transferRef === "string" ? b.transferRef.replace(/\s+/g, " ").trim().slice(0, 40) || null : null;
+  // เงินเข้าบัญชีไหน: มียอดโอนต้องเลือกบัญชีรับโอน · มียอดบัตรต้องเลือกเครื่องรูดบัตร/ช่องทางบัตร (เงินสดไม่ต้องเลือก)
+  const acct = (v: unknown) => (typeof v === "string" ? v.replace(/\s+/g, " ").trim().slice(0, 80) : "");
+  const transferAccount = transfer > 0 ? acct(b.transferAccount) || null : null;
+  const cardAccount = card > 0 ? acct(b.cardAccount) || null : null;
+  const edcAccount = edc > 0 ? acct(b.edcAccount) || null : null;
+  if (transfer > 0 && !transferAccount) return bad("กรุณาเลือกบัญชีที่เงินโอนเข้า");
+  if (edc > 0 && !edcAccount) return bad("กรุณาเลือกเครื่อง EDC ที่รูดบัตร");
+  if (card > 0 && !cardAccount) return bad("กรุณาเลือกช่องทางบัตรเครดิต");
   const pid = crypto.randomUUID();
   // ปรับยอดสะสมและบันทึกงวดในคำสั่งเดียว: ถ้ามีอีกเครื่องรับพร้อมกันจนยอดเกิน คำสั่งนี้จะไม่ทำอะไร
   const done = (await sql`
@@ -119,8 +212,8 @@ async function pay(req: NextRequest, me: import("@/lib/roles").SessionUser, id: 
       WHERE id = ${id} AND status IN ('ค้างชำระ', 'ชำระบางส่วน') AND paid_total + ${amount} <= net + 0.005
       RETURNING id, doc_no, status, net, paid_total, resident_name, branch_name
     ), p AS (
-      INSERT INTO invoice_payments (id, invoice_id, pay_date, cash, credit, transfer, amount, wht, cashier, note, slip, slip_at, transfer_ref)
-      SELECT ${pid}, id, coalesce(${date}::date, (now() AT TIME ZONE 'Asia/Bangkok')::date), ${cash}, ${credit}, ${transfer}, ${amount}, ${wht}, ${me.name}, ${note}, ${slip}, ${slip ? new Date().toISOString() : null}, ${transferRef}
+      INSERT INTO invoice_payments (id, invoice_id, pay_date, cash, credit, transfer, amount, wht, cashier, note, slip, slip_at, transfer_ref, transfer_account, card_account, edc, edc_account)
+      SELECT ${pid}, id, coalesce(${date}::date, (now() AT TIME ZONE 'Asia/Bangkok')::date), ${cash}, ${credit}, ${transfer}, ${amount}, ${wht}, ${me.name}, ${note}, ${slip}, ${slip ? new Date().toISOString() : null}, ${transferRef}, ${transferAccount}, ${cardAccount}, ${edc}, ${edcAccount}
       FROM u RETURNING id
     )
     SELECT u.* FROM u, p`) as { doc_no: string | null; status: string; net: number; paid_total: number; resident_name: string; branch_name: string | null }[];
@@ -130,8 +223,26 @@ async function pay(req: NextRequest, me: import("@/lib/roles").SessionUser, id: 
     return bad(`ยอดรับชำระเกินยอดคงเหลือ (คงเหลือ ${(Number(cur?.net ?? 0) - Number(cur?.paid_total ?? 0)).toFixed(2)} บาท) กรุณาตรวจสอบ`, 409);
   }
   const d = done[0];
-  await audit(req, me, [{ area: "invoices", action: "update", recordId: id, summary: `${d.doc_no ?? ""} · รับชำระ ${(amount - wht).toFixed(2)} บาท${wht ? ` · หัก ณ ที่จ่าย ${wht.toFixed(2)} บาท` : ""}${d.status === "ชำระแล้ว" ? " (ครบ)" : " (บางส่วน)"}`, branch: d.branch_name }]);
-  return NextResponse.json({ ok: true, status: d.status, paid: Number(d.paid_total), net: Number(d.net) });
+  // ออกเลขไม่สำเร็จ ห้ามทำให้การรับเงินที่บันทึกแล้วดูเหมือนล้มเหลว (แคชเชียร์จะกดรับซ้ำ) · ใบเสร็จใช้เลขเดิมแทน
+  const receiptNo = await numberReceipt(pid, d.branch_name).catch((e) => { console.error("numberReceipt", e); return null; });
+  await audit(req, me, [{ area: "invoices", action: "update", recordId: id, summary: `${d.doc_no ?? ""}${receiptNo ? ` · ใบเสร็จ ${receiptNo}` : ""} · รับชำระ ${(amount - wht).toFixed(2)} บาท${wht ? ` · หัก ณ ที่จ่าย ${wht.toFixed(2)} บาท` : ""}${transferAccount ? ` · โอนเข้า ${transferAccount}` : ""}${edcAccount ? ` · EDC ${edcAccount}` : ""}${cardAccount ? ` · บัตร ${cardAccount}` : ""}${d.status === "ชำระแล้ว" ? " (ครบ)" : " (บางส่วน)"}`, branch: d.branch_name }]);
+  return NextResponse.json({ ok: true, status: d.status, paid: Number(d.paid_total), net: Number(d.net), receiptNo });
+}
+
+/** เลขที่ใบเสร็จของงวด: <KN|KO>-RC + ปีเดือนวันที่รับเงิน + ลำดับของวัน (ตัวหน้าตามบริษัทของสาขา) · ชนกับอีกเครื่อง = ลองใหม่ */
+async function numberReceipt(payId: string, branch: string | null): Promise<string | null> {
+  const [b] = (await sql`SELECT legal_entity FROM branches WHERE name = ${branch ?? ""} LIMIT 1`) as { legal_entity: string | null }[];
+  const [p] = (await sql`SELECT pay_date::text AS d FROM invoice_payments WHERE id = ${payId}`) as { d: string }[];
+  if (!p) return null;
+  const prefix = `${receiptPrefix(b?.legal_entity)}-RC${thaiDateStamp(p.d)}`;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      const [r] = (await sql(`UPDATE invoice_payments SET receipt_no = $2 || lpad((SELECT coalesce(max(right(receipt_no, 4)::int), 0) + 1 FROM invoice_payments WHERE receipt_no LIKE $2 || '%')::text, 4, '0')
+          WHERE id = $1 AND receipt_no IS NULL RETURNING receipt_no`, [payId, prefix])) as { receipt_no: string }[];
+      return r?.receipt_no ?? null;
+    } catch (e) { if (attempt === 4) throw e; }
+  }
+  return null;
 }
 
 /* ---------- ใบลดหนี้ ---------- */

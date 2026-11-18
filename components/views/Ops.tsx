@@ -22,6 +22,7 @@ import { IncidentBoard, IncidentStats } from "../care/Incidents";
 import VitalsDialog from "../care/VitalsDialog";
 import { fetchNurses, useResidents } from "@/lib/care";
 import { useSession } from "@/lib/session";
+import { seesAllBranches, readOnlyRole } from "@/lib/roles";
 import { staying } from "@/lib/rooms";
 import { apptIso, apptKey, apptTh, nowTh } from "@/lib/appointments";
 import { evaluateVitals, implausible, Level, LEVEL_TH, levelOf, parseVitals, Vitals } from "@/lib/vitals";
@@ -75,7 +76,7 @@ export function Dashboard() {
     { name: "การเงิน", subs: [...(fin ? ["การเงิน"] : []), ...(sales ? ["ยอดขายตามหมวด"] : [])] },
     { name: "การดูแล", subs: ["สุขภาพผู้รับบริการ", "คุณภาพการดูแล", "กายภาพ"] },
     { name: "ห้องและทีม", subs: ["การเข้าพัก", "รับเข้า-จำหน่าย", "ทีมงาน"] },
-  ].filter((g) => g.subs.length);
+  ].filter((g) => g.subs.length && (!readOnlyRole(user?.role) || g.name === "ภาพรวม" || g.name === "การเงิน"));
   const [view, setView] = useState("ตัวชี้วัดหลัก");
   const [attnOpen, setAttnOpen] = useState(false);
   const [period, setPeriod] = useState<Period>("month");
@@ -86,11 +87,11 @@ export function Dashboard() {
   // การเงินเทียบเดือนต่อเดือนเสมอ (เลือก "วันนี้" ก็เทียบเดือนนี้กับเดือนก่อน)
   const finMonth = R.to.slice(0, 7), finPrev = new Date(Date.UTC(Number(finMonth.slice(0, 4)), Number(finMonth.slice(5, 7)) - 2, 1)).toISOString().slice(0, 7);
   const [shiftBranch, setShiftBranch] = useState("");
-  const global = user?.role === "Global Admin";
+  const global = seesAllBranches(user?.role);
   const scopeBranch = global ? shiftBranch : user?.branch ?? "";
   const { targets: T, store, reload } = useTargets(scopeBranch);
   const [tgOpen, setTgOpen] = useState(false);
-  const canTarget = global || user?.role === "Branch Admin";
+  const canTarget = user?.role === "Global Admin" || user?.role === "Branch Admin";
   const [d, setD] = useState<Dash | null>(null);
   const [ins, setIns] = useState<Insights | null>(null);
   const [finSum, setFinSum] = useState<FinSummary | null>(null);
@@ -144,20 +145,26 @@ export function Dashboard() {
     );
     const meds = pctOf(h.cur.meds.given, h.cur.meds.total), medsP = pctOf(h.prev.meds.given, h.prev.meds.total);
     const dm = (s: string) => `${Number(s.slice(8, 10))}/${Number(s.slice(5, 7))}`;
+    // รายเดือน 6 เดือน (เก่า → ใหม่) สำหรับกราฟแท่งเทียบเดือนและแนวโน้มการเติบโต
+    const cMon = ins.care.monthly ?? [], mMon = ins.health.medsMonthly ?? [];
     pct.push(
-      { key: "occ", label: "อัตราเข้าพัก", cur: occ, prev: occP, goal: T.occupancy, trendName: "รายเดือน", note: `${people} จาก ${cap} เตียง · เป้า ${T.occupancy}%`, base: `${people} จาก ${cap} เตียง`, prevLabel: mi > 0 ? `สิ้น ${monTh(o.monthly[mi - 1].month)}` : undefined,
+      { key: "occ", label: "อัตราเข้าพัก", cur: occ, prev: occP, goal: T.occupancy, note: `${people} จาก ${cap} เตียง · เป้า ${T.occupancy}%`, base: `${people} จาก ${cap} เตียง`, prevLabel: mi > 0 ? `สิ้น ${monTh(o.monthly[mi - 1].month)}` : undefined,
         drill: [`เตียงว่าง ${Math.max(0, cap - people)} เตียง`, needOcc > 0 ? `ต้องมีผู้รับบริการเพิ่มอีก ${needOcc} คนจึงถึงเป้า ${T.occupancy}%` : "ถึงเป้าแล้ว", ...(noRoom ? [`รอจัดห้อง ${noRoom} คน (ยังไม่นับเป็นเตียงที่มีคน)`] : [])],
-        trend: o.monthly.slice(Math.max(0, mi - 5), mi + 1).map((m) => ({ label: monTh(m.month), v: cap ? Math.round((m.people / cap) * 100) : null })), openLabel: "ดูการเข้าพัก", onOpen: () => setView("การเข้าพัก") },
+        monthly: o.monthly.slice(Math.max(0, mi - 5), mi + 1).map((m) => ({ label: monTh(m.month), v: cap ? Math.round((m.people / cap) * 100) : null })), openLabel: "ดูการเข้าพัก", onOpen: () => setView("การเข้าพัก") },
       ...(finSum ? [{ key: "collect", label: "อัตราเก็บเงินได้", cur: finSum.collect, prev: finSum.collectPrev, goal: T.collect, note: `รับชำระ ÷ ยอดออกใบ · เทียบ ${finSum.prevLabel} · เป้า ${T.collect}%`,
         base: `รับ ${baht(finSum.paid)} จาก ${baht(finSum.billed)} บาท`,
-        drill: [`ยอดออกใบ ${monTh(finSum.month)} ${baht(finSum.billed)} บาท · รับแล้ว ${baht(finSum.paid)} บาท`, `ค้างชำระทั้งหมดตอนนี้ ${baht(finSum.owe)} บาท (${finSum.openN} ใบ)`], openLabel: "ดูการเงิน", onOpen: () => setView("การเงิน") }] : []),
+        drill: [`ยอดออกใบ ${monTh(finSum.month)} ${baht(finSum.billed)} บาท · รับแล้ว ${baht(finSum.paid)} บาท`, `ค้างชำระทั้งหมดตอนนี้ ${baht(finSum.owe)} บาท (${finSum.openN} ใบ)`],
+        monthly: (finSum.collectMonthly ?? []).map((x) => ({ label: monTh(x.month), v: x.v })), openLabel: "ดูการเงิน", onOpen: () => setView("การเงิน") }] : []),
       { key: "tasks", label: "งานสำเร็จ", cur: tasks, prev: tasksP, goal: T.tasks, trendName: "รายสัปดาห์", note: `${c.cur.done} จาก ${c.cur.total} งาน · เป้า ${T.tasks}%`, base: `${c.cur.done} จาก ${c.cur.total} งาน`,
         drill: [`ยังไม่ส่ง ${Math.max(0, c.cur.total - c.cur.done)} งาน`, `หัวหน้าตรวจแล้ว ${c.cur.checked} จาก ${c.cur.done} งานที่ส่ง`, ...(c.cur.low ? [`ได้ต่ำกว่า 3 ดาว ${c.cur.low} งาน`] : [])],
+        monthly: cMon.map((x) => ({ label: monTh(x.month), v: pctOf(x.done, x.total) })),
         trend: c.weekly.map((w) => ({ label: dm(w.from), v: pctOf(w.done, w.total) })), openLabel: "ดูคุณภาพการดูแล", onOpen: () => setView("คุณภาพการดูแล") },
       { key: "ontime", label: "ส่งงานตรงเวลา", cur: ontime, prev: ontimeP, goal: T.ontime, base: `${c.cur.ontime} จาก ${c.cur.done} งานที่ส่ง`,
-        drill: [`ส่งช้าเกิน 30 นาที ${Math.max(0, c.cur.done - c.cur.ontime)} งาน`, `ช่วง${vs.trim()}: ตรงเวลา ${c.prev.ontime} จาก ${c.prev.done} งาน`], openLabel: "ดูคุณภาพการดูแล", onOpen: () => setView("คุณภาพการดูแล") },
+        drill: [`ส่งช้าเกิน 30 นาที ${Math.max(0, c.cur.done - c.cur.ontime)} งาน`, `ช่วง${vs.trim()}: ตรงเวลา ${c.prev.ontime} จาก ${c.prev.done} งาน`],
+        monthly: cMon.map((x) => ({ label: monTh(x.month), v: pctOf(x.ontime, x.done) })), openLabel: "ดูคุณภาพการดูแล", onOpen: () => setView("คุณภาพการดูแล") },
       { key: "meds", label: "ให้ยาครบตามมื้อ", cur: meds, prev: medsP, goal: T.meds, base: `${h.cur.meds.given} จาก ${h.cur.meds.total} มื้อ`,
-        drill: [`ยังไม่ได้ให้ ${Math.max(0, h.cur.meds.total - h.cur.meds.given)} มื้อ (นับถึงเมื่อวาน)`], openLabel: "ดูสุขภาพผู้รับบริการ", onOpen: () => setView("สุขภาพผู้รับบริการ") },
+        drill: [`ยังไม่ได้ให้ ${Math.max(0, h.cur.meds.total - h.cur.meds.given)} มื้อ (นับถึงเมื่อวาน)`],
+        monthly: mMon.map((x) => ({ label: monTh(x.month), v: pctOf(x.given, x.total) })), openLabel: "ดูสุขภาพผู้รับบริการ", onOpen: () => setView("สุขภาพผู้รับบริการ") },
     );
     counts.push(
       { key: "vit", label: "ค่าผิดปกติ / เฝ้าระวัง", unit: "ครั้ง", cur: h.cur.abnormal, prev: h.prev.abnormal, higherBetter: false, onOpen: () => setView("สุขภาพผู้รับบริการ") },
@@ -176,8 +183,10 @@ export function Dashboard() {
       tiles.push({ key: "paid", label: `รับชำระ ${monTh(finSum.month)}`, value: baht(finSum.paid), unit: "บาท", sub: `ออกใบแล้ว ${baht(finSum.billed)} บาท`,
         delta: ch === null ? undefined : ch === 0 ? { text: `เท่ากับ ${finSum.prevLabel}`, tone: "flat" } : { text: `${ch > 0 ? "▲" : "▼"} ${Math.abs(ch)}% จาก ${finSum.prevLabel}`, tone: ch > 0 ? "ok" : "bad" }, onClick: () => setView("การเงิน") });
     }
-    const bills = ins.attention.bills;
-    if (bills) tiles.push({ key: "owe", label: "ค้างชำระ", value: baht(bills.sum), unit: "บาท", sub: bills.n ? `${bills.n} ใบ · เก่าสุด ${docDate(bills.oldest ?? "")}` : "ไม่มีใบค้างชำระ", onClick: () => go("billing") });
+    const bills = ins.attention.bills, at = finSum?.oweAt;
+    // เลือกเดือนที่ผ่านมา: ค้างชำระ ณ สิ้นเดือนนั้น · เดือนปัจจุบัน: ยอด ณ วันนี้
+    if (bills && at) tiles.push({ key: "owe", label: `ค้างชำระ ณ สิ้น ${monTh(finSum!.month)}`, value: baht(at.sum), unit: "บาท", sub: `${at.n ? `${at.n} ใบ · เก่าสุด ${docDate(at.oldest ?? "")}` : "ไม่มีใบค้าง"} · ตอนนี้ค้าง ${baht(bills.sum)}`, onClick: () => go("billing") });
+    else if (bills) tiles.push({ key: "owe", label: "ค้างชำระ", value: baht(bills.sum), unit: "บาท", sub: bills.n ? `${bills.n} ใบ · เก่าสุด ${docDate(bills.oldest ?? "")}` : "ไม่มีใบค้างชำระ", onClick: () => go("billing") });
     tiles.push({ key: "res", label: "ผู้รับบริการ", value: String(tm.residents), unit: "คน", sub: `มีเตียงแล้ว ${o.inBed} · รอจัดห้อง ${noRoom}`,
       delta: { text: `ช่วงนี้รับเข้า ${ins.flow.cur.admits} · จำหน่าย ${ins.flow.cur.discharges}`, tone: "flat" }, onClick: () => setView("รับเข้า-จำหน่าย") });
     if (!fin) tiles.push({ key: "tasks", label: "งานสำเร็จ", value: tasks === null ? "-" : `${tasks}`, unit: tasks === null ? undefined : "%", sub: `${c.cur.done} จาก ${c.cur.total} งาน`,
@@ -216,7 +225,7 @@ export function Dashboard() {
           {branchNames.length > 1 && <div className="min-w-44"><Select options={branchNames} placeholder="รวมทุกสาขา" value={shiftBranch} onChange={setShiftBranch} /></div>}
           <button className="btn-soft" disabled={!ins} onClick={() => setReport(true)}><Icon name="print" className="h-4 w-4" /> รายงานผู้บริหาร</button>
           {canTarget && <button className="btn-soft" onClick={() => setTgOpen(true)}><Icon name="trophy" className="h-4 w-4" /> ตั้งเป้าหมาย</button>}
-          <button className="btn-soft" onClick={() => setMsg(true)}><Icon name="heart" className="h-4 w-4" /> ส่งกำลังใจให้สาขา</button>
+          {!readOnlyRole(user?.role) && <button className="btn-soft" onClick={() => setMsg(true)}><Icon name="heart" className="h-4 w-4" /> ส่งกำลังใจให้สาขา</button>}
         </>} />
       {err && <p role="alert" className="mb-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{err}</p>}
       <div className="mb-4 flex flex-wrap items-center gap-3">

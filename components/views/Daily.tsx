@@ -12,6 +12,7 @@ import { fetchNurses, useResidents } from "@/lib/care";
 import { fetchMonth, Month } from "@/lib/roster";
 import { staying } from "@/lib/rooms";
 import { DataTable, Field, FieldDef, FormDialog, MenuButton, Modal, PageHeader, RowAction, RowMenu, Section, StatusBadge, Tabs, TimeInput } from "../ui";
+import { OptionSettings, useOptions } from "../OptionSettings";
 
 /**
  * งานประจำวัน: ผู้จัดการมอบหมายงาน → ขึ้นใน "งานวันนี้" ของ KinApp → พนักงานส่งงาน → ผู้จัดการตรวจ
@@ -50,7 +51,7 @@ const shiftOf = (time: string) => { const h = Number(time.slice(0, 2)); return h
 
 /** หน้าต่างตรวจงาน: ระดับดาว และข้อความสำเร็จรูป (กดแล้วต่อท้ายความคิดเห็น) */
 const STAR_TEXT = ["", "ไม่ผ่าน ต้องทำใหม่", "ต้องปรับปรุง", "พอใช้", "ดี", "ดีมาก"];
-const QUICK_NOTES = ["ทำครบตามคำสั่ง", "ส่งตรงเวลา", "รูปหลักฐานชัดเจน", "รูปไม่ชัด ครั้งหน้าถ่ายใหม่", "ส่งช้ากว่ากำหนด", "บันทึกไม่ครบ"];
+/* ข้อความสั้นตอนตรวจงาน: แก้ได้ที่ ตั้งค่าตัวเลือก (lib/optionLists review_notes) */
 const filled = (x?: string) => (x && x.trim() && x.trim() !== "-" ? x.trim() : "");
 /** ส่งจริงเทียบเวลาที่กำหนด (นาที) · ข้ามเที่ยงคืนได้ · อ่านเวลาไม่ได้ = null */
 const lateBy = (sched: string, sent: string) => {
@@ -62,6 +63,7 @@ const lateBy = (sched: string, sent: string) => {
 };
 
 export function DailyTasks() {
+  const QUICK_NOTES = useOptions("review_notes").values;
   const [date, setDate] = useState(todayIso);
   const [shift, setShift] = useState("ทั้งหมด");
   const [kind, setKind] = useState("ทั้งหมด"); // งานประจำ (ระบบสร้างทุกวัน) / งานรายครั้ง
@@ -462,7 +464,7 @@ export function DailyTasks() {
                 ))}
                 <span className="review-star-text"><b>{star} ดาว</b> · {STAR_TEXT[Number(star)]}</span>
               </div>
-              <p className="text-xs text-gold-500">ดาวนับเข้า KPI ของ {doer}</p>
+              <p className="flex flex-wrap items-center justify-between gap-2 text-xs text-gold-500"><span>ดาวนับเข้า KPI ของ {doer}</span><OptionSettings group="tasks" lists={["review_notes"]} small label="ตั้งค่าข้อความ" /></p>
               <div className="flex flex-wrap gap-1.5">
                 {QUICK_NOTES.map((q) => {
                   const on = note.includes(q);

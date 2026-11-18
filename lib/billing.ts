@@ -58,7 +58,13 @@ export const balanceOf = (x: { net: number; paid?: number; kind?: string }) => (
 /** amount = ยอดที่ตัดจากยอดค้าง (เงินที่รับ + ภาษีหัก ณ ที่จ่าย) · wht = ภาษีหัก ณ ที่จ่าย · kind: pay = รับเงิน · credit = ใบลดหนี้หักยอด */
 export type Payment = { id: string; n: number; date: string; cash: number; credit: number; transfer: number; amount: number; wht?: number; kind?: string; cashier: string; note: string; slip: string | null; slipAt: string | null; paidBefore: number;
   /** เลขอ้างอิงการโอน */
-  transferRef?: string | null };
+  transferRef?: string | null;
+  /** เงินโอนเข้าบัญชีไหน / รูดบัตรเครื่องไหน (ชื่อ ณ ตอนรับเงิน) */
+  transferAccount?: string | null; cardAccount?: string | null;
+  /** ส่วนของยอดบัตร (credit) ที่รูดผ่านเครื่อง EDC และเครื่องที่ใช้ */
+  edc?: number; edcAccount?: string | null;
+  /** เลขที่ใบเสร็จ / ใบกำกับภาษีของงวด (KN-RC… / KO-RC…) · ว่าง = งวดก่อนเริ่มใช้ ใช้เลขเดิม (lib/receiptNo) */
+  receiptNo?: string | null };
 /** เลขผู้เสียภาษี 13 หลักถูกต้องตามเลขตรวจสอบ */
 export const validTaxId = (v: string) => { const d = v.replace(/\D/g, ""); if (d.length !== 13) return false; let s = 0; for (let i = 0; i < 12; i++) s += Number(d[i]) * (13 - i); return (11 - (s % 11)) % 10 === Number(d[12]); };
 
@@ -104,6 +110,44 @@ export function vatOf(all: BillItem[]) {
     return { rate, base, vat: r2((base * rate) / 100) };
   });
   return { rates, base: r2(rates.reduce((n, x) => n + x.base, 0)), vat: r2(rates.reduce((n, x) => n + x.vat, 0)), exempt: r2(items.filter((i) => !i.vat).reduce((n, i) => n + lineNet(i), 0)) };
+}
+
+/* ---------- ตัดชำระตามลำดับ (รับหลายงวด) ----------
+ * เงินที่รับแต่ละงวดไปชำระรายการที่มี VAT ก่อน (ค่ารายการ + VAT ครบทีละรายการตามลำดับในใบ) แล้วค่อยรายการที่ไม่มี VAT
+ * เงินที่หักไว้ในใบ (หักเงินที่รับไว้แล้ว เช่น มัดจำตอนจอง) นับเป็นเงินที่รับก่อนงวดแรก
+ * ใช้กับ: ใบเสร็จรายงวด (VAT ของงวด + รายการที่ชำระ) · CSV ค้างชำระ/ชำระครบ (ชำระแล้ว/ค้างของแต่ละรายการ) · CSV การรับเงิน
+ */
+export type PayOrderLine = { k: number; item: BillItem; base: number; vat: number; incl: number };
+/** รายการตามลำดับตัดชำระ · VAT ต่อรายการแบ่งจาก VAT ของอัตรานั้นตามสัดส่วน (เศษไปรายการสุดท้าย) ให้รวมตรงกับ vatOf */
+export function payOrder(all: BillItem[]): PayOrderLine[] {
+  const out: PayOrderLine[] = all.map((item, k) => ({ k, item, base: r2(lineNet(item)), vat: 0, incl: 0 })).filter((x) => !x.item.credit);
+  for (const t of vatOf(all).rates) {
+    const ls = out.filter((x) => x.item.vat === t.rate);
+    let left = t.vat;
+    ls.forEach((x, i) => { const v = i === ls.length - 1 ? r2(left) : r2(t.base ? (t.vat * x.base) / t.base : 0); x.vat = v; left = r2(left - v); });
+  }
+  out.forEach((x) => { x.incl = r2(x.base + x.vat); });
+  return [...out.filter((x) => x.item.vat), ...out.filter((x) => !x.item.vat)];
+}
+export type PayTakeLine = PayOrderLine & { take: number; takeVat: number; done: boolean };
+/** แบ่งยอด amount ที่รับ หลังจากรับไปแล้ว before (รวมเงินที่หักไว้ในใบ) ลงรายการตามลำดับตัดชำระ
+ *  done = รายการนั้นชำระครบแล้ว ณ งวดนี้ · base/vat/exempt = แจกแจงภาษีของยอดนี้ */
+export function payTake(all: BillItem[], before: number, amount: number) {
+  const end = before + amount, lines: PayTakeLine[] = [];
+  let pos = 0;
+  for (const x of payOrder(all)) {
+    const s = pos; pos = r2(pos + x.incl);
+    const c0 = Math.min(x.incl, Math.max(0, before - s)), c1 = Math.min(x.incl, Math.max(0, end - s));
+    const take = r2(c1 - c0);
+    if (take <= 0.004) continue;
+    // VAT ที่ชำระถึงจุด c (สะสม) · ครบรายการ = VAT ทั้งหมดของรายการ (เศษสตางค์ไม่ค้าง)
+    const vatAt = (c: number) => (c >= x.incl - 0.005 ? x.vat : r2((c * x.vat) / (x.incl || 1)));
+    lines.push({ ...x, take, takeVat: x.vat ? r2(vatAt(c1) - vatAt(c0)) : 0, done: c1 >= x.incl - 0.005 });
+  }
+  const vat = r2(lines.reduce((n, l) => n + l.takeVat, 0));
+  const base = r2(lines.filter((l) => l.item.vat).reduce((n, l) => n + l.take - l.takeVat, 0));
+  const exempt = r2(lines.filter((l) => !l.item.vat).reduce((n, l) => n + l.take, 0));
+  return { lines, base, vat, exempt };
 }
 
 /* ---------- ค่าบริการต่อเดือนตามสัญญา (ใช้ร่วมกัน: หน้าใบแจ้งหนี้ ทะเบียนสัญญา เอกสารพิมพ์สัญญา) ---------- */

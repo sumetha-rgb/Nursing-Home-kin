@@ -3,18 +3,20 @@ import { useLayoutEffect, useRef, useState } from "react";
 
 /**
  * แท็บ "ตัวชี้วัดหลัก" แบบกราฟ (แทนการ์ดตัวเลข)
- *  1) ตัวชี้วัดที่เป็น % ในกราฟเดียว: แท่งเข้ม = ช่วงนี้ · แท่งอ่อน = ช่วงก่อน · เส้นแดง = เป้า · กดแถวดูแนวโน้ม
- *  2) แนวโน้มของตัวที่เลือก พร้อมเส้นเป้า (มีข้อมูลรายเดือน/รายสัปดาห์เฉพาะบางตัว)
- *  3) ตัวชี้วัดที่เป็นจำนวน: แท่งคู่ช่วงก่อน/ช่วงนี้ (แต่ละตัวสเกลของตัวเอง) · กดไปแท็บรายละเอียด
- * สีทองเฉดเดียว 2 ระดับ (#c9a96a / #7a5f33 ผ่านการตรวจสีแล้ว) · ข้อความใช้สีตัวหนังสือ ไม่ใช้สีของแท่ง
+ *  1) ตัวชี้วัดที่เป็น % กราฟแท่งแนวตั้งเทียบเดือนก่อนๆ (2 / 3 / 6 เดือน) · แท่งเข้มสุด = เดือนนี้ · เส้นแดง = เป้า
+ *     กดกลุ่มแท่ง (หรือชื่อตัวชี้วัด) = เจาะดูแนวโน้มการเติบโตของตัวนั้นในการ์ดถัดไป
+ *  2) แนวโน้มการเติบโต: เส้นรายเดือน 6 เดือน + เพิ่ม/ลดจากเดือนก่อนทุกเดือน (+ รายสัปดาห์ถ้ามี) · สรุปและลิงก์ไปหน้ารายละเอียด
+ *  3) ตัวชี้วัดที่เป็นจำนวน: เดิม → ตอนนี้ · กดไปแท็บรายละเอียด
+ * สีทองเฉดเดียวไล่อ่อน → เข้มตามเดือน (เก่า → ใหม่) · ข้อความใช้สีตัวหนังสือ ไม่ใช้สีของแท่ง
  */
-/** base = ฐานของ % เช่น "18 จาก 24 เตียง" · drill = สรุปเมื่อกดแถว (กางใต้แถว) · openLabel = ชื่อลิงก์ไปหน้ารายละเอียด */
-export type PctKpi = { key: string; label: string; cur: number | null; prev: number | null; goal: number; note?: string; base?: string; prevLabel?: string; drill?: string[]; openLabel?: string; trend?: { label: string; v: number | null }[]; trendName?: string; onOpen?: () => void };
+type Pt = { label: string; v: number | null };
+/** base = ฐานของ % เช่น "18 จาก 24 เตียง" · drill = สรุปในการ์ดแนวโน้ม · monthly = รายเดือนเก่า → ใหม่ (ตัวสุดท้าย = ช่วงที่เลือก) · trend = รายสัปดาห์ (ถ้ามี) */
+export type PctKpi = { key: string; label: string; cur: number | null; prev: number | null; goal: number; note?: string; base?: string; prevLabel?: string; drill?: string[]; openLabel?: string; monthly?: Pt[]; trend?: Pt[]; trendName?: string; onOpen?: () => void };
 export type CountKpi = { key: string; label: string; unit: string; cur: number; prev: number; higherBetter: boolean; text?: string; prevText?: string; onOpen?: () => void };
 
 function useWidth(min = 200) {
   const ref = useRef<HTMLDivElement>(null);
-  const [w, setW] = useState(480);
+  const [w, setW] = useState(640);
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -26,80 +28,154 @@ function useWidth(min = 200) {
   return [ref, w] as const;
 }
 
-function Trend({ k }: { k: PctKpi }) {
+/** ไล่สีทองอ่อน → เข้ม (เดือนเก่า → เดือนนี้) */
+const RAMP = ["#ead9b4", "#dcc28d", "#c9a96a", "#ad8a4c", "#93723c", "#6f552c"];
+const rampOf = (m: number) => (m <= 1 ? [RAMP[5]] : m === 2 ? [RAMP[2], RAMP[5]] : m === 3 ? [RAMP[1], RAMP[3], RAMP[5]] : RAMP.slice(6 - m));
+const COMPARE = [2, 3, 6] as const;
+
+/** กราฟแท่งแนวตั้ง: กลุ่มละ 1 ตัวชี้วัด · แท่งละ 1 เดือน */
+function Columns({ list, m, sel, onPick }: { list: PctKpi[]; m: number; sel: string; onPick: (k: string) => void }) {
+  const [ref, w] = useWidth(300);
+  const [tip, setTip] = useState<{ x: number; y: number; t: string } | null>(null);
+  const H = 250, L = 36, R = 8, T = 22, B = 8, n = list.length;
+  const band = (w - L - R) / Math.max(1, n), pad = Math.min(26, band * 0.16), inner = band - pad * 2;
+  const bw = Math.max(6, (inner - (m - 1) * 3) / m);
+  const y = (v: number) => T + (1 - Math.min(100, Math.max(0, v)) / 100) * (H - T - B);
+  const col = rampOf(m);
+  return (
+    <div ref={ref} className="kc-cols" onMouseLeave={() => setTip(null)}>
+      <svg width={w} height={H} role="img" aria-label={`ตัวชี้วัดเทียบ ${m} เดือน: ${list.map((k) => `${k.label} ${(k.monthly ?? []).slice(-m).map((p) => `${p.label} ${p.v ?? "-"}%`).join(", ")} · เป้า ${k.goal}%`).join(" · ")}`}>
+        {[0, 25, 50, 75, 100].map((g) => <g key={g}><line x1={L} x2={w - R} y1={y(g)} y2={y(g)} className={g ? "kc-grid" : "kc-base"} /><text x={L - 6} y={y(g) + 4} textAnchor="end" className="kc-tick">{g}%</text></g>)}
+        {list.map((k, i) => {
+          const x0 = L + i * band, pts = (k.monthly ?? []).slice(-m);
+          const on = k.key === sel;
+          return (
+            <g key={k.key} className="kc-grp" onClick={() => onPick(k.key)} role="button" tabIndex={0} aria-label={`ดูแนวโน้ม ${k.label}`} aria-pressed={on}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onPick(k.key); } }}>
+              <rect x={x0 + 2} y={T - 18} width={band - 4} height={H - T + 18 - B} rx={10} className={on ? "kc-band is-on" : "kc-band"} />
+              {pts.map((p, j) => {
+                if (p.v === null) return null;
+                const bx = x0 + pad + (m - pts.length + j) * (bw + 3), top = y(p.v), h = Math.max(1.5, y(0) - top), last = j === pts.length - 1;
+                return <g key={p.label}>
+                  <path d={`M${bx},${y(0)}V${top + Math.min(4, h)}Q${bx},${top} ${bx + Math.min(4, bw / 2)},${top}H${bx + bw - Math.min(4, bw / 2)}Q${bx + bw},${top} ${bx + bw},${top + Math.min(4, h)}V${y(0)}Z`} fill={col[m - pts.length + j]}
+                    onMouseMove={(e) => { const r = (e.currentTarget.ownerSVGElement as SVGSVGElement).getBoundingClientRect(); setTip({ x: e.clientX - r.left, y: e.clientY - r.top, t: `${k.label} · ${p.label} ${p.v}%` }); }} />
+                  {last && <text x={bx + bw / 2} y={top - 6} textAnchor="middle" className="kc-val">{p.v}%</text>}
+                </g>;
+              })}
+              <line x1={x0 + pad - 4} x2={x0 + band - pad + 4} y1={y(k.goal)} y2={y(k.goal)} className="kc-goal-bar" />
+            </g>
+          );
+        })}
+      </svg>
+      {tip && <div className="kc-tip" style={{ left: Math.min(tip.x + 12, w - 170), top: Math.max(0, tip.y - 34) }}>{tip.t}</div>}
+      <div className="kc-xlabels" style={{ paddingLeft: L, paddingRight: R, gridTemplateColumns: `repeat(${n}, minmax(0,1fr))` }}>
+        {list.map((k) => {
+          const gap = k.cur === null ? null : k.cur - k.goal;
+          return <button key={k.key} type="button" className={`kc-xl ${k.key === sel ? "is-on" : ""}`} onClick={() => onPick(k.key)} aria-pressed={k.key === sel}>
+            <b>{k.label}</b>
+            <span><em>{k.cur === null ? "-" : `${k.cur}%`}</em> <small className={gap === null ? "" : gap >= 0 ? "is-ok" : "is-bad"}>{gap === null ? "ไม่มีข้อมูล" : gap >= 0 ? "ถึงเป้า" : `ขาด ${Math.abs(gap)}%`}</small></span>
+            {k.base && <small className="kc-xl-b">{k.base}</small>}
+          </button>;
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** เส้นแนวโน้ม + พื้นที่ใต้เส้น + เส้นเป้า · ใต้แกนบอกเพิ่ม/ลดจากจุดก่อนหน้า */
+function Growth({ pts, goal, name }: { pts: Pt[]; goal: number; name: string }) {
   const [ref, w] = useWidth();
   const [hover, setHover] = useState<number | null>(null);
-  const pts = k.trend ?? [];
-  const H = 200, L = 40, R = 58, T = 12, B = 26, n = pts.length;
+  const H = 230, L = 40, R = 64, T = 20, B = 50, n = pts.length;
   const x = (i: number) => L + (n > 1 ? (i * (w - L - R)) / (n - 1) : (w - L - R) / 2);
   const y = (v: number) => T + (1 - Math.min(100, Math.max(0, v)) / 100) * (H - T - B);
-  const seg = pts.map((p, i) => (p.v === null ? null : `${x(i).toFixed(1)},${y(p.v).toFixed(1)}`));
-  const path = seg.reduce<string>((d, s, i) => (s ? `${d}${d && seg[i - 1] ? "L" : "M"}${s}` : d), "");
-  const lastI = pts.map((p) => p.v).lastIndexOf(pts.filter((p) => p.v !== null).slice(-1)[0]?.v ?? -1);
-  const h = hover ?? lastI;
+  const seg = pts.map((p, i) => (p.v === null ? null : [x(i), y(p.v)] as const));
+  const path = seg.reduce<string>((d, s, i) => (s ? `${d}${d && seg[i - 1] ? "L" : "M"}${s[0].toFixed(1)},${s[1].toFixed(1)}` : d), "");
+  const valid = seg.map((s, i) => (s ? i : -1)).filter((i) => i >= 0);
+  const area = valid.length > 1 ? `${path}L${x(valid[valid.length - 1]).toFixed(1)},${y(0)}L${x(valid[0]).toFixed(1)},${y(0)}Z` : "";
+  const prevOf = (i: number) => { for (let j = i - 1; j >= 0; j--) if (pts[j].v !== null) return pts[j].v; return null; };
   return (
-    <div ref={ref} className="kc-trend">
-      <svg width={w} height={H} role="img" aria-label={`แนวโน้ม${k.label}: ${pts.map((p) => `${p.label} ${p.v ?? "-"}%`).join(", ")} · เป้า ${k.goal}%`}
+    <div ref={ref} className="kc-trend kc-growth">
+      <svg width={w} height={H} role="img" aria-label={`แนวโน้ม${name}: ${pts.map((p) => `${p.label} ${p.v ?? "-"}%`).join(", ")} · เป้า ${goal}%`}
         onMouseMove={(e) => { const px = e.clientX - e.currentTarget.getBoundingClientRect().left; setHover(Math.max(0, Math.min(n - 1, Math.round(((px - L) / Math.max(1, w - L - R)) * (n - 1))))); }} onMouseLeave={() => setHover(null)}>
+        <defs><linearGradient id="kc-area" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#c9a96a" stopOpacity="0.35" /><stop offset="100%" stopColor="#c9a96a" stopOpacity="0.02" /></linearGradient></defs>
         {[0, 50, 100].map((g) => <g key={g}><line x1={L} x2={w - R} y1={y(g)} y2={y(g)} className={g ? "kc-grid" : "kc-base"} /><text x={L - 6} y={y(g) + 4} textAnchor="end" className="kc-tick">{g}%</text></g>)}
-        {pts.map((p, i) => (n <= 8 || i % 2 === (n - 1) % 2 ? <text key={i} x={x(i)} y={H - 7} textAnchor="middle" className={`kc-tick ${i === hover ? "is-on" : ""}`}>{p.label}</text> : null))}
-        <line x1={L} x2={w - R} y1={y(k.goal)} y2={y(k.goal)} className="kc-goal" />
-        <text x={w - R + 6} y={y(k.goal) + 4} className="kc-goal-t">เป้า {k.goal}%</text>
-        <path d={path} fill="none" stroke="#8b6e3e" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+        <line x1={L} x2={w - R} y1={y(goal)} y2={y(goal)} className="kc-goal" />
+        <text x={w - R + 6} y={y(goal) + 4} className="kc-goal-t">เป้า {goal}%</text>
+        {area && <path d={area} fill="url(#kc-area)" />}
+        <path d={path} fill="none" stroke="#8b6e3e" strokeWidth={2.2} strokeLinejoin="round" strokeLinecap="round" />
         {hover !== null && <line x1={x(hover)} x2={x(hover)} y1={T} y2={y(0)} className="kc-cross" />}
-        {h >= 0 && pts[h]?.v !== null && pts[h] && <>
-          <circle cx={x(h)} cy={y(pts[h].v!)} r={4.5} fill="#8b6e3e" stroke="#fff" strokeWidth={2} />
-          <text x={x(h)} y={y(pts[h].v!) - 10} textAnchor="middle" className="kc-val">{pts[h].v}%</text>
-        </>}
+        {pts.map((p, i) => {
+          const d = p.v === null ? null : prevOf(i) === null ? null : p.v - (prevOf(i) as number);
+          const on = hover === i || (hover === null && i === n - 1);
+          return <g key={i}>
+            {p.v !== null && <>
+              <circle cx={x(i)} cy={y(p.v)} r={on ? 5 : 3.5} fill="#8b6e3e" stroke="#fff" strokeWidth={2} />
+              <text x={x(i)} y={y(p.v) - 10} textAnchor="middle" className={on ? "kc-val" : "kc-val-s"}>{p.v}%</text>
+            </>}
+            <text x={x(i)} y={H - 28} textAnchor="middle" className={`kc-tick ${on ? "is-on" : ""}`}>{p.label}</text>
+            <text x={x(i)} y={H - 10} textAnchor="middle" className={`kc-chg ${d === null ? "" : d > 0 ? "is-up" : d < 0 ? "is-down" : ""}`}>{d === null ? "" : d === 0 ? "เท่าเดิม" : `${d > 0 ? "▲" : "▼"} ${Math.abs(d)}%`}</text>
+          </g>;
+        })}
       </svg>
     </div>
   );
 }
 
 export default function KpiCharts({ pct, counts, vs }: { pct: PctKpi[]; counts: CountKpi[]; vs: string }) {
-  const [sel, setSel] = useState(pct.find((k) => k.trend?.length)?.key ?? pct[0]?.key);
-  const [drill, setDrill] = useState<string | null>(null);
+  const [sel, setSel] = useState(pct[0]?.key);
+  const [m, setM] = useState<number>(3);
+  const [by, setBy] = useState<"month" | "week">("month");
   const k = pct.find((x) => x.key === sel) ?? pct[0];
   const num = (v: number) => v.toLocaleString("en-US");
   const prevName = vs.trim();
+  const months = pct.find((x) => x.monthly?.length)?.monthly ?? [];
+  const legend = months.slice(-m);
+  const pick = (key: string) => { setSel(key); setBy("month"); setTimeout(() => document.getElementById("kc-growth")?.scrollIntoView({ behavior: "smooth", block: "nearest" }), 30); };
+  // สรุปการเติบโตของตัวที่เลือก: เดือนแรกที่มีข้อมูล → เดือนล่าสุด
+  // ตัดเดือนต้นๆ ที่ยังไม่มีข้อมูลเลยออก (เช่น ระบบเริ่มใช้กลางปี) ให้เส้นเริ่มจากเดือนแรกที่มีข้อมูล · เหลืออย่างน้อย 2 จุด
+  const raw = k ? (by === "week" && k.trend?.length ? k.trend : k.monthly ?? []) : [];
+  const fi = raw.findIndex((p) => p.v !== null);
+  const series = fi < 0 ? raw : raw.slice(Math.min(fi, Math.max(0, raw.length - 2)));
+  const vals = series.filter((p) => p.v !== null) as { label: string; v: number }[];
+  const first = vals[0], last = vals[vals.length - 1];
+  const change = first && last && first !== last ? last.v - first.v : null;
+  const best = vals.length ? vals.reduce((a, b) => (b.v > a.v ? b : a)) : null;
+  const hit = vals.filter((p) => k && p.v >= k.goal).length;
   return (
     <div className="kc">
-      <section className="card kc-card">
-        <header className="kc-h"><div><h3>ตัวชี้วัดที่เป็น % เทียบเป้า</h3><p>เทียบกับช่วง {prevName} · กดแถวเพื่อดูสรุปและแนวโน้ม</p></div></header>
-        <div className="kc-leg" aria-hidden="true"><span><i className="cur" />ช่วงนี้</span><span><i className="prev" />ช่วง {prevName}</span><span><i className="goal" />เส้นเป้าหมาย</span></div>
-        <div className="kc-bullets" role="list">
-          {pct.map((x) => {
-            const gap = x.cur === null ? null : x.cur - x.goal;
-            const isOpen = drill === x.key;
-            return (
-              <div key={x.key} role="listitem">
-              <button type="button" className={`kc-bul ${x.key === k?.key ? "is-on" : ""}`} aria-expanded={isOpen} aria-controls={`kc-drill-${x.key}`}
-                onClick={() => { setSel(x.key); setDrill(isOpen ? null : x.key); }}
-                aria-label={`${x.label} ช่วงนี้ ${x.cur ?? "ไม่มีข้อมูล"}%${x.base ? ` (${x.base})` : ""} · ${prevName} ${x.prev ?? "ไม่มีข้อมูล"}% · เป้า ${x.goal}%`}>
-                <span className="kc-bul-n">{x.label}{x.base && <small>{x.base}</small>}</span>
-                <span className="kc-track">
-                  {x.prev !== null && <i className="p" style={{ width: `${Math.min(100, x.prev)}%` }} />}
-                  {x.cur !== null && <i className="c" style={{ width: `${Math.min(100, x.cur)}%` }} />}
-                  <i className="g" style={{ left: `${Math.min(100, x.goal)}%` }} />
-                </span>
-                <span className="kc-bul-v"><b>{x.cur === null ? "-" : `${x.cur}%`}</b><small className={gap === null ? "" : gap >= 0 ? "is-ok" : "is-bad"}>{gap === null ? "ไม่มีข้อมูล" : gap >= 0 ? "ถึงเป้า" : `ขาดอีก ${Math.abs(gap)}%`}</small></span>
-              </button>
-              {isOpen && <div className="kc-drill" id={`kc-drill-${x.key}`}>
-                <p>{x.prevLabel ?? prevName}: {x.prev === null ? "ไม่มีข้อมูล" : `${x.prev}%`} · เป้า {x.goal}%{x.cur !== null && x.prev !== null && x.cur !== x.prev ? ` · ${x.cur > x.prev ? "▲ ดีขึ้น" : "▼ ลดลง"} ${Math.abs(x.cur - x.prev)}%` : ""}</p>
-                {!!x.drill?.length && <ul>{x.drill.map((t) => <li key={t}>{t}</li>)}</ul>}
-                {x.onOpen && <button type="button" className="kc-drill-go" onClick={x.onOpen}>{x.openLabel ?? "ดูรายละเอียด"} ›</button>}
-              </div>}
-              </div>
-            );
-          })}
+      <section className="card kc-card is-wide">
+        <header className="kc-h">
+          <div><h3>ตัวชี้วัดที่เป็น % เทียบเดือนก่อนๆ</h3><p>แท่งเข้มสุด = {legend[legend.length - 1]?.label ?? "เดือนนี้"} · เส้นแดง = เป้า · กดกลุ่มแท่งเพื่อดูแนวโน้มการเติบโต</p></div>
+          <div className="dash-period" role="radiogroup" aria-label="เทียบกี่เดือน">
+            {COMPARE.map((c) => <button key={c} type="button" role="radio" aria-checked={m === c} className={m === c ? "is-on" : ""} onClick={() => setM(c)}>{c} เดือน</button>)}
+          </div>
+        </header>
+        <div className="kc-leg" aria-hidden="true">
+          {legend.map((p, i) => <span key={p.label}><i style={{ background: rampOf(legend.length)[i] }} />{p.label}</span>)}
+          <span><i className="goal" />เป้าหมาย</span>
         </div>
-        <div className="kc-axis" aria-hidden="true"><span>0%</span><span>50%</span><span>100%</span></div>
+        <Columns list={pct} m={m} sel={k?.key ?? ""} onPick={pick} />
       </section>
 
-      {k && <section className="card kc-card">
-        <header className="kc-h"><div><h3>{k.trend?.length ? `แนวโน้ม${k.trendName ?? ""} · ${k.label}` : k.label}</h3><p>{k.note ?? `ช่วงนี้ ${k.cur ?? "-"}% · ${prevName} ${k.prev ?? "-"}% · เป้า ${k.goal}%`}</p></div>
-          {k.onOpen && <button type="button" className="btn-soft !min-h-0 !py-1.5 !text-sm" onClick={k.onOpen}>ดูรายละเอียด</button>}</header>
-        {k.trend?.length ? <Trend k={k} /> : <p className="kc-empty">ตัวนี้ยังไม่มีข้อมูลรายเดือนให้ดูแนวโน้ม · ดูรายละเอียดที่ปุ่มด้านบน</p>}
+      {k && <section id="kc-growth" className="card kc-card is-wide">
+        <header className="kc-h">
+          <div><h3>แนวโน้มการเติบโต · {k.label}</h3>
+            <p>{vals.length > 1 && change !== null
+              ? <>{first.label} {first.v}% → {last.label} {last.v}% · <b className={change >= 0 ? "kc-ok-t" : "kc-bad-t"}>{change > 0 ? "▲ โตขึ้น" : change < 0 ? "▼ ลดลง" : "เท่าเดิม"} {Math.abs(change)}%</b> · ถึงเป้า {hit} จาก {vals.length} {by === "week" ? "สัปดาห์" : "เดือน"}{best ? ` · สูงสุด ${best.label} ${best.v}%` : ""}</>
+              : k.note ?? `ช่วงนี้ ${k.cur ?? "-"}% · เป้า ${k.goal}%`}</p></div>
+          <div className="flex flex-wrap items-center gap-2">
+            {!!k.trend?.length && <div className="dash-period" role="radiogroup" aria-label="ดูแนวโน้มแบบ">
+              {([["month", "รายเดือน"], ["week", k.trendName ?? "รายสัปดาห์"]] as const).map(([v, t]) => <button key={v} type="button" role="radio" aria-checked={by === v} className={by === v ? "is-on" : ""} onClick={() => setBy(v)}>{t}</button>)}
+            </div>}
+            {k.onOpen && <button type="button" className="btn-soft !min-h-0 !py-1.5 !text-sm" onClick={k.onOpen}>{k.openLabel ?? "ดูรายละเอียด"}</button>}
+          </div>
+        </header>
+        {series.length ? <Growth pts={series} goal={k.goal} name={k.label} /> : <p className="kc-empty">ตัวนี้ยังไม่มีข้อมูลย้อนหลัง</p>}
+        {(!!k.drill?.length || k.base) && <div className="kc-drill">
+          <p>ตอนนี้ {k.cur === null ? "ไม่มีข้อมูล" : `${k.cur}%`}{k.base ? ` (${k.base})` : ""} · {k.prevLabel ?? prevName} {k.prev === null ? "ไม่มีข้อมูล" : `${k.prev}%`} · เป้า {k.goal}%</p>
+          {!!k.drill?.length && <ul>{k.drill.map((t) => <li key={t}>{t}</li>)}</ul>}
+        </div>}
       </section>}
 
       {counts.length > 0 && <section className="card kc-card is-wide">

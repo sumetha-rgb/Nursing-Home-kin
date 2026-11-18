@@ -3,7 +3,7 @@ import { createHash, randomBytes, scrypt as scryptCb, timingSafeEqual } from "no
 import { promisify } from "node:util";
 import { NextRequest, NextResponse } from "next/server";
 import { sql } from "./db";
-import { ROLES, Role, SessionUser } from "./roles";
+import { seesAllBranches, ROLES, Role, SessionUser } from "./roles";
 import { permsFor } from "./perms";
 
 const scrypt = promisify(scryptCb) as (pw: string, salt: Buffer, len: number) => Promise<Buffer>;
@@ -58,7 +58,7 @@ export async function currentUser(req: NextRequest): Promise<SessionUser | null>
 
 /** ตรวจว่าสาขาของบัญชีมีอยู่ในหน้า "ข้อมูลสาขา" และเปิดให้บริการหรือไม่ */
 export async function checkBranch(u: SessionUser): Promise<SessionUser> {
-  if (u.role === "Global Admin") return { ...u, branchCheck: "all" };
+  if (seesAllBranches(u.role)) return { ...u, branchCheck: "all" };
   const [b] = await sql`SELECT status FROM branches WHERE name = ${u.branch} LIMIT 1`;
   const st = String(b?.status ?? "");
   return { ...u, branchCheck: !b ? "missing" : st === "ปิด" ? "closed" : st === "เตรียมเปิด" ? "upcoming" : "ok" };

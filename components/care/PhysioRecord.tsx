@@ -6,7 +6,8 @@ import PhotoPicker from "../PhotoPicker";
 import { useApp } from "@/lib/app";
 import { useSession } from "@/lib/session";
 import { stampPhoto } from "@/lib/roster";
-import { ACTIVITIES, bmiOf, canEditRec, editLeft, EDIT_DAYS, MAX_PHOTOS, MOBILITY, PhysioHistory, PhysioVisit, VITAL_FIELDS, Vitals, vitalsText, vitalWarnings } from "@/lib/physio";
+import { bmiOf, canEditRec, editLeft, EDIT_DAYS, MAX_PHOTOS, PhysioHistory, PhysioVisit, VITAL_FIELDS, Vitals, vitalsText, vitalWarnings } from "@/lib/physio";
+import { useOptions } from "../OptionSettings";
 
 /** เคสที่จะบันทึก (ใช้ได้ทั้ง KinApp และโปรไฟล์ผู้รับบริการในระบบจัดการ) */
 export type RecordTarget = {
@@ -59,6 +60,8 @@ export const stampFor = (u: string, title: string, resident: string, room: strin
 export default function PhysioRecordModal({ target, testMode = false, onClose, onSaved }: {
   target: RecordTarget | null; testMode?: boolean; onClose: () => void; onSaved: (x: { used: number; total: number }) => void;
 }) {
+  // ตัวเลือกที่แก้เองได้ (ตั้งค่าตัวเลือก ที่หน้าตารางกายภาพ)
+  const ACTIVITIES = useOptions("physio_activities").values, MOBILITY = useOptions("physio_mobility").values;
   const { toast, confirm } = useApp();
   const { user } = useSession();
   const [f, setF] = useState<F | null>(null);

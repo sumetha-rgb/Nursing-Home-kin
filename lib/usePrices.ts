@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useSyncExternalStore } from "react";
-import { priceSnapshot, setPrices, subscribePrices } from "./priceList";
+import { priceSnapshot, setPrices, setSubs, subscribePrices } from "./priceList";
 
 let loading: Promise<void> | null = null;
 /** โหลดใบราคาครั้งเดียวต่อการเปิดหน้า (force = โหลดใหม่) · โหลดไม่สำเร็จใช้ใบราคาเดิมไปก่อน */
@@ -8,7 +8,7 @@ export function loadPrices(force = false) {
   if (!loading || force) {
     loading = fetch("/api/prices", { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : null))
-      .then((d) => { if (d?.items?.length && !d.missing) setPrices(d.items); })
+      .then((d) => { if (d?.subs) setSubs(d.subs); if (d?.items?.length && !d.missing) setPrices(d.items); })
       .catch(() => { loading = null; });
   }
   return loading;

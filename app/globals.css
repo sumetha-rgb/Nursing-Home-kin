@@ -208,6 +208,7 @@
 .row-actions { display:flex; align-items:center; gap:5px; }
 .row-action { border:1px solid #eee7db; background:white; color:#78684f; font-size:12px; border-radius:8px; padding:6px 10px; min-height:34px; white-space:nowrap; }
 .row-action:hover { background:#f5f1ea; border-color:#dad1bf; }
+.row-action.is-on { background:var(--gold); border-color:var(--gold); color:#fff; }
 .row-action.danger { border-color:transparent; background:transparent; color:#b1808d; }
 .row-action.danger:hover { color:#a6425d; background:#fceff3; }
 .status-badge { display:inline-flex; align-items:center; gap:6px; border-radius:6px; padding:4px 8px; font-size:11px; line-height:1.6; font-weight:500; white-space:nowrap; }
@@ -973,6 +974,32 @@ button.room-card:hover:not(.is-full):not(.is-closed) { border-color:#c9a96a; box
 .pay-cards { display:flex; flex-wrap:wrap; gap:8px; }
 .pay-card { display:inline-flex; align-items:center; gap:8px; border:1.5px solid #e6dac3; border-radius:999px; background:#fff; padding:8px 16px; font-size:14px; color:#5b4628; }
 .pay-card:hover { border-color:#c9a96a; } .pay-card.is-on { border-color:var(--gold); background:var(--gold); color:#fff; }
+/* เลือกบัญชีรับเงิน: การ์ดมีไอคอนธนาคาร ชื่อ และเลขบัญชี/เลขเครื่อง · เลือกแล้วขอบทองพื้นครีม (ไอคอนยังเห็นสีธนาคาร) */
+/* ตั้งค่าหมวดย่อยของใบราคา */
+.sub-list { display:grid; gap:8px; }
+.sub-list li { display:grid; grid-template-columns:64px minmax(0,1fr) auto auto; align-items:center; gap:12px; padding:9px 12px; border:1px solid #ece2cd; border-radius:12px; background:#fff; }
+.sub-list li.is-off { background:#faf7f0; } .sub-list li.is-off .sub-t, .sub-list li.is-off > .pl-code { opacity:.55; }
+.sub-t { display:grid; line-height:1.3; min-width:0; } .sub-t b { font-size:14.5px; color:#2f2618; } .sub-t small { font-size:12px; color:#8a7457; }
+@media (max-width:560px) { .sub-list li { grid-template-columns:56px minmax(0,1fr) auto; } .sub-list li > .pl-switch { grid-column:2; justify-self:start; } }
+/* หน้าตั้งค่าบัญชีธนาคาร */
+.acct-list { display:grid; gap:8px; }
+.acct-list li { display:grid; grid-template-columns:auto minmax(0,1fr) auto auto; align-items:center; gap:14px; padding:10px 14px; border:1px solid #ece2cd; border-radius:14px; background:#fff; }
+.acct-list li.is-off { background:#faf7f0; } .acct-list li.is-off > img, .acct-list li.is-off > .acct-list-t, .acct-list li.is-off > span[aria-hidden] { opacity:.5; }
+.acct-list-t { display:grid; line-height:1.3; min-width:0; }
+.acct-list-t b { font-size:15px; color:#2f2618; }
+.acct-list-t > span { font-size:14px; color:#4a3b22; font-variant-numeric:tabular-nums; } .acct-list-t i { font-style:normal; color:#a3221b; font-size:13px; }
+.acct-list-t small { font-size:12px; color:#8a7457; }
+.acct-list .acct-empty { display:block; color:#8a7457; font-size:13.5px; }
+@media (max-width:560px) { .acct-list li { grid-template-columns:auto minmax(0,1fr) auto; } .acct-list li > .pl-switch { grid-column:2; justify-self:start; } }
+.pay-route { display:grid; gap:10px; border:1px solid #eadfc8; border-radius:14px; background:#fffdf8; padding:12px 14px; }
+.pay-route-h { font-weight:600; color:#6b5226; font-size:14px; }
+.acct-cards { display:flex; flex-wrap:wrap; gap:8px; }
+.acct-card { display:inline-flex; align-items:center; gap:10px; min-width:0; max-width:100%; border:1.5px solid #e6dac3; border-radius:14px; background:#fff; padding:8px 14px 8px 8px; text-align:left; color:#5b4628; }
+.acct-card:hover { border-color:#c9a96a; }
+.acct-card.is-on { border-color:var(--gold); background:#fbf3e2; box-shadow:0 0 0 2px rgba(167,123,28,.25); }
+.acct-card .acct-text { display:grid; line-height:1.25; min-width:0; }
+.acct-card .acct-text b { font-size:14px; color:#3d2f17; }
+.acct-card .acct-text small { font-size:12px; color:#8a7350; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
 .bill4-lines { margin:0; padding:0; list-style:none; border:1px solid #ece2cf; border-radius:14px; overflow:hidden; }
 .bill4-lines li { display:flex; justify-content:space-between; gap:16px; padding:10px 14px; font-size:14px; color:#3a2d1b; }
 .bill4-lines li + li { border-top:1px solid #f1e9da; } .bill4-lines li small { color:#8a7457; }
@@ -1147,6 +1174,8 @@ button.room-card:hover:not(.is-full):not(.is-closed) { border-color:#c9a96a; box
 .bill-title2 span { margin-top:4px; font-size:13px; font-weight:600; border:1px solid #111; border-radius:4px; padding:0 10px; }
 .bill-note2 { padding:8px 10px; border-bottom:1px solid #111; font-size:13px; }
 .bill-note2 span { font-weight:600; }
+.bill-stmt-note b { font-weight:600; } .bill-stmt-en { display:block; margin-top:2px; font-size:12px; color:#444; }
+.bill-stmt-note > span + span, .bill-stmt-note .bill-stmt-en span { font-weight:400; }
 .bill-table2 { border-left:0; border-right:0; }
 .bill-table2 th:first-child,.bill-table2 td:first-child { border-left:0; }
 .bill-table2 th:last-child,.bill-table2 td:last-child { border-right:0; }
@@ -2058,6 +2087,25 @@ button.room-card:hover:not(.is-full):not(.is-closed) { border-color:#c9a96a; box
 .kc-goal-t { font-size:11.5px; fill:#a3221b; }
 .kc-cross { stroke:#b89560; stroke-dasharray:3 3; }
 .kc-val { font-size:12px; font-weight:700; fill:#2f2618; font-variant-numeric:tabular-nums; }
+/* กราฟแท่งแนวตั้งเทียบเดือน: กลุ่มละตัวชี้วัด · กดกลุ่ม/ชื่อเพื่อดูแนวโน้ม */
+.kc-cols { position:relative; width:100%; min-width:0; }
+.kc-cols svg { display:block; overflow:visible; }
+.kc-grp { cursor:pointer; outline:none; }
+.kc-band { fill:transparent; } .kc-grp:hover .kc-band { fill:#faf5ea; } .kc-band.is-on { fill:#f3ead8; } .kc-grp:focus-visible .kc-band { stroke:#c9a96a; stroke-width:1.5; }
+.kc-goal-bar { stroke:#b3261e; stroke-width:2; }
+.kc-tip { position:absolute; pointer-events:none; padding:5px 9px; border-radius:8px; background:#2f2618; color:#fff; font-size:12px; white-space:nowrap; font-variant-numeric:tabular-nums; z-index:2; }
+.kc-xlabels { display:grid; gap:4px; margin-top:6px; }
+.kc-xl { display:grid; justify-items:center; gap:1px; padding:6px 4px; border-radius:10px; text-align:center; min-width:0; }
+.kc-xl:hover { background:#faf5ea; } .kc-xl.is-on { background:#f3ead8; }
+.kc-xl b { font-size:13px; font-weight:600; color:#2f2618; line-height:1.3; }
+.kc-xl em { font-style:normal; font-size:15px; font-weight:700; color:#2f2618; font-variant-numeric:tabular-nums; }
+.kc-xl small { font-size:12.5px; font-weight:600; color:#6b5737; } .kc-xl small.is-ok { color:#1f7a4d; } .kc-xl small.is-bad { color:#a3221b; }
+.kc-xl .kc-xl-b { margin-top:2px; padding:2px 8px; border-radius:999px; background:#f6efe0; font-size:12.5px; font-weight:500; color:#4a3b22; line-height:1.4; font-variant-numeric:tabular-nums; }
+.kc-xl.is-on .kc-xl-b { background:#fff; }
+.kc-growth { height:230px; }
+.kc-val-s { font-size:11px; fill:#786443; font-variant-numeric:tabular-nums; }
+.kc-chg { font-size:11px; fill:#a8977a; font-weight:600; } .kc-chg.is-up { fill:#1f7a4d; } .kc-chg.is-down { fill:#a3221b; }
+@media (max-width:640px) { .kc-xl b { font-size:12px; } .kc-xl em { font-size:13.5px; } .kc-xl .kc-xl-b { font-size:11.5px; padding:1px 6px; } }
 .kc-empty { padding:24px 0; text-align:center; font-size:13px; color:#a58e65; }
 .kc-counts { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:12px; }
 .kc-count { display:grid; grid-template-columns:44px minmax(0,1fr); grid-template-rows:auto auto auto; gap:2px 12px; align-items:end; padding:12px 14px; border:1px solid #efe7d8; border-radius:14px; background:#fff; text-align:left; }
@@ -3498,3 +3546,77 @@ button.attn-chip:hover { filter:brightness(.96); }
 .th-date.is-off { cursor:default; opacity:.6; }
 .term-f .th-date { width:176px; }
 @media (max-width:640px) { .term-f .th-date { width:100%; } }
+/* ตั้งค่าตัวเลือก (components/OptionSettings) */
+.opt-list li { grid-template-columns:minmax(0,1fr) auto auto; }
+.opt-list li.is-fixed { background:#faf7f0; border-style:dashed; }
+@media (max-width:560px) { .opt-list li { grid-template-columns:minmax(0,1fr) auto; } .opt-list li > .pl-switch { grid-column:1; justify-self:start; } }
+/* หน้า "ตั้งค่า": ซ้าย = หมวด · ขวา = รายการ · มือถือใช้ช่องเลือกแทนเมนูซ้าย */
+.set-layout { display:grid; grid-template-columns:250px minmax(0,1fr); gap:20px; align-items:start; }
+.set-pick { display:none; }
+.set-nav { position:sticky; top:84px; display:grid; gap:14px; padding:14px 10px; border:1px solid #ece2cd; border-radius:18px; background:#fff; }
+.set-grp { display:grid; gap:2px; }
+.set-grp > p { padding:0 10px 4px; font-size:11.5px; font-weight:700; letter-spacing:.06em; color:#a08a66; }
+.set-grp button { padding:8px 10px; border-radius:10px; text-align:left; font-size:14px; color:#4a3b22; }
+.set-grp button:hover { background:#faf5ea; }
+.set-grp button.is-on { background:#f3ead8; color:#2f2618; font-weight:600; box-shadow:inset 3px 0 0 var(--gold); }
+.set-main { display:grid; gap:14px; min-width:0; }
+.set-h span { font-size:12px; font-weight:600; letter-spacing:.06em; color:#a08a66; }
+.set-h h2 { font-size:20px; font-weight:600; color:#2f2618; }
+.set-h p { font-size:13.5px; color:#786443; }
+@media (max-width:860px) { .set-layout { grid-template-columns:1fr; } .set-nav { display:none; } .set-pick { display:grid; gap:4px; } }
+/* รายงานภาษีขาย (components/views/SalesTax) · ตัวรายงานพื้นขาวแบบเอกสาร */
+.st-bar { display:flex; flex-wrap:wrap; align-items:end; gap:12px 18px; margin-bottom:12px; }
+.st-bar label { display:grid; gap:2px; }
+.st-bar input, .st-bar select { width:auto; min-width:180px; }
+.st-warn { margin-bottom:10px; border-radius:12px; background:#fbefd9; color:#8a5a12; padding:8px 14px; font-size:13.5px; }
+.st-tiles { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin-bottom:14px; }
+.st-tiles > div { display:grid; gap:2px; padding:12px 14px; border:1px solid #ece2cd; border-radius:14px; background:#fff; }
+.st-tiles small { font-size:12px; color:#8a7457; } .st-tiles b { font-size:20px; color:#2f2618; font-variant-numeric:tabular-nums; }
+@media (max-width:760px) { .st-tiles { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+.st-paper { padding:18px; }
+.st-scroll { overflow-x:auto; }
+.st-title { display:grid; justify-items:center; gap:2px; margin-bottom:10px; } .st-title b { font-size:17px; color:#111; } .st-title span { font-size:13.5px; color:#333; }
+.st-meta { display:grid; grid-template-columns:1fr auto; gap:2px 20px; margin-bottom:10px; font-size:12.5px; color:#222; } .st-meta span:nth-child(even) { text-align:right; }
+.st-table { width:100%; min-width:820px; border-collapse:collapse; font-size:12.5px; color:#111; background:#fff; font-variant-numeric:tabular-nums; }
+.st-table th, .st-table td { border:1px solid #444; padding:4px 7px; vertical-align:top; }
+.st-table th { background:#f2efe8; font-weight:600; text-align:center; line-height:1.3; vertical-align:middle; }
+.st-table td.c { text-align:center; white-space:nowrap; } .st-table td.n { text-align:right; white-space:nowrap; }
+.st-table td small { font-size:11px; color:#666; }
+.st-table tr.is-neg td.n { color:#b3261e; }
+.st-table tr.is-tot td { font-weight:700; background:#faf7f0; }
+.st-chip { display:inline-block; margin-left:5px; padding:0 6px; border-radius:999px; background:#efe6d3; color:#6b5226; font-size:10.5px; white-space:nowrap; }
+.st-chip.is-cn { background:#fbe3dc; color:#a3221b; }
+.st-empty { padding:20px 0; text-align:center; color:#8a7457; }
+.st-only { margin:-4px 0 10px; padding:5px 10px; border:1px dashed #b98a2c; border-radius:6px; background:#fdf6e6; font-size:12.5px; color:#6b4f12; text-align:center; }
+.st-print { font-family:"Sarabun","Noto Sans Thai",sans-serif; padding:28px 24px !important; }
+.st-print .st-table { min-width:0; font-size:11px; }
+.st-sign { display:flex; justify-content:space-between; gap:30px; margin-top:34px; font-size:12px; } .st-sign div { flex:0 1 220px; text-align:center; border-top:1px dotted #333; padding-top:4px; }
+/* รายได้ตามบริษัทและฝ่าย (components/views/Revenue) */
+.rv-card { display:grid; gap:10px; }
+.rv-bar { display:flex; height:14px; border-radius:999px; overflow:hidden; background:#efe7d8; }
+.rv-bar i { display:block; height:100%; }
+.rv-legend { display:flex; flex-wrap:wrap; gap:6px 16px; font-size:13px; color:#5b4b31; }
+.rv-legend span { display:inline-flex; align-items:center; gap:6px; } .rv-legend i { width:12px; height:12px; border-radius:3px; display:inline-block; }
+.rv-table { width:100%; min-width:760px; border-collapse:collapse; font-size:13.5px; font-variant-numeric:tabular-nums; color:#2f2618; }
+.rv-table th, .rv-table td { padding:8px 10px; border-bottom:1px solid #efe7d8; text-align:right; white-space:nowrap; }
+.rv-table th { background:#f6efe0; font-size:12px; font-weight:600; color:#786443; }
+.rv-table th:first-child, .rv-table td:first-child { text-align:left; }
+.rv-table tr.is-co td { font-weight:700; background:#fbf6ea; }
+.rv-table tr.is-div { cursor:pointer; } .rv-table tr.is-div:hover td, .rv-table tr.is-div.is-open td { background:#faf5ea; }
+.rv-table tr.is-div:focus-visible { outline:2px solid #c9a96a; outline-offset:-2px; }
+.rv-table tr.is-div td:first-child { padding-left:22px; }
+.rv-table tr.is-div small { color:#a3221b; font-weight:400; }
+.rv-table tr.is-br td { font-size:12.5px; color:#6b5a3e; } .rv-table tr.is-br td:first-child { padding-left:52px; }
+.rv-table tr.is-tot td { font-weight:700; border-top:2px solid #c9a96a; border-bottom:0; }
+.rv-caret { display:inline-block; width:16px; color:#a77b1c; }
+.rv-pct { color:#8a7457; }
+/* ตั้งค่า › ฝ่ายและบริษัท (components/BuSettings) */
+.bu-list { display:grid; gap:10px; }
+.bu-list li { display:grid; gap:8px; padding:12px 14px; border:1px solid #ece2cd; border-radius:14px; background:#fff; }
+.bu-list li.is-off { background:#faf7f0; } .bu-list li.is-off .bu-name, .bu-list li.is-off .bu-cats { opacity:.55; }
+.bu-row { display:flex; flex-wrap:wrap; align-items:center; gap:10px 14px; }
+.bu-name { flex:1 1 180px; font-size:15px; color:#2f2618; }
+.bu-co { display:inline-flex; align-items:center; gap:6px; font-size:12.5px; color:#786443; } .bu-co select { width:auto; min-height:34px; font-size:13px; }
+.bu-cats { display:flex; flex-wrap:wrap; gap:6px; }
+.bu-cat { display:inline-flex; align-items:center; gap:4px; padding:4px 10px; border:1px solid #e6dac3; border-radius:999px; background:#fff; font-size:12.5px; color:#6b5a3e; }
+.bu-cat.is-on { border-color:#a77b1c; background:#f3e7cb; color:#5b4210; font-weight:600; }

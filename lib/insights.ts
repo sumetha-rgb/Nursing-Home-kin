@@ -48,10 +48,18 @@ export async function insights(br: string | null, r: Range) {
     return { alerts: n(a.n), ackMin: a.ack === null ? null : Math.round(n(a.ack)), meds: { total: n(m.total), given: n(m.given) } };
   };
   const [hc, hp] = await Promise.all([alertStat(r.from, r.to), alertStat(r.pfrom, r.pto)]);
+  // ให้ยาครบตามมื้อ 6 เดือนย้อนหลัง (กราฟเทียบเดือนหน้าภาพรวม)
+  const M6h = months(r.to, 6);
+  const medsM = await Promise.all(M6h.map(async (m) => {
+    const [x] = (await sql(`SELECT count(*)::int AS total, count(*) FILTER (WHERE given)::int AS given FROM medication_packs
+        WHERE pack_date BETWEEN $1::date AND LEAST($2::date, ${TODAY} - 1) ${B("branch_name", 3)}`, P(`${m}-01`, monthEnd(m)))) as Row[];
+    return { month: m, total: n(x.total), given: n(x.given) };
+  }));
   const [adm] = (await sql(`SELECT count(*)::int AS n FROM residents WHERE status LIKE 'แอดมิท%' ${B("branch_name", 1)}`, P())) as Row[];
   const health = {
     cur: { ...vit(r.from, r.to), ...hc }, prev: { ...vit(r.pfrom, r.pto), ...hp }, admitted: n(adm.n),
     weekly: W.map((w) => ({ ...w, ...vit(w.from, w.to) })),
+    medsMonthly: medsM,
     repeat: [...rep.values()].filter((x) => x.n >= 2).sort((a, b) => b.critical - a.critical || b.n - a.n).slice(0, 8),
   };
 
@@ -66,8 +74,11 @@ export async function insights(br: string | null, r: Range) {
       FROM daily_tasks WHERE work_date BETWEEN $1::date AND LEAST($2::date, ${TODAY}) ${B("branch_name", 3)}`, P(f, t))) as Row[];
     return { total: n(c.total), done: n(c.done), checked: n(c.checked), ontime: n(c.ontime), stars: c.stars === null ? null : Math.round(n(c.stars) * 10) / 10, low: n(c.low) };
   };
-  const [cc, cp, ...cw] = await Promise.all([careStat(r.from, r.to), careStat(r.pfrom, r.pto), ...W.map((w) => careStat(w.from, w.to))]);
-  const care = { cur: cc, prev: cp, weekly: W.map((w, i) => ({ ...w, total: cw[i].total, done: cw[i].done })) };
+  const M6c = months(r.to, 6);
+  const [cc, cp, ...cw] = await Promise.all([careStat(r.from, r.to), careStat(r.pfrom, r.pto), ...W.map((w) => careStat(w.from, w.to)), ...M6c.map((m) => careStat(`${m}-01`, monthEnd(m)))]);
+  const cm = cw.splice(W.length);
+  // monthly = 6 เดือนย้อนหลัง (งานสำเร็จ · ส่งตรงเวลา) ใช้กับกราฟเทียบเดือน
+  const care = { cur: cc, prev: cp, weekly: W.map((w, i) => ({ ...w, total: cw[i].total, done: cw[i].done })), monthly: M6c.map((m, i) => ({ month: m, total: cm[i].total, done: cm[i].done, ontime: cm[i].ontime })) };
 
   /* ---------- ทีมงาน ---------- */
   const [resNow] = (await sql(`SELECT count(*)::int AS n FROM residents WHERE status LIKE 'เข้าอยู่%' ${B("branch_name", 1)}`, P())) as Row[];

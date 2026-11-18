@@ -3,10 +3,11 @@ import { useEffect, useState } from "react";
 import { Modal } from "../ui";
 import { useApp } from "@/lib/app";
 import { useSession } from "@/lib/session";
+import { useOptions } from "../OptionSettings";
 import { thNowText } from "@/lib/physio";
 
 /** เหตุผลที่ใช้บ่อย (กดเลือกแล้วแก้ต่อได้) */
-const REASONS = ["ผู้รับบริการย้ายออก", "ญาติขอหยุดคอร์ส", "จบการรักษา อาการดีขึ้น", "เปลี่ยนเป็นคอร์สใหม่", "ส่งต่อโรงพยาบาล"];
+/* เหตุผลปิดคอร์ส: แก้ได้ที่ ตั้งค่าตัวเลือก (lib/optionLists physio_close_reasons) */
 
 export type CloseTarget = { id: string; name: string; used: number; total: number; resident: string; billed: boolean; team?: string };
 
@@ -15,6 +16,7 @@ export type CloseTarget = { id: string; name: string; used: number; total: numbe
  *  ผู้จัดการสาขา ผู้บริหาร ฝ่ายขาย/แคชเชียร์ · ครั้งที่เหลือยกเลิก · นัดและทีมถูกล้าง · ประวัติการรักษาคงไว้ · เงินคืน/ส่วนต่าง = แคชเชียร์ออกใบลดหนี้แยก
  */
 export default function PhysioCloseCourse({ target, onClose, onDone }: { target: CloseTarget | null; onClose: () => void; onDone: () => void }) {
+  const REASONS = useOptions("physio_close_reasons").values;
   const { toast } = useApp();
   const { user } = useSession();
   const [why, setWhy] = useState("");

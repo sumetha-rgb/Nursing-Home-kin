@@ -104,7 +104,7 @@ const waitDays = (s?: string) => (s ? Math.floor((Date.now() - new Date(s.replac
 /** งานหลักของแต่ละตำแหน่ง (หน้าต่างอนุมัติ) */
 const ROLE_NOTE: Partial<Record<Role, string>> = {
   Nurse: "งานเวร จ่ายยา บันทึกการดูแล จัดยา", Physio: "เห็นเฉพาะนัดกายภาพที่ได้รับมอบหมาย", Cashier: "สัญญา การเงิน ห้องพัก ขายคอร์สกายภาพ",
-  "Head Nurse": "งานดูแล ห้องพัก ตรวจงาน และแอปของทีมดูแล", "Branch Admin": "ทุกเมนูของสาขา รวมทีมและสิทธิ์การใช้งาน",
+  "Head Nurse": "งานดูแล ห้องพัก ตรวจงาน และแอปของทีมดูแล", Finance: "ดูและส่งออกข้อมูลการเงินทุกสาขา (ดูอย่างเดียว)", "Branch Admin": "ทุกเมนูของสาขา รวมทีมและสิทธิ์การใช้งาน",
 };
 
 /**
@@ -115,7 +115,7 @@ function ApproveDialog({ u, global, branches, onClose, onApprove, onReject }: {
   u: UserRow | null; global: boolean; branches: string[]; onClose: () => void;
   onApprove: (role: Role, branch: string) => Promise<boolean>; onReject: () => Promise<boolean>;
 }) {
-  const roles: Role[] = global ? [...BRANCH_ROLES, "Branch Admin"] : [...BRANCH_ROLES];
+  const roles: Role[] = global ? [...BRANCH_ROLES, "Finance", "Branch Admin"] : [...BRANCH_ROLES];
   const [role, setRole] = useState<Role>("Nurse");
   const [branch, setBranch] = useState("");
   const [ask, setAsk] = useState(false);

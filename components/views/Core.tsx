@@ -11,12 +11,15 @@ import { balanceOf, baseOfIncl, BILL_KINDS, BillItem, contractMeta, ContractLine
 import { cycleDue, nextCycle } from "@/lib/servicePeriod";
 import { bookingInvoiceOf, bookingPaid, contractMonthTotal, contractStartLines, contractStartNote, isStartInvoice, prepaidMonths, useBranchInfo } from "./Billing";
 import ContractView from "./ContractView";
+import { AccountChoice } from "../billing/PayAccounts";
+import { OptionSettings, useOptions } from "../OptionSettings";
+import { OTHER } from "@/lib/optionLists";
 import { contractsCsv } from "../billing/contractsCsv";
 import ContractSummary from "../care/ContractSummary";
 import { ContractDoc, contractLines, longDate, contractRoomName, DcData, dcRefund, DepositDoc, DischargeDoc, PrintModal, RenewDoc } from "../print/Docs";
 import { ServiceLine, ServiceLines } from "../ServicePicker";
 import { AddressFinder, ChipChoice, SuggestText, TagInput } from "../ContractInputs";
-import { addMonthsIso, ALLERGY_DRUGS, COMMON_MEDS, FOOD_ALLERGENS, HEALTH_RIGHTS, HOSP_LATER, isNoAllergy, NO_ALLERGY, RELATIONS } from "@/lib/medicalLists";
+import { addMonthsIso, HOSP_LATER, isNoAllergy, NO_ALLERGY } from "@/lib/medicalLists";
 import { PROGRAMS } from "@/lib/contractText";
 import { roomByPrice, roomShareOf, rooms as priceRooms } from "@/lib/priceList";
 import { usePriceList } from "@/lib/usePrices";
@@ -34,6 +37,7 @@ import RoomCard from "../care/RoomCard";
 import Occupancy from "../care/Occupancy";
 import PhotoPicker from "../PhotoPicker";
 import { useSession } from "@/lib/session";
+import { seesAllBranches } from "@/lib/roles";
 import { can } from "@/lib/perms";
 import { findRoom, freeBed, RoomInfo, roomInfos, roomKey, roomProblem, staying, withRoom } from "@/lib/rooms";
 import { Avatar } from "../Avatar";
@@ -80,7 +84,7 @@ export function Workflow() {
   const active=residents.filter(r=>r[5].startsWith("เข้าอยู่")).length;
   const today=new Date().toLocaleDateString("th-TH",{weekday:"long",day:"numeric",month:"long",year:"numeric"});
   return <>
-    <PageHeader title={`สวัสดี ${user?.name??""}`.trim()} sub={<>{today}{user?.branch&&user.role!=="Global Admin"?` · สาขา${user.branch}`:""}</>}
+    <PageHeader title={`สวัสดี ${user?.name??""}`.trim()} sub={<>{today}{user?.branch&&!seesAllBranches(user.role)?` · สาขา${user.branch}`:""}</>}
       actions={<><button className="btn-soft" onClick={()=>go("appointments")}><Icon name="calendar" className="h-4 w-4" /> ดูตารางนัดหมาย</button>{admitTo&&<button className="btn-primary" onClick={()=>go(admitTo)}><Icon name="plus" className="h-4 w-4" /> รับผู้รับบริการใหม่</button>}</>} />
     <TodayCards />
     <div className="overview-columns mt-8"><div className="space-y-4"><h2 className="text-[17px] font-medium text-gold-800">ภาพรวมศูนย์</h2><Occupancy /><MetricGrid items={[{label:"ผู้รับบริการทั้งหมด",value:residents.length,unit:"คน",note:"ข้อมูลผู้รับบริการในระบบ",icon:"user",accent:true},{label:"กำลังรับการดูแล",value:active,unit:"คน",note:"สถานะเข้าอยู่ในศูนย์",icon:"heart"},{label:"สัญญาที่ใช้งาน",value:contracts.filter(r=>r[5]==="ใช้งานอยู่").length,unit:"สัญญา",note:"ทะเบียนสัญญาบริการ",icon:"doc"},{label:"นัดหมายที่กำลังจะมาถึง",value:upcoming.length,unit:"นัด",note:"จากตารางนัดหมาย",icon:"calendar"}]} /></div>
@@ -205,7 +209,6 @@ const idPhoneProblem = (r: string[]) => {
   if (!blank(r[9]) && !/^0\d{9}$/.test(r[9])) return "กรุณากรอกเบอร์โทรเป็นตัวเลข 10 หลัก ขึ้นต้นด้วย 0";
   return "";
 };
-const DC_REASONS = ["กลับบ้าน", "ส่งต่อโรงพยาบาล", "ย้ายไปสถานดูแลอื่น", "เสียชีวิต", "อื่น ๆ"];
 /** แถวสัญญา: ลำดับตรงกับ lib/schema contracts · [6] = ห้อง (เลือกในขั้นที่ 2) */
 const NO_ROOM = "-";
 
@@ -220,10 +223,12 @@ type IdPhotos = { employer: string; resident: string };
  *  unpaid = ค้างชำระ (รับเงินทีหลัง) · pay = รับชำระเต็มจำนวนเลย (เป็นใบเสร็จ) · draft = รอการเงินตรวจยอด · none = ไม่ออกใบ
  */
 type BillChoice = { mode: "unpaid" | "pay" | "draft" | "none"; items: BillItem[]; note: string; booking: boolean; pay?: PayNow };
-type PayNow = { method: string; slip: string; date: string };
-const PAY_METHODS = ["เงินสด", "โอนเงิน", "บัตรเครดิต"];
+/** account = บัญชีที่เงินโอนเข้า / เครื่องรูดบัตร (เงินสดไม่ต้องเลือก) */
+type PayNow = { method: string; slip: string; date: string; account?: string };
+const PAY_METHODS = ["เงินสด", "โอนเงิน", "รูดบัตร EDC", "บัตรเครดิต"];
+/** ช่องทางชำระ → ประเภทบัญชีรับเงินที่ต้องเลือก (เงินสดไม่ต้องเลือก) */
+const ACCT_KIND = { "โอนเงิน": "transfer", "รูดบัตร EDC": "edc", "บัตรเครดิต": "card" } as const;
 /** ยอดมัดจำค่าห้องที่ใช้บ่อย (ตามเอกสารการมัดจำ) */
-const BOOKING_AMOUNTS = [3000, 5000];
 const WAIT_DEPOSIT = "รอชำระเงินมัดจำ";
 /** สัญญาที่จองห้องด้วยมัดจำค่าห้อง ยังไม่ได้กรอกค่าบริการ (รอกด "เปิดสัญญา" ให้ครบ) */
 const isBookingRow = (c: string[]) => c[5] === WAIT_DEPOSIT && !contractMonthTotal(c);
@@ -279,7 +284,11 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, co
   const lockNames = renewing || completing;
   /** มัดจำค่าห้อง (จองห้องไว้ก่อน): กรอกแค่สาขา ผู้ว่าจ้าง ผู้รับบริการ เลือกห้อง แล้วออกใบแจ้งหนี้มัดจำ · ข้อมูลอื่นกรอกตอนเปิดสัญญา */
   const [booking, setBooking] = useState(false);
-  const [depAmt, setDepAmt] = useState(String(BOOKING_AMOUNTS[0]));
+  // ตัวเลือกที่แก้เองได้ (ปุ่ม ตั้งค่าตัวเลือก ที่หน้าสัญญาบริการ · lib/optionLists)
+  const relOpts = useOptions("relations").values, rights = useOptions("health_rights"), drugOpts = useOptions("allergy_drugs").values;
+  const foodOpts = useOptions("food_allergens").values, medOpts = useOptions("common_meds").values;
+  const bookAmts = useOptions("booking_amounts").values.map(Number).filter((n) => n > 0);
+  const [depAmt, setDepAmt] = useState(String(bookAmts[0] ?? 3000));
   const hide = booking ? "hidden" : "";
   const iv = (i: number) => (initial?.[i] && initial[i] !== "-" ? initial[i] : "");
   // ช่องที่มีตัวช่วยกรอก (ปุ่มลัด / พิมพ์แล้วขึ้น / ดึงจากสัญญาเดิม)
@@ -290,8 +299,8 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, co
   const [start, setStart] = useState(() => (completing && isoDate(initial?.[7])) || todayIso());
   const [endDate, setEndDate] = useState(iv(22).slice(0, 10));
   const hosp0 = iv(24).match(/^(.*?)\s*\(([^)]+)\)\s*$/);
-  const [hosp, setHosp] = useState(hosp0 && HEALTH_RIGHTS.includes(hosp0[2]) ? hosp0[1] : iv(24));
-  const [right, setRight] = useState(hosp0 && HEALTH_RIGHTS.includes(hosp0[2]) ? hosp0[2] : "");
+  const [hosp, setHosp] = useState(hosp0 && rights.all.includes(hosp0[2]) ? hosp0[1] : iv(24));
+  const [right, setRight] = useState(hosp0 && rights.all.includes(hosp0[2]) ? hosp0[2] : "");
   const [hospAlt, setHospAlt] = useState(iv(29));
   const [meds, setMeds] = useState(iv(28));
   const [drugA, setDrugA] = useState(iv(25));
@@ -322,7 +331,7 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, co
     if (!c) return;
     setField("resident_id", c[12]); setField("age", c[13]);
     const h = (c[24] ?? "").match(/^(.*?)\s*\(([^)]+)\)\s*$/);
-    if (c[24] && c[24] !== "-") { setHosp(h && HEALTH_RIGHTS.includes(h[2]) ? h[1] : c[24]); setRight(h && HEALTH_RIGHTS.includes(h[2]) ? h[2] : ""); }
+    if (c[24] && c[24] !== "-") { setHosp(h && rights.all.includes(h[2]) ? h[1] : c[24]); setRight(h && rights.all.includes(h[2]) ? h[2] : ""); }
     if (c[28] && c[28] !== "-") setMeds(c[28]);
     if (c[25] && c[25] !== "-") setDrugA(c[25]);
     if (c[26] && c[26] !== "-") setFoodA(c[26]);
@@ -399,7 +408,7 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, co
   const { go, toast } = useApp();
   const { user } = useSession();
   /** ผู้จัดการ/พนักงานสาขาเดียว: เลือกสาขาของตัวเองไว้ให้ (ผู้บริหารเลือกเอง) */
-  const myBranch = user?.role !== "Global Admin" && user?.branch && branchNames.includes(user.branch) ? user.branch : branchNames.length === 1 ? branchNames[0] : "";
+  const myBranch = !seesAllBranches(user?.role) && user?.branch && branchNames.includes(user.branch) ? user.branch : branchNames.length === 1 ? branchNames[0] : "";
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
   /** ห้องที่กด "ราคาถูกแล้ว" (ไม่เตือนค่าห้องไม่ตรงซ้ำ) */
   const [priceOk, setPriceOk] = useState("");
@@ -607,6 +616,9 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, co
   };
   /** ขั้น 4: ปัญหาที่ทำให้บันทึกไม่ได้ */
   const check4 = () => booking && billMode !== "none" && !(Number(depAmt) > 0) ? "กรุณาระบุยอดมัดจำค่าห้อง"
+    : billMode === "pay" && payBy.method === "โอนเงิน" && !payBy.account ? "กรุณาเลือกบัญชีที่เงินโอนเข้า"
+    : billMode === "pay" && payBy.method === "รูดบัตร EDC" && !payBy.account ? "กรุณาเลือกเครื่อง EDC ที่รูดบัตร"
+    : billMode === "pay" && payBy.method === "บัตรเครดิต" && !payBy.account ? "กรุณาเลือกช่องทางบัตรเครดิต"
     : billMode === "pay" && payBy.method === "โอนเงิน" && !payBy.slip ? "กรุณาแนบหลักฐานการโอนเงิน" : "";
   /** ขั้น 4: บันทึกสัญญา / การจอง พร้อมออกใบแจ้งหนี้ */
   const save = () => {
@@ -703,7 +715,7 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, co
           </div></Field>
           <Field label="รูปถ่ายบัตรประชาชนผู้ว่าจ้าง (ไม่บังคับ · แนบทีหลังได้)" className={`md:col-span-2 ${hide}`}><PhotoPicker value={photos.employer} onChange={(v) => setPhotos({ ...photos, employer: v })} label={renewing ?"ไม่แนบใหม่ = ใช้รูปจากสัญญาเดิม" : "ถ่ายหรือเลือกรูป · ให้เห็นชื่อ เลขบัตร รูปหน้า"} /></Field>
           <Field label="โทรศัพท์" required={!booking}><DigitsInput kind="phone" name="phone" required={!booking} defaultValue={d(9)} /></Field>
-          <Field label="เกี่ยวข้อง" className={booking ? "md:col-span-2" : ""}><div className={booking ? "booking-relation" : "space-y-2"}><ChipChoice label="เกี่ยวข้อง" options={RELATIONS} value={RELATIONS.includes(relation) ? relation : ""} onChange={setRelation} />
+          <Field label="เกี่ยวข้อง" className={booking ? "md:col-span-2" : ""}><div className={booking ? "booking-relation" : "space-y-2"}><ChipChoice label="เกี่ยวข้อง" options={relOpts} value={relOpts.includes(relation) ? relation : ""} onChange={setRelation} />
             <input value={relation} onChange={(e) => setRelation(e.target.value)} placeholder="หรือพิมพ์เอง เช่น ลูกเขย" aria-label="เกี่ยวข้อง (พิมพ์เอง)" /></div></Field>
           {booking && <h3 className="booking-group md:col-span-2">ผู้รับบริการ (ผู้เข้าพัก)</h3>}
           <Field label="ชื่อ นามสกุล ผู้รับบริการ" required className={booking ? "md:col-span-2" : ""}>{lockNames ? <input value={who} readOnly required />
@@ -731,13 +743,13 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, co
               <div className="flex flex-wrap gap-1.5"><button type="button" aria-pressed={hosp.trim() === HOSP_LATER} onClick={() => setHosp(hosp.trim() === HOSP_LATER ? "" : HOSP_LATER)}
                 className={`rounded-full px-3 py-1 text-xs font-medium ${hosp.trim() === HOSP_LATER ? "bg-gold-700 text-white" : "border border-cream-300 bg-white text-gold-700 hover:border-gold-300"}`}>{HOSP_LATER}</button></div>
               <p className="text-xs text-gold-600">เลือกสิทธิ์การรักษา</p>
-              <ChipChoice label="สิทธิ์การรักษา" options={HEALTH_RIGHTS} value={right} onChange={setRight} /></div>{(hosp.trim() || right) && <p className={`mt-2 rounded-xl px-3 py-2 text-sm ${hosp.trim() ? "bg-cream-50 text-gold-700" : "border border-amber-200 bg-amber-50 text-amber-900"}`}>
+              <ChipChoice label="สิทธิ์การรักษา" options={right && !rights.values.includes(right) ? [...rights.values, right] : rights.values} value={right} onChange={setRight} /></div>{(hosp.trim() || right) && <p className={`mt-2 rounded-xl px-3 py-2 text-sm ${hosp.trim() ? "bg-cream-50 text-gold-700" : "border border-amber-200 bg-amber-50 text-amber-900"}`}>
                 {hosp.trim() ? <>ในสัญญาข้อ 3.8 จะพิมพ์ว่า ให้นำส่งโรงพยาบาล <b className="text-gold-900">{[hosp.trim(), right ? `(${right})` : ""].filter(Boolean).join(" ")}</b>{hosp.trim() === HOSP_LATER && " · อย่าลืมตามชื่อโรงพยาบาลจากญาติแล้วแก้ไขสัญญา"}</> : <>เลือกสิทธิ์ <b>{right}</b> แล้ว · ยังไม่ได้ใส่ชื่อโรงพยาบาล · ถ้ายังไม่รู้ กด &quot;{HOSP_LATER}&quot;</>}</p>}
               <p className="field-hint">นำส่งเมื่อเจ็บป่วย</p></Field>
             <Field label="โรงพยาบาลสำรอง (ใกล้เคียง)"><SuggestText value={hospAlt} onChange={setHospAlt} options={pastHosp} label="โรงพยาบาลสำรอง" placeholder="เช่น รพ.ใกล้ศูนย์ ส่งได้เร็วกรณีฉุกเฉิน" /><p className="field-hint">ว่างได้ · สัญญาเว้นเส้นให้เขียนตอนเซ็น</p></Field>
-            <Field label="ยา / เวชภัณฑ์ที่ใช้ประจำ"><TagInput label="ยาที่ใช้ประจำ" value={meds} onChange={setMeds} suggestions={COMMON_MEDS} quick={["ยาความดัน", "ยาเบาหวาน", "ยาไขมัน"]} none="ไม่มียาประจำ" placeholder="พิมพ์ชื่อยา เช่น aml แล้วเลือก หรือพิมพ์เองแล้วกด Enter" /><p className="field-hint">ใช้พิมพ์ในสัญญาเท่านั้น · ยาที่ต้องจัดเพิ่มที่ประวัติผู้รับบริการ แท็บยา</p></Field>
-            <Field label="ประวัติแพ้ยา" required><TagInput label="ประวัติแพ้ยา" value={drugA} onChange={setDrugA} suggestions={ALLERGY_DRUGS} none={NO_ALLERGY} quick={["Penicillin", "Sulfonamide (Sulfa)", "Aspirin", "NSAIDs"]} placeholder="พิมพ์ชื่อยาที่แพ้ เช่น pen แล้วเลือก" /><p className="field-hint">ไม่แพ้กด &quot;{NO_ALLERGY}&quot;</p></Field>
-            <Field label="ประวัติแพ้อาหาร" required><TagInput label="ประวัติแพ้อาหาร" value={foodA} onChange={setFoodA} suggestions={FOOD_ALLERGENS} none={NO_ALLERGY} quick={["อาหารทะเล", "นมวัว", "ไข่", "ถั่วลิสง"]} placeholder="พิมพ์อาหารที่แพ้ แล้วกด Enter" /><p className="field-hint">ไม่แพ้กด &quot;{NO_ALLERGY}&quot;</p></Field>
+            <Field label="ยา / เวชภัณฑ์ที่ใช้ประจำ"><TagInput label="ยาที่ใช้ประจำ" value={meds} onChange={setMeds} suggestions={medOpts} quick={["ยาความดัน", "ยาเบาหวาน", "ยาไขมัน"]} none="ไม่มียาประจำ" placeholder="พิมพ์ชื่อยา เช่น aml แล้วเลือก หรือพิมพ์เองแล้วกด Enter" /><p className="field-hint">ใช้พิมพ์ในสัญญาเท่านั้น · ยาที่ต้องจัดเพิ่มที่ประวัติผู้รับบริการ แท็บยา</p></Field>
+            <Field label="ประวัติแพ้ยา" required><TagInput label="ประวัติแพ้ยา" value={drugA} onChange={setDrugA} suggestions={drugOpts} none={NO_ALLERGY} quick={["Penicillin", "Sulfonamide (Sulfa)", "Aspirin", "NSAIDs"]} placeholder="พิมพ์ชื่อยาที่แพ้ เช่น pen แล้วเลือก" /><p className="field-hint">ไม่แพ้กด &quot;{NO_ALLERGY}&quot;</p></Field>
+            <Field label="ประวัติแพ้อาหาร" required><TagInput label="ประวัติแพ้อาหาร" value={foodA} onChange={setFoodA} suggestions={foodOpts} none={NO_ALLERGY} quick={["อาหารทะเล", "นมวัว", "ไข่", "ถั่วลิสง"]} placeholder="พิมพ์อาหารที่แพ้ แล้วกด Enter" /><p className="field-hint">ไม่แพ้กด &quot;{NO_ALLERGY}&quot;</p></Field>
           </div>
           <p className={`mt-3 rounded-xl bg-cream-50 px-4 py-2.5 text-sm text-gold-700 ${hide}`}>โรคประจำตัว ไม่ต้องกรอกที่นี่ · ระบบดึงจากข้อมูลผู้รับบริการ (เมนูผู้รับบริการ) มาพิมพ์ในสัญญาให้เอง</p>
           <div className="mt-4 grid gap-4 md:grid-cols-2">
@@ -987,7 +999,7 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, co
               {booking ? <section>
                 <h3 className="bill4-h"><b>1</b>เลือกยอดมัดจำค่าห้อง</h3>
                 <div role="radiogroup" aria-label="ยอดมัดจำค่าห้อง" className="amt-cards">
-                  {BOOKING_AMOUNTS.map((n) => {
+                  {bookAmts.map((n) => {
                     const on = Number(depAmt) === n;
                     return (
                       <button key={n} type="button" role="radio" aria-checked={on} onClick={() => setDepAmt(String(n))} className={`amt-card ${on ? "is-on" : ""}`}>
@@ -1021,12 +1033,13 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, co
                 <h3 className="bill4-h"><b>3</b>ช่องทางชำระ</h3>
                 <div role="radiogroup" aria-label="ช่องทางชำระ" className="pay-cards">
                   {PAY_METHODS.map((m) => (
-                    <button key={m} type="button" role="radio" aria-checked={payBy.method === m} onClick={() => setPayBy({ ...payBy, method: m })} className={`pay-card ${payBy.method === m ? "is-on" : ""}`}>
-                      <Icon name={m === "เงินสด" ? "receipt" : m === "โอนเงิน" ? "building" : "id"} className="h-4 w-4" />{m === "โอนเงิน" ? "โอนเข้าบัญชีบริษัท" : m}
+                    <button key={m} type="button" role="radio" aria-checked={payBy.method === m} onClick={() => setPayBy({ ...payBy, method: m, account: m === payBy.method ? payBy.account : "" })} className={`pay-card ${payBy.method === m ? "is-on" : ""}`}>
+                      <Icon name={m === "เงินสด" ? "receipt" : m === "โอนเงิน" ? "building" : "id"} className="h-4 w-4" />{m === "โอนเงิน" ? "โอนเข้าบัญชีบริษัท" : m === "บัตรเครดิต" ? "บัตรเครดิตอื่น (ลิงก์ ฯลฯ)" : m}
                     </button>
                   ))}
                 </div>
                 <div className="mt-4 grid gap-4 md:grid-cols-2">
+                  {payBy.method !== "เงินสด" && <div className="md:col-span-2"><AccountChoice kind={ACCT_KIND[payBy.method as keyof typeof ACCT_KIND] ?? "card"} value={payBy.account ?? ""} onChange={(v) => setPayBy({ ...payBy, account: v })} /></div>}
                   <Field label="วันที่รับเงิน"><input type="date" value={payBy.date} max={todayIso()} onChange={(e) => setPayBy({ ...payBy, date: e.target.value })} /></Field>
                   {payBy.method === "โอนเงิน" && <Field label="หลักฐานการโอนเงิน" required className="md:col-span-2"><PhotoPicker value={payBy.slip} onChange={(v) => setPayBy({ ...payBy, slip: v })} label="ถ่ายหรือเลือกรูปสลิป" /></Field>}
                 </div>
@@ -1116,6 +1129,7 @@ export function Contracts() {
   const { confirm, toast, go } = useApp();
   const [creating, setCreating] = useState(false);
   const [sample, setSample] = useState(false);
+  const DC_REASONS = [...useOptions("dc_reasons").values, OTHER];
   const [dlg, setDlg] = useState<Dlg>(null);
   const [filter, setFilter] = useState("ทั้งหมด");
   /** ทะเบียนสัญญา หรือ สรุปการเปิดสัญญา รายวัน/เดือน/ปี */
@@ -1228,7 +1242,7 @@ export function Contracts() {
    */
   const payNow = async (inv: Invoice, p: PayNow, booking: boolean) => {
     const n = installmentsOf(inv.note), amt = n > 1 ? splitInstallments(inv.net, n)[0] : inv.net;
-    const body = { op: "pay", id: inv.id, cash: p.method === "เงินสด" ? amt : 0, credit: p.method === "บัตรเครดิต" ? amt : 0, transfer: p.method === "โอนเงิน" ? amt : 0, date: p.date, slip: p.method === "โอนเงิน" ? p.slip : undefined, note: booking ? "มัดจำค่าห้อง" : "รับชำระตอนเปิดสัญญา" };
+    const body = { op: "pay", id: inv.id, cash: p.method === "เงินสด" ? amt : 0, credit: p.method === "บัตรเครดิต" ? amt : 0, edc: p.method === "รูดบัตร EDC" ? amt : 0, transfer: p.method === "โอนเงิน" ? amt : 0, date: p.date, slip: p.method === "โอนเงิน" ? p.slip : undefined, transferAccount: p.method === "โอนเงิน" ? p.account : undefined, cardAccount: p.method === "บัตรเครดิต" ? p.account : undefined, edcAccount: p.method === "รูดบัตร EDC" ? p.account : undefined, note: booking ? "มัดจำค่าห้อง" : "รับชำระตอนเปิดสัญญา" };
     const send = () => fetch("/api/billing", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     try {
       let r = await send();
@@ -1478,6 +1492,7 @@ export function Contracts() {
           {admin && <button className="btn-soft" onClick={() => setTermsDlg(terms)}><Icon name="doc" className="h-4 w-4" /> เงื่อนไขเพิ่มเติมในสัญญา</button>}
           {boss && <button className="btn-soft" disabled={!shown.length} onClick={exportContracts}><CsvIcon /> ส่งออก CSV</button>}
           <button className="btn-soft" onClick={() => setSample(true)}><Icon name="print" className="h-4 w-4" /> ตัวอย่าง สบส. (แบบฟอร์มเปล่า)</button>
+          <OptionSettings group="contracts" />
         </>}
       />
       <div className="mb-4"><Tabs tabs={["ทะเบียนสัญญา", "สรุปการเปิดสัญญา"]} value={page === "list" ? "ทะเบียนสัญญา" : "สรุปการเปิดสัญญา"} onChange={(x) => setPage(x === "ทะเบียนสัญญา" ? "list" : "summary")} /></div>

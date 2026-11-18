@@ -9,8 +9,9 @@
  *  text · int · num · money (แสดงแบบมีจุลภาค) · bool · list (text[])
  *  date (YYYY-MM-DD) · date_th (วว/ดด/ปปปป พ.ศ.) · ts_th (วว/ดด/ปปปป HH:MM) · ts_bkk (เหมือน ts_th แต่เป็นคอลัมน์ timestamptz แปลงเป็นเวลาไทย) · time (HH:MM)
  */
-import type { Role } from "./roles";
+import { readOnlyRole, type Role } from "./roles";
 import { ALL_PERMS, can, Perm } from "./perms";
+import { OPT_GROUPS, OPT_WRITE, OptGroup } from "./optionLists";
 
 export type ColType = "text" | "int" | "num" | "money" | "bool" | "list" | "date" | "date_th" | "ts_th" | "ts_bkk" | "time";
 /** ro: server เป็นคนใส่ค่า (เช่น HN เลขที่เอกสาร) หน้าเว็บอ่านได้อย่างเดียว */
@@ -21,7 +22,8 @@ export type Col = { col: string; t: ColType; field?: string; ro?: boolean };
  * globalWrite  : แก้ไข/เพิ่ม/ลบได้เฉพาะ Global Admin (ระดับอื่นอ่านอย่างเดียว)
  * residentLink : มีคอลัมน์ resident_name → server เก็บ resident_id (รหัสผู้รับบริการ) ให้เอง
  */
-export type Spec = { table: string; kind: "rows" | "object"; cols: Col[]; numericId?: boolean; branchCol?: string; hiddenBranch?: boolean; residentLink?: boolean; globalWrite?: boolean; scope?: { col: string; value: string } };
+/** sharedWrite = ผู้ใช้สาขาแก้แถวส่วนกลาง ("ทุกสาขา") ได้ด้วย (ปกติแก้ส่วนกลางได้เฉพาะผู้บริหาร) */
+export type Spec = { table: string; kind: "rows" | "object"; cols: Col[]; numericId?: boolean; branchCol?: string; hiddenBranch?: boolean; residentLink?: boolean; globalWrite?: boolean; sharedWrite?: boolean; scope?: { col: string; value: string } };
 
 /** ค่าสาขาของข้อมูลส่วนกลาง ทุกสาขาเห็นได้ */
 export const SHARED_BRANCHES = ["ทุกสาขา", "ส่วนกลาง"];
@@ -97,6 +99,17 @@ const SPECS: Record<string, Omit<Spec, "scope">> = {
     table: "shift_handovers", kind: "object", numericId: true, ...own,
     cols: [c("topic_type", "text", "type"), c("resident_name", "text", "who"), c("detail", "text", "text"), c("written_by", "text", "by"), c("written_at", "text", "at")],
   },
+  /** ฝ่าย (BU): หมวดในใบราคา → ฝ่าย → บริษัทที่เป็นรายได้ (lib/bu) · แก้ได้เฉพาะผู้บริหาร */
+  "bu-divisions": {
+    table: "bu_divisions", kind: "object", globalWrite: true,
+    cols: [c("name", "text", "name"), c("cats", "list", "cats"), c("company", "text", "company"), c("active", "bool", "active"), ro("sort_order", "sort", "num")],
+  },
+  /** บัญชีธนาคาร/เครื่องรูดบัตรของบริษัท ที่แคชเชียร์เลือกตอนรับชำระ · kind: transfer | card · branch "ทุกสาขา" = ใช้ทุกสาขา */
+  "pay-accounts": {
+    // แคชเชียร์/ผู้จัดการแก้บัญชีกลาง (ทุกสาขา) ได้ด้วย (ตกลง 17 พ.ย. 2569: แคชเชียร์ตั้งค่าได้)
+    table: "pay_accounts", kind: "object", branchCol: "branch_name", sharedWrite: true,
+    cols: [c("branch_name", "text", "branch"), c("kind", "text", "kind"), c("name", "text", "name"), c("detail", "text", "detail"), c("active", "bool", "active"), ro("sort_order", "sort", "int")],
+  },
 };
 
 const DAILY = { table: "daily_tasks", kind: "rows" as const, ...own, cols: [c("resident_name"), c("task_name"), c("assignee"), c("scheduled_time", "time"), c("shift"), c("status"), c("instruction"), c("vital_signs"), c("submitted_time", "time"), c("note"), c("done_by"), ro("created_at", undefined, "ts_bkk")] };
@@ -129,12 +142,22 @@ const KEY_PERMS: Record<string, { read: Perm[]; write?: Perm[] }> = {
   "staff-tasks": { read: ["app.staff"] },
   "staff-meds": { read: ["app.staff"] },
   "staff-handover": { read: ["app.staff"] },
+  "pay-accounts": { read: ["billing", "contracts"], write: ["billing"] },
+  "bu-divisions": { read: ["billing", "dashboard", "branches"], write: ["branches"] },
 };
 const DAILY_PERMS: Perm[] = ["tasks", "app.staff", "careplan", "dashboard", "tasks.review"];
 
 /** สิทธิ์ของบัญชีต่อชุดข้อมูล */
 export function accessOf(user: { role: Role; perms?: string[] }, key: string): "none" | "read" | "write" {
-  const k = key.startsWith("daily-") ? { read: DAILY_PERMS } : KEY_PERMS[key];
+  // การเงิน/บัญชี: ไม่เปิดงานประจำวันของทีมดูแล (เห็นเฉพาะข้อมูลการเงิน)
+  if (readOnlyRole(user.role) && key.startsWith("daily-")) return "none";
+  const a = accessRaw(user, key);
+  // การเงิน/บัญชี: ดูได้อย่างเดียว (lib/roles readOnlyRole)
+  return a === "write" && readOnlyRole(user.role) ? "read" : a;
+}
+function accessRaw(user: { role: Role; perms?: string[] }, key: string): "none" | "read" | "write" {
+  const og = optGroupOf(key);
+  const k = key.startsWith("daily-") ? { read: DAILY_PERMS } : og ? { read: ALL_PERMS, write: OPT_WRITE[og] } : KEY_PERMS[key];
   if (!k) return user.role === "Global Admin" ? "write" : "none";
   if ((k.write ?? k.read).some((p) => can(user, p))) return "write";
   return k.read.some((p) => can(user, p)) ? "read" : "none";
@@ -146,8 +169,14 @@ export function specFor(key: string): Spec | null {
   const m = key.match(/^daily-(\d{4}-\d{2}-\d{2})$/);
   // งานประจำวัน: ผู้จัดการมอบหมาย พนักงานส่งงานจาก KinApp (เห็นเฉพาะสาขาตัวเอง)
   if (m) return { ...DAILY, residentLink: true, scope: { col: "work_date", value: m[1] } };
+  // ชุดตัวเลือกที่แก้เองได้ของแต่ละหน้า (lib/optionLists) · ข้อมูลกลางทุกสาขา
+  const og = optGroupOf(key);
+  if (og) return { ...OPTS, scope: { col: "grp", value: og } };
   return null;
 }
+/** opts-contracts → "contracts" */
+const optGroupOf = (key: string): OptGroup | null => { const g = key.startsWith("opts-") ? key.slice(5) : ""; return (OPT_GROUPS as readonly string[]).includes(g) ? (g as OptGroup) : null; };
+const OPTS = { table: "option_lists", kind: "object" as const, cols: [c("list_key", "text", "list"), c("value", "text", "value"), c("active", "bool", "active"), ro("sort_order", "sort", "num")] };
 
 /** ตารางที่อ้างถึงผู้รับบริการ (ใช้แก้ชื่อตามเมื่อเปลี่ยนชื่อผู้รับบริการ) */
 export const RESIDENT_TABLES = [...new Set([...Object.values(SPECS), DAILY].filter((s) => linked(s.cols)).map((s) => s.table))];

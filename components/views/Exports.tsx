@@ -5,6 +5,7 @@ import CsvIcon from "../CsvIcon";
 import { PageHeader } from "../ui";
 import { useApp } from "@/lib/app";
 import { useSession } from "@/lib/session";
+import { seesAllBranches } from "@/lib/roles";
 import { can, Perm } from "@/lib/perms";
 import { ViewId } from "@/lib/nav";
 import { useBranchNames } from "@/lib/branches";
@@ -141,7 +142,7 @@ export function Exports() {
   const { user } = useSession();
   const prices = usePriceList();
   const branches = useBranchNames();
-  const isGlobal = user?.role === "Global Admin";
+  const isGlobal = seesAllBranches(user?.role);
   const today = todayIso();
   const [range, setRange] = useState<RangeKey>("month");
   const [cFrom, setCFrom] = useState(`${today.slice(0, 7)}-01`);

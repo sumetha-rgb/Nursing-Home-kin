@@ -1210,3 +1210,92 @@ CREATE TABLE IF NOT EXISTS waitlist (
 );
 CREATE INDEX IF NOT EXISTS waitlist_branch ON waitlist (branch_name, status, created_at);
 COMMENT ON TABLE waitlist IS 'คนรอเข้าพัก เรียงตามลำดับที่ขอ';
+
+-- บัญชี/ช่องทางรับเงินของบริษัท: ตอนรับชำระแคชเชียร์เลือกว่าเงินโอนเข้าบัญชีไหน / รูดบัตรเครื่องไหน (17 พ.ย. 2569)
+--  kind: transfer = บัญชีธนาคารรับโอน · card = เครื่องรูดบัตร EDC / ช่องทางบัตร · branch_name 'ทุกสาขา' = ใช้ได้ทุกสาขา
+--  แคชเชียร์ ผู้จัดการ ผู้บริหาร (สิทธิ์ใบแจ้งหนี้และใบเสร็จ) เพิ่ม/แก้/ปิดใช้ได้ · ไม่ลบ (ปิดใช้แทน)
+CREATE TABLE IF NOT EXISTS pay_accounts (
+  id          text PRIMARY KEY,
+  branch_name text NOT NULL DEFAULT 'ทุกสาขา',
+  kind        text NOT NULL,
+  name        text NOT NULL,
+  detail      text,
+  active      boolean NOT NULL DEFAULT true,
+  sort_order  double precision NOT NULL DEFAULT 0,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+COMMENT ON TABLE pay_accounts IS 'บัญชีธนาคาร/เครื่องรูดบัตรของบริษัท ที่แคชเชียร์เลือกตอนรับชำระ';
+INSERT INTO pay_accounts (id, branch_name, kind, name, detail, sort_order) VALUES
+  ('pa-kbank', 'ทุกสาขา', 'transfer', 'กสิกรไทย', '047-1-4-7576-9', 1),
+  ('pa-scb', 'ทุกสาขา', 'transfer', 'ไทยพาณิชย์', NULL, 2),
+  ('pa-edc', 'ทุกสาขา', 'card', 'เครื่องรูดบัตร EDC', NULL, 3),
+  ('pa-card', 'ทุกสาขา', 'card', 'บัตรเครดิต (ลิงก์ชำระเงิน)', NULL, 4)
+ON CONFLICT (id) DO NOTHING;
+-- ชุดข้อมูลผ่าน /api/data ต้องมี updated_at (sort_order ระบบใส่เองตอนเพิ่ม)
+ALTER TABLE pay_accounts ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
+-- sort_order แบบเดียวกับตารางอื่นที่บันทึกผ่าน /api/data (ระบบใส่เวลาเป็นมิลลิวินาที เกินขนาด int)
+ALTER TABLE pay_accounts ALTER COLUMN sort_order TYPE double precision;
+-- รับชำระแต่ละงวด: เงินโอนเข้าบัญชีไหน / รูดบัตรเครื่องไหน (เก็บชื่อตอนรับเงิน แก้ชื่อบัญชีภายหลังไม่กระทบประวัติ)
+ALTER TABLE invoice_payments ADD COLUMN IF NOT EXISTS transfer_account text;
+ALTER TABLE invoice_payments ADD COLUMN IF NOT EXISTS card_account text;
+-- แยกรูดบัตร EDC ออกจากบัตรเครดิต: edc = ส่วนของยอดบัตร (credit) ที่รูดผ่านเครื่อง EDC · credit ยังเป็นยอดบัตรทั้งหมด (รายงานเดิมไม่เปลี่ยน)
+ALTER TABLE invoice_payments ADD COLUMN IF NOT EXISTS edc numeric(12,2) NOT NULL DEFAULT 0;
+ALTER TABLE invoice_payments ADD COLUMN IF NOT EXISTS edc_account text;
+-- ประเภทบัญชีรับเงินเพิ่ม edc (เครื่องรูดบัตร) · ตัวอย่างเลขบัญชี/เครื่อง (จำลอง รอเลขจริง)
+UPDATE pay_accounts SET kind = 'edc', name = 'EDC กสิกรไทย', detail = 'TID 70418823' WHERE id = 'pa-edc' AND kind = 'card';
+UPDATE pay_accounts SET detail = '408-2-61534-7' WHERE id = 'pa-scb' AND detail IS NULL;
+INSERT INTO pay_accounts (id, branch_name, kind, name, detail, sort_order) VALUES
+  ('pa-bbl', 'ทุกสาขา', 'transfer', 'กรุงเทพ', '215-0-84426-3', 5),
+  ('pa-ktb', 'ทุกสาขา', 'transfer', 'กรุงไทย', '982-6-03157-1', 6),
+  ('pa-edc-scb', 'ทุกสาขา', 'edc', 'EDC ไทยพาณิชย์', 'TID 51263094', 7)
+ON CONFLICT (id) DO NOTHING;
+
+-- หมวดย่อยของใบราคา (ผู้จัดการ/ผู้บริหารเพิ่ม เปลี่ยนชื่อ ปิดใช้ได้ · 17 พ.ย. 2569) · start = เลขเริ่มของช่วงรหัส (NS + 50 = NS-5x)
+--  ตั้งต้นจาก CATS ใน lib/priceList.ts ตอนเปิดหน้าใบราคาครั้งแรก (/api/prices) · price_items.sub เก็บเป็นชื่อหมวดย่อย (เปลี่ยนชื่อ = อัปเดตรายการตาม)
+CREATE TABLE IF NOT EXISTS price_subs (
+  id          text PRIMARY KEY,
+  cat         text NOT NULL,
+  name        text NOT NULL,
+  start_no    int NOT NULL,
+  active      boolean NOT NULL DEFAULT true,
+  updated_by  text,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (cat, start_no),
+  UNIQUE (cat, name)
+);
+COMMENT ON TABLE price_subs IS 'หมวดย่อยของใบราคา และช่วงรหัสของแต่ละหมวดย่อย';
+
+-- ชุดตัวเลือกที่ผู้ใช้แก้เองได้ (lib/optionLists.ts) · grp = หน้าเจ้าของ (contracts/billing/tasks/physio) · list_key = ชื่อชุด
+--  ตั้งต้นจากค่าเดิมในโค้ดตอนเปิดหน้าครั้งแรก (id = <list_key>-<ลำดับ>) · ปิดใช้แทนการลบ (ข้อมูลเก่าที่เคยเลือกยังอยู่)
+CREATE TABLE IF NOT EXISTS option_lists (
+  id          text PRIMARY KEY,
+  grp         text NOT NULL,
+  list_key    text NOT NULL,
+  value       text NOT NULL,
+  active      boolean NOT NULL DEFAULT true,
+  sort_order  double precision NOT NULL DEFAULT 0,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS option_lists_grp ON option_lists (grp, list_key);
+COMMENT ON TABLE option_lists IS 'ชุดตัวเลือกในฟอร์มที่ผู้ใช้เพิ่ม/แก้/ปิดใช้ได้';
+
+-- ฝ่าย (BU) สำหรับรายงาน "รายได้ตามบริษัทและฝ่าย" (18 พ.ย. 2569) · cats = หมวดในใบราคาที่เป็นของฝ่ายนี้ (RM ห้อง · MD ค่าบริการทางการแพทย์ · NS · CR · EQ · PT · OT)
+--  company = บริษัทที่เป็นรายได้ (ว่าง = บริษัทของสาขาที่ออกใบ) · ใช้เป็นรายงานภายใน ไม่กระทบเอกสารลูกค้า · ผู้บริหารแก้ได้ที่หน้าตั้งค่า
+CREATE TABLE IF NOT EXISTS bu_divisions (
+  id          text PRIMARY KEY,
+  name        text NOT NULL,
+  cats        text[] NOT NULL DEFAULT '{}',
+  company     text,
+  active      boolean NOT NULL DEFAULT true,
+  sort_order  double precision NOT NULL DEFAULT 0,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now()
+);
+COMMENT ON TABLE bu_divisions IS 'ฝ่าย (BU): หมวดในใบราคาไหนเป็นของฝ่ายไหน และเป็นรายได้ของบริษัทไหน';
+
+-- เลขที่ใบเสร็จ / ใบกำกับภาษีของแต่ละงวดรับเงิน (18 พ.ย. 2569): <ตัวหน้าบริษัท>-RC + ปีเดือนวันที่รับเงิน (พ.ศ.) + ลำดับของวัน 4 หลัก
+--  ทีทรีฯ = KN-RC… · คิน ออริจิ้นฯ = KO-RC… · งวดก่อนหน้านี้ว่าง = ใช้เลขเดิม (เลขใบแจ้งหนี้ หรือ เลขใบ-งวด) ไม่เปลี่ยนย้อนหลัง
+ALTER TABLE invoice_payments ADD COLUMN IF NOT EXISTS receipt_no text;
+CREATE UNIQUE INDEX IF NOT EXISTS invoice_payments_receipt_no ON invoice_payments (receipt_no) WHERE receipt_no IS NOT NULL;

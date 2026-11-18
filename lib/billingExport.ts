@@ -1,7 +1,7 @@
 "use client";
 // ส่งออกข้อมูลการเงินเป็น CSV สำหรับฝ่ายบัญชี (หน้าใบแจ้งหนี้และใบเสร็จ และแท็บการเงินในภาพรวมและรายงาน)
 import { useEffect, useState } from "react";
-import { BILL_GROUPS, docDate, groupOf, Invoice, lineAmount, lineDiscount, lineNet, lineSign, money, parseItems, BillItem } from "./billing";
+import { BILL_GROUPS, creditOf, docDate, groupOf, Invoice, lineAmount, lineDiscount, lineNet, lineSign, money, parseItems, payTake, BillItem } from "./billing";
 import { downloadCsv } from "./store";
 import { lineCode } from "./priceList";
 
@@ -11,6 +11,21 @@ export type PaidDay = { branch: string; date: string; amount: number };
  * ยอดรับเงินรายวันตั้งแต่วันที่ from (YYYY-MM-DD) · ใช้รวมเป็น "รับเดือนนี้" / รายรับรายเดือน ตามวันที่รับของแต่ละงวด
  *  sig = ค่าที่เปลี่ยนเมื่อมีการรับชำระ (เช่น ยอดชำระสะสมของทุกใบ) ให้ดึงใหม่ · คืน null ระหว่างโหลดหรือดึงไม่ได้ (ให้ผู้เรียกใช้ยอดประมาณแบบเดิม)
  */
+/** ยอดค้างชำระ ณ วันที่ date (null = ไม่ต้องดึง เช่น เดือนปัจจุบันใช้ยอด ณ วันนี้) · branch ว่าง = ทุกสาขาที่บัญชีเห็น */
+export type OwingAt = { date: string; n: number; sum: number; oldest: string | null };
+export function useOwingAt(date: string | null, branch: string): OwingAt | null {
+  const [v, setV] = useState<OwingAt | null>(null);
+  useEffect(() => {
+    setV(null);
+    if (!date) return;
+    let live = true;
+    fetch(`/api/billing?op=owing_at&date=${date}${branch ? `&branch=${encodeURIComponent(branch)}` : ""}`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null)).then((d) => { if (live && d) setV(d as OwingAt); }).catch(() => {});
+    return () => { live = false; };
+  }, [date, branch]);
+  return v;
+}
+
 export function usePaidDays(from: string, sig: unknown): PaidDay[] | null {
   const [rows, setRows] = useState<PaidDay[] | null>(null);
   useEffect(() => {
@@ -78,7 +93,15 @@ export function exportInvoiceLines(list: Invoice[], branchOf: (x: Invoice) => st
   return rows.length;
 }
 
-type PayRow = { date: string; no: string | null; n: number; branch: string; who: string; hn: string | null; payer: string | null; kind: string; status: string; cash: number; transfer: number; credit: number; amount: number; wht?: number; pkind?: string; cashier: string; note: string; slip: boolean; transferRef?: string };
+type PayRow = { date: string; no: string | null; n: number; branch: string; who: string; hn: string | null; payer: string | null; kind: string; status: string; cash: number; transfer: number; credit: number; amount: number; wht?: number; pkind?: string; cashier: string; note: string; slip: boolean; transferRef?: string; transferAccount?: string; cardAccount?: string; edc?: number; edcAccount?: string; paidBefore?: number; items?: string; receiptNo?: string };
+
+/** แยกยอดที่ตัดในงวดนี้: รายการที่มี VAT ก่อน (ค่ารายการ + VAT ครบ) แล้วค่อยไม่มี VAT · ใบลดหนี้หักยอด = ว่าง */
+function payCells(p: PayRow): string[] {
+  if (p.pkind === "credit" || !p.items) return ["", "", "", ""];
+  const its = parseItems(p.items);
+  const t = payTake(its, creditOf(its) + (p.paidBefore ?? 0), p.amount);
+  return [money(t.base), money(t.vat), money(t.exempt), t.lines.map((l) => `${lineCode(l.item) || l.item.desc} ${money(l.take)}${l.done ? "" : " (บางส่วน)"}`).join(" · ")];
+}
 
 /** การรับเงินทุกงวด: กระทบยอดเงินสด / เงินโอน / บัตร กับบัญชีธนาคารรายวัน */
 export async function exportPayments(branch: string, name: string, inRange: (d: string) => boolean = () => true) {
@@ -86,7 +109,7 @@ export async function exportPayments(branch: string, name: string, inRange: (d: 
   const d = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(d.error || "ดึงข้อมูลการรับเงินไม่สำเร็จ");
   const items = ((d.items ?? []) as PayRow[]).filter((p) => inRange(String(p.date ?? "").slice(0, 10)));
-  downloadCsv(name, ["วันที่รับเงิน", "เลขที่เอกสาร", "งวดที่", "สาขา", "ผู้รับบริการ", "HN", "ผู้ชำระ", "ประเภทใบ", "สถานะใบ", "ประเภทรายการ", "เงินสด", "เงินโอน", "บัตรเครดิต", "รวมรับเงิน", "ภาษีหัก ณ ที่จ่าย", "ตัดยอดค้างรวม", "เลขอ้างอิงการโอน", "ผู้รับเงิน", "มีสลิป", "หมายเหตุ"],
-    items.map((p) => [docDate(p.date), p.no ?? "", String(p.n), p.branch ?? "", p.who ?? "", p.hn ?? "", p.payer ?? "", p.kind ?? "", p.status ?? "", p.pkind === "credit" ? "ใบลดหนี้หักยอด" : "รับเงิน", money(p.cash), money(p.transfer), money(p.credit), money(p.cash + p.transfer + p.credit), money(p.wht ?? 0), money(p.amount), p.transferRef ?? "", p.cashier, p.slip ? "มี" : "", p.note]));
+  downloadCsv(name, ["วันที่รับเงิน", "เลขที่ใบเสร็จ", "เลขที่เอกสาร", "งวดที่", "สาขา", "ผู้รับบริการ", "HN", "ผู้ชำระ", "ประเภทใบ", "สถานะใบ", "ประเภทรายการ", "เงินสด", "เงินโอน", "โอนเข้าบัญชี", "รูดบัตร EDC", "เครื่อง EDC", "บัตรเครดิตอื่น", "ช่องทางบัตร", "รวมรับเงิน", "ภาษีหัก ณ ที่จ่าย", "ตัดยอดค้างรวม", "มูลค่าที่มี VAT (ก่อน VAT)", "VAT 7%", "มูลค่าที่ไม่มี VAT", "รายการที่ชำระ", "เลขอ้างอิงการโอน", "ผู้รับเงิน", "มีสลิป", "หมายเหตุ"],
+    items.map((p) => [docDate(p.date), p.receiptNo ?? "", p.no ?? "", String(p.n), p.branch ?? "", p.who ?? "", p.hn ?? "", p.payer ?? "", p.kind ?? "", p.status ?? "", p.pkind === "credit" ? "ใบลดหนี้หักยอด" : "รับเงิน", money(p.cash), money(p.transfer), p.transferAccount ?? "", money(p.edc ?? 0), p.edcAccount ?? "", money(p.credit - (p.edc ?? 0)), p.cardAccount ?? "", money(p.cash + p.transfer + p.credit), money(p.wht ?? 0), money(p.amount), ...payCells(p), p.transferRef ?? "", p.cashier, p.slip ? "มี" : "", p.note]));
   return items.length;
 }

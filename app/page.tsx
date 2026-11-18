@@ -10,6 +10,7 @@ import { can, hasConsole } from "@/lib/perms";
 import CashierOnly from "@/components/CashierOnly";
 import { wantStaffFilter } from "@/lib/staffIntent";
 import { EXPORT_SOURCES, NAV, ViewId } from "@/lib/nav";
+import { canSalesTax, canSettings } from "@/lib/settingsAccess";
 
 /** แต่ละหน้าโหลดตอนเปิดใช้เท่านั้น (หน้าแรกไม่ต้องรอโค้ดของทุกเมนู) */
 const view = (load: () => Promise<() => JSX.Element>) =>
@@ -39,6 +40,9 @@ const Billing = view(() => import("@/components/views/Billing").then((m) => m.Bi
 const PriceList = view(() => import("@/components/views/PriceList").then((m) => m.PriceList));
 const Exports = view(() => import("@/components/views/Exports").then((m) => m.Exports));
 const Physio = view(() => import("@/components/views/Physio").then((m) => m.Physio));
+const Settings = view(() => import("@/components/views/Settings").then((m) => m.Settings));
+const SalesTax = view(() => import("@/components/views/SalesTax").then((m) => m.SalesTax));
+const Revenue = view(() => import("@/components/views/Revenue").then((m) => m.Revenue));
 
 const VIEWS: Record<ViewId, ComponentType> = {
   careplan: Workflow,
@@ -66,6 +70,9 @@ const VIEWS: Record<ViewId, ComponentType> = {
   prices: PriceList,
   exports: Exports,
   physio: Physio,
+  settings: Settings,
+  sales_tax: SalesTax,
+  revenue: Revenue,
 };
 
 function Splash() {
@@ -90,7 +97,7 @@ export default function Home() {
   // บัญชีที่ไม่มีเมนูระบบจัดการ (พยาบาล นักกายภาพ) → พาไปแอปของตัวเอง
   if (!hasConsole(user)) return <CashierOnly user={user} app="console" onLogout={logout} />;
   // เห็นเฉพาะเมนูที่ติ๊กสิทธิ์ไว้ (lib/perms)
-  const views = NAV.flatMap((n) => (n.kind === "view" && (n.id === "exports" ? EXPORT_SOURCES.some((p) => can(user, p)) : can(user, n.id)) ? [n.id] : []));
+  const views = NAV.flatMap((n) => (n.kind === "view" && (n.id === "exports" ? EXPORT_SOURCES.some((p) => can(user, p)) : n.id === "settings" ? canSettings(user) : n.id === "sales_tax" || n.id === "revenue" ? canSalesTax(user) : can(user, n.id)) ? [n.id] : []));
   const shown = !views.includes(view) ? views[0] : view;
   const View = VIEWS[shown];
   const go = (v: ViewId) => { setView(v); window.scrollTo(0, 0); };

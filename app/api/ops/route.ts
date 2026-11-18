@@ -5,7 +5,7 @@ import { sql } from "@/lib/db";
 import { currentUser, forbidden, unauthorized } from "@/lib/auth";
 import { audit } from "@/lib/audit";
 import { can } from "@/lib/perms";
-import type { SessionUser } from "@/lib/roles";
+import { readOnlyRole, seesAllBranches, type SessionUser } from "@/lib/roles";
 import { compareBranches, insights } from "@/lib/insights";
 import { attention } from "@/lib/attention";
 
@@ -29,7 +29,8 @@ export const fetchCache = "force-no-store";
  *  POST { op: "targets", month, items: [{ branch, amount }] }   ตั้งเป้ายอดขาย (ผู้บริหาร Global Admin เท่านั้น) · amount 0/ว่าง = ลบเป้า
  */
 const bad = (msg: string, status = 400) => NextResponse.json({ error: msg }, { status });
-const scoped = (me: SessionUser) => me.role !== "Global Admin";
+/** เห็นเฉพาะสาขาตัวเอง (ผู้บริหารและการเงินเห็นทุกสาขา) */
+const scoped = (me: SessionUser) => !seesAllBranches(me.role);
 const text = (v: unknown, max = 500) => (typeof v === "string" ? v.trim().slice(0, max) : "");
 const TH_TIME = (col: string) => `to_char(${col} AT TIME ZONE 'Asia/Bangkok', 'DD/MM HH24:MI')`;
 /** เดือน YYYY-MM */
@@ -47,7 +48,7 @@ export async function GET(req: NextRequest) {
       if (!YM.test(from) || !YM.test(to)) return bad("ช่วงเดือนไม่ถูกต้อง");
       const items = await sql(`SELECT branch_name AS branch, month, amount::float AS amount, updated_by AS "by", to_char(updated_at AT TIME ZONE 'Asia/Bangkok', 'DD/MM/YYYY HH24:MI') AS at
           FROM branch_targets WHERE month BETWEEN $1 AND $2 ${scoped(me) ? "AND branch_name = $3" : ""} ORDER BY month, branch_name`, scoped(me) ? [from, to, me.branch] : [from, to]);
-      return NextResponse.json({ items, canEdit: !scoped(me) });
+      return NextResponse.json({ items, canEdit: me.role === "Global Admin" });
     }
     if (q.get("op") === "feed") {
       const kudos = await sql(`SELECT task_title, resident_name, given_by, ${TH_TIME("created_at")} AS at FROM kudos WHERE staff_name = $1 ORDER BY created_at DESC LIMIT 5`, [me.name]);
@@ -169,10 +170,11 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const me = await currentUser(req);
   if (!me) return unauthorized();
+  if (readOnlyRole(me.role)) return forbidden("บัญชีการเงิน/บัญชี ดูและส่งออกข้อมูลได้อย่างเดียว");
   const b = (await req.json().catch(() => ({}))) as Record<string, unknown>;
   try {
     if (b.op === "targets") {
-      if (scoped(me)) return forbidden("ตั้งเป้ายอดขายได้เฉพาะผู้บริหาร");
+      if (me.role !== "Global Admin") return forbidden("ตั้งเป้ายอดขายได้เฉพาะผู้บริหาร");
       const month = text(b.month, 7);
       if (!YM.test(month)) return bad("เดือนไม่ถูกต้อง");
       const items = (Array.isArray(b.items) ? b.items : []).slice(0, 50)

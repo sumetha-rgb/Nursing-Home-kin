@@ -58,6 +58,8 @@ export const ROLE_PERMS: Record<Role, Perm[]> = {
   "Head Nurse": [...CARE, "physio", "rooms.move", "rooms.manage", "tasks.review", ...TOOLS, "app.staff", "app.pharmacy"],
   // แคชเชียร์ = ฝ่ายขาย: ขายคอร์สกายภาพและจ่ายเคสให้นักกายภาพ (ร่วมกับผู้จัดการสาขา)
   Cashier: ["contracts", "billing", "rooms", "contracts.delete", "prices", "physio", "physio.assign"],
+  // การเงิน/บัญชี: เห็นทุกสาขา ดูและส่งออกอย่างเดียว (lib/roles readOnlyRole)
+  Finance: ["billing", "dashboard", "prices"],
   Nurse: ["app.staff", "app.pharmacy"],
   Physio: ["app.staff", "physio.record"],
 };
