@@ -114,7 +114,10 @@ async function revenue(req: NextRequest) {
   const q = req.nextUrl.searchParams;
   const month = /^\d{4}-\d{2}$/.test(q.get("month") ?? "") ? q.get("month")! : "";
   if (!month) return bad("เดือนไม่ถูกต้อง");
-  const from = `${month}-01`, to = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).toISOString().slice(0, 10);
+  // from/to (ไม่บังคับ) = ช่วงวันที่ที่เลือกเอง (หน้าภาพรวม › การเงิน) แทนทั้งเดือน
+  const okd = (v: string | null) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
+  const qf = okd(q.get("from")), qt = okd(q.get("to"));
+  const from = qf && qt && qf <= qt ? qf : `${month}-01`, to = qf && qt && qf <= qt ? qt : new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).toISOString().slice(0, 10);
   const br = seesAllBranches(me.role) ? q.get("branch") || null : me.branch;
   const invs = await sql(`SELECT i.id, i.doc_no AS no, i.doc_date::text AS date, i.items_json AS items, i.net::float, coalesce(i.paid_total, 0)::float AS paid,
       i.branch_name AS branch, i.status, (coalesce(i.category, '') = $3) AS cn

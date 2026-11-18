@@ -405,7 +405,7 @@ export function ExecReportBody({ title, period, kpis, attn, d, head, vs }: { tit
   );
 }
 export const finKpis = (f: FinSummary | null, t: Targets, onClick?: () => void): Kpi[] => !f ? [] : [
-  { key: "paid", label: `รับชำระ ${monTh(f.month)}`, value: `${money(f.paid)} บาท`, delta: f.paidPrev ? { text: f.paid === f.paidPrev ? "" : `${f.paid > f.paidPrev ? "▲ เพิ่มขึ้น" : "▼ ลดลง"} ${Math.abs(Math.round(((f.paid - f.paidPrev) / f.paidPrev) * 100))}%`, good: f.paid === f.paidPrev ? null : f.paid > f.paidPrev, vs: ` ${f.prevLabel}` } : { text: null, good: null, vs: ` ${f.prevLabel}` }, onClick },
-  { key: "collect", label: `อัตราเก็บเงินได้ ${monTh(f.month)}`, value: f.collect === null ? "-" : `${f.collect}%`, delta: deltaOf(f.collect, f.collectPrev, true, "%", ` ${f.prevLabel}`), target: targetOf(f.collect, t.collect, true, "%"), onClick },
+  { key: "paid", label: `รับชำระ ${f.label ?? monTh(f.month)}`, value: `${money(f.paid)} บาท`, delta: f.paidPrev ? { text: f.paid === f.paidPrev ? "" : `${f.paid > f.paidPrev ? "▲ เพิ่มขึ้น" : "▼ ลดลง"} ${Math.abs(Math.round(((f.paid - f.paidPrev) / f.paidPrev) * 100))}%`, good: f.paid === f.paidPrev ? null : f.paid > f.paidPrev, vs: ` ${f.prevLabel}` } : { text: null, good: null, vs: ` ${f.prevLabel}` }, onClick },
+  { key: "collect", label: `อัตราเก็บเงินได้ ${f.label ?? monTh(f.month)}`, value: f.collect === null ? "-" : `${f.collect}%`, delta: deltaOf(f.collect, f.collectPrev, true, "%", ` ${f.prevLabel}`), target: targetOf(f.collect, t.collect, true, "%"), onClick },
   { key: "owe", label: "ค้างชำระ ณ ตอนนี้", value: `${money(f.owe)} บาท`, note: `${f.openN} ใบ`, onClick },
 ];

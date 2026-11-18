@@ -1,5 +1,8 @@
 "use client";
 import { useLayoutEffect, useRef, useState } from "react";
+import DrillPanel from "./DrillPanel";
+import { isDrillKpi } from "@/lib/drillDims";
+import type { ViewId } from "@/lib/nav";
 
 /**
  * แท็บ "ตัวชี้วัดหลัก" แบบกราฟ (แทนการ์ดตัวเลข)
@@ -122,16 +125,23 @@ function Growth({ pts, goal, name }: { pts: Pt[]; goal: number; name: string }) 
   );
 }
 
-export default function KpiCharts({ pct, counts, vs }: { pct: PctKpi[]; counts: CountKpi[]; vs: string }) {
+/** ช่วงที่ใช้แตกย่อย (ตรงกับตัวเลขใต้กราฟ) · ranges = ช่วงเฉพาะตัวชี้วัด (เช่น การเงินคิดทั้งเดือน) · money = เห็นข้อมูลการเงิน */
+export type DrillCtx = { from: string; to: string; label: string; branch: string; money: boolean; ranges?: Record<string, { from: string; to: string; label: string }>; go?: (v: ViewId) => void };
+
+/** curNote = ตัวเลขใต้กราฟมาจากช่วงไหน (เมื่อไม่ใช่ทั้งเดือน เช่น เลือกวันนี้/ช่วงวันที่) */
+export default function KpiCharts({ pct, counts, vs, drill, curNote }: { pct: PctKpi[]; counts: CountKpi[]; vs: string; drill?: DrillCtx; curNote?: string }) {
   const [sel, setSel] = useState(pct[0]?.key);
   const [m, setM] = useState<number>(3);
   const [by, setBy] = useState<"month" | "week">("month");
   const k = pct.find((x) => x.key === sel) ?? pct[0];
+  const canDrill = (key: string) => !!drill && isDrillKpi(key) && (key !== "collect" || drill.money);
+  const dr = k && drill && canDrill(k.key) && isDrillKpi(k.key) ? { kpi: k.key, ...(drill.ranges?.[k.key] ?? drill) } : null;
   const num = (v: number) => v.toLocaleString("en-US");
   const prevName = vs.trim();
   const months = pct.find((x) => x.monthly?.length)?.monthly ?? [];
   const legend = months.slice(-m);
-  const pick = (key: string) => { setSel(key); setBy("month"); setTimeout(() => document.getElementById("kc-growth")?.scrollIntoView({ behavior: "smooth", block: "nearest" }), 30); };
+  // มีแผงแตกย่อย: กดกลุ่มแท่งแล้วเลื่อนไปที่แผง (จอแคบแผงอยู่ใต้กราฟ) · ไม่มี: เลื่อนไปการ์ดแนวโน้ม
+  const pick = (key: string) => { setSel(key); setBy("month"); setTimeout(() => document.getElementById(canDrill(key) ? "kc-drill" : "kc-growth")?.scrollIntoView({ behavior: "smooth", block: "nearest" }), 30); };
   // สรุปการเติบโตของตัวที่เลือก: เดือนแรกที่มีข้อมูล → เดือนล่าสุด
   // ตัดเดือนต้นๆ ที่ยังไม่มีข้อมูลเลยออก (เช่น ระบบเริ่มใช้กลางปี) ให้เส้นเริ่มจากเดือนแรกที่มีข้อมูล · เหลืออย่างน้อย 2 จุด
   const raw = k ? (by === "week" && k.trend?.length ? k.trend : k.monthly ?? []) : [];
@@ -146,7 +156,7 @@ export default function KpiCharts({ pct, counts, vs }: { pct: PctKpi[]; counts: 
     <div className="kc">
       <section className="card kc-card is-wide">
         <header className="kc-h">
-          <div><h3>ตัวชี้วัดที่เป็น % เทียบเดือนก่อนๆ</h3><p>แท่งเข้มสุด = {legend[legend.length - 1]?.label ?? "เดือนนี้"} · เส้นแดง = เป้า · กดกลุ่มแท่งเพื่อดูแนวโน้มการเติบโต</p></div>
+          <div><h3>ตัวชี้วัดที่เป็น % เทียบเดือนก่อนๆ</h3><p>แท่งเข้มสุด = {legend[legend.length - 1]?.label ?? "เดือนนี้"} · เส้นแดง = เป้า · {drill ? "กดกลุ่มแท่งเพื่อแตกย่อย" : "กดกลุ่มแท่งเพื่อดูแนวโน้มการเติบโต"}{curNote ? ` · ตัวเลขใต้กราฟ = ${curNote}` : ""}</p></div>
           <div className="dash-period" role="radiogroup" aria-label="เทียบกี่เดือน">
             {COMPARE.map((c) => <button key={c} type="button" role="radio" aria-checked={m === c} className={m === c ? "is-on" : ""} onClick={() => setM(c)}>{c} เดือน</button>)}
           </div>
@@ -157,6 +167,7 @@ export default function KpiCharts({ pct, counts, vs }: { pct: PctKpi[]; counts: 
         </div>
         <Columns list={pct} m={m} sel={k?.key ?? ""} onPick={pick} />
       </section>
+      {dr && k && <div id="kc-drill" className="kc-span min-w-0"><DrillPanel kpi={dr.kpi} label={k.label} goal={k.goal} cur={k.cur} base={k.base} from={dr.from} to={dr.to} period={dr.label} branch={drill!.branch} go={drill!.go} /></div>}
 
       {k && <section id="kc-growth" className="card kc-card is-wide">
         <header className="kc-h">

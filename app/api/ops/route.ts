@@ -7,6 +7,8 @@ import { audit } from "@/lib/audit";
 import { can } from "@/lib/perms";
 import { readOnlyRole, seesAllBranches, type SessionUser } from "@/lib/roles";
 import { compareBranches, insights } from "@/lib/insights";
+import { drill } from "@/lib/drill";
+import { dimsOf, isDrillKpi, type DrillDim } from "@/lib/drillDims";
 import { attention } from "@/lib/attention";
 
 export const dynamic = "force-dynamic";
@@ -100,6 +102,23 @@ export async function GET(req: NextRequest) {
         FROM daily_tasks WHERE work_date >= $1::date AND work_date <= $2::date AND work_date <= $1::date + 92 ${br ? "AND branch_name = $3" : ""}
         ORDER BY work_date DESC, scheduled_time, resident_name LIMIT 3000`, br ? [from, to, br] : [from, to]);
       return NextResponse.json({ rows });
+    }
+    // แตกย่อยตัวชี้วัด % (ตัวชี้วัดหลัก › กดกลุ่มแท่ง) · kpi + by (มิติที่จะแบ่ง) หรือไม่มี by = รายการจริง · f = ตัวกรองจากชั้นก่อน [[มิติ, ค่า], …]
+    if (q.get("op") === "drill") {
+      const kpi = q.get("kpi") ?? "";
+      if (!isDrillKpi(kpi)) return bad("ตัวชี้วัดไม่ถูกต้อง");
+      if (!can(me, "dashboard") || (kpi === "collect" && !can(me, "billing"))) return forbidden();
+      const ok = (v: string | null) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
+      const from = ok(q.get("from")), to = ok(q.get("to"));
+      if (!from || !to || to < from) return bad("ช่วงวันที่ไม่ถูกต้อง");
+      const allowed = dimsOf(kpi);
+      const byQ = q.get("by");
+      if (byQ && !allowed.has(byQ as DrillDim)) return bad("มิติไม่ถูกต้อง");
+      let filters: [DrillDim, string][] = [];
+      try { filters = JSON.parse(q.get("f") || "[]"); } catch { return bad("ตัวกรองไม่ถูกต้อง"); }
+      if (!Array.isArray(filters) || filters.length > 4 || !filters.every((x) => Array.isArray(x) && allowed.has(x[0]) && typeof x[1] === "string" && x[1].length <= 200)) return bad("ตัวกรองไม่ถูกต้อง");
+      const br = scoped(me) ? me.branch : q.get("branch") || null;
+      return NextResponse.json(await drill({ kpi, by: (byQ as DrillDim) || null, filters, from, to, br }));
     }
     if (q.get("op") === "insights") {
       if (!can(me, "dashboard")) return forbidden();

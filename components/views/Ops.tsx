@@ -26,7 +26,7 @@ import { seesAllBranches, readOnlyRole } from "@/lib/roles";
 import { staying } from "@/lib/rooms";
 import { apptIso, apptKey, apptTh, nowTh } from "@/lib/appointments";
 import { evaluateVitals, implausible, Level, LEVEL_TH, levelOf, parseVitals, Vitals } from "@/lib/vitals";
-import { BlankForm, DataTable, Field, FieldDef, FormDialog, MenuButton, Modal, PageHeader, Section, Select, Tabs } from "../ui";
+import { BlankForm, DataTable, Field, FieldDef, FormDialog, MenuButton, Modal, PageHeader, Section, Select, Tabs, ThaiDateInput } from "../ui";
 import SalesByCategory from "../dash/SalesByCategory";
 import KpiCharts, { CountKpi, PctKpi } from "../dash/KpiCharts";
 import { BranchCompareTable, DashTiles, GroupTabs, type TabGroup, type Tile } from "../dash/Overview";
@@ -40,10 +40,13 @@ const KPI_COLS = ["สาขา", "งานที่สั่ง", "% สำเ
 const stars = (v: number | null, n?: number) => (v === null ? "-" : `${v.toFixed(1)}${n ? ` (${n})` : ""}`);
 
 /** ช่วงเวลาที่เลือก + ช่วงเปรียบเทียบ (วันนี้ ↔ เมื่อวาน · เดือนนี้ ↔ ช่วงเดียวกันของเดือนก่อน · เดือนเต็ม ↔ เดือนก่อนหน้า) */
-type Period = "today" | "month" | "prev" | "pick";
-const PERIODS: { k: Period; t: string }[] = [{ k: "today", t: "วันนี้" }, { k: "month", t: "เดือนนี้" }, { k: "prev", t: "เดือนก่อน" }, { k: "pick", t: "เลือกเดือน" }];
+type Period = "today" | "month" | "prev" | "pick" | "range";
+const PERIODS: { k: Period; t: string }[] = [{ k: "today", t: "วันนี้" }, { k: "month", t: "เดือนนี้" }, { k: "prev", t: "เดือนก่อน" }, { k: "pick", t: "เลือกเดือน" }, { k: "range", t: "เลือกช่วงวันที่" }];
 const TH_MONTH = ["มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"];
-function rangeOf(p: Period, pick: string) {
+/** เดือนให้เลือก (ล่าสุดก่อน) ย้อนหลัง 36 เดือน · ชื่อเดือนภาษาไทย ปี พ.ศ. */
+const pickMonths = () => { const now = new Date(Date.now() + 7 * 3600e3); return Array.from({ length: 36 }, (_, i) => { const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1)); return { k: d.toISOString().slice(0, 7), t: `${TH_MONTH[d.getUTCMonth()]} ${d.getUTCFullYear() + 543}` }; }); };
+/** rf–rt = ช่วงวันที่ที่เลือกเอง (YYYY-MM-DD) · เทียบกับช่วงก่อนหน้าจำนวนวันเท่ากัน */
+function rangeOf(p: Period, pick: string, rf = "", rt = "") {
   const iso = (y: number, m: number, d: number) => new Date(Date.UTC(y, m, d)).toISOString().slice(0, 10);
   const dim = (y: number, m: number) => new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
   const now = new Date(Date.now() + 7 * 3600e3), today = now.toISOString().slice(0, 10);
@@ -53,14 +56,23 @@ function rangeOf(p: Period, pick: string) {
   const SH = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
   const sd = (s: string) => ({ d: Number(s.slice(8, 10)), m: `${SH[Number(s.slice(5, 7)) - 1]} ${String(Number(s.slice(0, 4)) + 543).slice(2)}` });
   const span = (a: string, b: string) => { const x = sd(a), z = sd(b); return a === b ? `${x.d} ${x.m}` : x.m === z.m ? `${x.d}–${z.d} ${z.m}` : `${x.d} ${x.m} – ${z.d} ${z.m}`; };
-  /** ข้อความใต้ตัวเลือกช่วงเวลา: ตัวเลขในหน้านี้มาจากช่วงไหน และ ▲▼ เทียบกับช่วงไหน */
-  const cap = (from: string, to: string, pfrom: string, pto: string, same = false) => `ข้อมูล ${span(from, to)} · เทียบกับ ${span(pfrom, pto)}${same ? " (จำนวนวันเท่ากัน)" : ""}`;
-  if (p === "today") { const y = new Date(Date.parse(today) - 864e5).toISOString().slice(0, 10); return { from: today, to: today, pfrom: y, pto: y, label: `ข้อมูลวันนี้ ${span(today, today)} · เทียบกับเมื่อวาน ${span(y, y)}`, title: `ประจำวันที่ ${D} ${mName(Y, M)}` }; }
-  if (p === "month") { const pfrom = iso(Y, M - 1, 1), pto = iso(Y, M - 1, Math.min(D, dim(Y, M - 1))); return { from: iso(Y, M, 1), to: today, pfrom, pto, label: cap(iso(Y, M, 1), today, pfrom, pto, true), title: `ประจำเดือน${mName(Y, M)} (ถึงวันที่ ${D})` }; }
+  /** ข้อความข้างตัวเลือกช่วงเวลา (ภาษาง่าย) · cur = ตัวเลขในหน้านี้มาจากช่วงไหน · cmp = ลูกศร ▲▼ เทียบกับช่วงไหน · label = รวมเป็นบรรทัดเดียว (รายงานผู้บริหาร) */
+  const cap = (cur: string, cmp: string) => ({ cur, cmp, label: `ตัวเลขช่วง ${cur} · เทียบกับ ${cmp}` });
+  const days = (a: string, b: string) => Math.round((Date.parse(b) - Date.parse(a)) / 864e5) + 1;
+  if (p === "today") { const y = new Date(Date.parse(today) - 864e5).toISOString().slice(0, 10); return { from: today, to: today, pfrom: y, pto: y, ...cap(`วันนี้ (${span(today, today)})`, `เมื่อวาน (${span(y, y)})`), title: `ประจำวันที่ ${D} ${mName(Y, M)}` }; }
+  if (p === "range" && rf && rt) {
+    const a = rf <= rt ? rf : rt, b0 = rf <= rt ? rt : rf, b = b0 < today ? b0 : today;
+    const from = a <= b ? a : b, n = Math.round((Date.parse(b) - Date.parse(from)) / 864e5) + 1;
+    const pto = new Date(Date.parse(from) - 864e5).toISOString().slice(0, 10), pfrom = new Date(Date.parse(from) - n * 864e5).toISOString().slice(0, 10);
+    return { from, to: b, pfrom, pto, ...cap(`${span(from, b)} (${n} วัน)`, `${n} วันก่อนหน้านั้น (${span(pfrom, pto)})`), title: `ระหว่างวันที่ ${span(from, b)}` };
+  }
+  // เลือกเดือนปัจจุบัน = เหมือนปุ่มเดือนนี้ (เทียบช่วงวันเดียวกันของเดือนก่อน ไม่ใช่ทั้งเดือน)
+  if (p === "month" || p === "range" || (p === "pick" && pick === today.slice(0, 7))) { const pfrom = iso(Y, M - 1, 1), pto = iso(Y, M - 1, Math.min(D, dim(Y, M - 1))); return { from: iso(Y, M, 1), to: today, pfrom, pto, ...cap(`${span(iso(Y, M, 1), today)} (เดือนนี้ถึงวันนี้)`, `ช่วงเดียวกันของเดือนก่อน (${span(pfrom, pto)})`), title: `ประจำเดือน${mName(Y, M)} (ถึงวันที่ ${D})` }; }
   const [py, pm] = p === "prev" ? [Y, M - 1] : pick.split("-").map(Number).map((v, i) => (i ? v - 1 : v));
   const end = iso(py, pm + 1, 0);
   const to = end < today ? end : today;
-  return { from: iso(py, pm, 1), to, pfrom: iso(py, pm - 1, 1), pto: iso(py, pm, 0), label: cap(iso(py, pm, 1), to, iso(py, pm - 1, 1), iso(py, pm, 0)), title: `ประจำเดือน${mName(py, pm)}` };
+  const full = to === end, pf = iso(py, pm - 1, 1), pt = iso(py, pm, 0);
+  return { from: iso(py, pm, 1), to, pfrom: pf, pto: pt, ...cap(full ? `${mName(py, pm)} ทั้งเดือน` : `${span(iso(py, pm, 1), to)} (${days(iso(py, pm, 1), to)} วันแรกของเดือน)`, `${mName(py, pm - 1)} ทั้งเดือน`), title: `ประจำเดือน${mName(py, pm)}` };
 }
 
 export function Dashboard() {
@@ -81,7 +93,20 @@ export function Dashboard() {
   const [attnOpen, setAttnOpen] = useState(false);
   const [period, setPeriod] = useState<Period>("month");
   const [pick, setPick] = useState(() => new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 7));
-  const R = rangeOf(period, pick);
+  // เลือกช่วงวันที่: ค่าเริ่มต้น = วันที่ 1 ของเดือนนี้ ถึงวันนี้
+  const [rFrom, setRFrom] = useState(() => `${new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 7)}-01`);
+  const [rTo, setRTo] = useState(() => new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10));
+  const todayStr = new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10);
+  const R = rangeOf(period, pick, rFrom, rTo);
+  /** ช่วงวันที่ที่เลือกเอง ส่งให้หน้าการเงิน (ตัวเลขหลักคิดตามช่วง) */
+  const finRng = period === "range" ? { from: R.from, to: R.to, pfrom: R.pfrom, pto: R.pto } : undefined;
+  /** แตกย่อยอัตราเก็บเงินได้: ช่วงเดียวกับตัวเลขการเงิน (ทั้งเดือนของวันสุดท้าย ถึงวันนี้ · เลือกช่วงวันที่ = ช่วงนั้น) */
+  const finDrill = (() => {
+    if (finRng) return { from: R.from, to: R.to, label: R.cur };
+    const m = R.to.slice(0, 7), end = new Date(Date.UTC(Number(m.slice(0, 4)), Number(m.slice(5, 7)), 0)).toISOString().slice(0, 10);
+    const to = end < todayStr ? end : todayStr;
+    return { from: `${m}-01`, to, label: monTh(m) };
+  })();
   // ชื่อช่วงที่เอามาเทียบ แสดงในทุกการ์ด เช่น "▲ 15% จาก 1–4 ต.ค." · "▲ 2 จากเมื่อวาน"
   const vs = vsLabel(R.pfrom, R.pto, period === "today");
   // การเงินเทียบเดือนต่อเดือนเสมอ (เลือก "วันนี้" ก็เทียบเดือนนี้กับเดือนก่อน)
@@ -153,7 +178,7 @@ export function Dashboard() {
         monthly: o.monthly.slice(Math.max(0, mi - 5), mi + 1).map((m) => ({ label: monTh(m.month), v: cap ? Math.round((m.people / cap) * 100) : null })), openLabel: "ดูการเข้าพัก", onOpen: () => setView("การเข้าพัก") },
       ...(finSum ? [{ key: "collect", label: "อัตราเก็บเงินได้", cur: finSum.collect, prev: finSum.collectPrev, goal: T.collect, note: `รับชำระ ÷ ยอดออกใบ · เทียบ ${finSum.prevLabel} · เป้า ${T.collect}%`,
         base: `รับ ${baht(finSum.paid)} จาก ${baht(finSum.billed)} บาท`,
-        drill: [`ยอดออกใบ ${monTh(finSum.month)} ${baht(finSum.billed)} บาท · รับแล้ว ${baht(finSum.paid)} บาท`, `ค้างชำระทั้งหมดตอนนี้ ${baht(finSum.owe)} บาท (${finSum.openN} ใบ)`],
+        drill: [`ยอดออกใบ ${finSum.label ?? monTh(finSum.month)} ${baht(finSum.billed)} บาท · รับแล้ว ${baht(finSum.paid)} บาท`, `ค้างชำระทั้งหมดตอนนี้ ${baht(finSum.owe)} บาท (${finSum.openN} ใบ)`],
         monthly: (finSum.collectMonthly ?? []).map((x) => ({ label: monTh(x.month), v: x.v })), openLabel: "ดูการเงิน", onOpen: () => setView("การเงิน") }] : []),
       { key: "tasks", label: "งานสำเร็จ", cur: tasks, prev: tasksP, goal: T.tasks, trendName: "รายสัปดาห์", note: `${c.cur.done} จาก ${c.cur.total} งาน · เป้า ${T.tasks}%`, base: `${c.cur.done} จาก ${c.cur.total} งาน`,
         drill: [`ยังไม่ส่ง ${Math.max(0, c.cur.total - c.cur.done)} งาน`, `หัวหน้าตรวจแล้ว ${c.cur.checked} จาก ${c.cur.done} งานที่ส่ง`, ...(c.cur.low ? [`ได้ต่ำกว่า 3 ดาว ${c.cur.low} งาน`] : [])],
@@ -170,7 +195,7 @@ export function Dashboard() {
       { key: "vit", label: "ค่าผิดปกติ / เฝ้าระวัง", unit: "ครั้ง", cur: h.cur.abnormal, prev: h.prev.abnormal, higherBetter: false, onOpen: () => setView("สุขภาพผู้รับบริการ") },
       { key: "staff", label: "กะที่ไม่มีคนหรือคนไม่พอ", unit: "กะ", cur: shortOf(tm.cur.shifts), prev: shortOf(tm.prev.shifts), higherBetter: false, onOpen: () => setView("ทีมงาน") },
       { key: "flow", label: "รับเข้าใหม่", unit: "คน", cur: ins.flow.cur.admits, prev: ins.flow.prev.admits, higherBetter: true, onOpen: () => setView("รับเข้า-จำหน่าย") },
-      ...(finSum ? [{ key: "paid", label: `รับชำระ ${monTh(finSum.month)}`, unit: "บาท", cur: Math.round(finSum.paid), prev: Math.round(finSum.paidPrev), higherBetter: true, onOpen: () => setView("การเงิน") }] : []),
+      ...(finSum ? [{ key: "paid", label: `รับชำระ ${finSum.label ?? monTh(finSum.month)}`, unit: "บาท", cur: Math.round(finSum.paid), prev: Math.round(finSum.paidPrev), higherBetter: true, onOpen: () => setView("การเงิน") }] : []),
     );
 
     // 1 · ตัวเลขหลักแถวบน
@@ -180,12 +205,12 @@ export function Dashboard() {
       meter: occ === null ? undefined : { pct: occ, goal: T.occupancy }, delta: up(occ, occP, "%", mi > 0 ? ` สิ้น ${monTh(o.monthly[mi - 1].month)}` : ""), onClick: () => setView("การเข้าพัก") });
     if (finSum) {
       const ch = finSum.paidPrev ? Math.round(((finSum.paid - finSum.paidPrev) / finSum.paidPrev) * 100) : null;
-      tiles.push({ key: "paid", label: `รับชำระ ${monTh(finSum.month)}`, value: baht(finSum.paid), unit: "บาท", sub: `ออกใบแล้ว ${baht(finSum.billed)} บาท`,
+      tiles.push({ key: "paid", label: `รับชำระ ${finSum.label ?? monTh(finSum.month)}`, value: baht(finSum.paid), unit: "บาท", sub: `ออกใบแล้ว ${baht(finSum.billed)} บาท`,
         delta: ch === null ? undefined : ch === 0 ? { text: `เท่ากับ ${finSum.prevLabel}`, tone: "flat" } : { text: `${ch > 0 ? "▲" : "▼"} ${Math.abs(ch)}% จาก ${finSum.prevLabel}`, tone: ch > 0 ? "ok" : "bad" }, onClick: () => setView("การเงิน") });
     }
     const bills = ins.attention.bills, at = finSum?.oweAt;
     // เลือกเดือนที่ผ่านมา: ค้างชำระ ณ สิ้นเดือนนั้น · เดือนปัจจุบัน: ยอด ณ วันนี้
-    if (bills && at) tiles.push({ key: "owe", label: `ค้างชำระ ณ สิ้น ${monTh(finSum!.month)}`, value: baht(at.sum), unit: "บาท", sub: `${at.n ? `${at.n} ใบ · เก่าสุด ${docDate(at.oldest ?? "")}` : "ไม่มีใบค้าง"} · ตอนนี้ค้าง ${baht(bills.sum)}`, onClick: () => go("billing") });
+    if (bills && at) tiles.push({ key: "owe", label: `ค้างชำระ ${finSum!.oweLabel ?? `ณ สิ้น ${monTh(finSum!.month)}`}`, value: baht(at.sum), unit: "บาท", sub: `${at.n ? `${at.n} ใบ · เก่าสุด ${docDate(at.oldest ?? "")}` : "ไม่มีใบค้าง"} · ตอนนี้ค้าง ${baht(bills.sum)}`, onClick: () => go("billing") });
     else if (bills) tiles.push({ key: "owe", label: "ค้างชำระ", value: baht(bills.sum), unit: "บาท", sub: bills.n ? `${bills.n} ใบ · เก่าสุด ${docDate(bills.oldest ?? "")}` : "ไม่มีใบค้างชำระ", onClick: () => go("billing") });
     tiles.push({ key: "res", label: "ผู้รับบริการ", value: String(tm.residents), unit: "คน", sub: `มีเตียงแล้ว ${o.inBed} · รอจัดห้อง ${noRoom}`,
       delta: { text: `ช่วงนี้รับเข้า ${ins.flow.cur.admits} · จำหน่าย ${ins.flow.cur.discharges}`, tone: "flat" }, onClick: () => setView("รับเข้า-จำหน่าย") });
@@ -232,8 +257,14 @@ export function Dashboard() {
         <div className="dash-period" role="radiogroup" aria-label="ช่วงเวลา">
           {PERIODS.map((p) => <button key={p.k} type="button" role="radio" aria-checked={period === p.k} className={period === p.k ? "is-on" : ""} onClick={() => setPeriod(p.k)}>{p.t}</button>)}
         </div>
-        {period === "pick" && <input type="month" aria-label="เลือกเดือน" className="!w-auto" value={pick} max={new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 7)} onChange={(e) => e.target.value && setPick(e.target.value)} />}
-        <span className="text-sm text-gold-600">{R.label}</span>
+        {period === "pick" && <select aria-label="เลือกเดือน" className="!w-auto" value={pick} onChange={(e) => e.target.value && setPick(e.target.value)}>{pickMonths().map((m) => <option key={m.k} value={m.k}>{m.t}</option>)}</select>}
+        {period === "range" && <div className="dash-range">
+          <label><span>ตั้งแต่</span><ThaiDateInput label="ตั้งแต่วันที่" value={rFrom} max={rTo || todayStr} onChange={(v) => v && setRFrom(v)} /></label>
+          <span aria-hidden="true">–</span>
+          <label><span>ถึง</span><ThaiDateInput label="ถึงวันที่" value={rTo} min={rFrom} max={todayStr} onChange={(v) => v && setRTo(v)} /></label>
+        </div>}
+        {/* บอกเฉพาะช่วงของตัวเลข · ลูกศร ▲▼ ในแต่ละกล่องบอกเองว่าเทียบกับช่วงไหน */}
+        <p className="dash-cap"><span><small>ตัวเลขช่วง</small><b>{R.cur}</b></span></p>
       </div>
       {/* จองพื้นที่เท่าครั้งก่อน ระหว่างโหลด · แถบแท็บและตัวเลขด้านล่างไม่กระโดด */}
       <Reserve id="tiles" loading={!ins} fallback={128} label="กำลังโหลดตัวเลขหลัก…"><DashTiles tiles={tiles} /></Reserve>
@@ -241,15 +272,16 @@ export function Dashboard() {
       <div className="dash-tabs mt-5 flex flex-wrap items-end justify-between gap-3"><GroupTabs groups={GROUPS} value={view} onChange={setView} />
         {view === "ตัวชี้วัดหลัก" && <button className="btn-soft" disabled={!kpis.length} onClick={exportOverview}><CsvIcon /> ส่งออก CSV</button>}</div>
       {/* สรุปการเงินของเดือนที่เลือก (ใช้ในการ์ดภาพรวมและรายงานผู้บริหาร) */}
-      {fin && view !== "การเงิน" && <div hidden><FinanceAnalytics branch={shiftBranch} compact month={finMonth} prevMonth={finPrev} onSummary={setFinSum} /></div>}
+      {fin && view !== "การเงิน" && <div hidden><FinanceAnalytics branch={shiftBranch} compact month={finMonth} prevMonth={finPrev} onSummary={setFinSum} rng={finRng} /></div>}
 
       {view === "ตัวชี้วัดหลัก" && <div className="space-y-6">
-        <Reserve id="kpi" loading={!pct.length} fallback={640} label="กำลังโหลดตัวชี้วัด…"><KpiCharts pct={pct} counts={counts} vs={vs} /></Reserve>
+        <Reserve id="kpi" loading={!pct.length} fallback={640} label="กำลังโหลดตัวชี้วัด…"><KpiCharts pct={pct} counts={counts} vs={vs} curNote={period === "today" || period === "range" ? R.cur : undefined}
+          drill={{ from: R.from, to: R.to, label: R.cur, branch: shiftBranch, money: fin, go, ranges: { collect: finDrill } }} /></Reserve>
         {ins?.compare && ins.compare.length > 1 && <BranchCompareTable rows={ins.compare} store={store} money={fin} onPick={(b) => { setShiftBranch(b); window.scrollTo({ top: 0, behavior: "smooth" }); }} />}
         <section><h3 className="dash-h">กายภาพ <button className="dash-more" onClick={() => setView("กายภาพ")}>ดูรายละเอียด</button></h3><CourseSummary branch={shiftBranch} compact /></section>
       </div>}
 
-      {view === "การเงิน" && <FinanceAnalytics branch={shiftBranch} month={finMonth} prevMonth={finPrev} onSummary={setFinSum} />}
+      {view === "การเงิน" && <FinanceAnalytics branch={shiftBranch} month={finMonth} prevMonth={finPrev} onSummary={setFinSum} collectGoal={T.collect} rng={finRng} />}
       {view === "ยอดขายตามหมวด" && <SalesByCategory branch={shiftBranch} month={finMonth} />}
       {view === "การเข้าพัก" && <div className="space-y-6"><Occupancy />{ins && <OccupancyTrend d={ins} t={T} />}</div>}
       {view === "สุขภาพผู้รับบริการ" && (ins ? <HealthTab d={ins} t={T} vs={vs} onResident={openResident} /> : <p className="text-sm text-gold-500">กำลังโหลด…</p>)}
