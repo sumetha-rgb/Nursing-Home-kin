@@ -43,6 +43,7 @@ const Physio = view(() => import("@/components/views/Physio").then((m) => m.Phys
 const Settings = view(() => import("@/components/views/Settings").then((m) => m.Settings));
 const SalesTax = view(() => import("@/components/views/SalesTax").then((m) => m.SalesTax));
 const Revenue = view(() => import("@/components/views/Revenue").then((m) => m.Revenue));
+const Deposits = view(() => import("@/components/views/Deposits").then((m) => m.Deposits));
 
 const VIEWS: Record<ViewId, ComponentType> = {
   careplan: Workflow,
@@ -73,6 +74,7 @@ const VIEWS: Record<ViewId, ComponentType> = {
   settings: Settings,
   sales_tax: SalesTax,
   revenue: Revenue,
+  deposits: Deposits,
 };
 
 function Splash() {
@@ -97,7 +99,7 @@ export default function Home() {
   // บัญชีที่ไม่มีเมนูระบบจัดการ (พยาบาล นักกายภาพ) → พาไปแอปของตัวเอง
   if (!hasConsole(user)) return <CashierOnly user={user} app="console" onLogout={logout} />;
   // เห็นเฉพาะเมนูที่ติ๊กสิทธิ์ไว้ (lib/perms)
-  const views = NAV.flatMap((n) => (n.kind === "view" && (n.id === "exports" ? EXPORT_SOURCES.some((p) => can(user, p)) : n.id === "settings" ? canSettings(user) : n.id === "sales_tax" || n.id === "revenue" ? canSalesTax(user) : can(user, n.id)) ? [n.id] : []));
+  const views = NAV.flatMap((n) => (n.kind === "view" && (n.id === "exports" ? EXPORT_SOURCES.some((p) => can(user, p)) : n.id === "settings" ? canSettings(user) : n.id === "sales_tax" || n.id === "revenue" || n.id === "deposits" ? canSalesTax(user) : can(user, n.id)) ? [n.id] : []));
   const shown = !views.includes(view) ? views[0] : view;
   const View = VIEWS[shown];
   const go = (v: ViewId) => { setView(v); window.scrollTo(0, 0); };

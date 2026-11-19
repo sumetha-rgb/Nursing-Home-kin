@@ -705,6 +705,37 @@ input::placeholder,textarea::placeholder { color:#8a785b; }
 .branch-badge.is-all { background:#8b6e3e; border-color:#8b6e3e; color:#fff; }
 .branch-badge.is-all small { color:#f1e3c4; }
 .branch-badge.is-bad { background:#fdecee; border-color:#f3c0c8; color:#a3213a; }
+/* ผู้บริหารเลือกดูทีละสาขา (components/BranchNotice: BranchBadge · WorkspaceIdentity · BranchMenu) */
+.branch-pick { position:relative; display:inline-flex; }
+.branch-pick.is-block { display:block; }
+.branch-badge.is-btn { cursor:pointer; transition:filter .15s, box-shadow .15s; }
+.branch-badge.is-btn:hover { filter:brightness(1.05); }
+.branch-badge.is-btn:focus-visible, .workspace-identity.is-btn:focus-visible, .branch-menu-item:focus-visible { outline:2px solid #8b6e3e; outline-offset:2px; }
+.branch-badge.is-view { background:#2B6B7A; border-color:#2B6B7A; color:#fff; box-shadow:0 0 0 3px #2b6b7a26; }
+.branch-badge.is-view small { color:#d7ecef; }
+.branch-caret { font-size:10px; opacity:.85; margin-left:2px; }
+.workspace-identity.is-btn { width:calc(100% - 34px); text-align:left; cursor:pointer; font:inherit; color:inherit; transition:border-color .15s, background .15s; }
+.workspace-identity.is-btn:hover { border-color:#c9b48a; }
+.workspace-identity.is-btn > .branch-caret { margin-left:auto; color:#8b6e3e; }
+.workspace-identity.is-view { border-color:#2B6B7A; background:#eef6f7; }
+.workspace-identity.is-view .workspace-monogram { background:#2B6B7A; color:#fff; }
+.branch-menu { position:absolute; top:calc(100% + 8px); z-index:50; width:min(300px, calc(100vw - 24px)); max-height:min(70vh, 520px); overflow-y:auto; padding:8px; border-radius:16px; border:1px solid #e0d3bb; background:#fff; box-shadow:0 18px 40px rgba(48,43,36,.18); text-align:left; }
+.branch-menu.is-right { right:0; }
+.branch-menu.is-left { left:17px; }
+.branch-menu-h { margin:4px 8px 6px; font-size:12px; color:#786443; }
+.branch-menu-co { margin:10px 8px 4px; font-size:11.5px; font-weight:600; letter-spacing:.02em; color:#8a785b; }
+.branch-menu-item { display:flex; align-items:center; gap:10px; width:100%; min-height:44px; padding:8px 10px; border-radius:10px; background:transparent; color:#302B24; font-size:14px; text-align:left; cursor:pointer; }
+.branch-menu-item:hover { background:#f8f3e9; }
+.branch-menu-item.is-on { background:#f4ebd7; font-weight:600; }
+.branch-menu-item > span:not(.branch-menu-dot) { display:grid; flex:1; min-width:0; line-height:1.35; }
+.branch-menu-item small { font-size:11.5px; font-weight:400; color:#8c4a10; }
+.branch-menu-item > span:first-of-type small { color:#786443; }
+.branch-menu-item i { font-style:normal; color:#2B6B7A; font-weight:700; }
+.branch-menu-item em { font-style:normal; font-size:11.5px; color:#786443; }
+.branch-menu-dot { flex:none; width:8px; height:8px; border-radius:50%; background:#c9b48a; }
+.branch-menu-item.is-on .branch-menu-dot { background:#2B6B7A; }
+.branch-menu-note { margin:8px 8px 4px; font-size:11.5px; line-height:1.5; color:#8a785b; }
+.branch-menu-note.is-bad { color:#a3221b; }
 .branch-notice { display:flex; align-items:flex-start; gap:12px; margin-bottom:20px; padding:14px 16px; border-radius:14px; border:1px solid; line-height:1.6; animation:notice-in .25s ease-out; }
 .branch-notice.is-ok { background:#fbf4e4; border-color:#e6d4ac; color:#5a4426; }
 .branch-notice.is-warn { background:#fdf3df; border-color:#f0d49a; color:#7d4f0b; }
@@ -2195,6 +2226,103 @@ button.room-card:hover:not(.is-full):not(.is-closed) { border-color:#c9a96a; box
 .dd-table td { padding:8px 10px; border-top:1px solid #EDE5D6; color:#302B24; }
 .dd-table td.is-num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
 .dd-table td.is-hot { color:#a3221b; font-weight:700; }
+/* ตัวเลือกช่วงเวลาแบบปฏิทิน (components/PeriodPicker) */
+.pp-field { display:grid; gap:2px; align-content:end; }
+.pp-field > .ppk { display:flex; }
+.ppk { position:relative; display:inline-flex; align-items:center; gap:4px; }
+.pp-btn { display:inline-flex; align-items:center; gap:8px; height:51px; padding:0 16px; border-radius:10px; border:1px solid #D8C9AD; background:#FFFDF8; color:#6E5D44; font-size:15px; line-height:1; white-space:nowrap; cursor:pointer; transition:border-color .15s, box-shadow .15s; }
+.pp-btn:hover { border-color:#c9b48a; }
+.pp-btn.is-on { border-color:#8B6E3E; color:#302B24; font-weight:600; box-shadow:0 0 0 1px #8B6E3E inset; background:#FFFDFA; }
+.pp-btn i { font-style:normal; font-size:10px; opacity:.7; }
+.pp-btn:focus-visible, .pp-clear:focus-visible, .pp-pop button:focus-visible { outline:2px solid #8b6e3e; outline-offset:2px; }
+.pp-clear { display:grid; place-items:center; width:32px; height:32px; border-radius:999px; border:1px solid #DED3BF; background:#fff; color:#786443; font-size:13px; cursor:pointer; }
+.pp-pop { position:absolute; top:calc(100% + 8px); left:0; z-index:50; width:min(320px, calc(100vw - 24px)); padding:12px; border-radius:16px; border:1px solid #e0d3bb; background:#fff; box-shadow:0 18px 40px rgba(48,43,36,.18); display:grid; gap:10px; }
+.pp-head { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.pp-head b { font-size:15px; color:#2f2618; }
+.pp-nav { width:36px; height:36px; border-radius:10px; border:1px solid #EDE5D6; background:#fff; font-size:18px; line-height:1; color:#4A4032; cursor:pointer; }
+.pp-nav:disabled { opacity:.35; cursor:default; }
+.pp-months { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:6px; }
+.pp-months button { min-height:44px; border-radius:10px; border:1px solid #EDE5D6; background:#fff; font-size:14px; color:#302B24; cursor:pointer; }
+.pp-months button:hover:not(:disabled) { background:#f8f3e9; }
+.pp-months button.is-now { border-color:#c9b48a; }
+.pp-months button.is-sel { background:#8B6E3E; border-color:#8B6E3E; color:#fff; font-weight:600; }
+.pp-months button:disabled { opacity:.35; cursor:default; }
+.pp-quick { display:flex; flex-wrap:wrap; gap:6px; }
+.pp-quick button { min-height:32px; padding:0 10px; border-radius:999px; border:1px solid #DED3BF; background:#FFFDFA; font-size:12.5px; color:#4A4032; cursor:pointer; }
+.pp-quick button:hover { border-color:#8B6E3E; }
+.pp-days { display:grid; grid-template-columns:repeat(7, minmax(0, 1fr)); gap:2px 0; }
+.pp-wd { text-align:center; font-size:11.5px; color:#8a785b; padding:2px 0 4px; }
+.pp-days button { height:38px; border:0; background:transparent; font-size:13.5px; color:#302B24; cursor:pointer; font-variant-numeric:tabular-nums; }
+.pp-days button:hover:not(:disabled):not(.lo):not(.hi) { background:#f4ebd7; border-radius:8px; }
+.pp-days button.in { background:#F4EBD7; }
+.pp-days button.lo, .pp-days button.hi { background:#8B6E3E; color:#fff; font-weight:600; }
+.pp-days button.lo { border-radius:10px 0 0 10px; } .pp-days button.hi { border-radius:0 10px 10px 0; } .pp-days button.lo.hi { border-radius:10px; }
+.pp-days button.now:not(.lo):not(.hi) { box-shadow:inset 0 0 0 1px #c9b48a; border-radius:8px; }
+.pp-days button:disabled { opacity:.3; cursor:default; }
+.pp-sum { font-size:13px; color:#6E5D44; margin:0; } .pp-sum b { color:#2f2618; }
+.pp-foot { display:flex; justify-content:flex-end; gap:8px; }
+@media (max-width:640px) { .pp-pop { position:fixed; left:12px; right:12px; top:auto; bottom:calc(12px + env(safe-area-inset-bottom, 0px)); width:auto; } }
+/* เงินเข้าบัญชี (components/views/Deposits) */
+.dp-bar { align-items:flex-end; }
+/* สีเดียวกับกล่องหลัก "รับชำระ" (.metric.accent) ให้ทั้งแอปเป็นชุดเดียวกัน */
+.dp-total { display:flex; flex-wrap:wrap; align-items:baseline; gap:6px 18px; background:linear-gradient(160deg,#a07f49,#7a5f33); color:#fff; border-radius:18px; padding:16px 20px; margin:6px 0 16px; box-shadow:0 6px 18px rgba(122,95,51,.18); }
+.dp-total b { font-size:clamp(24px,3.6vw,32px); font-variant-numeric:tabular-nums; }
+.dp-total small { color:#FBF3E2; font-size:13.5px; }
+.dp-h { margin:0 0 10px; font-size:16px; font-weight:700; color:#2f2618; }
+.dp-chans { display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:10px; margin-bottom:16px; }
+.dp-chan { display:grid; gap:3px; text-align:left; padding:13px 15px; border-radius:16px; border:1px solid #EDE5D6; background:#fff; min-height:44px; transition:border-color .15s; }
+.dp-chan:hover { border-color:#CDB78B; }
+.dp-chan:focus-visible { outline:2px solid #8b6e3e; outline-offset:2px; }
+.dp-chan[aria-pressed="true"] { border-color:#8B6E3E; background:#FFFDFA; box-shadow:0 0 0 1px #8B6E3E inset; }
+.dp-chan .k { display:flex; align-items:center; gap:8px; font-size:13px; color:#6E5D44; min-width:0; overflow-wrap:anywhere; }
+.dp-chan .k i { flex:none; width:10px; height:10px; border-radius:3px; background:#8A7A5A; }
+.dp-chan .k img { flex:none; border-radius:4px; }
+.dp-chan.is-cash .k i { background:#6B7A2B; } .dp-chan.is-transfer .k i { background:#2B6B7A; } .dp-chan.is-edc .k i { background:#8A5A1A; } .dp-chan.is-card .k i { background:#7A2B5A; } .dp-chan.is-wht .k i { background:#B9AC95; }
+.dp-chan.is-wht { background:#FBF8F2; border-style:dashed; }
+.dp-chan .v { font-size:21px; font-weight:700; color:#2f2618; font-variant-numeric:tabular-nums; }
+.dp-chan .v small { font-size:12.5px; font-weight:500; color:#786443; }
+.dp-chan-h { display:flex; align-items:center; gap:10px; min-width:0; }
+.dp-chan-h > span { display:grid; min-width:0; line-height:1.35; }
+.dp-chan-h b { font-size:13.5px; color:#4A4032; }
+.dp-chan-h small { font-size:12px; color:#786443; overflow-wrap:anywhere; }
+.dp-logo { flex:none; border-radius:8px; object-fit:contain; background:#fff; box-shadow:0 0 0 1px #EDE5D6; }
+.dp-ico { flex:none; display:inline-grid; place-items:center; border-radius:8px; color:#fff; }
+.dp-ico svg { width:62%; height:62%; }
+.dp-ico.is-cash { background:#6B7A2B; } .dp-ico.is-transfer { background:#2B6B7A; } .dp-ico.is-edc { background:#8A5A1A; } .dp-ico.is-card { background:#7A2B5A; } .dp-ico.is-wht { background:#A8977A; }
+.dp-share { display:block; height:5px; border-radius:999px; background:#F1EADF; overflow:hidden; }
+.dp-share i { display:block; height:100%; border-radius:999px; background:#8B6E3E; }
+.dp-chan.is-warn { border-color:#EBCB9C; background:#FFFBF3; }
+.dp-chan.is-warn .n { color:#8C4A10; }
+.dp-picked { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:-6px 0 14px; font-size:13.5px; color:#4A4032; }
+.dp-picked button { min-height:32px; padding:0 12px; border-radius:999px; border:1px solid #CDB78B; background:#FFFDFA; font-size:13px; }
+.dp-via { display:flex; flex-wrap:wrap; gap:4px 10px; }
+.dp-via > span { display:inline-flex; align-items:center; gap:6px; white-space:nowrap; }
+.dp-list-bar { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px 16px; }
+.dp-search input { min-height:40px; width:min(320px, 100%); border-radius:10px; border:1px solid #DED3BF; background:#fff; padding:0 12px; font-size:14px; }
+.dp-search { flex:0 1 320px; }
+.dp-chan .n { font-size:12.5px; color:#786443; }
+.dp-card { padding:18px 20px; display:grid; gap:10px; margin-bottom:16px; }
+.dp-card h3 { margin:0; font-size:16px; font-weight:700; color:#2f2618; }
+.dp-empty { padding:28px; text-align:center; }
+.dp-mixbar { display:flex; gap:2px; height:14px; border-radius:999px; overflow:hidden; background:#F1EADF; }
+.dp-mixbar i { display:block; height:100%; }
+.dp-mixlist { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:6px 24px; margin:0; padding:0; list-style:none; }
+.dp-mixlist li { display:flex; align-items:center; gap:8px; font-size:14px; }
+.dp-mixlist li i { flex:none; width:10px; height:10px; border-radius:3px; }
+.dp-mixlist li span { flex:1; min-width:0; }
+.dp-mixlist li b { font-variant-numeric:tabular-nums; }
+.dp-mixlist li small { color:#786443; font-size:12px; min-width:34px; text-align:right; }
+.dp-table table { min-width:880px; }
+.dp-table td.dp-who { min-width:150px; }
+.dp-2nd { display:block; font-size:12px; color:#786443; font-weight:400; white-space:normal; max-width:190px; }
+.dp-table td.dp-wide { min-width:230px; }
+.dp-table th.is-num { text-align:right; }
+.dp-table td.is-nw { white-space:nowrap; font-variant-numeric:tabular-nums; }
+.dp-table td.is-num { font-weight:600; }
+.dp-chips { display:flex; flex-wrap:wrap; gap:4px; }
+.dp-chips span { font-size:12px; background:#F4EBD7; color:#4A4032; border-radius:999px; padding:1px 8px; white-space:nowrap; }
+.dp-sum td { background:#FFFDFA; font-weight:700; }
+@media (max-width:640px) { .dp-table table { min-width:0; } .dp-table td.dp-wide { grid-column:1 / -1; } .dp-sum td:empty { display:none; } }
 /* แผงแตกย่อยเต็มแถวใต้กราฟ: โดนัทซ้าย รายการขวา (จอแคบซ้อนลง) */
 .kc-span { grid-column:1 / -1; }
 .dd-body { display:flex; flex-wrap:wrap; gap:18px; align-items:flex-start; }
@@ -3781,3 +3909,59 @@ button.attn-chip:hover { filter:brightness(.96); }
 .bu-cats { display:flex; flex-wrap:wrap; gap:6px; }
 .bu-cat { display:inline-flex; align-items:center; gap:4px; padding:4px 10px; border:1px solid #e6dac3; border-radius:999px; background:#fff; font-size:12.5px; color:#6b5a3e; }
 .bu-cat.is-on { border-color:#a77b1c; background:#f3e7cb; color:#5b4210; font-weight:600; }
+
+/* ===== ปุ่มปฏิทินแบบเดียวทุกหน้า + หน้าการเงินบนมือถือ (19 พ.ย. 69) ===== */
+.pp-txt { min-width:0; overflow:hidden; text-overflow:ellipsis; }
+.pp-quick button[aria-pressed="true"] { background:#8B6E3E; border-color:#8B6E3E; color:#fff; font-weight:600; }
+.pp-tabs { display:grid; grid-template-columns:1fr 1fr; padding:3px; border-radius:10px; background:#F4EEE3; }
+.pp-tabs button { min-height:34px; border:0; border-radius:8px; background:transparent; font-size:13px; color:#6E5D44; cursor:pointer; }
+.pp-tabs button[aria-selected="true"] { background:#fff; color:#302B24; font-weight:600; box-shadow:0 1px 3px rgba(48,43,36,.12); }
+/* รับเงินแยกตามบัญชี: แถวย่อของมือถือ (ซ่อนบนคอม) · % ในการ์ดช่องทาง (เฉพาะมือถือ) */
+.dp-m, .dp-pct { display:none; }
+/* รายได้ตาม BU: คอลัมน์ชื่อบริษัท/ฝ่ายตรึงซ้าย · เงาขอบขวาบอกว่ายังเลื่อนดูต่อได้ */
+.rv-table th:first-child, .rv-table td:first-child { position:sticky; left:0; z-index:1; background:#fff; }
+.rv-table th:first-child { background:#f6efe0; }
+.rv-scroll-wrap { position:relative; min-width:0; }
+.rv-scroll-wrap.has-more::after { content:""; position:absolute; top:0; right:0; bottom:0; width:28px; background:linear-gradient(90deg, rgba(255,255,255,0), #fff); pointer-events:none; }
+.rv-swipe { margin:0; font-size:12.5px; font-weight:600; color:#8B6E3E; }
+@media (min-width:641px) { .rv-swipe { display:none; } }
+@media (max-width:640px) {
+  /* ตัวกรอง 2 คอลัมน์ ช่องกว้างเท่ากัน ขอบตรงกัน */
+  .st-bar.is-grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; }
+  .st-bar.is-grid > * { min-width:0; }
+  .st-bar.is-grid:not(.dp-bar) > :last-child:nth-child(odd), .dp-bar > :last-child:nth-child(even), .dp-bar > .dp-when { grid-column:1 / -1; }
+  .st-bar.is-grid select { width:100%; min-width:0; }
+  .st-bar.is-grid .ppk { width:100%; min-width:0; }
+  .st-bar.is-grid .pp-btn { flex:1; min-width:0; padding:0 12px; font-size:14px; }
+  .st-bar.is-grid .pp-txt { flex:1; text-align:left; }
+  /* การ์ดช่องทาง → รายการแถวเดียว */
+  .dp-chans { grid-template-columns:minmax(0, 1fr); gap:0; border:1px solid #EDE5D6; border-radius:14px; overflow:hidden; background:#fff; }
+  .dp-chan { grid-template-columns:minmax(0, 1fr) auto; align-items:center; gap:6px 10px; padding:9px 12px; border:0; border-top:1px solid #EDE5D6; border-radius:0; min-height:0; }
+  .dp-chan:first-child { border-top:0; }
+  .dp-chan[aria-pressed="true"] { box-shadow:inset 3px 0 0 #8B6E3E; }
+  .dp-chan .v { grid-column:2; grid-row:1; font-size:16px; text-align:right; line-height:1.25; }
+  .dp-chan .v small, .dp-chan .n { display:none; }
+  .dp-chan .dp-pct { display:block; font-style:normal; font-size:11.5px; font-weight:500; color:#786443; }
+  .dp-chan .dp-share { grid-column:1 / -1; height:4px; }
+  .dp-chan-h small { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  /* รายการรับเงิน → แถวย่อ 2 บรรทัด กดเพื่อดูรายละเอียด */
+  .dp-table tr { padding:0; gap:6px 12px; margin-bottom:6px; overflow:hidden; }
+  .dp-table td.dp-m { display:block; grid-column:1 / -1; }
+  .dp-table td.dp-m::before { content:none; }
+  .dp-table tr:not(.is-open):not(.dp-sum) > td:not(.dp-m), .dp-table tr.is-open > td.dp-date, .dp-table tr.is-open > td.dp-amt, .dp-table tr.dp-sum > td.dp-m { display:none; }
+  .dp-table tr.is-open { padding-bottom:12px; border-color:#CDB78B; }
+  .dp-table tr.is-open > td:not(.dp-m) { padding:0 12px; }
+  .dp-table tr.dp-sum { padding:10px 12px; }
+  .dp-m button { display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:2px 10px; width:100%; min-height:44px; padding:9px 12px; border:0; background:transparent; text-align:left; cursor:pointer; color:#302B24; }
+  .dp-table tr.is-open .dp-m button { background:#FBF6EC; }
+  .dp-m button:focus-visible { outline:2px solid #8b6e3e; outline-offset:-2px; }
+  .dp-m-who { font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .dp-m-amt { text-align:right; font-variant-numeric:tabular-nums; }
+  .dp-m-meta { grid-column:1 / -1; display:flex; align-items:center; gap:4px 8px; min-width:0; overflow:hidden; white-space:nowrap; font-size:12.5px; color:#786443; font-variant-numeric:tabular-nums; }
+  .dp-m-via { display:inline-flex; align-items:center; gap:4px; }
+  .dp-m-rc { overflow:hidden; text-overflow:ellipsis; min-width:0; }
+  /* ตาราง BU: คอลัมน์แรกแคบลง ชื่อขึ้นบรรทัดใหม่ได้ มีเงาคั่น */
+  .rv-table th:first-child, .rv-table td:first-child { min-width:132px; max-width:150px; white-space:normal; box-shadow:6px 0 8px -6px rgba(94,82,63,.3); }
+  .rv-table tr.is-div td:first-child { padding-left:12px; }
+  .rv-table tr.is-br td:first-child { padding-left:22px; }
+}

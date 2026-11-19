@@ -8,6 +8,11 @@ import { permsFor } from "./perms";
 
 const scrypt = promisify(scryptCb) as (pw: string, salt: Buffer, len: number) => Promise<Buffer>;
 export const COOKIE = "kin_session";
+/** ผู้บริหารเลือกดูทีละสาขา: ชื่อสาขาที่กำลังดู (ตั้งที่ /api/auth/view) · ว่าง = ดูทุกสาขา */
+export const VIEW_COOKIE = "kin_view_branch";
+/** ชื่อสาขาภาษาไทยเก็บใน cookie แบบ base64url (ค่า cookie ต้องเป็นอักขระ ASCII) */
+export const packView = (b: string) => Buffer.from(b, "utf8").toString("base64url");
+const unpackView = (v: string) => { try { return Buffer.from(v, "base64url").toString("utf8").trim(); } catch { return ""; } };
 /** จดจำฉันไว้ = อยู่ในระบบ 30 วัน · ไม่จดจำ = ออกเองเมื่อปิดเบราว์เซอร์ (และหมดอายุใน 12 ชั่วโมง) */
 const SESSION_DAYS = 30;
 const SHORT_HOURS = 12;
@@ -42,6 +47,7 @@ export async function endSession(req: NextRequest, res: NextResponse) {
   const token = req.cookies.get(COOKIE)?.value;
   if (token) await sql`DELETE FROM sessions WHERE id = ${tokenId(token)}`;
   res.cookies.set(COOKIE, "", { httpOnly: true, path: "/", maxAge: 0 });
+  res.cookies.set(VIEW_COOKIE, "", { httpOnly: true, path: "/", maxAge: 0 });
 }
 
 /** ผู้ใช้จาก cookie (ต้องมีสถานะ "ทำงาน" และ session ยังไม่หมดอายุ) */
@@ -53,7 +59,10 @@ export async function currentUser(req: NextRequest): Promise<SessionUser | null>
     FROM sessions s JOIN staff_users u ON u.id = s.user_id
     WHERE s.id = ${tokenId(token)} AND s.expires_at > now() AND u.status = 'ทำงาน'`;
   if (!u || !ROLES.includes(u.access_level as Role)) return null;
-  return { id: u.id, name: u.full_name, email: u.email, role: u.access_level as Role, branch: u.branch_name ?? "", perms: permsFor(u.access_level as Role, u.permissions) };
+  const me: SessionUser = { id: u.id, name: u.full_name, email: u.email, role: u.access_level as Role, branch: u.branch_name ?? "", perms: permsFor(u.access_level as Role, u.permissions) };
+  // ผู้บริหารเลือก "ดูในฐานะสาขา": ทุก API เห็นและบันทึกเหมือนผู้จัดการสาขานั้น (ตรวจชื่อสาขาตอนตั้งค่าแล้ว) · สิทธิ์เมนูคงเดิม
+  const view = me.role === "Global Admin" ? unpackView(req.cookies.get(VIEW_COOKIE)?.value ?? "") : "";
+  return view ? { ...me, role: "Branch Admin", branch: view, viewAs: "Global Admin" } : me;
 }
 
 /** ตรวจว่าสาขาของบัญชีมีอยู่ในหน้า "ข้อมูลสาขา" และเปิดให้บริการหรือไม่ */

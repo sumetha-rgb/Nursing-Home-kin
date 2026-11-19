@@ -26,7 +26,8 @@ import { seesAllBranches, readOnlyRole } from "@/lib/roles";
 import { staying } from "@/lib/rooms";
 import { apptIso, apptKey, apptTh, nowTh } from "@/lib/appointments";
 import { evaluateVitals, implausible, Level, LEVEL_TH, levelOf, parseVitals, Vitals } from "@/lib/vitals";
-import { BlankForm, DataTable, Field, FieldDef, FormDialog, MenuButton, Modal, PageHeader, Section, Select, Tabs, ThaiDateInput } from "../ui";
+import { BlankForm, DataTable, Field, FieldDef, FormDialog, MenuButton, Modal, PageHeader, Section, Select, Tabs } from "../ui";
+import { RangePicker } from "../PeriodPicker";
 import SalesByCategory from "../dash/SalesByCategory";
 import KpiCharts, { CountKpi, PctKpi } from "../dash/KpiCharts";
 import { BranchCompareTable, DashTiles, GroupTabs, type TabGroup, type Tile } from "../dash/Overview";
@@ -41,10 +42,7 @@ const stars = (v: number | null, n?: number) => (v === null ? "-" : `${v.toFixed
 
 /** ช่วงเวลาที่เลือก + ช่วงเปรียบเทียบ (วันนี้ ↔ เมื่อวาน · เดือนนี้ ↔ ช่วงเดียวกันของเดือนก่อน · เดือนเต็ม ↔ เดือนก่อนหน้า) */
 type Period = "today" | "month" | "prev" | "pick" | "range";
-const PERIODS: { k: Period; t: string }[] = [{ k: "today", t: "วันนี้" }, { k: "month", t: "เดือนนี้" }, { k: "prev", t: "เดือนก่อน" }, { k: "pick", t: "เลือกเดือน" }, { k: "range", t: "เลือกช่วงวันที่" }];
 const TH_MONTH = ["มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"];
-/** เดือนให้เลือก (ล่าสุดก่อน) ย้อนหลัง 36 เดือน · ชื่อเดือนภาษาไทย ปี พ.ศ. */
-const pickMonths = () => { const now = new Date(Date.now() + 7 * 3600e3); return Array.from({ length: 36 }, (_, i) => { const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1)); return { k: d.toISOString().slice(0, 7), t: `${TH_MONTH[d.getUTCMonth()]} ${d.getUTCFullYear() + 543}` }; }); };
 /** rf–rt = ช่วงวันที่ที่เลือกเอง (YYYY-MM-DD) · เทียบกับช่วงก่อนหน้าจำนวนวันเท่ากัน */
 function rangeOf(p: Period, pick: string, rf = "", rt = "") {
   const iso = (y: number, m: number, d: number) => new Date(Date.UTC(y, m, d)).toISOString().slice(0, 10);
@@ -98,6 +96,9 @@ export function Dashboard() {
   const [rTo, setRTo] = useState(() => new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10));
   const todayStr = new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10);
   const R = rangeOf(period, pick, rFrom, rTo);
+  /** ปุ่มลัด/เดือนที่กำลังใช้ (ให้ปฏิทินไฮไลต์ถูกปุ่ม) และข้อความบนปุ่ม */
+  const periodKey = period === "pick" ? `m:${pick}` : period === "range" ? undefined : period;
+  const periodText = period === "today" ? "วันนี้" : period === "month" ? "เดือนนี้" : period === "prev" ? "เดือนก่อน" : period === "pick" ? `${TH_MONTH[Number(pick.slice(5, 7)) - 1]} ${Number(pick.slice(0, 4)) + 543}` : "ช่วงที่เลือก";
   /** ช่วงวันที่ที่เลือกเอง ส่งให้หน้าการเงิน (ตัวเลขหลักคิดตามช่วง) */
   const finRng = period === "range" ? { from: R.from, to: R.to, pfrom: R.pfrom, pto: R.pto } : undefined;
   /** แตกย่อยอัตราเก็บเงินได้: ช่วงเดียวกับตัวเลขการเงิน (ทั้งเดือนของวันสุดท้าย ถึงวันนี้ · เลือกช่วงวันที่ = ช่วงนั้น) */
@@ -254,15 +255,13 @@ export function Dashboard() {
         </>} />
       {err && <p role="alert" className="mb-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{err}</p>}
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <div className="dash-period" role="radiogroup" aria-label="ช่วงเวลา">
-          {PERIODS.map((p) => <button key={p.k} type="button" role="radio" aria-checked={period === p.k} className={period === p.k ? "is-on" : ""} onClick={() => setPeriod(p.k)}>{p.t}</button>)}
-        </div>
-        {period === "pick" && <select aria-label="เลือกเดือน" className="!w-auto" value={pick} onChange={(e) => e.target.value && setPick(e.target.value)}>{pickMonths().map((m) => <option key={m.k} value={m.k}>{m.t}</option>)}</select>}
-        {period === "range" && <div className="dash-range">
-          <label><span>ตั้งแต่</span><ThaiDateInput label="ตั้งแต่วันที่" value={rFrom} max={rTo || todayStr} onChange={(v) => v && setRFrom(v)} /></label>
-          <span aria-hidden="true">–</span>
-          <label><span>ถึง</span><ThaiDateInput label="ถึงวันที่" value={rTo} min={rFrom} max={todayStr} onChange={(v) => v && setRTo(v)} /></label>
-        </div>}
+        {/* ปุ่มปฏิทินแบบเดียวกับทุกหน้า: ปุ่มลัด (วันนี้ / เดือนนี้ / เดือนก่อน …) · เลือกวันเอง · แท็บทั้งเดือน */}
+        <RangePicker ariaLabel="ช่วงเวลา" from={R.from} to={R.to} months current={periodKey} label={periodText}
+          onChange={(f, t, k) => {
+            if (k === "today" || k === "month" || k === "prev") return setPeriod(k);
+            if (k?.startsWith("m:")) { const mk = k.slice(2); setPick(mk); return setPeriod(mk === todayStr.slice(0, 7) ? "month" : "pick"); }
+            setRFrom(f); setRTo(t); setPeriod("range");
+          }} />
         {/* บอกเฉพาะช่วงของตัวเลข · ลูกศร ▲▼ ในแต่ละกล่องบอกเองว่าเทียบกับช่วงไหน */}
         <p className="dash-cap"><span><small>ตัวเลขช่วง</small><b>{R.cur}</b></span></p>
       </div>

@@ -4,9 +4,10 @@
  *  ยอดออกใบ = ใบที่ออกในเดือน (ใบลดหนี้เป็นยอดลบ) · รับเงินจริง = งวดรับเงินในเดือน ตัดลงรายการตามลำดับตัดชำระ (lib/billing payTake)
  *  ค้างรับ = ยอดที่ยังไม่ได้รับของใบที่ออกในเดือน · ไม่นับเงินประกัน/มัดจำ · รายการ → ฝ่าย → บริษัท ตั้งค่าได้ที่ ตั้งค่า › BU (ฝ่ายและบริษัท)
  */
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import CsvIcon from "../CsvIcon";
 import { COMPANY, PageHeader } from "../ui";
+import { MonthPicker, RangePicker } from "../PeriodPicker";
 import { useBranchInfo } from "./Billing";
 import { creditOf, money, parseItems, payOrder, payTake } from "@/lib/billing";
 import { buCatOf, DEFAULT_DIVISIONS, Division, divisionOf, NO_DIV } from "@/lib/bu";
@@ -27,6 +28,11 @@ const r2 = (n: number) => Math.round(n * 100) / 100;
 const TH_MON = ["มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"];
 const monthTh = (m: string) => `${TH_MON[Number(m.slice(5, 7)) - 1]} ${Number(m.slice(0, 4)) + 543}`;
 const thisMonth = () => new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 7);
+const todayIso = () => new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10);
+const SHM = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
+const dTh = (s: string) => `${Number(s.slice(8, 10))} ${SHM[Number(s.slice(5, 7)) - 1]} ${String(Number(s.slice(0, 4)) + 543).slice(2)}`;
+/** ช่วงวันที่แบบสั้น: "5 พ.ย. 69" · "1–18 พ.ย. 69" · "20 ต.ค. 69 – 5 พ.ย. 69" */
+const spanTh = (a: string, b: string) => (a === b ? dTh(a) : a.slice(0, 7) === b.slice(0, 7) ? `${Number(a.slice(8, 10))}–${dTh(b)}` : `${dTh(a)} – ${dTh(b)}`);
 const zero = (): Cell => ({ billed: 0, recv: 0, base: 0, vat: 0, owe: 0 });
 const add = (c: Cell, d: Partial<Cell>) => { (Object.keys(d) as (keyof Cell)[]).forEach((k) => { c[k] = r2(c[k] + (d[k] ?? 0)); }); };
 const CN_DIV = "ลดหนี้ (ปรับลดยอดออกใบ)";
@@ -44,21 +50,33 @@ export function Revenue() {
   const [saved] = useRecords<Division>("bu-divisions", DEFAULT_DIVISIONS);
   const divs = saved.length ? saved : DEFAULT_DIVISIONS;
   const [month, setMonth] = useState(thisMonth);
+  /** เลือกช่วงวันที่เอง (ปฏิทิน) แทนทั้งเดือน */
+  const [useRange, setUseRange] = useState(false);
+  const [rng, setRng] = useState<[string, string]>(() => [`${thisMonth()}-01`, todayIso()]);
+  const [from, to] = rng[0] <= rng[1] ? rng : [rng[1], rng[0]];
+  const label = useRange ? spanTh(from, to) : monthTh(month);
   const [branch, setBranch] = useState("");
+  /** เลือกดูบริษัทเดียว (ผู้เห็นทุกสาขา) · ว่าง = ทุกบริษัท */
+  const [company, setCompany] = useState("");
   const [basis, setBasis] = useState<"recv" | "billed">("recv");
   const [open, setOpen] = useState<string | null>(null);
+  /** ตารางกว้างกว่าจอ (มือถือ): บอกว่าเลื่อนดูต่อได้ · เงาขอบขวาหายเมื่อเลื่อนสุด */
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [more, setMore] = useState(false);
+  const checkMore = useCallback(() => { const el = scrollRef.current; setMore(!!el && el.scrollWidth - el.clientWidth - el.scrollLeft > 4); }, []);
   const [data, setData] = useState<{ invs: Inv[]; pays: Pay[] } | null>(null);
   const [err, setErr] = useState("");
 
   useEffect(() => {
     setData(null); setErr("");
     let live = true;
-    fetch(`/api/billing?op=revenue&month=${month}${all && branch ? `&branch=${encodeURIComponent(branch)}` : ""}`, { cache: "no-store" })
+    const q = useRange ? `month=${to.slice(0, 7)}&from=${from}&to=${to}` : `month=${month}`;
+    fetch(`/api/billing?op=revenue&${q}${all && branch ? `&branch=${encodeURIComponent(branch)}` : ""}`, { cache: "no-store" })
       .then(async (r) => { const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || "โหลดรายงานไม่สำเร็จ"); return d; })
       .then((d) => { if (live) setData({ invs: d.invs ?? [], pays: d.pays ?? [] }); })
       .catch((e) => { if (live) setErr((e as Error).message); });
     return () => { live = false; };
-  }, [month, branch, all]);
+  }, [month, branch, all, useRange, from, to]);
 
   const legalOf = (b: string) => branchInfo(b).legal || COMPANY.th;
   const { cos, total, dep } = useMemo(() => {
@@ -105,42 +123,52 @@ export function Revenue() {
     return { cos: sorted, total, dep };
   }, [data, divs, basis]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const share = (c: Cell) => (total[basis] ? Math.round((c[basis] / total[basis]) * 100) : 0);
+  // เลือกบริษัท: ตารางและตัวเลขด้านบนเหลือบริษัทนั้น · สัดส่วนคิดภายในบริษัทนั้น
+  const coNames = [...new Set([...branchNames.map((b) => legalOf(b)), ...cos.map((c) => c.name)])];
+  const view = company ? cos.filter((c) => c.name === company) : cos;
+  const vt = company ? view.reduce((t, c) => { add(t, { billed: c.billed, recv: c.recv, base: c.base, vat: c.vat, owe: c.owe }); return t; }, zero()) : total;
+  const share = (c: Cell) => (vt[basis] ? Math.round((c[basis] / vt[basis]) * 100) : 0);
   const exportCsv = () => {
-    if (!cos.length) return toast("ไม่มีข้อมูลในเดือนนี้");
+    if (!view.length) return toast("ไม่มีข้อมูลในเดือนนี้");
     const row = (a: string, b: string, c: string, x: Cell) => [a, b, c, money(x.billed), money(x.recv), money(x.base), money(x.vat), money(x.owe), `${share(x)}%`];
-    downloadCsv(`รายได้ตาม BU-${month}${branch ? `-${branch}` : ""}`, ["บริษัท", "ฝ่าย", "สาขา", "ยอดออกใบ", "รับเงินจริง", "ก่อน VAT (เงินที่รับ)", "VAT (เงินที่รับ)", "ค้างรับ", `สัดส่วน (${basis === "recv" ? "เงินที่รับ" : "ยอดออกใบ"})`],
-      [...cos.flatMap((co) => [row(co.name, "รวมบริษัท", "", co), ...[...co.divs.values()].flatMap((d) => [row(co.name, d.name, "ทุกสาขา", d), ...[...d.byBranch.entries()].map(([b, x]) => row(co.name, d.name, b, x))])]), row("รวมทุกบริษัท", "", "", total)]);
-    toast(`ส่งออกรายได้ตาม BU ${monthTh(month)} แล้ว`);
+    downloadCsv(`รายได้ตาม BU-${useRange ? `${from}-ถึง-${to}` : month}${branch ? `-${branch}` : ""}${company ? `-${company}` : ""}`, ["บริษัท", "ฝ่าย", "สาขา", "ยอดออกใบ", "รับเงินจริง", "ก่อน VAT (เงินที่รับ)", "VAT (เงินที่รับ)", "ค้างรับ", `สัดส่วน (${basis === "recv" ? "เงินที่รับ" : "ยอดออกใบ"})`],
+      [...view.flatMap((co) => [row(co.name, "รวมบริษัท", "", co), ...[...co.divs.values()].flatMap((d) => [row(co.name, d.name, "ทุกสาขา", d), ...[...d.byBranch.entries()].map(([b, x]) => row(co.name, d.name, b, x))])]), row(company ? `รวม ${company}` : "รวมทุกบริษัท", "", "", vt)]);
+    toast(`ส่งออกรายได้ตาม BU ${label} แล้ว`);
   };
+
+  useEffect(() => { checkMore(); window.addEventListener("resize", checkMore); return () => window.removeEventListener("resize", checkMore); }, [checkMore, data, open, company, basis]);
 
   return (
     <>
       <PageHeader title="รายได้ตาม BU" sub="เงินแต่ละส่วนเป็นรายได้ของบริษัทไหน มาจากฝ่ายไหน · รายงานภายใน (ใบเสร็จของลูกค้ายังออกในนามบริษัทของสาขา) · ไม่นับเงินประกัน/มัดจำ"
-        actions={<button className="btn-soft" disabled={!cos.length} onClick={exportCsv}><CsvIcon /> ส่งออก Excel / CSV</button>} />
-      <div className="st-bar">
-        <label><span className="label">เดือน</span><input type="month" value={month} max={thisMonth()} onChange={(e) => e.target.value && setMonth(e.target.value)} aria-label="เดือน" /></label>
+        actions={<button className="btn-soft" disabled={!view.length} onClick={exportCsv}><CsvIcon /> ส่งออก Excel / CSV</button>} />
+      <div className="st-bar is-grid">
+        <div className="pp-field"><span className="label">เดือน</span><MonthPicker value={month} active={!useRange} onChange={(m) => { setMonth(m); setUseRange(false); }} /></div>
+        <div className="pp-field"><span className="label">หรือเลือกช่วงวันที่</span><RangePicker from={from} to={to} active={useRange} onChange={(f, t) => { setRng([f, t]); setUseRange(true); }} onClear={() => setUseRange(false)} /></div>
+        {all && coNames.length > 1 && <label><span className="label">บริษัท</span><select value={company} onChange={(e) => setCompany(e.target.value)} aria-label="บริษัท"><option value="">ทุกบริษัท</option>{coNames.map((c) => <option key={c} value={c}>{c}</option>)}</select></label>}
         {all && <label><span className="label">สาขา</span><select value={branch} onChange={(e) => setBranch(e.target.value)} aria-label="สาขา"><option value="">ทุกสาขา</option>{branchNames.map((b) => <option key={b} value={b}>{b}</option>)}</select></label>}
         <label><span className="label">คิดสัดส่วนจาก</span><select value={basis} onChange={(e) => setBasis(e.target.value as "recv" | "billed")} aria-label="คิดสัดส่วนจาก"><option value="recv">เงินที่รับจริง</option><option value="billed">ยอดออกใบ</option></select></label>
       </div>
       {err && <p role="alert" className="form-error">{err}</p>}
+      {!all && <p className="field-hint">แสดงเฉพาะสาขาของคุณ ({user?.branch || "-"}) · ดูทุกสาขาและทุกบริษัทได้เฉพาะผู้บริหารและการเงิน</p>}
       <div className="st-tiles">
-        <div><small>ยอดออกใบ</small><b>{data ? money(total.billed) : "…"}</b></div>
-        <div><small>รับเงินจริง</small><b>{data ? money(total.recv) : "…"}</b></div>
-        <div><small>VAT ของเงินที่รับ</small><b>{data ? money(total.vat) : "…"}</b></div>
-        <div><small>ค้างรับ (ใบของเดือนนี้)</small><b>{data ? money(total.owe) : "…"}</b></div>
+        <div><small>ยอดออกใบ</small><b>{data ? money(vt.billed) : "…"}</b></div>
+        <div><small>รับเงินจริง</small><b>{data ? money(vt.recv) : "…"}</b></div>
+        <div><small>VAT ของเงินที่รับ</small><b>{data ? money(vt.vat) : "…"}</b></div>
+        <div><small>ค้างรับ (ใบ{useRange ? "ในช่วงนี้" : "ของเดือนนี้"})</small><b>{data ? money(vt.owe) : "…"}</b></div>
       </div>
       <section className="card st-paper rv-card">
-        {!data && !err ? <p className="st-empty">กำลังโหลด…</p> : !cos.length ? <p className="st-empty">ไม่มีรายได้ใน{monthTh(month)}</p> : <>
-          <div className="rv-bar" role="img" aria-label={cos.map((c) => `${c.name} ${share(c)}%`).join(" · ")}>
-            {cos.map((c, i) => <i key={c.name} style={{ width: `${Math.max(0, share(c))}%`, background: CO_COLORS[i % CO_COLORS.length] }} />)}
+        {!data && !err ? <p className="st-empty">กำลังโหลด…</p> : !view.length ? <p className="st-empty">ไม่มีรายได้ใน{label}{company ? ` ของ${company}` : ""}</p> : <>
+          <div className="rv-bar" role="img" aria-label={view.map((c) => `${c.name} ${share(c)}%`).join(" · ")}>
+            {view.map((c) => <i key={c.name} style={{ width: `${Math.max(0, share(c))}%`, background: CO_COLORS[cos.indexOf(c) % CO_COLORS.length] }} />)}
           </div>
-          <p className="rv-legend">{cos.map((c, i) => <span key={c.name}><i style={{ background: CO_COLORS[i % CO_COLORS.length] }} />{c.name} <b>{share(c)}%</b></span>)}</p>
-          <div className="st-scroll">
+          <p className="rv-legend">{view.map((c) => <span key={c.name}><i style={{ background: CO_COLORS[cos.indexOf(c) % CO_COLORS.length] }} />{c.name} <b>{share(c)}%</b></span>)}</p>
+          <p className="rv-swipe" hidden={!more} aria-hidden="true">เลื่อนดูคอลัมน์อื่น →</p>
+          <div className={`rv-scroll-wrap ${more ? "has-more" : ""}`}><div className="st-scroll" ref={scrollRef} onScroll={checkMore} tabIndex={0} aria-label="ตารางรายได้ตาม BU เลื่อนซ้ายขวาได้">
             <table className="rv-table">
               <thead><tr><th>บริษัท / ฝ่าย</th><th>ยอดออกใบ</th><th>รับเงินจริง</th><th>ก่อน VAT</th><th>VAT</th><th>ค้างรับ</th><th>สัดส่วน</th></tr></thead>
               <tbody>
-                {cos.map((co) => (
+                {view.map((co) => (
                   <Fragment key={co.name}>
                     <tr className="is-co"><td>{co.name}</td><td>{money(co.billed)}</td><td>{money(co.recv)}</td><td>{money(co.base)}</td><td>{money(co.vat)}</td><td>{money(co.owe)}</td><td>{share(co)}%</td></tr>
                     {[...co.divs.values()].sort((a, b) => b[basis] - a[basis]).map((d) => {
@@ -160,10 +188,10 @@ export function Revenue() {
                     })}
                   </Fragment>
                 ))}
-                <tr className="is-tot"><td>รวมทุกบริษัท</td><td>{money(total.billed)}</td><td>{money(total.recv)}</td><td>{money(total.base)}</td><td>{money(total.vat)}</td><td>{money(total.owe)}</td><td>100%</td></tr>
+                <tr className="is-tot"><td>{company ? `รวม ${company}` : "รวมทุกบริษัท"}</td><td>{money(vt.billed)}</td><td>{money(vt.recv)}</td><td>{money(vt.base)}</td><td>{money(vt.vat)}</td><td>{money(vt.owe)}</td><td>100%</td></tr>
               </tbody>
             </table>
-          </div>
+          </div></div>
           <p className="field-hint">กดแถวฝ่ายเพื่อดูแยกตามสาขา{dep ? ` · เงินประกัน/มัดจำที่รับในเดือนนี้ ${money(dep)} บาท ไม่นับเป็นรายได้` : ""} · ฝ่ายและบริษัทของแต่ละหมวด ตั้งได้ที่ ตั้งค่า › BU (ฝ่ายและบริษัท) (ผู้บริหาร)</p>
         </>}
       </section>

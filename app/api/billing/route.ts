@@ -130,7 +130,35 @@ async function revenue(req: NextRequest) {
   return NextResponse.json({ month, invs, pays });
 }
 
+/**
+ * เงินเข้าบัญชี: งวดรับเงินในช่วงวันที่ (ตามวันที่รับเงิน) พร้อมช่องทาง/บัญชี เลขอ้างอิง และรายการในใบ (ให้หน้าเว็บตัดตามลำดับชำระว่าเป็นค่าอะไร)
+ *  ไม่นับงวดที่เป็นการหักด้วยใบลดหนี้ (kind = credit) และใบที่ยกเลิก · เห็นเฉพาะผู้บริหาร ผู้จัดการสาขา (สาขาตัวเอง) และการเงิน
+ */
+async function deposits(req: NextRequest) {
+  const me = await currentUser(req);
+  if (!me) return unauthorized();
+  if (!canSalesTax(me)) return forbidden("รายงานนี้ดูได้เฉพาะผู้บริหาร ผู้จัดการสาขา และการเงิน");
+  const q = req.nextUrl.searchParams;
+  const ok = (v: string | null) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
+  const from = ok(q.get("from")), to = ok(q.get("to"));
+  if (!from || !to || to < from) return bad("ช่วงวันที่ไม่ถูกต้อง");
+  if (Date.parse(to) - Date.parse(from) > 400 * 864e5) return bad("เลือกช่วงได้ไม่เกิน 13 เดือน");
+  const br = seesAllBranches(me.role) ? q.get("branch") || null : me.branch;
+  const rows = await sql(`SELECT p.id, p.pay_date::text AS date, to_char(p.created_at AT TIME ZONE 'Asia/Bangkok', 'HH24:MI') AS time,
+      coalesce(p.receipt_no, '') AS "receiptNo", i.doc_no AS no, row_number() OVER (PARTITION BY p.invoice_id ORDER BY p.created_at, p.id)::int AS n,
+      coalesce((SELECT sum(x.amount) FROM invoice_payments x WHERE x.invoice_id = p.invoice_id AND (x.created_at, x.id) < (p.created_at, p.id)), 0)::float AS "paidBefore",
+      i.items_json AS items, coalesce(i.branch_name, '') AS branch, coalesce(nullif(nullif(trim(b.legal_entity), ''), '-'), '') AS legal,
+      coalesce(i.resident_name, '-') AS who, p.cash::float, p.transfer::float, p.credit::float, p.edc::float, p.wht::float, p.amount::float,
+      coalesce(p.transfer_ref, '') AS "transferRef", coalesce(p.transfer_account, '') AS "transferAccount", coalesce(p.card_account, '') AS "cardAccount",
+      coalesce(p.edc_account, '') AS "edcAccount", coalesce(p.cashier, '') AS cashier
+    FROM invoice_payments p JOIN invoices i ON i.id = p.invoice_id LEFT JOIN branches b ON b.name = i.branch_name
+    WHERE p.pay_date BETWEEN $1::date AND $2::date AND coalesce(p.kind, 'pay') <> 'credit' AND coalesce(i.status, '') <> $3 ${br ? "AND i.branch_name = $4" : ""}
+    ORDER BY p.pay_date, p.created_at, p.id LIMIT 5000`, br ? [from, to, "ยกเลิก", br] : [from, to, "ยกเลิก"]);
+  return NextResponse.json({ from, to, rows });
+}
+
 export async function GET(req: NextRequest) {
+  if (req.nextUrl.searchParams.get("op") === "deposits") return deposits(req);
   if (req.nextUrl.searchParams.get("op") === "paid_days") return paidDays(req);
   if (req.nextUrl.searchParams.get("op") === "revenue") return revenue(req);
   if (req.nextUrl.searchParams.get("op") === "sales_tax") return salesTax(req);

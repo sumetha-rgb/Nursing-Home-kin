@@ -5,7 +5,8 @@ export type Role = (typeof ROLES)[number];
 /** branchCheck: ผลตรวจสาขาของบัญชีกับหน้า "ข้อมูลสาขา" ตอนเข้าสู่ระบบ (Global Admin = all) */
 export type BranchCheck = "all" | "ok" | "upcoming" | "closed" | "missing";
 /** perms: สิทธิ์จริงของบัญชี (ค่าเริ่มต้นของตำแหน่ง หรือที่ติ๊กกำหนดรายคน) */
-export type SessionUser = { id: string; name: string; email: string; role: Role; branch: string; branchCheck?: BranchCheck; perms?: string[] };
+/** viewAs = ตำแหน่งจริงเมื่อผู้บริหารเลือก "ดูในฐานะสาขา" (role ถูกตั้งเป็นผู้จัดการสาขาของสาขาที่เลือกชั่วคราว · lib/auth currentUser) */
+export type SessionUser = { id: string; name: string; email: string; role: Role; branch: string; branchCheck?: BranchCheck; perms?: string[]; viewAs?: Role };
 
 export const ROLE_INFO: Record<Role, { th: string; sees: string; app: string }> = {
   Nurse: { th: "พยาบาล", sees: "KinApp และห้องยาเท่านั้น เห็นเฉพาะข้อมูลสาขาตัวเอง", app: "/staff" },
