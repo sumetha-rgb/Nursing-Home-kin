@@ -66,7 +66,7 @@ async function profile(me: SessionUser, id: string) {
   if (scoped(me) && r.branch_name !== me.branch) return "forbidden";
   const p = [r.id, r.full_name, r.branch_name];
   const q = (text: string) => sql(text, p) as Promise<Record<string, unknown>[]>;
-  const [health, daily, meds, packs, appts, tasks, handovers, alerts, contracts, plans, stockMeds, care] = await Promise.all([
+  const [health, daily, meds, packs, appts, tasks, handovers, alerts, contracts, plans, stockMeds, care, medMoves, withdrawals] = await Promise.all([
     q(`SELECT id, recorded_at::text AS at, vital_signs, o2_sat, dtx, weight_height, note, recorded_by FROM health_logs WHERE ${MINE} ORDER BY recorded_at DESC NULLS LAST LIMIT 90`),
     q(`SELECT id, work_date::text AS work_date, scheduled_time::text AS time, task_name, assignee, shift, status, vital_signs FROM daily_tasks WHERE ${MINE} ORDER BY work_date DESC, scheduled_time DESC LIMIT 40`),
     q(`SELECT id, drug_name, indication, dose, unit, timing, meals, stock, on_hold, status, warnings, needs_fridge, source FROM resident_medications WHERE ${MINE} ORDER BY on_hold, drug_name`),
@@ -80,14 +80,29 @@ async function profile(me: SessionUser, id: string) {
     !can(me, "quotations") ? Promise.resolve([]) : q(`SELECT id, plan_name, relative_phone, estimated_price, note FROM care_assessments WHERE ${MINE}`),
     // ยาที่เบิกจากคลังกลางของศูนย์ (การเบิกครั้งเดียวกันหลายล็อตรวมเป็นแถวเดียว)
     sql(`SELECT d.name, d.unit, (-sum(m.delta))::float AS qty, m.moved_by, m.note, m.med_id IS NOT NULL AS basket, bool_and(m.invoice_id IS NOT NULL) AS billed, max(m.price) IS NOT NULL AS priced,
+        to_char(m.created_at AT TIME ZONE 'Asia/Bangkok', 'YYYY-MM-DD') AS day, to_char(m.created_at AT TIME ZONE 'Asia/Bangkok', 'YYYY-MM-DD HH24:MI:SS') AS ts,
         to_char(m.created_at AT TIME ZONE 'Asia/Bangkok', 'DD/MM/') || (extract(year FROM m.created_at AT TIME ZONE 'Asia/Bangkok')::int + 543) || to_char(m.created_at AT TIME ZONE 'Asia/Bangkok', ' HH24:MI') AS at
       FROM stock_moves m JOIN stock_drugs d ON d.id = m.drug_id WHERE m.resident_id = $1 AND m.reason = 'เบิกให้ผู้ป่วย'
       GROUP BY m.created_at, d.name, d.unit, m.moved_by, m.note, m.med_id ORDER BY m.created_at DESC LIMIT 60`, [r.id]) as Promise<Record<string, unknown>[]>,
     // ข้อมูลสำคัญสำหรับการดูแลจากสัญญาล่าสุด (ทีมดูแลทุกคนเห็น) · ไม่ส่งเลขบัตร ที่อยู่ หรือยอดเงิน
     q(`SELECT drug_allergy, food_allergy, regular_meds, hospital, hospital_alt, employer_name, relationship, employer_phone FROM contracts
         WHERE ${MINE} AND coalesce(status, '') <> 'ยกเลิกสัญญา' ORDER BY (status IN ('ใช้งานอยู่', 'รอชำระเงินมัดจำ')) DESC NULLS LAST, created_at DESC LIMIT 1`),
+    // ความเคลื่อนไหวของยาในตะกร้าผู้รับบริการ (เบิกยาตามจำนวน · จัดซอง · เติม/แก้คงเหลือ · เพิ่มยาใหม่) จากประวัติการแก้ไข: คงเหลือก่อน → หลัง
+    q(`SELECT a.action, a.actor_name AS by, a.before->>'stock' AS b, a.after->>'stock' AS s,
+          coalesce(a.after->>'drug_name', a.before->>'drug_name') AS name, coalesce(a.after->>'unit', a.before->>'unit') AS unit,
+          to_char(a.at AT TIME ZONE 'Asia/Bangkok', 'DD/MM/') || (extract(year FROM a.at AT TIME ZONE 'Asia/Bangkok')::int + 543) || to_char(a.at AT TIME ZONE 'Asia/Bangkok', ' HH24:MI') AS at,
+          to_char(a.at AT TIME ZONE 'Asia/Bangkok', 'YYYY-MM-DD') AS day, to_char(a.at AT TIME ZONE 'Asia/Bangkok', 'YYYY-MM-DD HH24:MI:SS') AS ts
+        FROM audit_logs a WHERE a.area = 'pharmacy-drugs' AND a.action IN ('create', 'update')
+          AND a.record_id IN (SELECT id::text FROM resident_medications WHERE ${MINE})
+          AND (a.action = 'create' OR (a.before->>'stock') IS DISTINCT FROM (a.after->>'stock'))
+        ORDER BY a.at DESC LIMIT 200`),
+    // เบิกยาจากตะกร้า (เมนูเบิกยาในแอปห้องยา)
+    q(`SELECT drug_name AS name, qty::float, unit, stock_before::float AS b, stock_after::float AS s, meal, note, withdrawn_by AS by,
+          to_char(created_at AT TIME ZONE 'Asia/Bangkok', 'DD/MM/') || (extract(year FROM created_at AT TIME ZONE 'Asia/Bangkok')::int + 543) || to_char(created_at AT TIME ZONE 'Asia/Bangkok', ' HH24:MI') AS at,
+          to_char(created_at AT TIME ZONE 'Asia/Bangkok', 'YYYY-MM-DD') AS day, to_char(created_at AT TIME ZONE 'Asia/Bangkok', 'YYYY-MM-DD HH24:MI:SS') AS ts
+        FROM med_withdrawals WHERE ${MINE} ORDER BY created_at DESC LIMIT 200`).catch(() => []), // ยังไม่ได้รัน db:setup = ไม่มีตาราง · หน้าประวัติยังเปิดได้
   ]);
-  return { resident: r, health, daily, meds, packs, appts, tasks, handovers, alerts, contracts, plans, stockMeds, careInfo: care[0] ?? null };
+  return { resident: r, health, daily, meds, packs, appts, tasks, handovers, alerts, contracts, plans, stockMeds, medMoves, withdrawals, careInfo: care[0] ?? null };
 }
 
 export async function GET(req: NextRequest) {

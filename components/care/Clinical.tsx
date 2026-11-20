@@ -19,9 +19,9 @@ import { closedInfo, PhysioBoard, PhysioCase, PhysioHistory, schedText, teamText
 
 /**
  * งานพยาบาลและกายภาพรายบุคคล (แท็บในหน้าประวัติผู้รับบริการ · ใช้ได้ทั้งระบบจัดการและ KinApp)
- *  admission = ประวัติและประเมินแรกรับ · nursing = Nurse Note / Problem list / ฉีดอินซูลิน · physio = คอร์สกายภาพ · supplies = เวชภัณฑ์
+ *  admission = ประวัติและประเมินแรกรับ · nursing = Nurse Note / Problem list / ฉีดอินซูลิน · aide = บันทึกผู้ช่วยพยาบาล · physio = คอร์สกายภาพ · supplies = เวชภัณฑ์
  */
-export type ClinicalTab = "admission" | "nursing" | "physio" | "supplies";
+export type ClinicalTab = "admission" | "nursing" | "aide" | "physio" | "supplies";
 const SHIFTS = ["เวรเช้า", "เวรดึก"];
 const SITES = ["หน้าท้อง", "ต้นแขน", "ต้นขา", "สะโพก"];
 const ADM_DEFAULTS = Object.fromEntries(ADMISSION.flatMap((s) => s.fields).filter((f) => f.options).map((f) => [f.key, ""]));
@@ -38,6 +38,7 @@ export default function ClinicalPanel({ id, tab, c, reload, name = "" }: { id: s
   if (!c) return <p className="py-8 text-center text-sm text-gold-500">กำลังโหลด…</p>;
   if (tab === "admission") return <Admission id={id} c={c} reload={reload} />;
   if (tab === "nursing") return <Nursing id={id} c={c} reload={reload} />;
+  if (tab === "aide") return <Aide id={id} c={c} reload={reload} />;
   if (tab === "physio") return <Physio id={id} c={c} reload={reload} name={name} />;
   return <Supplies id={id} c={c} reload={reload} />;
 }
@@ -84,6 +85,30 @@ function Admission({ id, c, reload }: P) {
         ))}</div>}
       </Modal>
     </div>
+  );
+}
+
+/* ---------- บันทึกผู้ช่วยพยาบาล (โน้ตรายเวร แบบเดียวกับ Nurse Note) ---------- */
+function Aide({ id, c, reload }: P) {
+  const { toast, confirm } = useApp();
+  const { user } = useSession();
+  const [an, setAn] = useState({ shift: SHIFTS[0], body: "" });
+  const aide = c.notes.filter((n) => n.kind === "aide");
+  const mine = (n: Note) => n.author === user?.name || can(user, "residents");
+  const del = (n: Note) => confirm({ title: "ลบบันทึกผู้ช่วยพยาบาล", message: `ต้องการลบบันทึกผู้ช่วยพยาบาลที่บันทึกเมื่อ ${n.at} ใช่หรือไม่`, danger: true, okLabel: "ลบ",
+    onOk: () => run(toast, { op: "note_delete", id: n.id }, `ลบบันทึกผู้ช่วยพยาบาลแล้ว · ${n.at}`, reload) });
+  return (
+    <section className="space-y-3">
+      <h4 className="profile-sub">บันทึกผู้ช่วยพยาบาล</h4>
+      <div className="grid gap-2 sm:grid-cols-[140px_1fr_auto]">
+        <select value={an.shift} onChange={(e) => setAn({ ...an, shift: e.target.value })} aria-label="เวร">{SHIFTS.map((x) => <option key={x}>{x}</option>)}</select>
+        <textarea rows={2} value={an.body} onChange={(e) => setAn({ ...an, body: e.target.value })} placeholder="สิ่งที่ทำและสังเกตเห็น เช่น อาบน้ำ เปลี่ยนผ้าอ้อม พลิกตัว ทานอาหารได้หมด ปัสสาวะ/อุจจาระ" aria-label="บันทึกผู้ช่วยพยาบาล" />
+        <button className="btn-primary !py-2" onClick={() => an.body.trim() ? run(toast, { op: "note", residentId: id, kind: "aide", title: an.shift, body: an.body }, `บันทึกผู้ช่วยพยาบาลแล้ว · ${an.shift}`, () => { setAn({ ...an, body: "" }); reload(); }) : toast("กรุณาพิมพ์บันทึก")}>บันทึก</button>
+      </div>
+      <DataTable search={false} columns={["วันเวลา", "เวร", "บันทึก", "ผู้บันทึก"]} empty="ยังไม่มีบันทึกผู้ช่วยพยาบาล"
+        rows={aide.map((n) => [n.at, n.title ?? "-", n.body ?? "-", n.author ?? "-"])}
+        actions={[{ label: "ลบ", danger: true, hidden: (i) => !mine(aide[i]), onClick: (i) => del(aide[i]) }]} />
+    </section>
   );
 }
 

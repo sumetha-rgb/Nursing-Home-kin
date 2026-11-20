@@ -6,7 +6,7 @@ import { audit } from "@/lib/audit";
 import { can } from "@/lib/perms";
 import { attention } from "@/lib/attention";
 import type { SessionUser } from "@/lib/roles";
-import { NOTE_KINDS } from "@/lib/clinic";
+import { NOTE_KINDS, NOTE_LABEL, NoteKind } from "@/lib/clinic";
 import { pushTo } from "@/lib/push";
 import { dowOf, onDate, schedOf, teamOf, thNowText, whoOn, type PlanSlots } from "@/lib/physio";
 
@@ -304,7 +304,7 @@ export async function POST(req: NextRequest) {
         const id = randomUUID();
         await sql`INSERT INTO clinical_notes (id, resident_id, resident_name, branch_name, kind, title, body, data, status, author)
                   VALUES (${id}, ${o.r.id}, ${o.r.full_name}, ${o.r.branch_name}, ${kind}, ${title || null}, ${body || null}, ${JSON.stringify(obj(b.data))}::jsonb, ${text(b.status, 40) || null}, ${me.name})`;
-        await audit(req, me, [{ area: "clinical", action: "create", recordId: id, summary: `${kind} · ${o.r.full_name}${title ? ` · ${title}` : ""}`, branch: o.r.branch_name }]);
+        await audit(req, me, [{ area: "clinical", action: "create", recordId: id, summary: `${NOTE_LABEL[kind as NoteKind] ?? kind} · ${o.r.full_name}${title ? ` · ${title}` : ""}`, branch: o.r.branch_name }]);
         return NextResponse.json({ ok: true, id });
       }
       case "note_status": case "note_delete": {

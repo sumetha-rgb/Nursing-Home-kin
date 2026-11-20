@@ -388,6 +388,7 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 );
 CREATE INDEX IF NOT EXISTS audit_logs_at ON audit_logs (at DESC);
 CREATE INDEX IF NOT EXISTS audit_logs_branch ON audit_logs (branch_name, at DESC);
+CREATE INDEX IF NOT EXISTS audit_logs_record ON audit_logs (area, record_id);  -- ประวัติการเบิกยารายคน (area = pharmacy-drugs)
 COMMENT ON TABLE audit_logs IS 'ประวัติการแก้ไขข้อมูลและการเข้าสู่ระบบ';
 
 -- ---------------------------------------------------------------- รหัสผู้รับบริการ (foreign key)
@@ -802,7 +803,7 @@ CREATE TABLE IF NOT EXISTS resident_admissions (
   created_at  timestamptz NOT NULL DEFAULT now(),
   updated_at  timestamptz NOT NULL DEFAULT now()
 );
--- บันทึกทางคลินิก: nurse = Nurse Note · problem = Problem list · insulin = ฉีดอินซูลิน · physio = กายภาพ (ประเมิน/Progress note) · referral = ใบส่งต่อ
+-- บันทึกทางคลินิก: nurse = Nurse Note · problem = Problem list · insulin = ฉีดอินซูลิน · physio = กายภาพ (ประเมิน/Progress note) · referral = ใบส่งต่อ · aide = บันทึกผู้ช่วยพยาบาล (โน้ตรายเวร)
 CREATE TABLE IF NOT EXISTS clinical_notes (
   id            text PRIMARY KEY,
   resident_id   text REFERENCES residents(id) ON DELETE CASCADE,
@@ -962,6 +963,24 @@ ALTER TABLE resident_medications ADD COLUMN IF NOT EXISTS stock_drug_id text REF
 -- การเบิกที่เข้าตะกร้า: ผูกกับรายการยาในตะกร้า
 ALTER TABLE stock_moves ADD COLUMN IF NOT EXISTS med_id text;
 CREATE INDEX IF NOT EXISTS stock_moves_res ON stock_moves (resident_id, created_at DESC);
+-- เบิกยาจากตะกร้าผู้ป่วยตามจำนวนที่ใช้จริง (ยาน้ำ ยาขวด ยาทา ยาเมื่อมีอาการ) · เมนูเบิกยาในแอปห้องยา · ตัดคงเหลือใน resident_medications
+CREATE TABLE IF NOT EXISTS med_withdrawals (
+  id            text PRIMARY KEY,
+  med_id        text,
+  resident_id   text REFERENCES residents(id) ON DELETE SET NULL,
+  resident_name text,
+  branch_name   text,
+  drug_name     text NOT NULL,
+  qty           numeric(12,2) NOT NULL,
+  unit          text,
+  stock_before  numeric(12,2),
+  stock_after   numeric(12,2),
+  meal          text,
+  note          text,
+  withdrawn_by  text,
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS med_withdrawals_res ON med_withdrawals (resident_name, created_at DESC);
 -- รูปของแอปจัดยา: label = รูปฉลาก/กล่องยาตอนรับเข้า (ref = resident_medications.id) · pack = รูปซองยาที่จัดเสร็จ (ref = medication_packs.id)
 -- แยกจากตารางหลัก เพื่อไม่ให้รูปติดไปกับข้อมูลที่ดึงอัตโนมัติทุก 20 วินาที
 CREATE TABLE IF NOT EXISTS med_photos (

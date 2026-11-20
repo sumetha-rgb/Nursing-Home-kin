@@ -1,8 +1,9 @@
 /** งานพยาบาลและกายภาพ: แบบฟอร์มประเมินแรกรับ ชนิดบันทึก และตัวช่วยเรียก /api/clinic (ใช้ได้ทั้งหน้าเว็บและ server) */
 
-export const NOTE_KINDS = ["nurse", "problem", "insulin", "physio", "referral"] as const;
+/** aide = บันทึกผู้ช่วยพยาบาล (โน้ตรายเวร แบบเดียวกับ Nurse Note · title = เวร) */
+export const NOTE_KINDS = ["nurse", "problem", "insulin", "physio", "referral", "aide"] as const;
 export type NoteKind = (typeof NOTE_KINDS)[number];
-export const NOTE_LABEL: Record<NoteKind, string> = { nurse: "Nurse Note", problem: "Problem list", insulin: "ฉีดอินซูลิน", physio: "กายภาพ", referral: "ใบส่งต่อ" };
+export const NOTE_LABEL: Record<NoteKind, string> = { nurse: "Nurse Note", problem: "Problem list", insulin: "ฉีดอินซูลิน", physio: "กายภาพ", referral: "ใบส่งต่อ", aide: "บันทึกผู้ช่วยพยาบาล" };
 
 export type Note = { id: string; kind: NoteKind; title: string | null; body: string | null; data: Record<string, unknown>; status: string | null; author: string | null; at: string };
 export type Course = { id: string; name: string; total: number; used: number; price: number; status: string; created_by: string | null; invoice_id: string | null; at: string;

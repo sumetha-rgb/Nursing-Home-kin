@@ -61,13 +61,13 @@ const limitLines = (k: keyof Vitals) => {
   return out;
 };
 
-const TABS = ["ภาพรวม", "แรกรับ/ประเมิน", "บันทึกพยาบาล", "แผล", "สัญญาณชีพ", "ยาและการให้ยา", "กายภาพ", "เวชภัณฑ์", "งานดูแลและนัดหมาย", "สมุดส่งเวร", "ค่าใช้จ่าย"];
+const TABS = ["ภาพรวม", "แรกรับ/ประเมิน", "บันทึกพยาบาล", "บันทึกผู้ช่วยพยาบาล", "แผล", "สัญญาณชีพ", "ยาและการให้ยา", "กายภาพ", "เวชภัณฑ์", "งานดูแลและนัดหมาย", "สมุดส่งเวร", "ค่าใช้จ่าย"];
 /** แท็บแบ่ง 2 แถวตามกลุ่ม ไม่ต้องเลื่อนซ้ายขวา */
 const TAB_GROUPS = [
   { label: "ข้อมูลทั่วไป", tabs: ["ภาพรวม", "แรกรับ/ประเมิน", "งานดูแลและนัดหมาย", "สมุดส่งเวร"] },
-  { label: "การดูแลรายวัน", tabs: ["บันทึกพยาบาล", "แผล", "สัญญาณชีพ", "ยาและการให้ยา", "กายภาพ", "เวชภัณฑ์"] },  { label: "การเงิน", tabs: ["ค่าใช้จ่าย"], money: true },
+  { label: "การดูแลรายวัน", tabs: ["บันทึกพยาบาล", "บันทึกผู้ช่วยพยาบาล", "แผล", "สัญญาณชีพ", "ยาและการให้ยา", "กายภาพ", "เวชภัณฑ์"] },  { label: "การเงิน", tabs: ["ค่าใช้จ่าย"], money: true },
 ];
-const CLINICAL: Record<string, ClinicalTab> = { "แรกรับ/ประเมิน": "admission", "บันทึกพยาบาล": "nursing", "กายภาพ": "physio", "เวชภัณฑ์": "supplies" };
+const CLINICAL: Record<string, ClinicalTab> = { "แรกรับ/ประเมิน": "admission", "บันทึกพยาบาล": "nursing", "บันทึกผู้ช่วยพยาบาล": "aide", "กายภาพ": "physio", "เวชภัณฑ์": "supplies" };
 
 /** ประวัติรายบุคคล: กดชื่อผู้รับบริการแล้วเห็นทุกอย่างในหน้าเดียว (พิมพ์เป็นเอกสารได้) */
 /** initialTab = เปิดที่แท็บนี้ (เช่น "กายภาพ" จากหน้าตารางกายภาพ) */
@@ -106,7 +106,26 @@ export default function ResidentProfile({ id, onClose, initialTab }: { id: strin
   const activeMeds = (p?.meds ?? []).filter((m) => !m.on_hold && (m.status ?? "ปกติ") === "ปกติ");
   // วันนี้ตามเวลาไทย (UTC+7) · toISOString ตรง ๆ เป็นเวลา UTC ทำให้ 00:00–06:59 ยังเป็นเมื่อวาน
   const today = new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10);
-  const nextAppt = (p?.appts ?? []).filter((a) => String(a.date ?? "") >= today).sort((a, b) => String(a.date).localeCompare(String(b.date)))[0];
+  /** ประวัติการเบิกยา: ยาในตะกร้าที่คงเหลือเปลี่ยน (จากประวัติการแก้ไข) + เบิกจากคลังยากลาง · เรียงใหม่→เก่า */
+  const medHistory = useMemo(() => {
+    if (!p) return [];
+    const ago = (d: unknown) => { if (!d) return "-"; const n = Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${d}T00:00:00Z`)) / 864e5); return !Number.isFinite(n) ? "-" : n <= 0 ? "วันนี้" : `${n} วันก่อน`; };
+    const fx = (v: unknown) => { const s = String(v ?? "").trim(); const n = Number(s); return s !== "" && Number.isFinite(n) ? n : null; };
+    const moves = (p.medMoves ?? []).flatMap((m) => {
+      const b = fx(m.b), s = fx(m.s), u = str(m.unit) === "-" ? "" : ` ${str(m.unit)}`;
+      if (m.action === "create") return s === null ? [] : [{ ts: String(m.ts), row: [str(m.at), ago(m.day), str(m.name), "เพิ่มยาใหม่", `${num(s)}${u}`, `${num(s)}${u}`, str(m.by), "-", "-"] }];
+      if (b === null || s === null || b === s) return [];
+      const out = s < b;
+      return [{ ts: String(m.ts), row: [str(m.at), ago(m.day), str(m.name), out ? "เบิกออก" : "เติมยา / ปรับยอด", `${out ? "−" : "+"}${num(Math.abs(b - s))}${u}`, `${num(b)} → ${num(s)}${u}`, str(m.by), "-", "-"] }];
+    });
+    const central = (p.stockMeds ?? []).map((m) => ({ ts: String(m.ts ?? ""), row: [str(m.at), ago(m.day), str(m.name), "เบิกจากคลังกลาง", `${num(m.qty)} ${str(m.unit)}`, "-", str(m.moved_by),
+      [m.basket ? "เข้าตะกร้ายา" : "ใช้ครั้งคราว", str(m.note) === "-" ? "" : str(m.note)].filter(Boolean).join(" · "), !m.priced ? "ไม่คิดเงิน" : m.billed ? "เรียกเก็บแล้ว" : "ยังไม่เรียกเก็บ"] }));
+    const taken = (p.withdrawals ?? []).map((m) => { const u = str(m.unit) === "-" ? "" : ` ${str(m.unit)}`;
+      return { ts: String(m.ts ?? ""), row: [str(m.at), ago(m.day), str(m.name), "เบิกออก", `−${num(m.qty)}${u}`, `${num(m.b)} → ${num(m.s)}${u}`, str(m.by),
+        [m.meal ? `มื้อ${str(m.meal)}` : "", str(m.note) === "-" ? "" : str(m.note)].filter(Boolean).join(" · ") || "-", "-"] }; });
+    return [...taken, ...moves, ...central].sort((a, b) => b.ts.localeCompare(a.ts)).map((x) => x.row);
+  }, [p, today]);
+  const nextAppt =(p?.appts ?? []).filter((a) => String(a.date ?? "") >= today).sort((a, b) => String(a.date).localeCompare(String(b.date)))[0];
   // ข้อมูลสำคัญสำหรับการดูแลจากสัญญา · แพ้ยา/แพ้อาหาร ขึ้นแถบแดงทุกแท็บ
   const ci = p?.careInfo ?? null;
   const txt = (v: unknown) => { const s = String(v ?? "").trim(); return s && s !== "-" ? s : ""; };
@@ -205,13 +224,15 @@ export default function ResidentProfile({ id, onClose, initialTab }: { id: strin
               <div><h4 className="profile-sub">รายการยาประจำตัว</h4>
                 <DataTable search={false} columns={["ชื่อยา", "ข้อบ่งใช้", "ขนาด", "มื้อ", "คงเหลือ", "สถานะ"]} empty="ไม่มีรายการยา"
                   rows={p.meds.map((m) => [`${str(m.drug_name)}${m.source === "คลังศูนย์" ? " · [คลังศูนย์]" : " · [ญาตินำมา]"}`, str(m.indication), `${num(m.dose)} ${str(m.unit)}`, str(m.meals), `${num(m.stock)} ${str(m.unit)}`, m.on_hold ? "งดชั่วคราว" : str(m.status ?? "ปกติ")])} /></div>
+              <div><h4 className="profile-sub !mb-0.5">ประวัติการเบิกยา</h4>
+                <p className="mb-2 text-xs text-gold-500">เบิกยาจากตะกร้ายาของผู้รับบริการ (เมนูเบิกยาในแอปห้องยา · ตัดตอนจัดซอง) · เติมยา · เพิ่มยาใหม่ · เบิกจากคลังยากลาง · ใหม่สุดอยู่บน</p>
+                <DataTable search={false} columns={["วันเวลา", "ผ่านมา", "ชื่อยา", "รายการ", "จำนวน", "คงเหลือ", "ผู้ทำรายการ", "หมายเหตุ", "สถานะเงิน"]} empty="ยังไม่มีประวัติการเบิกยา" minor={[1, 7]}
+                  render={(_, col, v) => col === 3 ? <span className={`whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${v.startsWith("เบิกออก") ? "bg-amber-50 text-amber-800" : v.startsWith("เบิกจากคลัง") ? "bg-sky-50 text-sky-800" : "bg-emerald-50 text-emerald-800"}`}>{v}</span> : undefined}
+                  rows={medHistory} /></div>
               <div><h4 className="profile-sub">บันทึกการให้ยา (MAR)</h4>
                 <DataTable search={false} badgeCols={[6]} columns={["วันที่", "มื้อ", "รายการยา", "จัดโดย", "ตรวจ QA", "ผู้ให้ยา / เวลา", "สถานะ"]} empty="ยังไม่มีประวัติการจัดยา"
                   actions={[{ label: "ดูรูปซอง", onClick: (i) => setPackPic({ id: String(p.packs[i].id), title: `รูปซองยา · มื้อ${str(p.packs[i].meal)} · ${thDate(p.packs[i].date as string, false)}` }) }]}
                   rows={p.packs.map((k) => [thDate(k.date, false), str(k.meal), str(k.items), str(k.packed_by), str(k.checked_by), k.given ? `${str(k.given_by)} · ${thDate(k.given_at)}` : "-", k.given ? "จ่ายยาแล้ว" : k.qa_status === "ตรวจผ่าน" ? "รอจ่าย" : str(k.qa_status)])} /></div>
-              <div><h4 className="profile-sub">ยาที่เบิกจากคลังกลาง</h4>
-                <DataTable search={false} columns={["วันเวลา", "ชื่อยา", "จำนวน", "ผู้เบิก", "หมายเหตุ", "สถานะเงิน"]} empty="ยังไม่เคยเบิกยาจากคลังกลาง"
-                  rows={(p.stockMeds ?? []).map((m) => [str(m.at), str(m.name), `${num(m.qty)} ${str(m.unit)}`, str(m.moved_by), [m.basket ? "เข้าตะกร้า" : "", str(m.note) === "-" ? "" : str(m.note)].filter(Boolean).join(" · ") || "-", !m.priced ? "ไม่คิดเงิน" : m.billed ? "เรียกเก็บแล้ว" : "ยังไม่เรียกเก็บ"])} /></div>
             </div>
           )}
 

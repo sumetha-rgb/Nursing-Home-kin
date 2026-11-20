@@ -63,6 +63,10 @@ export type Profile = {
   health: Row[]; daily: Row[]; meds: Row[]; packs: Row[]; appts: Row[]; tasks: Row[]; handovers: Row[]; alerts: Row[]; contracts: Row[]; plans: Row[];
   /** ยาที่เบิกจากคลังกลางของศูนย์ */
   stockMeds?: Row[];
+  /** คงเหลือของยาในตะกร้าที่เปลี่ยน (เบิก/เติม/เพิ่มยา) จากประวัติการแก้ไข: b = ก่อน · s = หลัง */
+  medMoves?: Row[];
+  /** เบิกยาจากตะกร้า (เมนูเบิกยา · med_withdrawals) */
+  withdrawals?: Row[];
   /** ข้อมูลสำคัญสำหรับการดูแลจากสัญญาล่าสุด: แพ้ยา แพ้อาหาร ยาประจำ โรงพยาบาล ผู้ติดต่อฉุกเฉิน */
   careInfo?: Row | null;
 };

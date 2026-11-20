@@ -21,6 +21,8 @@ export const fetchCache = "force-no-store";
  *  POST { op: "issue", drugId, qty, residentId | residentName, note?, basket?, medId? }   เบิกให้ผู้ป่วย (ตัดล็อตที่หมดอายุก่อนก่อน) · ขึ้นรอเรียกเก็บที่การเงิน
  *       basket = { dose, meals, days?, how?, use?, timing?, store?, form?, bulk?, warn?, fridge? } → สร้างยาในตะกร้าผู้ป่วย (ขึ้นหน้าจัดยารายวัน)
  *       medId  = เติมยาในตะกร้าที่มีอยู่ (บวกคงเหลือ) · ไม่ส่งทั้งสองอย่าง = เบิกครั้งเดียว (ยาให้ครั้งคราว)
+ *  GET  ?op=withdrawals&resident=ชื่อ   ประวัติการเบิกยาจากตะกร้าผู้ป่วย (รวมคงเหลือที่ลดลงก่อนมีเมนูเบิกยา)
+ *  POST { op: "withdraw", medId, qty, meal?, note? }   เบิกยาจากตะกร้าผู้ป่วยตามจำนวนที่ใช้จริง (ตัดคงเหลือ + เก็บเป็นรายการ)
  */
 const bad = (msg: string, status = 400) => NextResponse.json({ error: msg }, { status });
 const isManager = (me: SessionUser) => ["Global Admin", "Branch Admin", "Head Nurse"].includes(me.role);
@@ -61,6 +63,31 @@ export async function GET(req: NextRequest) {
           to_char(m.created_at AT TIME ZONE 'Asia/Bangkok', 'DD/MM/') || (extract(year FROM m.created_at AT TIME ZONE 'Asia/Bangkok')::int + 543) || to_char(m.created_at AT TIME ZONE 'Asia/Bangkok', ' HH24:MI') AS at
         FROM stock_moves m LEFT JOIN stock_lots l ON l.id = m.lot_id WHERE m.drug_id = $1 ${br ? "AND m.branch_name = $2" : ""} ORDER BY m.created_at DESC LIMIT 200`, br ? [drug, br] : [drug]);
       return NextResponse.json({ moves: rows });
+    }
+    if (q.get("op") === "withdrawals") {
+      // ประวัติการเบิกยาจากตะกร้าของผู้ป่วยคนนี้: รายการเบิก (med_withdrawals) + คงเหลือที่ลดลงก่อนมีเมนูเบิกยา (จากประวัติการแก้ไข)
+      const who = text(q.get("resident"), 200);
+      if (!who) return bad("กรุณาเลือกผู้ป่วย");
+      const scope = me.role === "Global Admin" ? null : me.branch;
+      const p = scope ? [who, scope] : [who];
+      const TH = (c: string) => `to_char(${c} AT TIME ZONE 'Asia/Bangkok', 'DD/MM/') || (extract(year FROM ${c} AT TIME ZONE 'Asia/Bangkok')::int + 543) || to_char(${c} AT TIME ZONE 'Asia/Bangkok', ' HH24:MI')`;
+      const TS = (c: string) => `to_char(${c} AT TIME ZONE 'Asia/Bangkok', 'YYYY-MM-DD HH24:MI:SS')`;
+      const [rows, legacy] = await Promise.all([
+        sql(`SELECT id, med_id, drug_name AS name, qty::float, unit, stock_before::float AS b, stock_after::float AS s, meal, note, withdrawn_by AS by, ${TH("created_at")} AS at, ${TS("created_at")} AS ts
+          FROM med_withdrawals WHERE resident_name = $1 ${scope ? "AND branch_name = $2" : ""} ORDER BY created_at DESC LIMIT 300`, p).catch(() => []), // ยังไม่ได้รัน db:setup
+        sql(`SELECT a.id::text, a.record_id AS med_id, coalesce(a.after->>'drug_name', a.before->>'drug_name') AS name, coalesce(a.after->>'unit', a.before->>'unit') AS unit,
+            a.before->>'stock' AS b, a.after->>'stock' AS s, a.actor_name AS by, ${TH("a.at")} AS at, ${TS("a.at")} AS ts
+          FROM audit_logs a WHERE a.area = 'pharmacy-drugs' AND a.action = 'update' AND (a.before->>'stock') IS DISTINCT FROM (a.after->>'stock')
+            AND a.record_id IN (SELECT id::text FROM resident_medications WHERE resident_name = $1 ${scope ? "AND branch_name = $2" : ""})
+          ORDER BY a.at DESC LIMIT 300`, p),
+      ]);
+      const n = (v: unknown) => { const s = String(v ?? "").trim(); const x = Number(s); return s !== "" && Number.isFinite(x) ? x : null; };
+      const old = (legacy as Record<string, unknown>[]).flatMap((r): Record<string, unknown>[] => {
+        const b = n(r.b), s = n(r.s);
+        return b !== null && s !== null && s < b ? [{ ...r, b, s, qty: Math.round((b - s) * 100) / 100, meal: null, note: null, legacy: true }] : [];
+      });
+      const items = [...(rows as Record<string, unknown>[]), ...old].sort((x, y) => String(y.ts).localeCompare(String(x.ts)));
+      return NextResponse.json({ items });
     }
     return bad("unknown op");
   } catch (e) {
@@ -180,6 +207,25 @@ export async function POST(req: NextRequest) {
                     VALUES (${randomUUID()}, ${r.branch_name}, ${d.id}, ${t.id}, ${-t.n}, 'เบิกให้ผู้ป่วย', ${r.id}, ${r.full_name}, ${d.price}, ${me.name}, ${note}, ${medId}, ${at})`;
         await audit(req, me, [{ area: "stock", action: "update", recordId: d.id, summary: `เบิกยาคลังกลาง · ${d.name} ${qty} ${d.unit} · ${r.full_name}${refill ? " · เติมตะกร้า" : basket ? " · เข้าตะกร้า" : ""}`, branch: r.branch_name }]);
         return NextResponse.json({ ok: true, left: Math.round((have - qty) * 100) / 100, unit: d.unit, priced: d.price !== null, medId });
+      }
+      case "withdraw": {
+        // เบิกยาจากตะกร้าผู้ป่วยตามจำนวนที่ใช้จริง · ตัดคงเหลือแบบมีเงื่อนไข (ของไม่พอ = ไม่ตัด กันสองเครื่องเบิกพร้อมกันจนติดลบ)
+        if (!canIssue(me)) return forbidden();
+        const qty = num(b.qty);
+        if (!(qty > 0)) return bad("กรุณาระบุจำนวนที่เบิก");
+        const [m] = (await sql`SELECT id, resident_id, resident_name, branch_name, drug_name, unit, coalesce(stock, 0)::float AS stock FROM resident_medications WHERE id = ${String(b.medId ?? "")}`) as
+          { id: string; resident_id: string | null; resident_name: string; branch_name: string | null; drug_name: string; unit: string | null; stock: number }[];
+        if (!m) return bad("ไม่พบยานี้ในตะกร้าของผู้ป่วย", 404);
+        if (me.role !== "Global Admin" && m.branch_name && m.branch_name !== me.branch) return forbidden("เบิกได้เฉพาะผู้รับบริการในสาขาของคุณ");
+        const [u] = (await sql`UPDATE resident_medications SET stock = round((coalesce(stock, 0) - ${qty})::numeric, 2), updated_at = now()
+          WHERE id = ${m.id} AND coalesce(stock, 0) >= ${qty} RETURNING stock::float AS stock`) as { stock: number }[];
+        if (!u) return bad(`เบิกเกินคงเหลือ · ${m.drug_name} เหลือ ${m.stock} ${m.unit ?? ""}`.trim(), 409);
+        const before = Math.round((u.stock + qty) * 100) / 100;
+        const meal = text(b.meal, 40) || null, note = text(b.note, 300) || null;
+        await sql`INSERT INTO med_withdrawals (id, med_id, resident_id, resident_name, branch_name, drug_name, qty, unit, stock_before, stock_after, meal, note, withdrawn_by)
+                  VALUES (${randomUUID()}, ${m.id}, ${m.resident_id}, ${m.resident_name}, ${m.branch_name}, ${m.drug_name}, ${qty}, ${m.unit}, ${before}, ${u.stock}, ${meal}, ${note}, ${me.name})`;
+        await audit(req, me, [{ area: "med_withdraw", action: "update", recordId: m.id, summary: `เบิกยา · ${m.drug_name} ${qty} ${m.unit ?? ""} · ${m.resident_name} · ${before} → ${u.stock}`, branch: m.branch_name }]);
+        return NextResponse.json({ ok: true, stock: u.stock, before });
       }
       default:
         return bad("unknown op");
