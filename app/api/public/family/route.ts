@@ -39,7 +39,19 @@ export async function GET(req: NextRequest) {
       SELECT meal, bool_or(given) AS given, to_char(max(given_at), 'HH24:MI') AS at
       FROM medication_packs WHERE (resident_id = $1 OR (resident_id IS NULL AND resident_name = $2 AND (branch_name IS NULL OR branch_name = $3 OR branch_name = ANY($5))))
         AND pack_date = $4::date GROUP BY meal`, [...p, l.branch_name, date, SHARED_BRANCHES])) as { meal: string; given: boolean; at: string | null }[];
-    const meds = packs.sort((a, b) => MEALS.indexOf(a.meal) - MEALS.indexOf(b.meal));
+    // ให้ยาแบบใหม่ (ไม่มีซอง): มื้อที่ต้องกิน = ยาตามมื้อในตะกร้า · ให้แล้ว = มีการให้ยาของมื้อนั้นในวันนั้น (ไม่นับยกเลิก/ไม่ได้ให้) · รวมกับซองยาระบบเดิม
+    const [plan, given] = await Promise.all([
+      sql(`SELECT DISTINCT u.meal FROM resident_medications m CROSS JOIN LATERAL unnest(m.meals) AS u(meal)
+        WHERE (m.resident_id = $1 OR (m.resident_id IS NULL AND m.resident_name = $2 AND m.branch_name = $3)) AND NOT m.is_bulk AND NOT m.on_hold`, [...p, l.branch_name]).catch(() => []) as Promise<{ meal: string }[]>,
+      sql(`SELECT u.meal, to_char(max(w.created_at) AT TIME ZONE 'Asia/Bangkok', 'HH24:MI') AS at
+        FROM med_withdrawals w CROSS JOIN LATERAL unnest(string_to_array(coalesce(w.meal, ''), ', ')) AS u(meal)
+        WHERE (w.resident_id = $1 OR (w.resident_id IS NULL AND w.resident_name = $2 AND w.branch_name = $3)) AND w.voided_at IS NULL AND w.skip_reason IS NULL
+          AND (w.created_at AT TIME ZONE 'Asia/Bangkok')::date = $4::date GROUP BY u.meal`, [...p, l.branch_name, date]).catch(() => []) as Promise<{ meal: string; at: string | null }[]>,
+    ]);
+    const byMeal = new Map(packs.map((x) => [x.meal, x]));
+    for (const { meal } of plan) if (!byMeal.has(meal)) byMeal.set(meal, { meal, given: false, at: null });
+    for (const g of given) if (MEALS.includes(g.meal)) { const cur = byMeal.get(g.meal); byMeal.set(g.meal, { meal: g.meal, given: true, at: cur?.given && cur.at ? cur.at : g.at }); }
+    const meds = [...byMeal.values()].filter((x) => MEALS.includes(x.meal)).sort((a, b) => MEALS.indexOf(a.meal) - MEALS.indexOf(b.meal));
     const days = (await sql(`
       SELECT d FROM (
         SELECT DISTINCT work_date::text AS d FROM daily_tasks

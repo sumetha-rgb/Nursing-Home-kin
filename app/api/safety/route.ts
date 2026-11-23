@@ -45,7 +45,8 @@ export async function GET(req: NextRequest) {
       const br = scoped(me) ? me.branch : q.get("branch") || null;
       const rows = await sql(`SELECT id, resident_id, resident_name, branch_name AS branch, kind, severity, coalesce(detail, '') AS detail, (photo IS NOT NULL) AS has_photo,
           ${TH_AT("occurred_at")} AS occurred, reported_by, ${TH_AT("created_at")} AS reported, ack_by, ${TH_AT("ack_at")} AS ack_at, coalesce(action, '') AS action,
-          ${TH_AT("family_at")} AS family_at, family_by, floor(extract(epoch FROM now() - created_at) / 60)::int AS age_min
+          ${TH_AT("family_at")} AS family_at, family_by, floor(extract(epoch FROM now() - created_at) / 60)::int AS age_min,
+          CASE WHEN ack_at IS NULL THEN NULL ELSE floor(extract(epoch FROM ack_at - created_at) / 60)::int END AS ack_min
         FROM incidents WHERE created_at > now() - ($1 || ' days')::interval ${br ? "AND branch_name = $2" : ""} ORDER BY created_at DESC LIMIT 1000`, br ? [String(days), br] : [String(days)]);
       return NextResponse.json({ items: rows, canAck: isLead(me) });
     }

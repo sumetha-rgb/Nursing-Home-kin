@@ -26,6 +26,9 @@ import BranchNotice from "@/components/BranchNotice";
 import ResidentProfile from "@/components/care/ResidentProfile";
 import { IncidentReport } from "@/components/care/Incidents";
 import VitalsDialog from "@/components/care/VitalsDialog";
+import GiveMeds from "@/components/pharmacy/GiveMeds";
+import { DueBadge } from "@/components/care/VitalPlanCard";
+import { fetchVitalDue, needOf, VITAL_DUE_EVENT, VitalDueRow } from "@/lib/vitalPlan";
 import FamilyLinkDialog from "@/components/care/FamilyLinkDialog";
 import PhotoPicker from "@/components/PhotoPicker";
 import { OfflineBar, usePwa } from "@/components/Pwa";
@@ -50,7 +53,7 @@ const TYPES = ["เฝ้าระวังอาการ", "คำสั่ง
 type Tab = "tasks" | "meds" | "residents" | "roster" | "perf" | "ptoday" | "pweek" | "pcases";
 const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: "tasks", label: "งานวันนี้", icon: "check" },
-  { id: "meds", label: "จ่ายยา", icon: "pill" },
+  { id: "meds", label: "ให้ยา", icon: "pill" },
   { id: "residents", label: "ผู้รับบริการ", icon: "user" },
   { id: "roster", label: "ตารางเวร", icon: "calendar" },
   { id: "perf", label: "ฉัน", icon: "me" },
@@ -338,11 +341,21 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
     }).catch(() => {});
   }, []);
   const [resQ, setResQ] = useState("");
-  const [resTodo, setResTodo] = useState(false);
+  /** กรองผู้รับบริการ: all ทั้งหมด · todo ยังไม่วัดวันนี้ · due ถึงรอบวัด (รอบการวัดรายบุคคล) */
+  const [resTodo, setResTodo] = useState<"all" | "todo" | "due">("all");
   const [resPick, setResPick] = useState<(typeof RESIDENTS)[number] | null>(null);
   // รายงานเหตุการณ์ไม่พึงประสงค์ (หกล้ม ยาผิด แผลใหม่) · แจ้งหัวหน้าพยาบาลทันที
   const [incOpen, setIncOpen] = useState(false);
-  const resList = RESIDENTS.filter((r) => (!resQ.trim() || `${r.name} ${r.room}`.toLowerCase().includes(resQ.trim().toLowerCase())) && (!resTodo || !measured[r.name]));
+  // รอบการวัดรายบุคคล: ใครถึงรอบวัดอะไร (นับจากครั้งล่าสุดที่บันทึกจริง) · ดึงใหม่หลังบันทึกสัญญาณชีพ
+  const [vdue, setVdue] = useState<VitalDueRow[]>([]);
+  const loadVdue = () => { fetchVitalDue().then((d) => setVdue(d.items)).catch(() => {}); };
+  useEffect(() => { loadVdue(); window.addEventListener(VITAL_DUE_EVENT, loadVdue); return () => window.removeEventListener(VITAL_DUE_EVENT, loadVdue); }, []);
+  useAutoRefresh(loadVdue);
+  const needBy: Record<string, ReturnType<typeof needOf>> = Object.fromEntries(vdue.map((r) => [r.name, needOf(r)]).filter(([, n]) => (n as unknown[]).length));
+  const dueCount = Object.keys(needBy).length, overCount = Object.values(needBy).filter((n) => n.some((x) => x.due.cls === "over")).length;
+  const resList = RESIDENTS.filter((r) => (!resQ.trim() || `${r.name} ${r.room}`.toLowerCase().includes(resQ.trim().toLowerCase())) && (resTodo === "all" || (resTodo === "todo" ? !measured[r.name] : !!needBy[r.name])))
+    .sort((a, b) => (resTodo === "due" ? Number(!!needBy[b.name]?.some((x) => x.due.cls === "over")) - Number(!!needBy[a.name]?.some((x) => x.due.cls === "over")) : 0));
+  const goDue = () => { setTab("residents"); setResTodo("due"); setResQ(""); window.scrollTo(0, 0); };
   // จ่ายยา: เปิดที่มื้อตามเวลาตอนนี้ · กรองตามสถานะซอง
   const [meal, setMeal] = useState(() => { const h = new Date().getHours() + new Date().getMinutes() / 60; return h < 10.5 ? MEALS[0] : h < 15 ? MEALS[1] : h < 19.5 ? MEALS[2] : MEALS[3]; });
   const [medF, setMedF] = useState<"" | "ready" | "wait" | "done">("");
@@ -383,7 +396,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
       <header className="sticky top-0 z-30 flex items-center justify-between gap-3 border-b border-cream-300/60 bg-white/95 px-4 py-3 backdrop-blur">
         <div className="flex min-w-0 items-center gap-2.5">
           <Image src="/logo-mark.png" alt="KIN" width={44} height={33} className="h-9 w-auto shrink-0" />
-          <div className="min-w-0 leading-tight"><p className="text-[15px] font-semibold text-gold-800">KinApp</p><p className="truncate text-[11px] font-medium text-gold-600">สาขา{user.branch || "-"}</p></div>
+          <div className="min-w-0 leading-tight"><p className="text-[15px] font-semibold text-gold-800">KinApp</p><p className="line-clamp-2 break-words text-xs font-medium text-gold-600" title={`สาขา${user.branch || "-"}`}>{user.branch || "-"}</p></div>
         </div>
         <div className="flex items-center gap-2">
           <AlertsBell compact />
@@ -443,6 +456,15 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
             })}
 
             <CheckInCard user={user} compact />
+
+            {/* ถึงรอบวัด (รอบการวัดรายบุคคล) · กดแล้วไปแท็บผู้รับบริการ กรองเฉพาะคนที่ถึงรอบ */}
+            {dueCount > 0 && <button type="button" onClick={goDue}
+              className={`flex w-full items-center gap-3 rounded-2xl border px-4 py-3 text-left ${overCount ? "border-red-200 bg-red-50" : "border-amber-200 bg-amber-50"}`}>
+              <Icon name="pulse" className={`h-5 w-5 shrink-0 ${overCount ? "text-red-700" : "text-amber-700"}`} />
+              <span className="min-w-0 flex-1"><b className="block text-sm text-gold-900">ถึงรอบวัด {dueCount} คน{overCount ? ` · เลยกำหนด ${overCount} คน` : ""}</b>
+                <small className="block truncate text-xs text-gold-600">{Object.entries(needBy).slice(0, 3).map(([n, x]) => `${n.split(" ")[0]}: ${x.map((y) => y.label).join(", ")}`).join(" · ")}</small></span>
+              <Icon name="chevron" className="h-4 w-4 shrink-0 -rotate-90 text-gold-500" />
+            </button>}
 
             {nextTask && taskTab === "todo" && <>
               <p className="ka-h">งานถัดไป</p>
@@ -555,42 +577,8 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
 
         {tab === "roster" && <StaffRoster user={user} />}
 
-        {tab === "meds" && (
-          <>
-            <div className="ka-head">
-              <div><h1>จ่ายยา</h1><p>มื้อ{meal} · จ่ายแล้ว {mealQ.filter((p) => p.given).length} จาก {mealQ.length} ซอง</p></div>
-              <Link href="/pharmacy?page=dispense" className="ka-pill"><Icon name="pill" className="h-4 w-4" />ห้องยา</Link>
-            </div>
-            <div className="ka-meals" role="radiogroup" aria-label="มื้อยา">
-              {MEALS.map((m) => <button key={m} type="button" role="radio" aria-checked={meal === m} onClick={() => setMeal(m)}>{m}<b>{queue.filter((p) => p.meal === m).length}</b></button>)}
-            </div>
-            <div className="ka-prog" aria-hidden><i style={{ width: `${mealQ.length ? Math.round((mealQ.filter((p) => p.given).length / mealQ.length) * 100) : 0}%` }} /></div>
-            <div className="ka-chips" role="radiogroup" aria-label="สถานะซอง">
-              {([["", "ทั้งหมด"], ["ready", "พร้อมจ่าย"], ["wait", "รอห้องยา"], ["done", "จ่ายแล้ว"]] as const).map(([k, l]) => (
-                <button key={k} type="button" role="radio" aria-checked={medF === k} onClick={() => setMedF(k)}>{l} {mealQ.filter((p) => !k || packState(p) === k).length}</button>
-              ))}
-            </div>
-            {mealQ.length === 0 ? <Empty t={queue.length ? `ไม่มีซองยามื้อ${meal}ของวันนี้` : "ยังไม่มีซองยาของวันนี้ ห้องยาจัดยาได้ที่แอปจัดยา"} /> : (
-              <ul className="space-y-3">{mealQ.filter((p) => !medF || packState(p) === medF).map((m) => {
-                const low = lowFor(m.who);
-                const room = roomOf(m.who);
-                return (
-                  <li key={m.id} className={`ka-pack ${m.given ? "is-done" : ""}`}>
-                    <div className="ka-pack-h"><Avatar kind="resident" id={RESIDENTS.find((x) => x.name === m.who)?.id} name={m.who} size={40} />
-                      <span className="ka-t"><b>{m.who}</b><small>{room ? `ห้อง ${room}` : "ยังไม่มีห้อง"} · {m.items.length} รายการ{allergy[m.who] && <em className="ka-flag bad">แพ้ {allergy[m.who]}</em>}</small></span></div>
-                    <div className="ka-pills">{m.items.map((x) => {
-                      const l = low.find((d) => x.includes(d.name));
-                      return <span key={x} className={l && !m.given ? "is-low" : ""}>{x}{l && !m.given ? ` · เหลือ ${l.stock} ${l.unit}` : ""}</span>;
-                    })}</div>
-                    {m.given ? <p className="ka-given"><Icon name="check" className="h-4 w-4" />ให้ยาแล้ว · {m.gby ?? "-"}{m.gat ? ` · ${m.gat}` : ""}</p>
-                      : m.qa === "ตรวจผ่าน" ? <button type="button" className="btn-primary w-full" onClick={() => open("dispense", m.id)}><Icon name="check" className="h-4 w-4" /> บันทึกการให้ยา</button>
-                        : <p className={`ka-wait ${m.qa === "แจ้งจัดยาผิด" ? "is-bad" : ""}`}>{m.qa === "แจ้งจัดยาผิด" ? "ห้องยากำลังแก้ไขซองนี้" : "รอห้องยาตรวจ QA ก่อนจ่าย"}</p>}
-                  </li>
-                );
-              })}</ul>
-            )}
-          </>
-        )}
+        {/* ให้ยา: ไม่มีจัดซอง/QA แล้ว · ยาตามมื้อของทุกคน กดให้ยาทีละคน (แบบผสม) · บันทึกเป็นการเบิกชุดเดียวกับ KINmed */}
+        {tab === "meds" && <GiveMeds drugs={drugs} people={RESIDENTS.map((r) => ({ name: r.name, room: String(r.room ?? "") }))} />}
 
         {PHYSIO_VIEWS.includes(tab) && <PhysioKin view={tab as "ptoday" | "pweek" | "pcases"} user={user} onCount={setPkCount} />}
 
@@ -599,10 +587,12 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
             <div className="ka-head"><div><h1>ผู้รับบริการ</h1><p>{RESIDENTS.length} คน · สาขา{user.branch || "-"}</p></div></div>
             <label className="ka-search"><Icon name="search" className="h-4 w-4" /><input value={resQ} onChange={(e) => setResQ(e.target.value)} placeholder="ค้นหาชื่อหรือเลขห้อง" aria-label="ค้นหาผู้รับบริการ" /></label>
             <div className="ka-chips" role="radiogroup" aria-label="กรองผู้รับบริการ">
-              <button type="button" role="radio" aria-checked={!resTodo} onClick={() => setResTodo(false)}>ทั้งหมด {RESIDENTS.length}</button>
-              <button type="button" role="radio" aria-checked={resTodo} onClick={() => setResTodo(true)}>ยังไม่วัดวันนี้ {RESIDENTS.filter((r) => !measured[r.name]).length}</button>
+              <button type="button" role="radio" aria-checked={resTodo === "all"} onClick={() => setResTodo("all")}>ทั้งหมด {RESIDENTS.length}</button>
+              <button type="button" role="radio" aria-checked={resTodo === "due"} onClick={() => setResTodo("due")}>ถึงรอบวัด {dueCount}{overCount ? ` · เลยกำหนด ${overCount}` : ""}</button>
+              <button type="button" role="radio" aria-checked={resTodo === "todo"} onClick={() => setResTodo("todo")}>ยังไม่วัดวันนี้ {RESIDENTS.filter((r) => !measured[r.name]).length}</button>
             </div>
-            {resList.length === 0 ? <Empty t={resQ ? `ไม่พบ "${resQ}"` : "วัดสัญญาณชีพครบทุกคนแล้ว"} /> : (
+            {resTodo === "due" && <p className="text-xs text-gold-600">ตามรอบการวัดที่หัวหน้าพยาบาลตั้งไว้ · นับจากครั้งล่าสุดที่บันทึก · บันทึกแล้วรายการหายไปเอง</p>}
+            {resList.length === 0 ? <Empty t={resQ ? `ไม่พบ "${resQ}"` : resTodo === "due" ? "ไม่มีใครถึงรอบวัดตอนนี้" : "วัดสัญญาณชีพครบทุกคนแล้ว"} /> : (
               <ul className="ka-res-list">{resList.map((r) => (
                 // การ์ดทั้งใบกดดูข้อมูลได้ ("ดูข้อมูล ›") · ปุ่มวัดสัญญาณชีพแยกลงบรรทัดล่าง ไม่ติดกับลูกศร
                 <li key={r.id ?? r.name} className="ka-res">
@@ -611,6 +601,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
                     <span className="ka-t"><b>{r.name}</b><small>{r.room && r.room !== "-" ? `ห้อง ${r.room}` : "ยังไม่มีห้อง"} · {r.age} ปี{allergy[r.name] && <em className="ka-flag bad">แพ้ {allergy[r.name]}</em>}</small>{ptDone[r.name] && <em className="ka-pt">กายภาพแล้ว {ptDone[r.name]}</em>}</span>
                     <span className="ka-res-go">ดูข้อมูล<Icon name="chevron" className="h-4 w-4 -rotate-90" /></span>
                   </button>
+                  {needBy[r.name] && <div className="flex flex-wrap items-center gap-1.5 px-3 pb-1 text-xs text-gold-600"><span>ถึงรอบ:</span>{needBy[r.name].map((x) => <DueBadge key={x.k} cls={x.due.cls} text={`${x.label}${x.due.cls === "over" ? ` · ${x.due.text}` : ""}`} />)}</div>}
                   <div className="ka-res-foot">
                     <span className={`ka-res-st ${measured[r.name] ? "is-done" : ""}`}><i aria-hidden />{measured[r.name] ? `วัดแล้ว ${measured[r.name]} น.` : "ยังไม่วัดวันนี้"}</span>
                     <button type="button" className="ka-res-vital" onClick={() => setVitalsFor(r.name)}><Icon name="pulse" className="h-4 w-4" />{measured[r.name] ? "วัดอีกครั้ง" : "วัดสัญญาณชีพ"}</button>

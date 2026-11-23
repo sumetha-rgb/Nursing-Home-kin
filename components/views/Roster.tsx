@@ -194,6 +194,8 @@ export function Roster() {
   const [who, setWho] = useState("");
   const [onlyOn, setOnlyOn] = useState(false);
   const [folded, setFolded] = useState<string[]>([]);
+  /** โทรศัพท์: วันที่เลือกในแถบวันที่ (ไม่อยู่ในสัปดาห์ที่ดู = วันนี้ หรือวันแรกของสัปดาห์) */
+  const [mDay, setMDay] = useState("");
   const ROLE_ORDER = ["Head Nurse", "Nurse"];
   const shownTeam = team.filter((t) => (!who || t.name.toLowerCase().includes(who.trim().toLowerCase())) && (!onlyOn || weekDays.some((d) => cellOf(t.id, d).length)));
   const groups = ROLE_ORDER.map((r) => ({ role: r, label: ROLE_INFO[r as Role]?.th ?? r, list: shownTeam.filter((t) => t.role === r) })).filter((g) => g.list.length);
@@ -227,6 +229,42 @@ export function Roster() {
   const dm = (d: string) => `${Number(d.slice(8, 10))} ${TH_MONTHS[Number(d.slice(5, 7)) - 1]}`;
   const weekRange = (a: string, b: string) => `${a.slice(0, 7) === b.slice(0, 7) ? Number(a.slice(8, 10)) : dm(a)} – ${dm(b)} ${Number(b.slice(0, 4)) + 543}`;
   const DAY_FULL = ["จันทร์", "อังคาร", "พุธ", "พฤหัสบดี", "ศุกร์", "เสาร์", "อาทิตย์"];
+  // โทรศัพท์: ตาราง 7 วันกว้างเกินจอ (เห็นแค่ 2 วัน) → แถบเลือกวัน + เวรของวันนั้นเป็นรายการ · ปุ่มและเมนูเดียวกับตาราง
+  const mD = weekDays.includes(mDay) ? mDay : weekDays.includes(today) ? today : weekDays[0];
+  const mobileWeek = (
+    <div className="wk-m">
+      <div className="wk-m-days" role="tablist" aria-label="เลือกวัน">
+        {weekDays.map((x, j) => <button key={x} type="button" role="tab" aria-selected={x === mD} className={`${x === mD ? "is-on" : ""} ${x === today ? "is-today" : ""} ${x < today ? "is-past" : ""}`} onClick={() => setMDay(x)}>
+          <small>{WEEKDAYS[j]}</small><b>{Number(x.slice(8, 10))}</b></button>)}
+      </div>
+      <p className="wk-m-title">{DAY_FULL[weekDays.indexOf(mD)]} {dm(mD)}{mD === today ? " · วันนี้" : ""}</p>
+      {SHIFTS.map((sh) => {
+        const ids = onShift(mD, sh.key), n = ids.length, open = crew?.d === mD && crew.sh === sh.key, names = team.filter((t) => ids.includes(t.id)).map((t) => shortName(t.name));
+        return <div key={sh.key} className={`wk-m-shift ${!n && mD >= today ? "is-gap" : ""}`}>
+          <span className="min-w-0"><b>เวร{sh.key}</b> <small>{sh.time}</small><small className="wk-m-names">{names.length ? names.join(", ") : "ยังไม่มีคน"}</small></span>
+          {mD < today ? <em>{n} คน</em> : <button type="button" className={`wk-covb ${open ? "is-open" : ""}`} aria-haspopup="dialog" aria-expanded={open}
+            aria-label={`เลือกพนักงานเวร${sh.key} ${dm(mD)} · ตอนนี้ ${n} คน`} onClick={(e) => (open ? setCrew(null) : openCrew(e, mD, sh.key))}>
+            {saving === `cov|${mD}|${sh.key}` ? "…" : n ? `${n} คน` : "ไม่มี"}<Icon name="plus" className="h-3 w-3" /></button>}
+        </div>;
+      })}
+      <ul className="wk-m-list">
+        {ROLE_ORDER.flatMap((r) => shownTeam.filter((t) => t.role === r)).map((t) => {
+          const c = cellOf(t.id, mD), k = c.length === 2 ? "dn" : c[0] === "เช้า" ? "d" : c[0] === "ดึก" ? "n" : "o";
+          const ins = c.filter((sh) => weekAtt.some((a) => a.staff_id === t.id && a.date === mD && a.shift === sh && a.kind === "in"));
+          const missed = c.length > ins.length && due({ date: mD, shift: c[c.length - 1] });
+          const open = menu?.id === t.id && menu.d === mD;
+          return <li key={t.id}>
+            <span className="min-w-0"><b title={t.name}>{shortName(t.name)}</b><small>{ROLE_INFO[t.role as Role]?.th ?? t.role}</small></span>
+            <button type="button" className={`wk-c is-${k} ${mD < today ? "is-past" : ""} ${open ? "is-open" : ""}`} disabled={saving === `${t.id}|${mD}`} aria-haspopup="menu" aria-expanded={open}
+              aria-label={`${t.name} วันที่ ${Number(mD.slice(8, 10))} ${c.length ? `เวร${c.join("+")}` : "ยังไม่มีเวร"}`} onClick={(e) => (open ? setMenu(null) : openMenu(e, t.id, t.name, mD))}>
+              {saving === `${t.id}|${mD}` ? "…" : c.length ? c.join("+") : mD < today ? "–" : "+ จัดเวร"}{ins.length > 0 && <i className="ok" title="เช็คชื่อแล้ว">✓</i>}{missed && <i className="bad" title="ไม่ได้เช็คชื่อ">ขาด</i>}
+            </button>
+          </li>;
+        })}
+      </ul>
+      {!shownTeam.length && <p className="px-4 py-6 text-center text-sm text-gold-500">ไม่พบพนักงานตามตัวกรอง</p>}
+    </div>
+  );
 
   return (
     <>
@@ -259,7 +297,7 @@ export function Roster() {
           <label className="wk-only"><input type="checkbox" checked={onlyOn} onChange={(e) => setOnlyOn(e.target.checked)} /> เฉพาะคนที่มีเวรสัปดาห์นี้</label>
           <span className="text-sm text-gold-500">{shownTeam.length} จาก {team.length} คน</span>
         </div>}
-        {!team.length ? <p className="rounded-xl bg-cream-50 px-4 py-6 text-center text-sm text-gold-600">ยังไม่มีพยาบาลที่ทำงานอยู่ในสาขานี้</p> : <div className="wk-wrap">
+        {!team.length ? <p className="rounded-xl bg-cream-50 px-4 py-6 text-center text-sm text-gold-600">ยังไม่มีพยาบาลที่ทำงานอยู่ในสาขานี้</p> : <><div className="sm:hidden">{mobileWeek}</div><div className="wk-wrap hidden sm:block">
           <table className="wk">
             <thead>
               <tr><th scope="col">พนักงาน</th>{weekDays.map((d, i) => <th key={d} scope="col" className={d === today ? "is-today" : d < today ? "is-past" : ""}>{DAY_FULL[i]}{d === today && <em>วันนี้</em>}<b>{dm(d)}</b></th>)}<th scope="col">รวม</th></tr>
@@ -298,7 +336,7 @@ export function Roster() {
             })}
           </table>
           {!shownTeam.length && <p className="px-4 py-6 text-center text-sm text-gold-500">ไม่พบพนักงานตามตัวกรอง</p>}
-        </div>}
+        </div></>}
         <p className="wk-leg"><span><i className="is-d" />เช้า 07:00–19:00</span><span><i className="is-n" />ดึก 19:00–07:00</span><span><i className="is-o" />+ ยังไม่มีเวร</span><span>กดช่องเพื่อเลือกเวรรายคน · กดแถว คนเช้า / คนดึก เพื่อเลือกพนักงานทั้งกะ · ✓ เช็คชื่อแล้ว · แดง = ยังไม่มีคน</span></p>
         {menu && createPortal(<div ref={menuRef} className="wk-menu" role="menu" aria-label={`เวรของ ${menu.name}`} style={{ left: menu.x, top: menu.y }}>
           <p>{shortName(menu.name)} · {WEEKDAYS[weekDays.indexOf(menu.d)]} {dm(menu.d)}</p>
@@ -330,7 +368,13 @@ export function Roster() {
       </Section>}
 
       <Section title="สรุปการมาทำงานรายคน" sub="ชื่อสีแดง = ขาด 2 ครั้งขึ้นไปในเดือนนี้">
-        {report.length ? <div className="overflow-x-auto rounded-2xl border border-cream-300">
+        {report.length ? <>
+        <ul className="grid gap-2 sm:hidden">{report.map((r) => <li key={r.name} className="rounded-xl border border-cream-300 bg-white px-3 py-2.5">
+          <div className="flex items-center justify-between gap-2"><b className={r.missed >= 2 ? "text-red-700" : r.missed === 1 ? "text-amber-800" : "text-gold-900"}>{r.name}</b>
+            {r.missed > 0 && <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${r.missed >= 2 ? "bg-red-50 text-red-700" : "bg-amber-50 text-amber-800"}`}>ขาด {r.missed}</span>}</div>
+          <p className="mt-0.5 text-xs leading-relaxed text-gold-600">ถึงเวลาแล้ว {r.due} เวร · ตรงเวลา {r.ontime} · สาย {r.late ? `${r.late} ครั้ง (รวม ${r.lateMin} นาที)` : "-"} · เช็คชื่อนอกตาราง {r.extra || "-"}</p>
+        </li>)}</ul>
+        <div className="hidden overflow-x-auto rounded-2xl border border-cream-300 sm:block">
           <table className="data-table w-full min-w-[640px]">
             <thead><tr><th scope="col">พนักงาน</th><th scope="col">เวรที่ถึงเวลาแล้ว</th><th scope="col">ตรงเวลา</th><th scope="col">สาย</th><th scope="col">ขาด</th><th scope="col">เช็คชื่อนอกตาราง</th></tr></thead>
             <tbody>{report.map((r) => <tr key={r.name}>
@@ -341,7 +385,7 @@ export function Roster() {
               <td>{r.extra || "-"}</td>
             </tr>)}</tbody>
           </table>
-        </div> : <p className="rounded-xl bg-cream-50 px-4 py-6 text-center text-sm text-gold-600">ยังไม่มีเวรที่ถึงเวลาเข้างานในเดือนนี้</p>}
+        </div></> : <p className="rounded-xl bg-cream-50 px-4 py-6 text-center text-sm text-gold-600">ยังไม่มีเวรที่ถึงเวลาเข้างานในเดือนนี้</p>}
       </Section>
 
       <Modal open={!!day} wide title={day ? `จัดเวร · ${dayTitle(day)}` : ""} onClose={() => setDay(null)}

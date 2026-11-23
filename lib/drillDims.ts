@@ -45,8 +45,8 @@ export const DRILL: Record<DrillKpi, Def> = {
   },
   meds: {
     dims: [{ chain: ["branch", "meal"] }, { chain: ["meal", "branch"] }, { chain: ["resident"] }],
-    unit: "มื้อ", numWord: "ให้แล้ว",
-    recTitle: "มื้อที่ยังไม่ได้ให้ยา", recHead: ["วันที่", "ผู้รับบริการ", "มื้อ", "ยา", "ผู้จัดยา"], view: "", viewLabel: "",
+    unit: "รายการ", numWord: "ให้แล้ว",
+    recTitle: "ยาที่ยังไม่ได้ให้ (หรือไม่ได้ให้พร้อมเหตุผล)", recHead: ["วันที่", "ผู้รับบริการ", "มื้อ", "ยา", "สถานะ"], view: "", viewLabel: "",
   },
 };
 

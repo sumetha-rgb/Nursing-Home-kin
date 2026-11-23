@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { sql } from "@/lib/db";
 import { currentUser, forbidden, unauthorized } from "@/lib/auth";
 import { audit } from "@/lib/audit";
-import { can } from "@/lib/perms";
+import { can, seesMoney } from "@/lib/perms";
 import { readOnlyRole, seesAllBranches } from "@/lib/roles";
 import { canSalesTax } from "@/lib/settingsAccess";
 import { receiptPrefix, thaiDateStamp } from "@/lib/receiptNo";
@@ -41,7 +41,7 @@ async function owned(req: NextRequest, id: string) {
 async function paidDays(req: NextRequest) {
   const me = await currentUser(req);
   if (!me) return unauthorized();
-  if (!can(me, "billing") && !can(me, "dashboard")) return forbidden();
+  if (!seesMoney(me)) return forbidden();
   const q = req.nextUrl.searchParams;
   const br = seesAllBranches(me.role) ? q.get("branch") || null : me.branch;
   const fromQ = q.get("from") ?? "";
@@ -60,7 +60,7 @@ async function paidDays(req: NextRequest) {
 async function owingAt(req: NextRequest) {
   const me = await currentUser(req);
   if (!me) return unauthorized();
-  if (!can(me, "billing") && !can(me, "dashboard")) return forbidden();
+  if (!seesMoney(me)) return forbidden();
   const q = req.nextUrl.searchParams;
   const date = /^\d{4}-\d{2}-\d{2}$/.test(q.get("date") ?? "") ? q.get("date")! : "";
   if (!date) return bad("วันที่ไม่ถูกต้อง");

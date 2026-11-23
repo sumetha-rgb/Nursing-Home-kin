@@ -6,15 +6,18 @@ import { ResidentPicker } from "../SearchSelect";
 import { useApp } from "@/lib/app";
 import { nowTh } from "@/lib/pharmacy";
 import { evaluateVitals, flagText, implausible, levelOf, LEVEL_TH, LIMITS, parseVitals, vitalText } from "@/lib/vitals";
+import { dueAll, fetchVitalDue, notifyVitalDue, thShort, VitalDueRow } from "@/lib/vitalPlan";
+import { DueBadge } from "./VitalPlanCard";
 
 const BLANK = { bp: "", pr: "", rr: "", bt: "", o2: "", dtx: "", weight: "", height: "", note: "" };
+/** ทุกช่องไม่บังคับ ขอแค่อย่างน้อย 1 ช่อง · ป้ายถึงรอบ/เลยกำหนด/อีก n วัน มาจากรอบการวัดรายบุคคล (lib/vitalPlan) */
 const FIELDS: { k: keyof typeof BLANK; label: string; ph: string; mode?: "decimal" | "text" }[] = [
   { k: "bp", label: "BP ความดันโลหิต", ph: "เช่น 120/80", mode: "text" },
   { k: "pr", label: "PR ชีพจร (ครั้ง/นาที)", ph: "เช่น 76" },
   { k: "rr", label: "RR การหายใจ (ครั้ง/นาที)", ph: "เช่น 18" },
   { k: "bt", label: "BT อุณหภูมิ (°C)", ph: "เช่น 36.6" },
   { k: "o2", label: "O2 Sat ออกซิเจน (%)", ph: "เช่น 98" },
-  { k: "dtx", label: "DTX น้ำตาล (mg/dL)", ph: "เช่น 110" },
+  { k: "dtx", label: "น้ำตาลในเลือด (DTX, mg/dL)", ph: "เช่น 110" },
   { k: "weight", label: "น้ำหนัก (กก.)", ph: "เช่น 58" },
   { k: "height", label: "ส่วนสูง (ซม.)", ph: "เช่น 155" },
 ];
@@ -77,6 +80,18 @@ export default function VitalsDialog({ open, residents, resident, recorder, onCl
     } catch (e) { toast((e as Error).message || "อ่านค่าไม่สำเร็จ"); }
     finally { setReading(false); }
   };
+  // รอบการวัดของผู้ป่วยที่เลือก: ช่องที่ถึงรอบไฮไลต์ · ยังไม่ถึงรอบหรี่ลง (ยังกรอกได้) · โหลดไม่ได้ = ฟอร์มแบบเดิม
+  const [plan, setPlan] = useState<VitalDueRow | null>(null);
+  useEffect(() => {
+    setPlan(null);
+    if (!open || !who) return;
+    let live = true;
+    fetchVitalDue({ name: who }).then((d) => live && setPlan(d.items[0] ?? null)).catch(() => {});
+    return () => { live = false; };
+  }, [open, who]);
+  const dueItems = useMemo(() => (plan ? dueAll(plan) : []), [plan]);
+  const dueOfField = (k: string) => dueItems.find((x) => x.fields.includes(k));
+  const need = dueItems.filter((x) => x.due.cls === "due" || x.due.cls === "over");
   const parsed = useMemo(() => parseVitals(vitalText(f), f.o2, f.dtx), [f]);
   const flags = useMemo(() => evaluateVitals(parsed), [parsed]);
   const odd = implausible(parsed);
@@ -92,7 +107,7 @@ export default function VitalsDialog({ open, residents, resident, recorder, onCl
     if (odd.length && !doubt) { setDoubt(true); return; }
     const wh = [f.weight && `${f.weight} กก.`, f.height && `${f.height} ซม.`].filter(Boolean).join(" / ");
     onSave([nowTh(), who, vitalText({ bp: f.bp.replace(/\s/g, ""), pr: f.pr, rr: f.rr, bt: f.bt }) || "-", f.o2 ? `${f.o2}%` : "-", f.dtx || "-", wh || "-", "-", f.note.trim() || "-", recorder]);
-    onClose();
+    onClose(); notifyVitalDue(); // หน้าที่แสดงรอบการวัด (KinApp ถึงรอบวัด · การ์ดรอบการวัด) ดึงใหม่หลังบันทึกขึ้น server
     toast(level === "normal" ? "บันทึกสัญญาณชีพแล้ว" : `บันทึกแล้ว · ค่า${LEVEL_TH[level]} ระบบแจ้งเตือนพยาบาลแล้ว`);
   };
 
@@ -112,12 +127,24 @@ export default function VitalsDialog({ open, residents, resident, recorder, onCl
           <input ref={pick} type="file" accept="image/*" hidden onChange={(e) => { const file = e.target.files?.[0]; e.target.value = ""; if (file) readPhoto(file); }} />
           {ai && <p className="vitals-ai-note" role="status">อ่านจากรูปแล้ว {ai.keys.length} ช่อง (ไฮไลต์สีทอง) · <b>ตรวจตัวเลขกับหน้าจอเครื่องก่อนบันทึก</b>{ai.note ? ` · ${ai.note}` : ""}</p>}
         </div>}
+        {who && <p className={`rounded-xl px-3.5 py-2.5 text-sm ${need.some((x) => x.due.cls === "over") ? "bg-red-50 text-red-800" : need.length ? "bg-amber-50 text-amber-900" : "bg-cream-50 text-gold-700"}`} role="status">
+          {!plan ? "กรอกเฉพาะค่าที่วัด ไม่ต้องครบทุกช่อง (อย่างน้อย 1 ช่อง)"
+            : need.length ? <>วันนี้ต้องวัด <b>{need.map((x) => `${x.label}${x.due.cls === "over" ? ` (${x.due.text})` : ""}`).join(" · ")}</b> · ช่องอื่นยังไม่ถึงรอบ เว้นว่างได้</>
+            : "ยังไม่มีรายการที่ถึงรอบ · กรอกเฉพาะค่าที่วัด วัดนอกรอบก็นับเป็นรอบใหม่"}</p>}
         <div className="grid grid-cols-2 gap-3">
-          {FIELDS.map((x) => (
-            <Field key={x.k} label={x.label}>
-              <input inputMode={x.mode ?? "decimal"} className={ai?.keys.includes(x.k) ? "is-ai" : undefined} value={f[x.k]} placeholder={x.ph} onChange={(e) => { setF({ ...f, [x.k]: e.target.value }); setDoubt(false); if (ai) setAi({ ...ai, keys: ai.keys.filter((k) => k !== x.k) }); }} />
-            </Field>
-          ))}
+          {FIELDS.map((x) => {
+            const d = dueOfField(x.k), first = d && d.fields[0] === x.k;
+            const ring = d?.due.cls === "over" ? "!border-red-400 !ring-2 !ring-red-100" : d?.due.cls === "due" ? "!border-amber-400 !ring-2 !ring-amber-100" : "";
+            const dim = d && (d.due.cls === "rest" || d.due.cls === "off") && !f[x.k] ? "opacity-60" : "";
+            return (
+              <div key={x.k} className="min-w-0">
+                <Field label={x.label}>
+                  <input inputMode={x.mode ?? "decimal"} className={[ai?.keys.includes(x.k) ? "is-ai" : "", ring, dim].filter(Boolean).join(" ") || undefined} value={f[x.k]} placeholder={x.ph} onChange={(e) => { setF({ ...f, [x.k]: e.target.value }); setDoubt(false); if (ai) setAi({ ...ai, keys: ai.keys.filter((k) => k !== x.k) }); }} />
+                </Field>
+                {d && first && <p className="mt-1 flex flex-wrap items-center gap-1.5 text-[11.5px] text-gold-500"><DueBadge cls={d.due.cls} text={d.due.text} />{d.due.cls !== "off" && d.last && <span>ล่าสุด {thShort(d.last)}</span>}</p>}
+              </div>
+            );
+          })}
         </div>
         <Field label="อาการ / หมายเหตุ"><textarea rows={2} value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} placeholder="เช่น ทานอาหารได้ดี หลับสนิท" /></Field>
         {doubt && odd.length > 0 && (

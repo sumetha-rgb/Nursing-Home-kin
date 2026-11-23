@@ -2,6 +2,7 @@
 //  rows = แต่ละกลุ่มของมิติที่ขอ { key, num, den } · records = รายการจริงที่ต้องตาม (หมดชั้นแตกย่อยแล้ว)
 //  มิติและตัวกรองตรวจกับ lib/drillDims (whitelist) · ค่าที่กรองส่งเป็นพารามิเตอร์เสมอ
 import { sql } from "@/lib/db";
+import { medSlotsSql } from "@/lib/medSlots";
 import { CN_KIND, DRAFT, PARTIAL, UNPAID, VOID } from "@/lib/billing";
 import type { DrillDim, DrillKpi } from "@/lib/drillDims";
 
@@ -71,10 +72,11 @@ export async function drill(q: DrillQuery): Promise<{ rows?: DrillRow[]; records
   }
 
   if (q.kpi === "meds") {
-    const base = `FROM medication_packs m WHERE m.pack_date BETWEEN $1::date AND LEAST($2::date, ${TODAY} - 1) ${W}`;
+    // มื้อยาที่ต้องให้ (ยา × มื้อ × วัน) · given = ให้แล้ว (lib/medSlots)
+    const base = `FROM ${medSlotsSql("$1::date", `LEAST($2::date, ${TODAY} - 1)`)} m WHERE true ${W}`;
     if (by) return { rows: rowsOf(await sql(`SELECT ${by} AS k, count(*) FILTER (WHERE m.given)::int AS num, count(*)::int AS den ${base} GROUP BY 1`, params) as Row[]) };
-    return { records: await sql(`SELECT m.pack_date::text AS date, m.resident_name AS resident, m.meal, array_to_string(m.items, ', ') AS items, coalesce(m.packed_by, '-') AS who
-        ${base} AND NOT m.given ORDER BY m.pack_date DESC, m.resident_name LIMIT 200`, params) as Row[] };
+    return { records: await sql(`SELECT m.day::text AS date, m.resident_name AS resident, m.meal, m.drug_name AS items, coalesce('ไม่ได้ให้: ' || m.skip, 'ยังไม่ได้บันทึก') AS who
+        ${base} AND NOT m.given ORDER BY m.day DESC, m.resident_name LIMIT 200`, params) as Row[] };
   }
 
   // collect: รับเงินในช่วง ÷ ยอดออกใบในช่วง (สูตรเดียวกับหน้าการเงิน) · ใบลดหนี้ลดยอดออกใบ · แยกตามประเภทใบไม่นับใบลดหนี้

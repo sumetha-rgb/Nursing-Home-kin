@@ -1,4 +1,5 @@
 "use client";
+import type { ViewId } from "@/lib/nav";
 import Reserve from "@/components/Reserve";
 import Occupancy from "../care/Occupancy";
 import CsvIcon from "@/components/CsvIcon";
@@ -20,6 +21,8 @@ import { useApp } from "@/lib/app";
 import ResidentProfile from "../care/ResidentProfile";
 import { IncidentBoard, IncidentStats } from "../care/Incidents";
 import VitalsDialog from "../care/VitalsDialog";
+import { DueBadge } from "../care/VitalPlanCard";
+import { fetchVitalDue, needOf, VITAL_DUE_EVENT, VitalDueRow } from "@/lib/vitalPlan";
 import { fetchNurses, useResidents } from "@/lib/care";
 import { useSession } from "@/lib/session";
 import { seesAllBranches, readOnlyRole } from "@/lib/roles";
@@ -73,6 +76,34 @@ function rangeOf(p: Period, pick: string, rf = "", rt = "") {
   return { from: iso(py, pm, 1), to, pfrom: pf, pto: pt, ...cap(full ? `${mName(py, pm)} ทั้งเดือน` : `${span(iso(py, pm, 1), to)} (${days(iso(py, pm, 1), to)} วันแรกของเดือน)`, `${mName(py, pm - 1)} ทั้งเดือน`), title: `ประจำเดือน${mName(py, pm)}` };
 }
 
+/**
+ * มุมงานดูแล (ภาพรวมและรายงาน › ตัวชี้วัดหลัก): เสียงจากครอบครัวและเหตุการณ์ · คนที่ขาดวัดสัญญาณชีพมากสุด
+ *  complaints = เรื่องร้องเรียนในช่วงที่เลือก · ยังไม่แก้ไข/เหตุการณ์รอรับทราบ มาจากแถบต้องจัดการ (ณ ตอนนี้)
+ */
+function CareCards({ d, complaints, fam, go, onResident }: { d: Insights; complaints: number; fam?: Kpi; go: (v: ViewId) => void; onResident: (name: string) => void }) {
+  const open = d.attention.complaints?.n ?? 0, inc = d.attention.incidents?.length ?? 0, miss = d.health.rounds?.miss ?? [];
+  const Row = ({ t, children }: { t: string; children: React.ReactNode }) => <div className="flex items-center justify-between gap-3 border-t border-cream-100 py-2 text-sm first:border-0 first:pt-0"><span className="text-gold-800">{t}</span><span className="flex items-center gap-2 whitespace-nowrap">{children}</span></div>;
+  const Pill = ({ tone, children }: { tone: "r" | "a" | "g"; children: React.ReactNode }) => <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${tone === "r" ? "bg-red-50 text-red-700" : tone === "a" ? "bg-amber-50 text-amber-800" : "bg-emerald-50 text-emerald-800"}`}>{children}</span>;
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      <section className="card grid content-start gap-2 p-5">
+        <div className="flex flex-wrap items-baseline justify-between gap-2"><h3 className="text-base font-semibold text-gold-900">เสียงจากครอบครัว และเหตุการณ์</h3><button type="button" className="dash-more" onClick={() => go("feedbacks")}>ดูเสียงจากครอบครัว</button></div>
+        <div>
+          <Row t="เรื่องร้องเรียน ช่วงนี้"><b className="tabular-nums">{complaints}</b>{open > 0 ? <Pill tone="r">ยังไม่แก้ไข {open}</Pill> : <Pill tone="g">ไม่มีเรื่องค้าง</Pill>}</Row>
+          <Row t="ดาวจากครอบครัว"><b className="tabular-nums">{fam?.value ?? "-"}</b><small className="text-xs text-gold-500">{fam?.note ?? ""}</small></Row>
+          <Row t="เหตุการณ์ไม่พึงประสงค์ รอรับทราบ"><b className="tabular-nums">{inc}</b>{inc > 0 ? <Pill tone="r">ต้องรับทราบ</Pill> : <Pill tone="g">ไม่มี</Pill>}</Row>
+        </div>
+      </section>
+      <section className="card grid content-start gap-2 p-5">
+        <div className="flex flex-wrap items-baseline justify-between gap-2"><h3 className="text-base font-semibold text-gold-900">ขาดวัดสัญญาณชีพมากสุด</h3><button type="button" className="dash-more" onClick={() => go("health_logs")}>ดูคนที่ถึงรอบวัด</button></div>
+        {miss.length ? <div>{miss.map((x) => <div key={x.name} className="flex items-center justify-between gap-3 border-t border-cream-100 py-2 text-sm first:border-0 first:pt-0"><button type="button" className="min-w-0 text-left font-medium text-gold-800 underline-offset-2 hover:underline" onClick={() => onResident(x.name)}>{x.name}</button><Pill tone={x.n >= 5 ? "r" : "a"}>ขาด {x.n.toLocaleString("en-US")} ครั้ง</Pill></div>)}</div>
+          : <p className="text-sm text-gold-500">วัดครบตามรอบทุกคนในช่วงนี้</p>}
+        <p className="text-xs text-gold-500">นับตามรอบที่ตั้งให้แต่ละคน · ถึงเมื่อวาน · กดชื่อเพื่อเปิดประวัติ</p>
+      </section>
+    </div>
+  );
+}
+
 export function Dashboard() {
   const branchNames = useBranchNames();
   const { user } = useSession();
@@ -80,8 +111,15 @@ export function Dashboard() {
   const fin = can(user, "billing");
   // ยอดขายตามหมวด: ผู้บริหาร (ทุกสาขา) และผู้จัดการสาขา (สาขาตัวเอง) เสมอ · ตำแหน่งอื่นตามสิทธิ์การเงิน
   const sales = fin || user?.role === "Global Admin" || user?.role === "Branch Admin";
+  /** มุมงานดูแล: บัญชีที่ไม่เห็นตัวเลขเงินและการขาย (เช่น หัวหน้าพยาบาล) · เรื่องการดูแลขึ้นก่อน ซ่อนเนื้อหาฝั่งขาย · ผู้บริหาร/ผู้จัดการสาขาเห็นแบบเดิม */
+  const care = !sales;
   // 4 กลุ่ม + แท็บย่อย · หมวดการเงินเฉพาะผู้มีสิทธิ์การเงิน (กลุ่มที่ไม่มีแท็บย่อยให้ดู = ซ่อน)
-  const GROUPS: TabGroup[] = [
+  const GROUPS: TabGroup[] = care ? [
+    { name: "ภาพรวม", subs: ["ตัวชี้วัดหลัก"], hint: "ตัวชี้วัดงานดูแลเทียบเป้า" },
+    { name: "การดูแล", subs: ["สุขภาพผู้รับบริการ", "คุณภาพการดูแล", "กายภาพ"] },
+    { name: "ทีมงานและเวร", subs: ["ทีมงาน"], hint: "คนเข้าเวร · มาสาย · ขาดงาน" },
+    { name: "ห้องและการรับเข้า", subs: ["การเข้าพัก", "รับเข้า-จำหน่าย"] },
+  ] : [
     { name: "ภาพรวม", subs: ["ตัวชี้วัดหลัก"], hint: user?.role === "Global Admin" ? "ตัวชี้วัดเทียบเป้า · เทียบสาขา" : "ตัวชี้วัดเทียบเป้า" },
     { name: "การเงิน", subs: [...(fin ? ["การเงิน"] : []), ...(sales ? ["ยอดขายตามหมวด"] : [])] },
     { name: "การดูแล", subs: ["สุขภาพผู้รับบริการ", "คุณภาพการดูแล", "กายภาพ"] },
@@ -142,7 +180,8 @@ export function Dashboard() {
   const rows = (d?.branches ?? []).map((b) => [b.branch, String(b.total), `${b.donePct}%`, `${b.checkPct}%`, stars(b.famStars, b.famN), String(b.perResident), b.satPct === null ? "-" : `${b.satPct}%`, String(b.complaints), b.score.toFixed(1)]);
 
   // แถบต้องจัดการ: ชุดเดียวกับการ์ด "สิ่งที่ต้องทำวันนี้" หน้าแรก (components/dash/Todo.tsx)
-  const attn = ins ? buildTodos(ins.attention, user) : [];
+  const attn0 = ins ? buildTodos(ins.attention, user) : [];
+  const attn = care ? [...attn0.filter((x) => x.key !== "room"), ...attn0.filter((x) => x.key === "room")] : attn0;
 
   // ตัวชี้วัดหน้าภาพรวม (กดแล้วไปแท็บนั้น)
   const kpis: Kpi[] = [];
@@ -191,7 +230,13 @@ export function Dashboard() {
       { key: "meds", label: "ให้ยาครบตามมื้อ", cur: meds, prev: medsP, goal: T.meds, base: `${h.cur.meds.given} จาก ${h.cur.meds.total} มื้อ`,
         drill: [`ยังไม่ได้ให้ ${Math.max(0, h.cur.meds.total - h.cur.meds.given)} มื้อ (นับถึงเมื่อวาน)`],
         monthly: mMon.map((x) => ({ label: monTh(x.month), v: pctOf(x.given, x.total) })), openLabel: "ดูสุขภาพผู้รับบริการ", onOpen: () => setView("สุขภาพผู้รับบริการ") },
+      // วัดสัญญาณชีพตามรอบที่ตั้งให้แต่ละคน (lib/vitalRound · นับถึงเมื่อวาน)
+      ...(h.rounds ? [{ key: "vround", label: "วัดสัญญาณชีพตามรอบ", cur: pctOf(h.rounds.cur.ok, h.rounds.cur.total), prev: pctOf(h.rounds.prev.ok, h.rounds.prev.total), goal: T.vround,
+        base: `วัดทันรอบ ${h.rounds.cur.ok.toLocaleString()} จาก ${h.rounds.cur.total.toLocaleString()} ครั้ง`,
+        drill: [`วัดไม่ทันรอบ ${Math.max(0, h.rounds.cur.total - h.rounds.cur.ok).toLocaleString()} ครั้ง · นับถึงเมื่อวาน · รายการวันละ 2 ครั้ง นับเวรละครั้ง`, ...(h.rounds.miss.length ? [`ขาดวัดมากสุด: ${h.rounds.miss.slice(0, 3).map((x) => `${x.name} (${x.n})`).join(" · ")}`] : [])],
+        monthly: h.rounds.monthly.map((x) => ({ label: monTh(x.month), v: pctOf(x.ok, x.total) })), openLabel: "ดูคนที่ถึงรอบวัด", onOpen: () => go("health_logs") }] : []),
     );
+    if (care) { const i = pct.findIndex((k) => k.key === "occ"); if (i >= 0) pct.push(...pct.splice(i, 1)); }
     counts.push(
       { key: "vit", label: "ค่าผิดปกติ / เฝ้าระวัง", unit: "ครั้ง", cur: h.cur.abnormal, prev: h.prev.abnormal, higherBetter: false, onOpen: () => setView("สุขภาพผู้รับบริการ") },
       { key: "staff", label: "กะที่ไม่มีคนหรือคนไม่พอ", unit: "กะ", cur: shortOf(tm.cur.shifts), prev: shortOf(tm.prev.shifts), higherBetter: false, onOpen: () => setView("ทีมงาน") },
@@ -202,6 +247,25 @@ export function Dashboard() {
     // 1 · ตัวเลขหลักแถวบน
     const up = (a: number | null, b: number | null, unit: string, vsT: string, higher = true): Tile["delta"] =>
       a === null || b === null ? undefined : a === b ? { text: `เท่ากับ${vsT}`, tone: "flat" } : { text: `${a > b ? "▲" : "▼"} ${Math.abs(a - b).toLocaleString("en-US")}${unit} จาก${vsT}`, tone: (a > b) === higher ? "ok" : "bad" };
+    if (care) {
+      // มุมงานดูแล: ให้ยาครบ · วัดตามรอบ · งานสำเร็จ · ค่าผิดปกติ · กะที่คนไม่พอ · เรื่องด่วน
+      const r = h.rounds, vr = r ? pctOf(r.cur.ok, r.cur.total) : null, vrP = r ? pctOf(r.prev.ok, r.prev.total) : null;
+      const past = tm.cur.shifts.filter((s) => s.day <= R.to), staffed = past.filter((s) => s.staff);
+      const avgRatio = staffed.length ? Math.round((tm.residents / (staffed.reduce((n, s) => n + s.staff, 0) / staffed.length)) * 10) / 10 : null;
+      const openAlerts = ins.attention.alerts?.n ?? 0;
+      tiles.push(
+        { key: "meds", label: "ให้ยาครบตามมื้อ", value: meds === null ? "-" : `${meds}`, unit: meds === null ? undefined : "%", sub: `ขาด ${Math.max(0, h.cur.meds.total - h.cur.meds.given).toLocaleString("en-US")} มื้อ · นับถึงเมื่อวาน`,
+          meter: meds === null ? undefined : { pct: meds, goal: T.meds }, delta: up(meds, medsP, "%", vs), onClick: () => setView("สุขภาพผู้รับบริการ") },
+        { key: "vround", label: "วัดสัญญาณชีพตามรอบ", value: vr === null ? "-" : `${vr}`, unit: vr === null ? undefined : "%", sub: r ? `วัดไม่ทันรอบ ${Math.max(0, r.cur.total - r.cur.ok).toLocaleString("en-US")} ครั้ง` : "ยังไม่มีข้อมูล",
+          meter: vr === null ? undefined : { pct: vr, goal: T.vround }, delta: up(vr, vrP, "%", vs), onClick: () => go("health_logs") },
+        { key: "tasks", label: "งานสำเร็จ", value: tasks === null ? "-" : `${tasks}`, unit: tasks === null ? undefined : "%", sub: `${c.cur.done} จาก ${c.cur.total} งาน${ontime === null ? "" : ` · ตรงเวลา ${ontime}%`}`,
+          meter: tasks === null ? undefined : { pct: tasks, goal: T.tasks }, delta: up(tasks, tasksP, "%", vs), onClick: () => setView("คุณภาพการดูแล") },
+        { key: "vit", label: "ค่าผิดปกติ / เฝ้าระวัง", value: String(h.cur.abnormal), unit: "ครั้ง", sub: `${openAlerts ? `ยังไม่มีคนรับทราบ ${openAlerts} · ` : ""}แอดมิท รพ. ${h.admitted} คน`,
+          delta: up(h.cur.abnormal, h.prev.abnormal, " ครั้ง", vs, false), onClick: () => setView("สุขภาพผู้รับบริการ") },
+        { key: "staff", label: "กะที่คนไม่พอ", value: String(shortOf(tm.cur.shifts)), unit: "กะ", sub: avgRatio === null ? "ยังไม่มีคนเข้าเวรในช่วงนี้" : `ผู้รับบริการต่อพยาบาล 1 : ${avgRatio} · เป้า 1 : ${T.ratio}`,
+          delta: up(shortOf(tm.cur.shifts), shortOf(tm.prev.shifts), " กะ", vs, false), onClick: () => setView("ทีมงาน") },
+      );
+    } else {
     tiles.push({ key: "occ", label: "อัตราเข้าพัก", value: occ === null ? "-" : `${occ}`, unit: occ === null ? undefined : "%", sub: `${people} จาก ${cap} เตียง · เป้า ${T.occupancy}%`,
       meter: occ === null ? undefined : { pct: occ, goal: T.occupancy }, delta: up(occ, occP, "%", mi > 0 ? ` สิ้น ${monTh(o.monthly[mi - 1].month)}` : ""), onClick: () => setView("การเข้าพัก") });
     if (finSum) {
@@ -217,6 +281,7 @@ export function Dashboard() {
       delta: { text: `ช่วงนี้รับเข้า ${ins.flow.cur.admits} · จำหน่าย ${ins.flow.cur.discharges}`, tone: "flat" }, onClick: () => setView("รับเข้า-จำหน่าย") });
     if (!fin) tiles.push({ key: "tasks", label: "งานสำเร็จ", value: tasks === null ? "-" : `${tasks}`, unit: tasks === null ? undefined : "%", sub: `${c.cur.done} จาก ${c.cur.total} งาน`,
       meter: tasks === null ? undefined : { pct: tasks, goal: T.tasks }, delta: up(tasks, tasksP, "%", vs), onClick: () => setView("คุณภาพการดูแล") });
+    }
     const urgent = attn.filter((x) => x.n && x.urgent);
     tiles.push({ key: "urgent", label: "เรื่องด่วน", value: String(urgent.length), unit: "เรื่อง", urgent: urgent.length > 0,
       sub: urgent.length ? urgent.slice(0, 2).map((x) => x.short).join(" · ") : "ไม่มีเรื่องด่วน", onClick: urgent.length ? () => setAttnOpen(true) : undefined });
@@ -249,9 +314,9 @@ export function Dashboard() {
       <PageHeader title="ภาพรวมและรายงาน" sub="ตัวเลขจากงานจริง · อัปเดตทุก 1 นาที"
         actions={<>
           {branchNames.length > 1 && <div className="min-w-44"><Select options={branchNames} placeholder="รวมทุกสาขา" value={shiftBranch} onChange={setShiftBranch} /></div>}
-          <button className="btn-soft" disabled={!ins} onClick={() => setReport(true)}><Icon name="print" className="h-4 w-4" /> รายงานผู้บริหาร</button>
+          <button className="btn-soft" disabled={!ins} onClick={() => setReport(true)}><Icon name="print" className="h-4 w-4" /> {care ? "พิมพ์รายงานงานดูแล" : "รายงานผู้บริหาร"}</button>
           {canTarget && <button className="btn-soft" onClick={() => setTgOpen(true)}><Icon name="trophy" className="h-4 w-4" /> ตั้งเป้าหมาย</button>}
-          {!readOnlyRole(user?.role) && <button className="btn-soft" onClick={() => setMsg(true)}><Icon name="heart" className="h-4 w-4" /> ส่งกำลังใจให้สาขา</button>}
+          {!readOnlyRole(user?.role) && <button className="btn-soft" onClick={() => setMsg(true)}><Icon name="heart" className="h-4 w-4" /> {care ? "ส่งกำลังใจให้ทีม" : "ส่งกำลังใจให้สาขา"}</button>}
         </>} />
       {err && <p role="alert" className="mb-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{err}</p>}
       <div className="mb-4 flex flex-wrap items-center gap-3">
@@ -274,9 +339,11 @@ export function Dashboard() {
       {fin && view !== "การเงิน" && <div hidden><FinanceAnalytics branch={shiftBranch} compact month={finMonth} prevMonth={finPrev} onSummary={setFinSum} rng={finRng} /></div>}
 
       {view === "ตัวชี้วัดหลัก" && <div className="space-y-6">
-        <Reserve id="kpi" loading={!pct.length} fallback={640} label="กำลังโหลดตัวชี้วัด…"><KpiCharts pct={pct} counts={counts} vs={vs} curNote={period === "today" || period === "range" ? R.cur : undefined}
+        <Reserve id="kpi" loading={!pct.length} fallback={640} label="กำลังโหลดตัวชี้วัด…"><KpiCharts pct={pct} counts={counts} vs={vs}
+          initial={care ? [...pct].filter((k) => k.cur !== null && k.cur < k.goal).sort((a, b) => (a.cur! - a.goal) - (b.cur! - b.goal))[0]?.key : undefined} curNote={period === "today" || period === "range" ? R.cur : undefined}
           drill={{ from: R.from, to: R.to, label: R.cur, branch: shiftBranch, money: fin, go, ranges: { collect: finDrill } }} /></Reserve>
         {ins?.compare && ins.compare.length > 1 && <BranchCompareTable rows={ins.compare} store={store} money={fin} onPick={(b) => { setShiftBranch(b); window.scrollTo({ top: 0, behavior: "smooth" }); }} />}
+        {care && ins && <CareCards d={ins} complaints={(d?.branches ?? []).reduce((n, b) => n + b.complaints, 0)} fam={kpis.find((k) => k.key === "fam")} go={go} onResident={openResident} />}
         <section><h3 className="dash-h">กายภาพ <button className="dash-more" onClick={() => setView("กายภาพ")}>ดูรายละเอียด</button></h3><CourseSummary branch={shiftBranch} compact /></section>
       </div>}
 
@@ -285,7 +352,7 @@ export function Dashboard() {
       {view === "การเข้าพัก" && <div className="space-y-6"><Occupancy />{ins && <OccupancyTrend d={ins} t={T} />}</div>}
       {view === "สุขภาพผู้รับบริการ" && (ins ? <HealthTab d={ins} t={T} vs={vs} onResident={openResident} /> : <p className="text-sm text-gold-500">กำลังโหลด…</p>)}
       {view === "ทีมงาน" && (ins ? <TeamTab d={ins} t={T} vs={vs} /> : <p className="text-sm text-gold-500">กำลังโหลด…</p>)}
-      {view === "รับเข้า-จำหน่าย" && (ins ? <FlowTab d={ins} vs={vs} /> : <p className="text-sm text-gold-500">กำลังโหลด…</p>)}
+      {view === "รับเข้า-จำหน่าย" && (ins ? <FlowTab d={ins} vs={vs} sales={sales} /> : <p className="text-sm text-gold-500">กำลังโหลด…</p>)}
       {view === "กายภาพ" && <CourseSummary branch={shiftBranch} />}
 
       {view === "คุณภาพการดูแล" && <div className="space-y-6">
@@ -355,10 +422,10 @@ export function Dashboard() {
 
       <TargetsDialog open={tgOpen} onClose={() => setTgOpen(false)} branch={scopeBranch} store={store} onSaved={reload} isGlobal={global} />
       <ResidentProfile id={profile} onClose={() => setProfile(null)} />
-      <PrintModal open={report && !!ins} title="รายงานผู้บริหาร" onClose={() => setReport(false)}>
-        {ins && <Paper><ExecReportBody title={`รายงานผู้บริหาร ${R.title}`} period={`${scopeBranch ? `สาขา${scopeBranch}` : "ทุกสาขา"} · ${R.label}`} kpis={kpis} attn={attn} d={ins} vs={vs}
+      <PrintModal open={report && !!ins} title={care ? "รายงานงานดูแล" : "รายงานผู้บริหาร"} onClose={() => setReport(false)}>
+        {ins && <Paper><ExecReportBody title={`${care ? "รายงานงานดูแล" : "รายงานผู้บริหาร"} ${R.title}`} period={`${scopeBranch ? `สาขา${scopeBranch}` : "ทุกสาขา"} · ${R.label}`} kpis={kpis} attn={attn} d={ins} vs={vs}
           head={<DocHead branch={scopeBranch ? branchInfo(scopeBranch) : undefined} refs={[["ช่วงเวลา", `${longDate(R.from, true)} – ${longDate(R.to, true)}`], ["สาขา", scopeBranch || "ทุกสาขา"]]} />} />
-          <DocFoot left={`รายงานผู้บริหาร · ${scopeBranch || "ทุกสาขา"}`} by={user?.name} /></Paper>}
+          <DocFoot left={`${care ? "รายงานงานดูแล" : "รายงานผู้บริหาร"} · ${scopeBranch || "ทุกสาขา"}`} by={user?.name} /></Paper>}
       </PrintModal>
       <Modal open={msg} title="ส่งกำลังใจให้สาขา" onClose={() => setMsg(false)}
         footer={<><button className="btn-soft" onClick={() => setMsg(false)}>ยกเลิก</button><button className="btn-primary" onClick={cheer}>ส่งกำลังใจ</button></>}>
@@ -544,8 +611,18 @@ export function HealthLogs() {
     fetch("/api/audit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ what: "health", count: shown.length }) }).catch(() => {});
     toast(`ส่งออกบันทึกสุขภาพแล้ว ${shown.length} รายการ`);
   };
+  // ---------- ถึงรอบวัด (รอบการวัดรายบุคคล · lib/vitalPlan) ----------
+  const [vdue, setVdue] = useState<VitalDueRow[]>([]);
+  const [recordFor, setRecordFor] = useState<string | undefined>(undefined);
+  const [profileTab, setProfileTab] = useState<string | undefined>(undefined);
+  const loadVdue = useCallback(() => { fetchVitalDue().then((d) => setVdue(d.items)).catch(() => {}); }, []);
+  useEffect(() => { loadVdue(); window.addEventListener(VITAL_DUE_EVENT, loadVdue); return () => window.removeEventListener(VITAL_DUE_EVENT, loadVdue); }, [loadVdue]);
+  const scopedUser = !seesAllBranches(user?.role);
+  const dueList = vdue.filter((x) => (!applied.branch || x.branch === applied.branch) && (!applied.person || x.name === applied.person))
+    .map((x) => ({ x, need: needOf(x) })).filter((y) => y.need.length)
+    .sort((a, b) => Number(b.need.some((n) => n.due.cls === "over")) - Number(a.need.some((n) => n.due.cls === "over")) || String(a.x.room ?? "").localeCompare(String(b.x.room ?? "")));
   // ---------- ล่าสุดของแต่ละคน (มุมมองแรก) ----------
-  const [mode, setMode] = useState<"ล่าสุดของแต่ละคน" | "ประวัติทั้งหมด">("ล่าสุดของแต่ละคน");
+  const [mode, setMode] = useState<"ล่าสุดของแต่ละคน" | "ถึงรอบวัด" | "ประวัติทั้งหมด">("ล่าสุดของแต่ละคน");
   const stampOf = (th: string) => { const m = th.match(/^(\d{2})\/(\d{2})\/(\d{4})\s*(\d{2}:\d{2})?/); return m ? `${Number(m[3]) - 543}-${m[2]}-${m[1]} ${m[4] ?? "00:00"}` : ""; };
   const sysOf = (r: string[]) => Number(String(r[2] ?? "").match(/BP\s*(\d{2,3})\s*\//i)?.[1]) || null;
   const ago = (st: string) => { const d = Math.floor((Date.now() + 7 * 3600e3 - Date.parse(`${st.slice(0, 10)}T00:00:00Z`)) / 864e5); return d <= 0 ? "วันนี้" : d === 1 ? "เมื่อวาน" : `${d} วันก่อน`; };
@@ -593,7 +670,7 @@ export function HealthLogs() {
           </div>
         </div>
         <div className="mb-4 flex flex-wrap items-center gap-2">
-          <Tabs tabs={["ล่าสุดของแต่ละคน", "ประวัติทั้งหมด"]} value={mode} onChange={(v) => setMode(v as typeof mode)} />
+          <Tabs tabs={["ล่าสุดของแต่ละคน", `ถึงรอบวัด (${dueList.length})`, "ประวัติทั้งหมด"]} value={mode === "ถึงรอบวัด" ? `ถึงรอบวัด (${dueList.length})` : mode} onChange={(v) => setMode((v.startsWith("ถึงรอบวัด") ? "ถึงรอบวัด" : v) as typeof mode)} />
           {(person || branch || from || to) && <button className="row-action" onClick={() => { setBranch(""); setPerson(""); setFrom(""); setTo(""); }}>ล้างตัวกรอง</button>}
           <span className="sm:ml-auto" />
           <MenuButton label="เพิ่มเติม" items={[
@@ -602,6 +679,23 @@ export function HealthLogs() {
             { label: "ตัวอย่าง สบส. (แบบฟอร์มเปล่า)", onClick: () => setSample(true) },
           ]} />
         </div>
+        {mode === "ถึงรอบวัด" ? (
+          <div className="space-y-3">
+            <p className="text-sm text-gold-600">ผู้รับบริการที่ถึงรอบหรือเลยกำหนดตามรอบการวัดรายบุคคล · นับจากครั้งล่าสุดที่บันทึกจริง · ตั้งรอบได้ที่ประวัติผู้รับบริการ › สัญญาณชีพ</p>
+            {dueList.length ? <ul className="divide-y divide-cream-200 rounded-2xl border border-cream-300 bg-white">
+              {dueList.map(({ x, need }) => (
+                <li key={x.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
+                  <span className="min-w-0 flex-1"><b className="block text-sm text-gold-900">{x.name}</b><small className="text-xs text-gold-500">{x.room ? `ห้อง ${x.room}` : "ยังไม่มีห้อง"}{x.branch && !scopedUser ? ` · ${x.branch}` : ""}</small></span>
+                  <span className="flex flex-wrap gap-1.5">{need.map((n) => <DueBadge key={n.k} cls={n.due.cls} text={`${n.label} · ${n.due.text}`} />)}</span>
+                  <span className="flex gap-1.5">
+                    <button type="button" className="row-action" onClick={() => { setProfileTab("สัญญาณชีพ"); setProfile(x.id); }}>ตั้งรอบ</button>
+                    <button type="button" className="row-action is-primary" onClick={() => { setRecordFor(x.name); setRecord(true); }}>บันทึก</button>
+                  </span>
+                </li>
+              ))}
+            </ul> : <p className="empty-state">ไม่มีผู้รับบริการที่ถึงรอบวัดตอนนี้</p>}
+          </div>
+        ) : <>
         <div className="stat-filter" role="radiogroup" aria-label="กรองตามผลประเมิน">
           {LEVEL_FILTERS.map((f) => (
             <button key={f.t} type="button" role="radio" aria-checked={lv === f.k} className={`${f.c} ${lv === f.k ? "is-on" : ""}`} onClick={() => setLv(f.k)}>
@@ -629,9 +723,10 @@ export function HealthLogs() {
             { label: "รายละเอียด", more: true, onClick: (i) => setView(rows.indexOf(shown[i])) },
             { label: "ประวัติผู้รับบริการ", more: true, onClick: (i) => { const r = residents.find((x) => x.full_name === shown[i][1]); if (r) setProfile(r.id); else toast("ยังไม่มีผู้รับบริการชื่อนี้ในทะเบียน"); } },
           ]} />}
+        </>}
       </Section>
-      <VitalsDialog open={record} residents={names} recorder={user?.name ?? "-"} onClose={() => setRecord(false)} onSave={(row) => add(row)} />
-      <ResidentProfile id={profile} onClose={() => setProfile(null)} />
+      <VitalsDialog open={record} residents={names} resident={recordFor} recorder={user?.name ?? "-"} onClose={() => { setRecord(false); setRecordFor(undefined); }} onSave={(row) => add(row)} />
+      <ResidentProfile id={profile} initialTab={profileTab} onClose={() => { setProfile(null); setProfileTab(undefined); }} />
       <VitalsView row={view !== null ? rows[view] : null} onClose={() => setView(null)} onProfile={() => { const r = view !== null ? residents.find((x) => x.full_name === rows[view][1]) : undefined; if (r) { setView(null); setProfile(r.id); } else toast("ยังไม่มีผู้รับบริการชื่อนี้ในทะเบียน"); }} />
       <BlankForm open={sample} title="แบบบันทึกสัญญาณชีพ (แบบฟอร์มเปล่า)" onClose={() => setSample(false)}
         lines={["ชื่อผู้สูงอายุ", "วัน-เวลา", "BT อุณหภูมิ", "PR ชีพจร", "RR การหายใจ", "BP ความดันโลหิต", "O2SAT ออกซิเจน", "DTX น้ำตาล", "น้ำหนัก (ก.ก.)", "ส่วนสูง (ซ.ม.)", "โน้ต / อาการ", "ผู้บันทึก"]} />

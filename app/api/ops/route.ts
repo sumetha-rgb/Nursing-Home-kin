@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { sql } from "@/lib/db";
 import { currentUser, forbidden, unauthorized } from "@/lib/auth";
 import { audit } from "@/lib/audit";
-import { can } from "@/lib/perms";
+import { can, seesMoney } from "@/lib/perms";
 import { readOnlyRole, seesAllBranches, type SessionUser } from "@/lib/roles";
 import { compareBranches, insights } from "@/lib/insights";
 import { drill } from "@/lib/drill";
@@ -45,7 +45,7 @@ export async function GET(req: NextRequest) {
   const q = req.nextUrl.searchParams;
   try {
     if (q.get("op") === "targets") {
-      if (!can(me, "dashboard") && !can(me, "billing")) return forbidden();
+      if (!seesMoney(me)) return forbidden();
       const from = q.get("from") ?? "", to = q.get("to") ?? "";
       if (!YM.test(from) || !YM.test(to)) return bad("ช่วงเดือนไม่ถูกต้อง");
       const items = await sql(`SELECT branch_name AS branch, month, amount::float AS amount, updated_by AS "by", to_char(updated_at AT TIME ZONE 'Asia/Bangkok', 'DD/MM/YYYY HH24:MI') AS at

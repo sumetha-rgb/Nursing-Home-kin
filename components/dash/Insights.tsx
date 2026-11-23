@@ -16,7 +16,8 @@ type FlowStat = { quotes: number; contracts: number; admits: number; discharges:
 export type Insights = {
   range: { from: string; to: string; pfrom: string; pto: string };
   attention: HomeData;
-  health: { cur: Vit & { alerts: number; ackMin: number | null; meds: { total: number; given: number } }; prev: Vit & { alerts: number; ackMin: number | null; meds: { total: number; given: number } }; admitted: number; weekly: (Vit & { from: string; to: string })[]; repeat: { name: string; n: number; critical: number }[]; medsMonthly?: { month: string; total: number; given: number }[] };
+  health: { cur: Vit & { alerts: number; ackMin: number | null; meds: { total: number; given: number } }; prev: Vit & { alerts: number; ackMin: number | null; meds: { total: number; given: number } }; admitted: number;
+    rounds?: { cur: { total: number; ok: number }; prev: { total: number; ok: number }; monthly: { month: string; total: number; ok: number }[]; miss: { name: string; n: number }[] }; weekly: (Vit & { from: string; to: string })[]; repeat: { name: string; n: number; critical: number }[]; medsMonthly?: { month: string; total: number; given: number }[] };
   care: { cur: CareStat; prev: CareStat; weekly: { from: string; to: string; total: number; done: number }[]; monthly?: { month: string; total: number; done: number; ontime: number }[] };
   team: { residents: number; cur: { shifts: Shift[]; late: number; lateMin: number; absent: number }; prev: { shifts: Shift[]; late: number; lateMin: number; absent: number } };
   flow: { cur: FlowStat; prev: FlowStat; monthly: { month: string; admits: number; discharges: number }[] };
@@ -26,8 +27,8 @@ export type Insights = {
 };
 
 /* ---------- เป้าหมาย (เก็บใน doc_settings คีย์ dash_targets · ค่า default + รายสาขา) ---------- */
-export type Targets = { occupancy: number; collect: number; tasks: number; ontime: number; ackMin: number; meds: number; ratio: number };
-export const DEFAULT_TARGETS: Targets = { occupancy: 85, collect: 95, tasks: 98, ontime: 90, ackMin: 15, meds: 100, ratio: 6 };
+export type Targets = { occupancy: number; collect: number; tasks: number; ontime: number; ackMin: number; meds: number; vround: number; ratio: number };
+export const DEFAULT_TARGETS: Targets = { occupancy: 85, collect: 95, tasks: 98, ontime: 90, ackMin: 15, meds: 100, vround: 95, ratio: 6 };
 type TargetStore = { default?: Partial<Targets>; branches?: Record<string, Partial<Targets>> };
 const TARGET_FIELDS: { k: keyof Targets; label: string; unit: string; hint: string }[] = [
   { k: "occupancy", label: "อัตราเข้าพัก", unit: "%", hint: "ขั้นต่ำ" },
@@ -36,6 +37,7 @@ const TARGET_FIELDS: { k: keyof Targets; label: string; unit: string; hint: stri
   { k: "ontime", label: "ส่งงานตรงเวลา", unit: "%", hint: "ส่งภายใน 30 นาทีหลังเวลาที่กำหนด" },
   { k: "ackMin", label: "เวลารับทราบค่าผิดปกติ", unit: "นาที", hint: "ไม่เกิน" },
   { k: "meds", label: "ให้ยาครบตามมื้อ", unit: "%", hint: "ขั้นต่ำ" },
+  { k: "vround", label: "วัดสัญญาณชีพตามรอบ", unit: "%", hint: "วัดทันรอบที่ตั้งให้แต่ละคน" },
   { k: "ratio", label: "ผู้รับบริการต่อพยาบาล 1 คน", unit: "คน", hint: "ไม่เกิน (ต่อกะ)" },
 ];
 export function useTargets(branch: string) {
@@ -52,7 +54,7 @@ export function useTargets(branch: string) {
 /** หมวดของเป้า (จัดหน้าต่างตั้งเป้า) · dir = ทิศของเป้า: min = ไม่ต่ำกว่า · max = ไม่เกิน */
 const TARGET_GROUPS: { name: string; items: { k: keyof Targets; dir: "min" | "max" }[] }[] = [
   { name: "การเงินและการเข้าพัก", items: [{ k: "occupancy", dir: "min" }, { k: "collect", dir: "min" }] },
-  { name: "คุณภาพงานดูแล", items: [{ k: "tasks", dir: "min" }, { k: "ontime", dir: "min" }, { k: "meds", dir: "min" }] },
+  { name: "คุณภาพงานดูแล", items: [{ k: "tasks", dir: "min" }, { k: "ontime", dir: "min" }, { k: "meds", dir: "min" }, { k: "vround", dir: "min" }] },
   { name: "ความปลอดภัยและกำลังคน", items: [{ k: "ackMin", dir: "max" }, { k: "ratio", dir: "max" }] },
 ];
 
@@ -346,12 +348,13 @@ export function TeamTab({ d, t, vs }: { d: Insights; t: Targets; vs: string }) {
 }
 
 /* ---------- แท็บรับเข้า-จำหน่าย ---------- */
-export function FlowTab({ d, vs }: { d: Insights; vs: string }) {
+/** sales = เห็นตัวชี้วัดฝั่งขาย (ใบเสนอราคา → สัญญา) */
+export function FlowTab({ d, vs, sales = true }: { d: Insights; vs: string; sales?: boolean }) {
   const f = d.flow, conv = pctOf(f.cur.contracts, f.cur.quotes), convP = pctOf(f.prev.contracts, f.prev.quotes);
   return (
     <div className="space-y-6">
       <KpiGrid items={[
-        { key: "conv", label: "ใบเสนอราคา → สัญญา", value: conv === null ? "-" : `${conv}%`, delta: deltaOf(conv, convP, true, "%"), note: `ใบเสนอราคา ${f.cur.quotes} · สัญญาใหม่ ${f.cur.contracts}` },
+        ...(sales ? [{ key: "conv", label: "ใบเสนอราคา → สัญญา", value: conv === null ? "-" : `${conv}%`, delta: deltaOf(conv, convP, true, "%"), note: `ใบเสนอราคา ${f.cur.quotes} · สัญญาใหม่ ${f.cur.contracts}` }] : []),
         { key: "in", label: "รับเข้าใหม่", value: `${f.cur.admits} คน`, delta: deltaOf(f.cur.admits, f.prev.admits, true, " คน") },
         { key: "out", label: "จำหน่ายกลับบ้าน", value: `${f.cur.discharges} คน`, delta: deltaOf(f.cur.discharges, f.prev.discharges, false, " คน") },
         { key: "los", label: "ระยะเวลาพักเฉลี่ย", value: f.cur.los === null ? "-" : `${f.cur.los} เดือน`, note: "ของผู้ที่จำหน่ายในช่วงนี้" },

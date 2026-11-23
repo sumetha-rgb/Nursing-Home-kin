@@ -55,7 +55,8 @@ const TOOLS: Perm[] = ["tasks_table", "facility_tasks", "master_tasks", "officia
 export const ROLE_PERMS: Record<Role, Perm[]> = {
   "Global Admin": ALL_PERMS,
   "Branch Admin": ALL_PERMS,
-  "Head Nurse": [...CARE, "physio", "rooms.move", "rooms.manage", "tasks.review", ...TOOLS, "app.staff", "app.pharmacy"],
+  // หัวหน้าพยาบาล: งานดูแล + เสียงจากครอบครัว · KPI/รีวิวพนักงาน · ภาพรวมและรายงาน (เห็นเฉพาะตัวชี้วัดงานดูแล ไม่เห็นตัวเลขเงิน เพราะไม่มีสิทธิ์ billing)
+  "Head Nurse": [...CARE, "physio", "feedbacks", "kpi", "reviews", "dashboard", "rooms.move", "rooms.manage", "tasks.review", ...TOOLS, "app.staff", "app.pharmacy"],
   // แคชเชียร์ = ฝ่ายขาย: ขายคอร์สกายภาพและจ่ายเคสให้นักกายภาพ (ร่วมกับผู้จัดการสาขา)
   Cashier: ["contracts", "billing", "rooms", "contracts.delete", "prices", "physio", "physio.assign"],
   // การเงิน/บัญชี: เห็นทุกสาขา ดูและส่งออกอย่างเดียว (lib/roles readOnlyRole)
@@ -73,6 +74,9 @@ export function permsFor(role: Role, custom?: string[] | null): Perm[] {
 
 export const can = (u: { role: Role; perms?: string[] } | null | undefined, p: Perm) =>
   !!u && (u.role === "Global Admin" || (u.perms ?? ROLE_PERMS[u.role]).includes(p));
+/** เห็นตัวเลขเงิน (รับชำระ ค้างชำระ ยอดขาย เป้ายอดขาย ราคาคอร์ส) = มีสิทธิ์การเงิน หรือผู้บริหาร/ผู้จัดการสาขา
+ *  มีแค่ ภาพรวมและรายงาน (เช่น หัวหน้าพยาบาล) = เห็นเฉพาะตัวชี้วัดงานดูแล */
+export const seesMoney = (u: { role: Role; perms?: string[] } | null | undefined) => !!u && (can(u, "billing") || u.role === "Global Admin" || u.role === "Branch Admin");
 /** เปิดระบบจัดการได้ = มีเมนูอย่างน้อย 1 เมนู */
 export const MENU_PERMS = PERM_GROUPS.slice(0, 3).flatMap((g) => g.items.map((i) => i.id));
 export const hasConsole = (u: { role: Role; perms?: string[] } | null | undefined) => MENU_PERMS.some((p) => can(u, p));

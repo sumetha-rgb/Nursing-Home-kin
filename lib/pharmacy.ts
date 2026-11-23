@@ -20,6 +20,11 @@ export const sumByUnit = (list: { n: number; unit: string }[]) => {
   for (const x of list) m.set(x.unit, (m.get(x.unit) ?? 0) + x.n);
   return [...m].map(([u, n]) => `${fmt(n)} ${u}`).join(" · ") || "-";
 };
+/**
+ * ยาหนึ่งตัว หนึ่งทาง: เบิกตามใช้ = ยาขวด/ยาทา/ไม่แพ็คซอง หรือยาที่ไม่มีมื้อ (ตามอาการ) · ที่เหลือ = จัดตามมื้อ (ขึ้นซองในยาประจำวัน)
+ *  ยาตามมื้อไม่ขึ้นในกล่องเบิก กันตัดคงเหลือซ้ำ
+ */
+export const isUseDrug = (x: { bulk: boolean; meals: string[] }) => x.bulk || !x.meals.length;
 /** ยาที่นับเป็นปริมาตร (ml) */
 export const isLiquid = (x: { unit: string }) => x.unit.trim().toLowerCase() === "ml";
 /** "1,600 ml (≈ 1.6 ขวด)" · ยาอื่น "20 เม็ด" */

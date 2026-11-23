@@ -963,6 +963,16 @@ ALTER TABLE resident_medications ADD COLUMN IF NOT EXISTS stock_drug_id text REF
 -- การเบิกที่เข้าตะกร้า: ผูกกับรายการยาในตะกร้า
 ALTER TABLE stock_moves ADD COLUMN IF NOT EXISTS med_id text;
 CREATE INDEX IF NOT EXISTS stock_moves_res ON stock_moves (resident_id, created_at DESC);
+-- รอบการวัดรายบุคคล (lib/vitalPlan.ts): plan = { vs, o2, dtx, wt, ht: "2d"|"1d"|"3d"|"1w"|"2w"|"1m"|"off" } · ไม่มีแถว = ค่าเริ่มต้น
+CREATE TABLE IF NOT EXISTS vital_plans (
+  resident_id   text PRIMARY KEY REFERENCES residents(id) ON DELETE CASCADE,
+  resident_name text,
+  branch_name   text,
+  plan          jsonb NOT NULL DEFAULT '{}'::jsonb,
+  updated_by    text,
+  updated_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS health_logs_res_at ON health_logs (resident_id, recorded_at DESC);
 -- เบิกยาจากตะกร้าผู้ป่วยตามจำนวนที่ใช้จริง (ยาน้ำ ยาขวด ยาทา ยาเมื่อมีอาการ) · เมนูเบิกยาในแอปห้องยา · ตัดคงเหลือใน resident_medications
 CREATE TABLE IF NOT EXISTS med_withdrawals (
   id            text PRIMARY KEY,
@@ -981,6 +991,13 @@ CREATE TABLE IF NOT EXISTS med_withdrawals (
   created_at    timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS med_withdrawals_res ON med_withdrawals (resident_name, created_at DESC);
+-- ยกเลิกการเบิกที่กดผิด: คืนคงเหลือแล้วเก็บรายการไว้ (ไม่ลบ) · คนเบิกเองภายใน 24 ชม. หรือหัวหน้าพยาบาลขึ้นไป
+ALTER TABLE med_withdrawals ADD COLUMN IF NOT EXISTS voided_at   timestamptz;
+ALTER TABLE med_withdrawals ADD COLUMN IF NOT EXISTS voided_by   text;
+ALTER TABLE med_withdrawals ADD COLUMN IF NOT EXISTS void_reason text;
+-- ให้ยาแบบใหม่ (ไม่มีจัดซอง/QA): การเบิก = บันทึกการให้ยาของมื้อนั้น · skip_reason = ไม่ได้ให้เพราะ… (qty 0 ไม่ตัดคงเหลือ)
+ALTER TABLE med_withdrawals ADD COLUMN IF NOT EXISTS skip_reason text;
+CREATE INDEX IF NOT EXISTS med_withdrawals_med_day ON med_withdrawals (med_id, created_at DESC);
 -- รูปของแอปจัดยา: label = รูปฉลาก/กล่องยาตอนรับเข้า (ref = resident_medications.id) · pack = รูปซองยาที่จัดเสร็จ (ref = medication_packs.id)
 -- แยกจากตารางหลัก เพื่อไม่ให้รูปติดไปกับข้อมูลที่ดึงอัตโนมัติทุก 20 วินาที
 CREATE TABLE IF NOT EXISTS med_photos (

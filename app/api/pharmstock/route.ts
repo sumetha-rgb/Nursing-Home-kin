@@ -4,6 +4,8 @@ import { sql } from "@/lib/db";
 import { currentUser, forbidden, unauthorized } from "@/lib/auth";
 import { audit } from "@/lib/audit";
 import { can } from "@/lib/perms";
+import { medSlotsSql } from "@/lib/medSlots";
+import { seesAllBranches } from "@/lib/roles";
 import type { SessionUser } from "@/lib/roles";
 
 export const dynamic = "force-dynamic";
@@ -23,6 +25,12 @@ export const fetchCache = "force-no-store";
  *       medId  = เติมยาในตะกร้าที่มีอยู่ (บวกคงเหลือ) · ไม่ส่งทั้งสองอย่าง = เบิกครั้งเดียว (ยาให้ครั้งคราว)
  *  GET  ?op=withdrawals&resident=ชื่อ   ประวัติการเบิกยาจากตะกร้าผู้ป่วย (รวมคงเหลือที่ลดลงก่อนมีเมนูเบิกยา)
  *  POST { op: "withdraw", medId, qty, meal?, note? }   เบิกยาจากตะกร้าผู้ป่วยตามจำนวนที่ใช้จริง (ตัดคงเหลือ + เก็บเป็นรายการ)
+ *  POST { op: "withdraw_void", id, reason }   ยกเลิกการเบิกที่กดผิด (คืนคงเหลือ · เก็บรายการพร้อมเหตุผล)
+ *  POST { op: "give", meal, checked, items: [{ medId, qty }], skips: [{ medId, reason }], note? }   ให้ยาทั้งมื้อของผู้ป่วย 1 คน (KinApp)
+ *  GET  ?op=summary&from=&to=[&branch=]   ภาพรวมห้องยาตามช่วงวันที่: ให้ยาตามมื้อรายวัน/รายมื้อ · เหตุผลที่ไม่ได้ให้ · ผู้ป่วยที่ให้ไม่ครบ · เบิกตามอาการ · เทียบช่วงก่อน
+ *  GET  ?op=mar&from=&to=[&branch=]      บันทึกการให้ยาทุกครั้งในช่วง (ให้แล้ว · ไม่ได้ให้ · ยกเลิก) สำหรับไฟล์ส่งออก
+ *  GET  ?op=missed&from=&to=[&branch=]   ยา × มื้อ ที่ยังไม่ได้ให้ / ไม่ได้ให้ (lib/medSlots · นับถึงเมื่อวาน) สำหรับไฟล์ส่งออก
+ *  GET  ?op=withdrawals_day&date=   จำนวนครั้งที่เบิกของแต่ละคน + slots (ยา × มื้อ ที่ให้แล้ว/ไม่ได้ให้) ของวันนั้น
  */
 const bad = (msg: string, status = 400) => NextResponse.json({ error: msg }, { status });
 const isManager = (me: SessionUser) => ["Global Admin", "Branch Admin", "Head Nurse"].includes(me.role);
@@ -64,6 +72,78 @@ export async function GET(req: NextRequest) {
         FROM stock_moves m LEFT JOIN stock_lots l ON l.id = m.lot_id WHERE m.drug_id = $1 ${br ? "AND m.branch_name = $2" : ""} ORDER BY m.created_at DESC LIMIT 200`, br ? [drug, br] : [drug]);
       return NextResponse.json({ moves: rows });
     }
+    if (q.get("op") === "mar" || q.get("op") === "missed") {
+      // ไฟล์ส่งออก (หน้าส่งออกข้อมูล): ช่วงไม่เกิน 1 ปี · ผู้บริหารเลือกสาขาได้ · คนอื่นเห็นสาขาตัวเอง
+      const D = /^\d{4}-\d{2}-\d{2}$/;
+      const from = String(q.get("from") ?? ""), to = String(q.get("to") ?? "");
+      if (!D.test(from) || !D.test(to) || to < from) return bad("ช่วงวันที่ไม่ถูกต้อง");
+      if ((Date.parse(to) - Date.parse(from)) / 864e5 > 366) return bad("เลือกช่วงได้ไม่เกิน 1 ปี");
+      const scope = seesAllBranches(me.role) ? text(q.get("branch"), 120) || null : me.branch;
+      const ROOM = (name: string, br: string) => `(SELECT r.room FROM residents r WHERE r.full_name = ${name} AND r.branch_name IS NOT DISTINCT FROM ${br} LIMIT 1)`;
+      if (q.get("op") === "mar") {
+        const rows = await sql(`SELECT to_char(w.created_at AT TIME ZONE 'Asia/Bangkok', 'YYYY-MM-DD') AS day, to_char(w.created_at AT TIME ZONE 'Asia/Bangkok', 'HH24:MI') AS time,
+            w.branch_name AS branch, w.resident_name AS resident, ${ROOM("w.resident_name", "w.branch_name")} AS room, w.drug_name AS drug, coalesce(w.meal, '') AS meal,
+            w.qty::float AS qty, coalesce(w.unit, '') AS unit, w.skip_reason AS skip, w.withdrawn_by AS by, w.stock_before::float AS b, w.stock_after::float AS a, coalesce(w.note, '') AS note,
+            w.voided_at IS NOT NULL AS voided, coalesce(w.void_reason, '') AS void_reason, coalesce(w.voided_by, '') AS voided_by
+          FROM med_withdrawals w WHERE (w.created_at AT TIME ZONE 'Asia/Bangkok')::date BETWEEN $1::date AND $2::date ${scope ? "AND w.branch_name = $3" : ""}
+          ORDER BY w.created_at LIMIT 20000`, scope ? [from, to, scope] : [from, to]);
+        return NextResponse.json({ items: rows });
+      }
+      const rows = await sql(`SELECT m.day::text AS day, m.branch_name AS branch, m.resident_name AS resident, ${ROOM("m.resident_name", "m.branch_name")} AS room, m.meal, m.drug_name AS drug, m.skip
+        FROM ${medSlotsSql("$1::date", "LEAST($2::date, (now() AT TIME ZONE 'Asia/Bangkok')::date - 1)")} m WHERE NOT m.given ${scope ? "AND m.branch_name = $3" : ""}
+        ORDER BY m.day, m.resident_name, m.meal LIMIT 20000`, scope ? [from, to, scope] : [from, to]);
+      return NextResponse.json({ items: rows });
+    }
+    if (q.get("op") === "summary") {
+      // ภาพรวมห้องยา (KINmed): นับจากยา × มื้อ ที่ต้องให้ (medSlotsSql) · ผู้บริหารเลือกสาขาได้ (ไม่เลือก = ทุกสาขา) · คนอื่นเห็นสาขาตัวเอง
+      const D = /^\d{4}-\d{2}-\d{2}$/;
+      const today = new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10);
+      let from = D.test(q.get("from") ?? "") ? String(q.get("from")) : today, to = D.test(q.get("to") ?? "") ? String(q.get("to")) : today;
+      if (to > today) to = today;
+      if (from > to) [from, to] = [to, from];
+      const n = Math.round((Date.parse(to) - Date.parse(from)) / 864e5) + 1;
+      if (n > 366) return bad("เลือกช่วงได้ไม่เกิน 1 ปี");
+      const all = seesAllBranches(me.role);
+      const scope = all ? text(q.get("branch"), 120) || null : me.branch;
+      const pFrom = new Date(Date.parse(from) - n * 864e5).toISOString().slice(0, 10), pTo = new Date(Date.parse(from) - 864e5).toISOString().slice(0, 10);
+      const W = scope ? "AND m.branch_name = $3" : "";
+      const WW = scope ? "AND w.branch_name = $3" : "";
+      const p = (a: string, b: string) => (scope ? [a, b, scope] : [a, b]);
+      const S = `WITH s AS (SELECT m.*, (NOT m.given AND m.skip IS NOT NULL) AS sk FROM ${medSlotsSql("$1::date", "$2::date")} m WHERE true ${W})`;
+      const PRN = `FROM med_withdrawals w WHERE w.voided_at IS NULL AND w.skip_reason IS NULL AND coalesce(w.meal, '') = ''
+          AND (w.created_at AT TIME ZONE 'Asia/Bangkok')::date BETWEEN $1::date AND $2::date ${WW}`;
+      const [[cur], [prev], branches] = await Promise.all([
+        sql(`${S} SELECT
+          (SELECT coalesce(json_agg(x ORDER BY x.day), '[]') FROM (SELECT day::text AS day, count(*)::int AS due, count(*) FILTER (WHERE given)::int AS given, count(*) FILTER (WHERE sk)::int AS skip FROM s GROUP BY day) x) AS days,
+          (SELECT coalesce(json_agg(x), '[]') FROM (SELECT meal, count(*)::int AS due, count(*) FILTER (WHERE given)::int AS given, count(*) FILTER (WHERE sk)::int AS skip FROM s GROUP BY meal) x) AS meals,
+          (SELECT coalesce(json_agg(x ORDER BY x.n DESC), '[]') FROM (SELECT skip AS reason, count(*)::int AS n FROM s WHERE sk GROUP BY skip) x) AS reasons,
+          (SELECT coalesce(json_agg(x ORDER BY x.due - x.given DESC, x.name), '[]') FROM (
+            SELECT y.*, (SELECT r.room FROM residents r WHERE r.full_name = y.name AND r.branch_name IS NOT DISTINCT FROM y.branch LIMIT 1) AS room
+            FROM (SELECT resident_name AS name, branch_name AS branch, count(*)::int AS due, count(*) FILTER (WHERE given)::int AS given, count(*) FILTER (WHERE sk)::int AS skip
+              FROM s GROUP BY resident_name, branch_name HAVING count(*) FILTER (WHERE NOT given) > 0 ORDER BY count(*) FILTER (WHERE NOT given) DESC LIMIT 8) y) x) AS people,
+          (SELECT coalesce(json_agg(x ORDER BY x.day), '[]') FROM (SELECT (w.created_at AT TIME ZONE 'Asia/Bangkok')::date::text AS day, count(*)::int AS n ${PRN} GROUP BY 1) x) AS prn,
+          (SELECT coalesce(json_agg(x ORDER BY x.n DESC), '[]') FROM (SELECT w.drug_name AS name, count(*)::int AS n ${PRN} GROUP BY 1 ORDER BY 2 DESC LIMIT 6) x) AS "prnTop"`, p(from, to)),
+        sql(`${S} SELECT (SELECT count(*)::int FROM s) AS due, (SELECT count(*) FILTER (WHERE given)::int FROM s) AS given, (SELECT count(*)::int ${PRN}) AS prn`, p(pFrom, pTo)),
+        all ? sql`SELECT DISTINCT branch_name AS b FROM resident_medications WHERE branch_name IS NOT NULL ORDER BY 1` : Promise.resolve([]),
+      ]);
+      return NextResponse.json({ from, to, today, branch: scope, all, branches: (branches as { b: string }[]).map((x) => x.b), prev: { from: pFrom, to: pTo, ...prev }, ...cur });
+    }
+    if (q.get("op") === "withdrawals_day") {
+      // จำนวนครั้งที่เบิกของแต่ละคนในวันที่เลือก (ไม่นับที่ยกเลิก) · รายชื่อในเมนูเบิกยาตามใช้
+      const day = /^\d{4}-\d{2}-\d{2}$/.test(q.get("date") ?? "") ? String(q.get("date")) : new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10);
+      const scope = me.role === "Global Admin" ? null : me.branch;
+      const p = scope ? [day, scope] : [day];
+      const [rows, slots] = await Promise.all([
+        sql(`SELECT resident_name AS name, count(*)::int AS n, to_char(max(created_at) AT TIME ZONE 'Asia/Bangkok', 'HH24:MI') AS last
+          FROM med_withdrawals WHERE voided_at IS NULL AND skip_reason IS NULL AND (created_at AT TIME ZONE 'Asia/Bangkok')::date = $1::date ${scope ? "AND branch_name = $2" : ""}
+          GROUP BY resident_name`, p).catch(() => []),
+        // ยาไหน มื้อไหน ให้แล้ว/ไม่ได้ให้ (หน้าให้ยา KinApp · สถานะมื้อในเมนูเบิกยา)
+        sql(`SELECT id, resident_name AS name, med_id, meal, qty::float, skip_reason, withdrawn_by AS by, to_char(created_at AT TIME ZONE 'Asia/Bangkok', 'HH24:MI') AS at
+          FROM med_withdrawals WHERE voided_at IS NULL AND (created_at AT TIME ZONE 'Asia/Bangkok')::date = $1::date ${scope ? "AND branch_name = $2" : ""}
+          ORDER BY created_at`, p).catch(() => []),
+      ]);
+      return NextResponse.json({ items: rows, slots });
+    }
     if (q.get("op") === "withdrawals") {
       // ประวัติการเบิกยาจากตะกร้าของผู้ป่วยคนนี้: รายการเบิก (med_withdrawals) + คงเหลือที่ลดลงก่อนมีเมนูเบิกยา (จากประวัติการแก้ไข)
       const who = text(q.get("resident"), 200);
@@ -73,13 +153,17 @@ export async function GET(req: NextRequest) {
       const TH = (c: string) => `to_char(${c} AT TIME ZONE 'Asia/Bangkok', 'DD/MM/') || (extract(year FROM ${c} AT TIME ZONE 'Asia/Bangkok')::int + 543) || to_char(${c} AT TIME ZONE 'Asia/Bangkok', ' HH24:MI')`;
       const TS = (c: string) => `to_char(${c} AT TIME ZONE 'Asia/Bangkok', 'YYYY-MM-DD HH24:MI:SS')`;
       const [rows, legacy] = await Promise.all([
-        sql(`SELECT id, med_id, drug_name AS name, qty::float, unit, stock_before::float AS b, stock_after::float AS s, meal, note, withdrawn_by AS by, ${TH("created_at")} AS at, ${TS("created_at")} AS ts
+        sql(`SELECT id, med_id, drug_name AS name, qty::float, unit, stock_before::float AS b, stock_after::float AS s, meal, note, withdrawn_by AS by, ${TH("created_at")} AS at, ${TS("created_at")} AS ts,
+            void_reason, voided_by, skip_reason, ${TH("voided_at")} AS voided_at, created_at > now() - interval '24 hours' AS fresh
           FROM med_withdrawals WHERE resident_name = $1 ${scope ? "AND branch_name = $2" : ""} ORDER BY created_at DESC LIMIT 300`, p).catch(() => []), // ยังไม่ได้รัน db:setup
+        // บันทึกเดิม: คงเหลือที่ลดลงก่อนมีเมนูเบิกยา ของยาที่ปุ่ม "เบิกยาตามจำนวน" เดิมเบิกได้ (ยาขวด · ยาน้ำ ml · ไม่มีมื้อ) · อาจรวมการตัดยาน้ำตอนจัดซอง (แยกไม่ได้)
         sql(`SELECT a.id::text, a.record_id AS med_id, coalesce(a.after->>'drug_name', a.before->>'drug_name') AS name, coalesce(a.after->>'unit', a.before->>'unit') AS unit,
             a.before->>'stock' AS b, a.after->>'stock' AS s, a.actor_name AS by, ${TH("a.at")} AS at, ${TS("a.at")} AS ts
           FROM audit_logs a WHERE a.area = 'pharmacy-drugs' AND a.action = 'update' AND (a.before->>'stock') IS DISTINCT FROM (a.after->>'stock')
+            AND (a.after->>'is_bulk' = 'true' OR lower(trim(coalesce(a.after->>'unit', ''))) = 'ml' OR (jsonb_typeof(a.after->'meals') = 'array' AND jsonb_array_length(a.after->'meals') = 0))
+            AND a.at < coalesce((SELECT min(created_at) FROM med_withdrawals), now())
             AND a.record_id IN (SELECT id::text FROM resident_medications WHERE resident_name = $1 ${scope ? "AND branch_name = $2" : ""})
-          ORDER BY a.at DESC LIMIT 300`, p),
+          ORDER BY a.at DESC LIMIT 300`, p).catch(() => []),
       ]);
       const n = (v: unknown) => { const s = String(v ?? "").trim(); const x = Number(s); return s !== "" && Number.isFinite(x) ? x : null; };
       const old = (legacy as Record<string, unknown>[]).flatMap((r): Record<string, unknown>[] => {
@@ -226,6 +310,68 @@ export async function POST(req: NextRequest) {
                   VALUES (${randomUUID()}, ${m.id}, ${m.resident_id}, ${m.resident_name}, ${m.branch_name}, ${m.drug_name}, ${qty}, ${m.unit}, ${before}, ${u.stock}, ${meal}, ${note}, ${me.name})`;
         await audit(req, me, [{ area: "med_withdraw", action: "update", recordId: m.id, summary: `เบิกยา · ${m.drug_name} ${qty} ${m.unit ?? ""} · ${m.resident_name} · ${before} → ${u.stock}`, branch: m.branch_name }]);
         return NextResponse.json({ ok: true, stock: u.stock, before });
+      }
+      case "give": {
+        // ให้ยาทั้งมื้อของผู้ป่วย 1 คน (KinApp แบบผสม): items = ยาที่ให้ (ตัดคงเหลือ) · skips = ยาที่ไม่ได้ให้พร้อมเหตุผล (ไม่ตัดคงเหลือ)
+        //  ต้องติ๊ก "ตรวจชื่อผู้ป่วยและยาแล้ว" (checked) · ยาไม่พอตัวใดตัวหนึ่ง = ไม่บันทึกทั้งชุด (คืนคงเหลือที่ตัดไปแล้ว)
+        if (!canIssue(me)) return forbidden();
+        if (b.checked !== true) return bad("กรุณาติ๊ก ตรวจชื่อผู้ป่วยและยาแล้ว ก่อนบันทึก");
+        const meal = text(b.meal, 40);
+        if (!meal) return bad("กรุณาเลือกมื้อ");
+        const rows = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is Record<string, unknown> => !!x && typeof x === "object").slice(0, 40) : []);
+        const items = rows(b.items).map((x) => ({ id: String(x.medId ?? ""), qty: num(x.qty) }));
+        const skips = rows(b.skips).map((x) => ({ id: String(x.medId ?? ""), reason: text(x.reason, 80) }));
+        if (!items.length && !skips.length) return bad("ไม่มีรายการยา");
+        if (items.some((x) => !(x.qty > 0))) return bad("จำนวนยาไม่ถูกต้อง");
+        if (skips.some((x) => !x.reason)) return bad("กรุณาเลือกเหตุผลของยาที่ไม่ได้ให้");
+        const ids = [...items.map((x) => x.id), ...skips.map((x) => x.id)];
+        const meds = (await sql`SELECT id, resident_id, resident_name, branch_name, drug_name, unit, coalesce(stock, 0)::float AS stock FROM resident_medications WHERE id = ANY(${ids})`) as
+          { id: string; resident_id: string | null; resident_name: string; branch_name: string | null; drug_name: string; unit: string | null; stock: number }[];
+        const byId = new Map(meds.map((m) => [m.id, m]));
+        if (ids.some((id) => !byId.has(id))) return bad("ไม่พบยาบางรายการในตะกร้าของผู้ป่วย", 404);
+        if (new Set(meds.map((m) => m.resident_name)).size > 1) return bad("ยาต้องเป็นของผู้ป่วยคนเดียวกัน");
+        const m0 = meds[0];
+        if (me.role !== "Global Admin" && m0.branch_name && m0.branch_name !== me.branch) return forbidden("ให้ยาได้เฉพาะผู้รับบริการในสาขาของคุณ");
+        const done: { m: typeof m0; qty: number; after: number }[] = [];
+        for (const it of items) {
+          const m = byId.get(it.id)!;
+          const [u] = (await sql`UPDATE resident_medications SET stock = round((coalesce(stock, 0) - ${it.qty})::numeric, 2), updated_at = now()
+            WHERE id = ${m.id} AND coalesce(stock, 0) >= ${it.qty} RETURNING stock::float AS stock`) as { stock: number }[];
+          if (!u) {
+            for (const d of done) await sql`UPDATE resident_medications SET stock = round((coalesce(stock, 0) + ${d.qty})::numeric, 2) WHERE id = ${d.m.id}`;
+            return bad(`ยาไม่พอ · ${m.drug_name} เหลือ ${m.stock} ${m.unit ?? ""} · เอาติ๊กยานี้ออก แล้วเลือกเหตุผล "ยาหมด"`.trim(), 409);
+          }
+          done.push({ m, qty: it.qty, after: u.stock });
+        }
+        const note = text(b.note, 300) || null;
+        for (const d of done)
+          await sql`INSERT INTO med_withdrawals (id, med_id, resident_id, resident_name, branch_name, drug_name, qty, unit, stock_before, stock_after, meal, note, withdrawn_by)
+                    VALUES (${randomUUID()}, ${d.m.id}, ${d.m.resident_id}, ${d.m.resident_name}, ${d.m.branch_name}, ${d.m.drug_name}, ${d.qty}, ${d.m.unit}, ${Math.round((d.after + d.qty) * 100) / 100}, ${d.after}, ${meal}, ${note}, ${me.name})`;
+        for (const s of skips) {
+          const m = byId.get(s.id)!;
+          await sql`INSERT INTO med_withdrawals (id, med_id, resident_id, resident_name, branch_name, drug_name, qty, unit, stock_before, stock_after, meal, note, withdrawn_by, skip_reason)
+                    VALUES (${randomUUID()}, ${m.id}, ${m.resident_id}, ${m.resident_name}, ${m.branch_name}, ${m.drug_name}, 0, ${m.unit}, ${m.stock}, ${m.stock}, ${meal}, ${note}, ${me.name}, ${s.reason})`;
+        }
+        await audit(req, me, [{ area: "med_withdraw", action: "create", recordId: m0.id, branch: m0.branch_name,
+          summary: `ให้ยามื้อ${meal} · ${m0.resident_name} · ให้ ${done.length} รายการ${skips.length ? ` · ไม่ได้ให้ ${skips.map((s) => `${byId.get(s.id)!.drug_name} (${s.reason})`).join(", ")}` : ""}` }]);
+        return NextResponse.json({ ok: true, given: done.length, skipped: skips.length });
+      }
+      case "withdraw_void": {
+        // ยกเลิกการเบิกที่กดผิด: คืนคงเหลือ · เก็บรายการไว้พร้อมเหตุผล · คนเบิกเองภายใน 24 ชม. หรือหัวหน้าพยาบาล/ผู้จัดการ/ผู้บริหาร
+        if (!canIssue(me)) return forbidden();
+        const reason = text(b.reason, 120);
+        if (!reason) return bad("กรุณาเลือกเหตุผลที่ยกเลิก");
+        const [w] = (await sql`SELECT id, med_id, resident_name, branch_name, drug_name, qty::float, unit, withdrawn_by, voided_at, created_at > now() - interval '24 hours' AS fresh FROM med_withdrawals WHERE id = ${String(b.id ?? "")}`) as
+          { id: string; med_id: string | null; resident_name: string; branch_name: string | null; drug_name: string; qty: number; unit: string | null; withdrawn_by: string | null; voided_at: string | null; fresh: boolean }[];
+        if (!w) return bad("ไม่พบรายการเบิกนี้", 404);
+        if (me.role !== "Global Admin" && w.branch_name && w.branch_name !== me.branch) return forbidden();
+        if (w.voided_at) return bad("รายการนี้ยกเลิกไปแล้ว", 409);
+        if (!isManager(me) && !(w.withdrawn_by === me.name && w.fresh)) return forbidden("ยกเลิกได้เฉพาะรายการที่ตัวเองเบิกภายใน 24 ชั่วโมง · รายการอื่นแจ้งหัวหน้าพยาบาล");
+        const done = (await sql`UPDATE med_withdrawals SET voided_at = now(), voided_by = ${me.name}, void_reason = ${reason} WHERE id = ${w.id} AND voided_at IS NULL RETURNING id`) as unknown[];
+        if (!done.length) return bad("รายการนี้ยกเลิกไปแล้ว", 409);
+        const [m] = w.med_id ? (await sql`UPDATE resident_medications SET stock = round((coalesce(stock, 0) + ${w.qty})::numeric, 2), updated_at = now() WHERE id = ${w.med_id} RETURNING stock::float AS stock`) as { stock: number }[] : [];
+        await audit(req, me, [{ area: "med_withdraw", action: "delete", recordId: w.id, summary: `ยกเลิกการเบิก · ${w.drug_name} ${w.qty} ${w.unit ?? ""} · ${w.resident_name} · ${reason} (คืนคงเหลือ${m ? ` เป็น ${m.stock}` : ""})`, branch: w.branch_name }]);
+        return NextResponse.json({ ok: true, stock: m?.stock ?? null });
       }
       default:
         return bad("unknown op");

@@ -6,6 +6,7 @@ import type { SessionUser } from "@/lib/roles";
 import { fromDb, selectExpr, specFor } from "@/lib/schema";
 import type { Invoice } from "@/lib/billing";
 import { bkkToday, cycleDue, nextCycle } from "@/lib/servicePeriod";
+import { vitalDueSummary } from "@/lib/vitalDue";
 
 /**
  * สัญญารายเดือนที่ครบรอบบิลแล้วหรือจะครบภายใน 7 วัน แต่ยังไม่มีใบของรอบนั้น
@@ -33,7 +34,7 @@ const SHARE_MS = 30_000;
 const shared = new Map<string, { at: number; p: Promise<Record<string, unknown>> }>();
 export function attention(me: SessionUser, br: string | null) {
   const flags = [can(me, "tasks") || can(me, "tasks.review"), can(me, "health_logs") || can(me, "residents"), can(me, "billing"), can(me, "contracts") || can(me, "billing"),
-    can(me, "residents") || can(me, "app.pharmacy"), can(me, "rooms"), can(me, "roster"), can(me, "physio.assign"), can(me, "staff")];
+    can(me, "residents") || can(me, "app.pharmacy"), can(me, "rooms"), can(me, "roster"), can(me, "physio.assign"), can(me, "staff"), can(me, "feedbacks")];
   const key = `${br ?? "*"}|${flags.map(Number).join("")}`, now = Date.now(), hit = shared.get(key);
   if (hit && now - hit.at < SHARE_MS) return hit.p;
   const p = compute(flags, br);
@@ -44,7 +45,7 @@ export function attention(me: SessionUser, br: string | null) {
 }
 
 /** คำนวณทุกเรื่องพร้อมกัน (เดิมถามฐานข้อมูลทีละเรื่องต่อกัน 18 ครั้ง) */
-async function compute([tasks, health, billing, contracts, stock, rooms, roster, physio, staff]: boolean[], br: string | null) {
+async function compute([tasks, health, billing, contracts, stock, rooms, roster, physio, staff, feedbacks]: boolean[], br: string | null) {
   const p = br ? [br] : [];
   const w = (col: string) => (br ? `AND ${col} = $1` : "");
   const TODAY = "(now() AT TIME ZONE 'Asia/Bangkok')::date";
@@ -66,6 +67,15 @@ async function compute([tasks, health, billing, contracts, stock, rooms, roster,
     // ค่าสัญญาณชีพผิดปกติที่ยังไม่มีพยาบาลกดรับทราบ (นานสุดกี่นาที)
     job(() => q(`SELECT count(*)::int AS n, coalesce(max(extract(epoch FROM now() - created_at) / 60), 0)::int AS oldest
         FROM care_alerts WHERE status = 'open' ${w("branch_name")}`), (v) => { out.alerts = v[0]; });
+  }
+  if (health) {
+    // คนที่ถึงรอบวัดสัญญาณชีพตอนนี้ (ตามรอบที่ตั้งให้แต่ละคน · lib/vitalDue)
+    job(() => vitalDueSummary(br).catch(() => undefined), (v) => { if (v) out.vitalDue = v; });
+  }
+  if (feedbacks) {
+    // เรื่องร้องเรียนจากญาติที่ยังไม่ได้แก้ไข (เสียงจากครอบครัว)
+    job(() => q(`SELECT count(*)::int AS n, coalesce(max(extract(epoch FROM now() - reported_at) / 86400), 0)::int AS days FROM complaints
+        WHERE coalesce(status, '') <> 'แก้ไขแล้ว' ${w("branch_name")}`).catch(() => undefined), (v) => { if (v) out.complaints = v[0]; });
   }
   if (billing) {
     job(() => q(`SELECT count(*)::int AS n, coalesce(sum(net - coalesce(paid_total, 0)), 0)::float AS sum, to_char(min(doc_date), 'YYYY-MM-DD') AS oldest

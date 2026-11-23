@@ -5,6 +5,10 @@ import { audit } from "@/lib/audit";
 import type { SessionUser } from "@/lib/roles";
 import { can } from "@/lib/perms";
 import { SHARED_BRANCHES } from "@/lib/schema";
+import { planOf, presetLabel, VITAL_ITEMS } from "@/lib/vitalPlan";
+import { vitalDueRows } from "@/lib/vitalDue";
+import { vitalRounds } from "@/lib/vitalRound";
+import { dueAll } from "@/lib/vitalPlan";
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
@@ -97,7 +101,7 @@ async function profile(me: SessionUser, id: string) {
           AND (a.action = 'create' OR (a.before->>'stock') IS DISTINCT FROM (a.after->>'stock'))
         ORDER BY a.at DESC LIMIT 200`),
     // เบิกยาจากตะกร้า (เมนูเบิกยาในแอปห้องยา)
-    q(`SELECT drug_name AS name, qty::float, unit, stock_before::float AS b, stock_after::float AS s, meal, note, withdrawn_by AS by,
+    q(`SELECT drug_name AS name, qty::float, unit, stock_before::float AS b, stock_after::float AS s, meal, note, withdrawn_by AS by, void_reason, voided_by, skip_reason,
           to_char(created_at AT TIME ZONE 'Asia/Bangkok', 'DD/MM/') || (extract(year FROM created_at AT TIME ZONE 'Asia/Bangkok')::int + 543) || to_char(created_at AT TIME ZONE 'Asia/Bangkok', ' HH24:MI') AS at,
           to_char(created_at AT TIME ZONE 'Asia/Bangkok', 'YYYY-MM-DD') AS day, to_char(created_at AT TIME ZONE 'Asia/Bangkok', 'YYYY-MM-DD HH24:MI:SS') AS ts
         FROM med_withdrawals WHERE ${MINE} ORDER BY created_at DESC LIMIT 200`).catch(() => []), // ยังไม่ได้รัน db:setup = ไม่มีตาราง · หน้าประวัติยังเปิดได้
@@ -111,6 +115,34 @@ export async function GET(req: NextRequest) {
   const qs = req.nextUrl.searchParams;
   try {
     switch (qs.get("op")) {
+      case "vital_rounds": {
+        // ไฟล์ส่งออก "รอบวัดสัญญาณชีพรายคน": รอบที่ตั้ง · วัดล่าสุด · วัดทันรอบ % ในช่วง (lib/vitalRound) · สถานะตอนนี้ (lib/vitalPlan)
+        if (!can(me, "health_logs") && !can(me, "residents")) return forbidden();
+        const D = /^\d{4}-\d{2}-\d{2}$/, from = qs.get("from") ?? "", to = qs.get("to") ?? "";
+        if (!D.test(from) || !D.test(to) || to < from) return bad("ช่วงวันที่ไม่ถูกต้อง");
+        const br = scoped(me) ? me.branch : qs.get("branch") || null;
+        const [rows, vr] = await Promise.all([vitalDueRows({ branch: br }), vitalRounds(br, [{ from, to }])]);
+        const rank = { over: 0, due: 1, rest: 2, off: 3 } as const;
+        const items = rows.map((r) => {
+          const all = dueAll(r).filter((x) => x.due.cls !== "off").sort((a, b) => rank[a.due.cls] - rank[b.due.cls]);
+          const st = vr.perRes[r.id] ?? { total: 0, ok: 0 };
+          const now = !all.length ? "ไม่ต้องวัด" : all[0].due.cls === "rest" ? "ครบตามรอบ" : all.filter((x) => x.due.cls === "over" || x.due.cls === "due").map((x) => `${x.label} ${x.due.text}`).join(" · ");
+          return { name: r.name, room: r.room, branch: r.branch, plan: Object.fromEntries(VITAL_ITEMS.map(({ k }) => [k, presetLabel(r.plan[k])])), lastVs: r.last.vs, ok: st.ok, total: st.total, now, by: r.custom ? r.by ?? "" : "ค่าเริ่มต้น" };
+        });
+        return NextResponse.json({ items });
+      }
+      case "quote_branches": {
+        // สาขาของใบเสนอราคา (ข้อมูลใบเสนอราคาในหน้าเว็บไม่มีสาขา) · ใช้ในไฟล์ส่งออกใบเสนอราคา
+        if (!can(me, "quotations") && !can(me, "residents")) return forbidden();
+        const rows = await sql(`SELECT doc_no AS no, branch_name AS branch FROM care_assessments WHERE doc_no IS NOT NULL ${scoped(me) ? "AND branch_name = $1" : ""}`, scoped(me) ? [me.branch] : []);
+        return NextResponse.json({ items: rows });
+      }
+      case "vital_due": {
+        // รอบการวัดรายบุคคล + ครั้งล่าสุดที่วัดแต่ละรายการ (lib/vitalDue · หน้าเว็บคิดสถานะด้วย lib/vitalPlan) · ?id= หรือ ?name= = คนเดียว · ไม่ส่ง = ทุกคนในสาขา
+        if (!can(me, "app.staff") && !can(me, "residents") && !can(me, "health_logs")) return forbidden();
+        const items = await vitalDueRows({ branch: scoped(me) ? me.branch : null, id: qs.get("id"), name: qs.get("name") });
+        return NextResponse.json({ items, canEdit: can(me, "residents") });
+      }
       case "facility": {
         if (!canFacility(me)) return forbidden();
         const rows = await sql(`SELECT f.id, f.task_name AS name, f.category, f.schedule, f.dispatch_mode,
@@ -270,6 +302,21 @@ export async function POST(req: NextRequest) {
   const me = await currentUser(req);
   if (!me) return unauthorized();
   const b = await req.json().catch(() => ({}));
+  if (b.op === "vital_plan") {
+    // ตั้งรอบการวัดรายบุคคล: หัวหน้าพยาบาล ผู้จัดการสาขา ผู้บริหาร (สิทธิ์ผู้รับบริการ)
+    if (!can(me, "residents")) return forbidden("ตั้งรอบการวัดได้เฉพาะหัวหน้าพยาบาลและผู้จัดการสาขา");
+    const [r] = (await sql`SELECT id, full_name, branch_name FROM residents WHERE id = ${String(b.residentId ?? "")}`) as Record<string, string>[];
+    if (!r) return bad("ไม่พบผู้รับบริการ", 404);
+    if (scoped(me) && r.branch_name !== me.branch) return forbidden("ตั้งได้เฉพาะผู้รับบริการในสาขาของคุณ");
+    const plan = planOf(b.plan);
+    const [old] = (await sql`SELECT plan FROM vital_plans WHERE resident_id = ${r.id}`) as { plan: unknown }[];
+    await sql`INSERT INTO vital_plans (resident_id, resident_name, branch_name, plan, updated_by, updated_at) VALUES (${r.id}, ${r.full_name}, ${r.branch_name}, ${JSON.stringify(plan)}::jsonb, ${me.name}, now())
+              ON CONFLICT (resident_id) DO UPDATE SET plan = EXCLUDED.plan, resident_name = EXCLUDED.resident_name, branch_name = EXCLUDED.branch_name, updated_by = EXCLUDED.updated_by, updated_at = now()`;
+    const before = planOf(old?.plan);
+    const changed = VITAL_ITEMS.filter((it) => before[it.k] !== plan[it.k]).map((it) => `${it.label} ${presetLabel(before[it.k])} → ${presetLabel(plan[it.k])}`);
+    await audit(req, me, [{ area: "vital_plans", action: "update", recordId: r.id, summary: `รอบการวัด · ${r.full_name}${changed.length ? ` · ${changed.join(" · ")}` : ""}`, branch: r.branch_name, before: old ? before : undefined, after: plan }]);
+    return NextResponse.json({ ok: true, plan });
+  }
   if (b.op === "facility_done") {
     if (!can(me, "app.staff") && !can(me, "facility_tasks")) return forbidden();
     const photo = typeof b.photo === "string" ? b.photo : "";

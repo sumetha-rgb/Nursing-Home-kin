@@ -3,7 +3,7 @@
  * ตัวสร้างไฟล์ CSV ที่ใช้ร่วมกันระหว่างปุ่มส่งออกในแต่ละหน้า และหน้า "ส่งออกข้อมูล" (components/views/Exports)
  *  ทุกฟังก์ชันรับข้อมูลที่กรองช่วงวันที่/สาขาแล้ว · คืนจำนวนแถวที่ส่งออก
  */
-import { balanceOf, BILL_GROUPS, creditOf, docDate, groupOf, inclNet, Invoice, isOpen, lineSign, money, parseItems, payOrder, payTake, signedNet, todayIso, vatOf, VOID } from "./billing";
+import { balanceOf, BILL_GROUPS, creditOf, csvDate, groupOf, inclNet, Invoice, isOpen, lineSign, money, parseItems, payOrder, payTake, signedNet, todayIso, vatOf, VOID } from "./billing";
 import { lineTotal } from "./billingExport";
 import { classify, DP_NAME, SALE_CATS, saleLines } from "./salesCategory";
 import { lineCode, PriceItem } from "./priceList";
@@ -29,7 +29,7 @@ export function serviceLinesRows(list: Invoice[], contracts: string[][], from = 
       const t = credit ? 2 : vat ? 0 : 1;
       out.push({
         who: x.who, hn: String(x.hn ?? "").trim(), date: x.date, no: x.no ?? "", k, t, x, alloc,
-        cells: [code, desc, grp, String(qty), money(incl), credit ? "หักเงินที่รับไว้แล้ว" : vat ? `มี VAT ${vat}%` : "ไม่มี VAT", p ? docDate(p.from) : "", p ? docDate(p.to) : "", p ? String(days) : "", p ? String(inDays) : "",
+        cells: [code, desc, grp, String(qty), money(incl), credit ? "หักเงินที่รับไว้แล้ว" : vat ? `มี VAT ${vat}%` : "ไม่มี VAT", p ? csvDate(p.from) : "", p ? csvDate(p.to) : "", p ? String(days) : "", p ? String(inDays) : "",
           money(t === 0 ? Math.round((alloc - vatAlloc) * 100) / 100 : 0), money(t === 0 ? vatAlloc : 0), money(t === 1 ? alloc : 0), money(alloc),
           credit ? "" : money(paidK.get(k) ?? 0), credit ? "" : money(Math.max(0, Math.round(((inclK.get(k) ?? 0) - (paidK.get(k) ?? 0)) * 100) / 100))],
       });
@@ -51,7 +51,7 @@ export function serviceLinesCsv(list: Invoice[], contracts: string[][], branchOf
   const rows = serviceLinesRows(list, contracts, from, to)
     .sort((a, b) => a.date.localeCompare(b.date) || a.no.localeCompare(b.no) || a.t - b.t || a.k - b.k)
     // ท้ายสุด: ใบที่ยังค้าง = ค้างมากี่วันนับจากวันที่ออกใบถึงวันนี้ (เหมือนป้าย "ค้างชำระ · N วัน" ในหน้าใบแจ้งหนี้) · ชำระครบแล้ว = ว่าง
-    .map(({ x, cells }) => [docDate(x.date), x.no ?? "", x.contract || "", x.hn || "", x.who, branchOf(x), x.kind, ...cells, x.status, x.paidDate ? docDate(x.paidDate) : "", payMethodOf(x), isOpen(x) ? String(ageOf(x, today)) : ""]);
+    .map(({ x, cells }) => [csvDate(x.date), x.no ?? "", x.contract || "", x.hn || "", x.who, branchOf(x), x.kind, ...cells, x.status, x.paidDate ? csvDate(x.paidDate) : "", payMethodOf(x), isOpen(x) ? String(ageOf(x, today)) : ""]);
   downloadCsv(name, ["วันที่", "เลขที่เอกสาร", "สัญญา", "HN", "ชื่อผู้รับบริการ", "สาขา", "ประเภทใบ",
     "รหัสสินค้า", "รายการ", "หมวดในใบเสร็จ", "จำนวน", "ยอดในใบ (รวม VAT)", "ประเภทภาษี", "ช่วงบริการ เริ่ม", "ช่วงบริการ สิ้นสุด", "วันทั้งหมดของช่วงบริการ", "วันที่อยู่ในช่วงที่เลือก",
     ...["มูลค่าที่มี VAT (ก่อน VAT)", "VAT 7%", "มูลค่าที่ไม่มี VAT", "รวม (รวม VAT)"].map((h) => (from ? `${h} ในช่วงที่เลือก` : h)),
@@ -70,10 +70,10 @@ export function invoiceDocsCsv(list: Invoice[], branchOf: (x: Invoice) => string
     const grp = (k: string) => money(sg * sale.filter((i) => groupOf(i) === k).reduce((n, i) => n + inclNet(i), 0));
     // รหัสสินค้าในใบ (เรียงตามบรรทัด · จำนวนมากกว่า 1 ใส่ ×จำนวน) · รายการที่ไม่มีรหัส (ยา เวชภัณฑ์ ที่กรอกเอง) ไม่แสดง
     const codes = sale.map((i) => { const c = lineCode(i); return c ? (i.qty !== 1 ? `${c} ×${i.qty}` : c) : ""; }).filter(Boolean).join(", ");
-    return [x.no ?? "", docDate(x.date), branchOf(x), x.who, x.hn || "", x.payer, x.ref ? `${x.kind} (อ้างอิง ${x.ref})` : x.kind, x.contract || "", codes,
+    return [x.no ?? "", csvDate(x.date), branchOf(x), x.who, x.hn || "", x.payer, x.ref ? `${x.kind} (อ้างอิง ${x.ref})` : x.kind, x.contract || "", codes,
       ...BILL_GROUPS.map(([k]) => grp(k)), grp("dep"),
       money(sg * t.base), money(sg * t.vat), money(sg * t.exempt), money(sg * (t.base + t.vat + t.exempt)), money(sg * creditOf(items)), money(x.discount),
-      money(signedNet(x)), money(x.paid ?? 0), x.status === VOID ? "0.00" : money(balanceOf(x)), x.paidDate ? docDate(x.paidDate) : "", x.status];
+      money(signedNet(x)), money(x.paid ?? 0), x.status === VOID ? "0.00" : money(balanceOf(x)), x.paidDate ? csvDate(x.paidDate) : "", x.status];
   });
   downloadCsv(name, ["เลขที่เอกสาร", "วันที่", "สาขา", "ผู้รับบริการ", "HN", "ผู้ชำระ", "ประเภท", "สัญญา", "รหัสสินค้าในใบ",
     ...BILL_GROUPS.map(([k, th]) => (k === "room" ? `${th} (รวม VAT)` : th)), "เงินประกัน / มัดจำ",
@@ -114,17 +114,18 @@ export function debtorsCsv(debtors: Debtor[], name: string) {
 }
 
 /* ---------- ยอดขายตามรายการ (หลังส่วนลด ก่อน VAT · ไม่นับเงินประกัน/รับล่วงหน้า) ---------- */
-export function salesItemsCsv(list: Invoice[], prices: PriceItem[], inRange: (d: string) => boolean, name: string) {
-  const sales = saleLines(list, prices).filter((l) => l.cat !== "DP" && inRange(l.date));
-  const by = new Map<string, { item: string; code: string; cat: string; sub: string; amount: number; qty: number; times: number }>();
+/** branchOf = สาขาของใบ · 1 แถวต่อรายการต่อสาขา (ส่งออกทุกสาขาแล้วแยกยอดแต่ละสาขาได้) */
+export function salesItemsCsv(list: Invoice[], prices: PriceItem[], inRange: (d: string) => boolean, name: string, branchOf: (x: Invoice) => string = () => "") {
+  const sales = list.flatMap((x) => saleLines([x], prices).map((l) => ({ ...l, branch: branchOf(x) }))).filter((l) => l.cat !== "DP" && inRange(l.date));
+  const by = new Map<string, { item: string; code: string; cat: string; sub: string; amount: number; qty: number; times: number; branch: string }>();
   for (const l of sales) {
-    const k = l.code || l.item;
-    const e = by.get(k) ?? { item: l.item, code: l.code, cat: SALE_CATS.find((c) => c.id === l.cat)?.name ?? l.cat, sub: l.sub, amount: 0, qty: 0, times: 0 };
+    const k = `${l.branch}|${l.code || l.item}`;
+    const e = by.get(k) ?? { item: l.item, code: l.code, cat: SALE_CATS.find((c) => c.id === l.cat)?.name ?? l.cat, sub: l.sub, amount: 0, qty: 0, times: 0, branch: l.branch };
     e.amount += l.amount; e.qty += l.qty; e.times += 1; by.set(k, e);
   }
   const items = [...by.values()].sort((a, b) => b.amount - a.amount), tot = items.reduce((n, x) => n + x.amount, 0);
-  downloadCsv(name, ["อันดับ", "รหัส", "รายการ", "หมวด", "หมวดย่อย", "จำนวน", "ครั้งที่ขาย", "ยอดขาย (บาท)", "สัดส่วน (%)"],
-    items.map((x, i) => [String(i + 1), x.code, x.item, x.cat, x.sub, String(x.qty), String(x.times), money(x.amount), tot ? String(Math.round((x.amount / tot) * 1000) / 10) : "0"]));
+  downloadCsv(name, ["อันดับ", "สาขา", "รหัส", "รายการ", "หมวด", "หมวดย่อย", "จำนวน", "ครั้งที่ขาย", "ยอดขาย (บาท)", "สัดส่วน (%)"],
+    items.map((x, i) => [String(i + 1), x.branch, x.code, x.item, x.cat, x.sub, String(x.qty), String(x.times), money(x.amount), tot ? String(Math.round((x.amount / tot) * 1000) / 10) : "0"]));
   return items.length;
 }
 
@@ -149,13 +150,13 @@ export function spendPeople(invs: Invoice[], lines: SpendLine[], branchOf: (x: I
 export type SpendPerson = ReturnType<typeof spendPeople>["people"][number];
 export function spendSummaryCsv(people: SpendPerson[], cols: string[], name: string) {
   downloadCsv(name, ["ผู้รับบริการ", "HN", "สาขา", "จำนวนใบ", ...cols, "รวมเรียกเก็บ", "ชำระแล้ว", "ค้างชำระ", "ออกใบล่าสุด"],
-    people.map((p) => [p.who, p.hn, p.branch, String(p.docs), ...cols.map((c) => money(p.by[c])), money(p.billed), money(p.paid), money(p.owe), p.last ? docDate(p.last) : ""]));
+    people.map((p) => [p.who, p.hn, p.branch, String(p.docs), ...cols.map((c) => money(p.by[c])), money(p.billed), money(p.paid), money(p.owe), p.last ? csvDate(p.last) : ""]));
   return people.length;
 }
 /** ทุกรายการที่ซื้อ: รหัสสินค้า ชื่อ จำนวน ราคาต่อหน่วย และยอดที่จ่ายจริง (หลังส่วนลด รวม VAT) */
 export function spendLinesCsv(lines: SpendLine[], branchOf: (x: Invoice) => string, name: string) {
   const rows = [...lines].sort((a, b) => a.x.who.localeCompare(b.x.who, "th") || a.x.date.localeCompare(b.x.date) || a.k - b.k)
-    .map((l) => [l.x.who, l.x.hn || "", branchOf(l.x), docDate(l.x.date), l.x.no ?? "", l.x.kind, l.x.status, String(l.k + 1), l.code, l.i.desc, l.cat, String(l.i.qty), money(l.i.price), money(l.total)]);
+    .map((l) => [l.x.who, l.x.hn || "", branchOf(l.x), csvDate(l.x.date), l.x.no ?? "", l.x.kind, l.x.status, String(l.k + 1), l.code, l.i.desc, l.cat, String(l.i.qty), money(l.i.price), money(l.total)]);
   downloadCsv(name, ["ผู้รับบริการ", "HN", "สาขา", "วันที่", "เลขที่เอกสาร", "ประเภทใบ", "สถานะใบ", "บรรทัด", "รหัสสินค้า", "รายการ", "หมวด", "จำนวน", "ราคาต่อหน่วย", "ยอดที่จ่าย (บาท)"], rows);
   return rows.length;
 }

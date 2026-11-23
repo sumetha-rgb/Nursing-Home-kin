@@ -1,6 +1,8 @@
 // ใช้ฝั่ง server เท่านั้น: ข้อมูลหน้า "ภาพรวมและรายงาน" (สุขภาพ · คุณภาพการดูแล · ทีมงาน · รับเข้า-จำหน่าย · อัตราเข้าพัก)
 // ช่วงเวลาและช่วงเปรียบเทียบส่งมาจากหน้าจอ (from/to และ pfrom/pto) · br = สาขา (ว่าง = ทุกสาขาที่เห็น)
 import { sql } from "@/lib/db";
+import { medSlotsSql } from "@/lib/medSlots";
+import { vitalRounds } from "@/lib/vitalRound";
 import { evaluateVitals, levelOf, parseVitals } from "@/lib/vitals";
 
 type Row = Record<string, unknown>;
@@ -43,23 +45,27 @@ export async function insights(br: string | null, r: Range) {
   const alertStat = async (f: string, t: string) => {
     const [a] = (await sql(`SELECT count(*)::int AS n, avg(extract(epoch FROM ack_at - created_at) / 60) FILTER (WHERE ack_at IS NOT NULL)::float AS ack
         FROM care_alerts WHERE (created_at AT TIME ZONE 'Asia/Bangkok')::date BETWEEN $1::date AND $2::date ${B("branch_name", 3)}`, P(f, t))) as Row[];
-    const [m] = (await sql(`SELECT count(*)::int AS total, count(*) FILTER (WHERE given)::int AS given FROM medication_packs
-        WHERE pack_date BETWEEN $1::date AND LEAST($2::date, ${TODAY} - 1) ${B("branch_name", 3)}`, P(f, t))) as Row[];
+    // ให้ยาครบ = มื้อยาที่ให้แล้ว ÷ มื้อยาที่ต้องให้ (lib/medSlots · นับทั้งการให้ยาใหม่และซองยาระบบเดิม)
+    const [m] = (await sql(`SELECT count(*)::int AS total, count(*) FILTER (WHERE m.given)::int AS given FROM ${medSlotsSql("$1::date", `LEAST($2::date, ${TODAY} - 1)`)} m
+        WHERE true ${B("m.branch_name", 3)}`, P(f, t))) as Row[];
     return { alerts: n(a.n), ackMin: a.ack === null ? null : Math.round(n(a.ack)), meds: { total: n(m.total), given: n(m.given) } };
   };
   const [hc, hp] = await Promise.all([alertStat(r.from, r.to), alertStat(r.pfrom, r.pto)]);
   // ให้ยาครบตามมื้อ 6 เดือนย้อนหลัง (กราฟเทียบเดือนหน้าภาพรวม)
   const M6h = months(r.to, 6);
   const medsM = await Promise.all(M6h.map(async (m) => {
-    const [x] = (await sql(`SELECT count(*)::int AS total, count(*) FILTER (WHERE given)::int AS given FROM medication_packs
-        WHERE pack_date BETWEEN $1::date AND LEAST($2::date, ${TODAY} - 1) ${B("branch_name", 3)}`, P(`${m}-01`, monthEnd(m)))) as Row[];
+    const [x] = (await sql(`SELECT count(*)::int AS total, count(*) FILTER (WHERE m.given)::int AS given FROM ${medSlotsSql("$1::date", `LEAST($2::date, ${TODAY} - 1)`)} m
+        WHERE true ${B("m.branch_name", 3)}`, P(`${m}-01`, monthEnd(m)))) as Row[];
     return { month: m, total: n(x.total), given: n(x.given) };
   }));
+  // วัดสัญญาณชีพตามรอบ: ช่วงนี้ · ช่วงก่อน · 6 เดือนย้อนหลัง (lib/vitalRound)
+  const vr = await vitalRounds(br, [{ from: r.from, to: r.to }, { from: r.pfrom, to: r.pto }, ...M6h.map((m) => ({ from: `${m}-01`, to: monthEnd(m) }))]);
   const [adm] = (await sql(`SELECT count(*)::int AS n FROM residents WHERE status LIKE 'แอดมิท%' ${B("branch_name", 1)}`, P())) as Row[];
   const health = {
     cur: { ...vit(r.from, r.to), ...hc }, prev: { ...vit(r.pfrom, r.pto), ...hp }, admitted: n(adm.n),
     weekly: W.map((w) => ({ ...w, ...vit(w.from, w.to) })),
     medsMonthly: medsM,
+    rounds: { cur: vr.stats[0], prev: vr.stats[1], monthly: M6h.map((m, i) => ({ month: m, ...vr.stats[i + 2] })), miss: vr.miss },
     repeat: [...rep.values()].filter((x) => x.n >= 2).sort((a, b) => b.critical - a.critical || b.n - a.n).slice(0, 8),
   };
 

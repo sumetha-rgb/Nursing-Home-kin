@@ -25,6 +25,10 @@ export type HomeData = {
   signups?: { name: string; branch: string; days: number }[];
   /** นักกายภาพขอคนแทน (ยังไม่มีใครจัด) */
   physioReq?: { name: string; date: string; who: string; reason: string }[];
+  /** คนที่ถึงรอบวัดสัญญาณชีพตอนนี้ · over = มีรายการเลยกำหนด */
+  vitalDue?: { n: number; over: number; names: string[] };
+  /** เรื่องร้องเรียนจากญาติที่ยังไม่แก้ไข · days = ค้างนานสุดกี่วัน */
+  complaints?: { n: number; days: number };
 };
 /** urgent = ด่วน (แดง) · top = ขึ้นก่อนทุกเรื่องเมื่อมีค้าง · open = ทำก่อนไปหน้านั้น (เปิดตัวกรอง/หน้าต่าง) */
 /** short / meta = ชื่อสั้นและตัวเลขสำคัญ 1 อย่าง สำหรับแถบ "ต้องจัดการ" (การ์ดหน้าแรกใช้ title / detail เต็ม) */
@@ -35,7 +39,7 @@ export type TodoItem = { key: string; title: string; short: string; meta?: strin
 
 /** ด้านของงาน (ใช้ทั้งหน้าแรกและแถบต้องจัดการ) · ตำแหน่งที่ไม่มีสิทธิ์ด้านนั้นจะไม่เห็นกล่อง */
 export const TODO_AREAS = [
-  { name: "การดูแลและทีม", keys: ["alerts", "incidents", "late", "review", "gap", "checkin", "signup", "physioReq", "physioCase", "physioMissed"] },
+  { name: "การดูแลและทีม", keys: ["alerts", "incidents", "late", "vitalDue", "complaints", "review", "gap", "checkin", "signup", "physioReq", "physioCase", "physioMissed"] },
   { name: "การเงิน", keys: ["bills", "debt60", "monthDue", "drafts", "courses", "deposit", "quoteCall", "physio", "physioLow"] },
   { name: "ห้อง ยา และคลัง", keys: ["room", "stock"] },
 ];
@@ -43,7 +47,7 @@ export const TODO_AREAS = [
 export const SAFETY_KEYS = ["alerts", "incidents", "late", "checkin"];
 /** ปุ่มสั้นด้านขวาของแต่ละเรื่อง */
 export const TODO_ACT: Record<string, string> = {
-  alerts: "ดูรายการ", signup: "อนุมัติ", physioCase: "จ่ายเคส", physioMissed: "ดูงาน", physioReq: "จัดคนแทน", physioLow: "เสนอต่อ", late: "ตามงาน", review: "ตรวจงาน", gap: "จัดเวร", checkin: "ดูเวร", bills: "รับชำระ", debt60: "ดูลูกหนี้",
+  alerts: "ดูรายการ", vitalDue: "ไปวัด", complaints: "ดูเรื่อง", signup: "อนุมัติ", physioCase: "จ่ายเคส", physioMissed: "ดูงาน", physioReq: "จัดคนแทน", physioLow: "เสนอต่อ", late: "ตามงาน", review: "ตรวจงาน", gap: "จัดเวร", checkin: "ดูเวร", bills: "รับชำระ", debt60: "ดูลูกหนี้",
   monthDue: "ออกใบ", quoteCall: "โทรติดตาม", incidents: "รับทราบ", drafts: "ตรวจยอด", courses: "ออกใบ", deposit: "ดูสัญญา", physio: "ใส่ราคา", room: "จัดห้อง", stock: "ห้องยา",
 };
 
@@ -60,6 +64,16 @@ const ago = (min: number) => (min >= 1440 ? `${Math.floor(min / 1440)} วัน
 export function buildTodos(d: HomeData, user: SessionUser | null | undefined): TodoItem[] {
   const c: TodoItem[] = [];
   if (d.alerts) c.push({ key: "alerts", short: "ค่าผิดปกติค้าง", meta: d.alerts.n ? `นานสุด ${ago(d.alerts.oldest)}` : undefined, title: "ค่าสัญญาณชีพผิดปกติ ยังไม่มีคนรับทราบ", brief: d.alerts.n ? `ค้างนานสุด ${ago(d.alerts.oldest)}` : undefined, hot: d.alerts.n > 0 && d.alerts.oldest >= 60, n: d.alerts.n, unit: "รายการ", detail: d.alerts.n ? `ค้างนานสุด ${ago(d.alerts.oldest)} · กดรับทราบที่ปุ่มแจ้งเตือนด้านบน` : "รับทราบครบแล้ว", cta: "ไปที่บันทึกสุขภาพ", urgent: true, top: true, view: "health_logs" });
+  if (d.vitalDue) {
+    const v = d.vitalDue;
+    c.push({ key: "vitalDue", short: "ถึงรอบวัด", meta: v.over ? `เลยกำหนด ${v.over} คน` : undefined, title: "ถึงรอบวัดสัญญาณชีพ", brief: v.n ? namesOf(v.names) : undefined, hot: v.over > 0, n: v.n, unit: "คน",
+      detail: v.n ? `${v.over ? `เลยกำหนด ${v.over} คน · ` : ""}ตามรอบที่ตั้งให้แต่ละคน · ดูรายชื่อที่บันทึกสุขภาพ แท็บถึงรอบวัด` : "วัดครบตามรอบแล้ว", cta: "ไปที่บันทึกสุขภาพ", warn: v.over > 0, view: "health_logs" });
+  }
+  if (d.complaints) {
+    const k = d.complaints;
+    c.push({ key: "complaints", short: "ร้องเรียนจากญาติ", meta: k.n ? `ค้างนานสุด ${k.days} วัน` : undefined, title: "เรื่องร้องเรียนจากญาติ ยังไม่ได้แก้ไข", brief: k.n ? `ค้างนานสุด ${k.days} วัน` : undefined, hot: k.n > 0 && k.days >= 3, n: k.n, unit: "เรื่อง",
+      detail: k.n ? `ค้างนานสุด ${k.days} วัน · แก้แล้วเปลี่ยนสถานะเป็นแก้ไขแล้วที่เสียงจากครอบครัว` : "ไม่มีเรื่องค้าง", cta: "ไปที่เสียงจากครอบครัว", warn: k.n > 0, view: "feedbacks" });
+  }
   if (d.late) {
     const n = d.late.length, list = d.late.slice(0, 2).map((x) => `${x.task} (${x.name})`).join(", ");
     c.push({ key: "late", short: "งานเลยเวลา", title: "งานเลยเวลา", brief: n ? `${[...new Set(d.late.map((x) => x.name))].slice(0, 2).join(", ")}${n > 2 ? ` และอีก ${n - 2} งาน` : ""}` : undefined, n, unit: "งาน", detail: n ? `เลยเวลาเกิน 30 นาทียังไม่มีใครส่ง · ${list}${n > 2 ? ` และอีก ${n - 2} งาน` : ""}` : "งานวันนี้ส่งตรงเวลา", cta: "ไปตามงาน", urgent: true, top: true, open: () => taskHandoff.set("late"), view: "tasks" });

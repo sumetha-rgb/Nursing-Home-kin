@@ -4,7 +4,7 @@ import CsvIcon from "@/components/CsvIcon";
 import Image from "next/image";
 import Link from "next/link";
 import Icon from "@/components/Icon";
-import { DataTable, Field, Modal, PageHeader, PrintLetterhead, Section, Select, StatFilter, StatusBadge, Tabs } from "@/components/ui";
+import { DataTable, Field, Modal, PageHeader, PrintLetterhead, Section, Select, StatFilter, StatusBadge, Tabs, ThaiDateInput } from "@/components/ui";
 import { AppProvider, useApp } from "@/lib/app";
 import { downloadCsv, refreshData, useCrud, useRecords } from "@/lib/store";
 import { OfflineBar } from "@/components/Pwa";
@@ -12,9 +12,11 @@ import PhotoPicker from "@/components/PhotoPicker";
 import TutorialVideos from "@/components/TutorialVideos";
 import CashierOnly from "@/components/CashierOnly";
 import CentralStock from "@/components/pharmacy/CentralStock";
-import Withdraw from "@/components/pharmacy/Withdraw";
+import { DayTimeline, WithdrawBox } from "@/components/pharmacy/Withdraw";
+import { DaySlot, slotOf } from "@/components/pharmacy/GiveMeds";
 import { ResidentPicker } from "@/components/SearchSelect";
 import SupplyStock from "@/components/pharmacy/SupplyStock";
+import RxOverview from "@/components/pharmacy/RxOverview";
 import { MedPhotoModal, PhotoItem, saveMedPhoto } from "@/components/pharmacy/MedPhotos";
 import { stockAlertText, useStockAlerts } from "@/lib/stockAlerts";
 import { can } from "@/lib/perms";
@@ -23,23 +25,21 @@ import Login from "@/components/Login";
 import AppSwitcher from "@/components/AppSwitcher";
 import { useSession, SessionUser } from "@/lib/session";
 
-import { nowTh, Drug, Pack, Page, MEALS, DAYS, FORMS, STORES, TIMINGS, AUDIT_STATUS, ERR_5R, WARN_SUGGEST, RESIDENTS as RESIDENTS0, d, DRUGS0, MASTER0, iso, thai, dayOf, drugsFor, isLiquid, stockText, sumByUnit, daysLeft } from "@/lib/pharmacy";
+import { nowTh, Drug, Pack, Page, MEALS, DAYS, FORMS, STORES, TIMINGS, AUDIT_STATUS, ERR_5R, WARN_SUGGEST, RESIDENTS as RESIDENTS0, d, DRUGS0, MASTER0, iso, thai, dayOf, drugsFor, isLiquid, isUseDrug, stockText, sumByUnit, daysLeft } from "@/lib/pharmacy";
 
 const NAV: { id: Page; label: string; icon: string; group: number }[] = [
-  { id: "dashboard", label: "แดชบอร์ด", icon: "grid", group: 0 },
-  { id: "dispense", label: "จัดยารายวัน", icon: "pill", group: 0 },
-  { id: "withdraw", label: "เบิกยา", icon: "download", group: 0 },
-  { id: "qa", label: "ตรวจซองยา (QA)", icon: "check", group: 0 },
-  { id: "central", label: "คลังยากลางของศูนย์", icon: "building", group: 1 },
+  { id: "dashboard", label: "ภาพรวม", icon: "grid", group: 0 },
+  { id: "withdraw", label: "เบิกยา", icon: "pill", group: 0 },
+  { id: "central", label: "คลังยากลาง (ยาของศูนย์)", icon: "building", group: 1 },
   { id: "supplies", label: "คลังเวชภัณฑ์", icon: "files", group: 1 },
-  { id: "inventory", label: "ยาของผู้ป่วย (รับเข้า · แก้ไข)", icon: "download", group: 1 },
-  { id: "audit", label: "ตรวจนับและปรับยอดยา", icon: "refresh", group: 1 },
-  { id: "templates", label: "ซองมื้อยา", icon: "files", group: 1 },
-  { id: "master", label: "ฐานข้อมูลยา", icon: "book", group: 1 },
-  { id: "report", label: "รายงานการจัดยา", icon: "table", group: 2 },
-  { id: "manual", label: "คู่มือผู้ใช้งาน", icon: "doc", group: 2 },
+  { id: "inventory", label: "ยาของผู้ป่วย", icon: "download", group: 1 },
+  { id: "audit", label: "นับยาคงเหลือ", icon: "refresh", group: 1 },
+  { id: "templates", label: "ยาแต่ละมื้อของผู้ป่วย", icon: "files", group: 1 },
+  { id: "master", label: "รายชื่อยา", icon: "book", group: 1 },
+  { id: "report", label: "ซองยาระบบเดิม", icon: "table", group: 2 },
+  { id: "manual", label: "วิธีใช้งาน", icon: "doc", group: 2 },
 ];
-const GROUPS = [{ id: 0, label: "งานประจำวัน", en: "DAILY" }, { id: 1, label: "คลังยา", en: "STOCK" }, { id: 2, label: "รายงาน", en: "REPORT" }];
+const GROUPS = [{ id: 0, label: "งานวันนี้", en: "DAILY" }, { id: 1, label: "คลังยา", en: "STOCK" }, { id: 2, label: "รายงาน", en: "REPORT" }];
 
 /* ---------- ช่องถ่ายรูป ---------- */
 /** รายชื่อผู้รับบริการจริงของสาขา (จากฐานข้อมูล) ส่งให้ทุกหน้าในแอป · ยังโหลดไม่ได้ใช้รายชื่อตัวอย่าง */
@@ -70,12 +70,14 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   const [invView, setInvView] = useState("");
   // ตรวจ QA เจอซองจัดผิด → รีเซตแล้วเปิดหน้าจัดยาของผู้ป่วยและวันนั้นให้เลย
   const [focus, setFocus] = useState<{ who: string; date: string } | null>(null);
-  /** ผู้ป่วยที่เลือกในหน้าเบิกยา (กดจากหน้าจัดยา → เปิดคนเดียวกัน) */
-  const [wWho, setWWho] = useState<string | undefined>(undefined);
+  /** ผู้ป่วยที่เลือกในจัดยาตามมื้อ / เบิกยาตามใช้ (สลับเมนูแล้วยังเป็นคนเดิม) */
+  const [medWho, setMedWho] = useState("");
 
   // เปิดหน้าตาม ?page= เช่น /pharmacy?page=dispense
   useEffect(() => {
-    const p = new URLSearchParams(window.location.search).get("page") as Page | null;
+    const raw = new URLSearchParams(window.location.search).get("page") as Page | null;
+    // จัดยาตามมื้อ / ตรวจซองยา เลิกใช้แล้ว (ให้ยาที่เบิกยา) · ลิงก์เดิมพามาหน้าเบิกยา
+    const p = raw === "dispense" || raw === "qa" ? "withdraw" : raw;
     if (p && NAV.some((n) => n.id === p)) setPage(p);
   }, []);
   const go = (p: Page) => {
@@ -91,7 +93,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
 
   const sidebar = (
     <div className="sidebar-inner">
-      <Link href="/pharmacy" className="sidebar-brand"><Image src="/logo-mark.png" alt="KIN" width={43} height={34} /><div><span className="sidebar-wordmark">KIN<span>med</span></span><span className="sidebar-brand-caption">ห้องยา · จัดยาและคลังยา</span></div></Link>
+      <Link href="/pharmacy" className="sidebar-brand"><Image src="/logo-mark.png" alt="KIN" width={43} height={34} /><div><span className="sidebar-wordmark">KIN<span>med</span></span><span className="sidebar-brand-caption">ห้องยา · ให้ยาและคลังยา</span></div></Link>
       <div className="workspace-identity"><span className="workspace-monogram">ห</span><div><strong>{user.name}</strong><span>ห้องยา · {user.branch}</span></div><span className="workspace-live" /></div>
       <nav className="sidebar-nav" aria-label="เมนูห้องยา">
         {GROUPS.map((g) => (
@@ -125,16 +127,17 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
             <span className="topbar-section">ห้องยา</span><span className="topbar-slash">/</span><span className="topbar-current">{current.label}</span>
           </div>
           <div className="flex items-center gap-3">
-            <button className="btn-primary !min-h-[40px] !px-4 !py-2 text-sm" onClick={() => go("dispense")}><Icon name="pill" className="h-4 w-4" /> จัดยา</button>
+            {page !== "withdraw" && <button className="btn-primary !min-h-[40px] !px-4 !py-2 text-sm" onClick={() => go("withdraw")}><Icon name="pill" className="h-4 w-4" /> เบิกยา</button>}
             <AppSwitcher user={user} current="pharmacy" />
           </div>
         </header>
         <OfflineBar />
         <main className="workspace-main" key={page}>
           <PrintLetterhead title="ระบบบริหารจัดการยา" className="page-letterhead" />
-          {page === "dashboard" && <Dashboard go={go} need={todayNeed.length} packed={packedToday} low={low} waitQa={waitQa} onLow={() => { setInvView("low"); go("inventory"); }} />}
-          {page === "dispense" && <Dispense drugs={drugs} setDrugs={setDrugs} packs={packs} setPacks={setPacks} go={go} me={user.name} focus={focus} onAddDrug={(w) => { setAddFor(w); go("inventory"); }} onWithdraw={(w) => { setWWho(w); go("withdraw"); }} />}
-          {page === "withdraw" && <Withdraw drugs={drugs} names={RESIDENTS} initialWho={wWho} onWho={setWWho} />}
+          {page === "dashboard" && <Dashboard go={go} low={low} onLow={() => { setInvView("low"); go("inventory"); }} onPerson={(w) => { setMedWho(w); go("withdraw"); }} />}
+          {(page === "dispense" || page === "withdraw") && <Dispense mode="use" who={medWho} setWho={setMedWho}
+            drugs={drugs} setDrugs={setDrugs} packs={packs} setPacks={setPacks} go={go} me={user.name} focus={focus} onAddDrug={(w) => { setAddFor(w); go("inventory"); }}
+            canVoidAll={["Global Admin", "Branch Admin", "Head Nurse"].includes(user.role)} />}
           {page === "qa" && <QA packs={packs} setPacks={setPacks} drugs={drugs} setDrugs={setDrugs} me={user.name} go={go} onRedo={(who, date) => { setFocus({ who, date }); go("dispense"); }} />}
           {page === "inventory" && <Inventory drugs={drugs} setDrugs={setDrugs} master={master} addFor={addFor} onAdded={() => setAddFor(null)} lowView={invView} onLowView={setInvView} />}
           {page === "central" && <CentralStock />}
@@ -145,40 +148,28 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
           {page === "report" && <Report packs={packs} />}
           {page === "manual" && <Manual />}
         </main>
-        <footer className="workspace-footer"><span>KIN MEDCARE</span><span>จัดยาด้วยหลัก 5R เพื่อความปลอดภัยของผู้รับบริการ</span></footer>
+        <footer className="workspace-footer"><span>KIN MEDCARE</span><span>ให้ยาตามหลัก 5R เพื่อความปลอดภัยของผู้ป่วย</span></footer>
       </div>
     </div>
     </NamesCtx.Provider>
   );
 }
 
-/* ---------- แดชบอร์ด ---------- */
-function Dashboard({ go, need, packed, low, waitQa, onLow }: { go: (p: Page) => void; need: number; packed: number; low: Drug[]; waitQa: number; onLow: () => void }) {
+/* ---------- ภาพรวมห้องยา ---------- */
+/** ภาพรวม: กราฟการให้ยาตามช่วงวันที่ (RxOverview) · ปุ่มลัด เติมยา/นับยา · แจ้งเตือนคลังกลาง · ยาใกล้หมด */
+function Dashboard({ go, low, onLow, onPerson }: { go: (p: Page) => void; low: Drug[]; onLow: () => void; onPerson: (name: string) => void }) {
   const { items: stock } = useStockAlerts();
-  // แถบขั้นตอนพร้อมตัวเลขของวันนี้ · วิธีทำแต่ละขั้น (พนักงาน / ระบบ) อยู่ที่หน้าคู่มือ
-  const steps: { t: string; note: string; tone?: "now" | "warn" | "done"; p: Page | "kinapp" }[] = [
-    { t: "รับยา", note: "ยาของผู้ป่วย", p: "inventory" },
-    { t: "จัดยา", note: need ? `จัดแล้ว ${packed}/${need} ซอง` : "วันนี้ไม่มีซองต้องจัด", tone: need && packed >= need ? "done" : need ? "now" : undefined, p: "dispense" },
-    { t: "ตรวจ QA", note: waitQa ? `รอตรวจ ${waitQa} ซอง` : "ไม่มีซองรอตรวจ", tone: waitQa ? "warn" : undefined, p: "qa" },
-    { t: "ให้ยา", note: "KinApp", p: "kinapp" },
-  ];
   return (
     <>
-      <PageHeader title="แดชบอร์ด" sub="งานจัดยาวันนี้" />
-      <ol className="rx-steps">
-        {steps.map((s, i) => (
-          <li key={s.t}><button type="button" className={s.tone ? `is-${s.tone}` : ""} onClick={() => (s.p === "kinapp" ? window.location.assign("/staff") : go(s.p))}>
-            <span className="rx-n">{s.tone === "done" ? <Icon name="check" className="h-3.5 w-3.5" /> : i + 1}</span><b>{s.t}</b><small>{s.note}</small>
-          </button></li>
-        ))}
-      </ol>
-      <div className="mb-6 flex flex-wrap items-center gap-2">
+      <PageHeader title="ภาพรวมห้องยา" sub="การให้ยาตามมื้อ ไม่ได้ให้ยา และเบิกตามอาการ · เลือกดูวันนี้ รายสัปดาห์ รายเดือน หรือเลือกช่วงจากปฏิทิน" />
+      <div className="mb-4 flex flex-wrap items-center gap-2">
         <button className="btn-soft" onClick={onLow}><Icon name="alert" className="h-4 w-4" /> เติมยาใกล้หมด{low.length ? ` ${low.length}` : ""}</button>
-        <button className="btn-soft" onClick={() => go("audit")}><Icon name="check" className="h-4 w-4" /> สุ่มนับยา</button>
-        <button className="step-link ml-auto !mt-0" onClick={() => go("manual")}>วิธีทำแต่ละขั้น<Icon name="arrow" className="h-3.5 w-3.5" /></button>
+        <button className="btn-soft" onClick={() => go("audit")}><Icon name="check" className="h-4 w-4" /> นับยาคงเหลือ</button>
+        <button className="btn-soft" onClick={() => go("inventory")}><Icon name="download" className="h-4 w-4" /> เพิ่มยาใหม่ของผู้ป่วย</button>
+        <button className="step-link ml-auto !mt-0" onClick={() => go("manual")}>วิธีใช้งาน<Icon name="arrow" className="h-3.5 w-3.5" /></button>
       </div>
       {stock.length > 0 && (
-        <button type="button" onClick={() => go("central")} className="card mb-6 flex w-full flex-wrap items-center gap-4 border-amber-200 bg-amber-50/70 p-5 text-left transition hover:border-amber-300">
+        <button type="button" onClick={() => go("central")} className="card mb-4 flex w-full flex-wrap items-center gap-4 border-amber-200 bg-amber-50/70 p-5 text-left transition hover:border-amber-300">
           <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-amber-100 text-amber-800"><Icon name="alert" className="h-5 w-5" /></span>
           <span className="min-w-0 flex-1">
             <b className="block text-gold-900">คลังยากลาง: ใกล้หมด {stock.filter((x) => x.low).length} รายการ · ใกล้หมดอายุ {stock.filter((x) => x.days !== null && x.days <= 60).length} รายการ</b>
@@ -187,21 +178,254 @@ function Dashboard({ go, need, packed, low, waitQa, onLow }: { go: (p: Page) => 
           <span className="step-link">ไปที่คลังยากลาง<Icon name="arrow" className="h-3.5 w-3.5" /></span>
         </button>
       )}
+      <RxOverview onPerson={onPerson} />
       {low.length > 0 && (
-        <div className="mt-6"><Section title="ยาใกล้หมด" sub="เหลือไม่ถึง 2 วัน · ยาของญาติแจ้งญาตินำมาเพิ่ม">
-          <DataTable columns={["ผู้รับบริการ", "ชื่อยา", "คงเหลือ", "สถานะ"]} rows={low.map((x) => [x.who, x.name, `${x.stock} ${x.unit}`, x.stock === 0 ? "ยาหมด" : "รอเติมยา"])} />
+        <div className="mt-6"><Section title="ยาใกล้หมด" sub="เหลือใช้ไม่ถึง 2 วัน · ยาที่ญาตินำมา แจ้งญาติให้นำมาเพิ่ม · ยาของศูนย์ เติมจากคลังยากลาง">
+          <DataTable search={low.length > 10} columns={["ผู้ป่วย", "ชื่อยา", "คงเหลือ", "สถานะ"]} rows={low.map((x) => [x.who, x.name, `${x.stock} ${x.unit}`, x.stock === 0 ? "ยาหมด" : "รอเติมยา"])} />
         </Section></div>
       )}
     </>
   );
 }
 
-/* ---------- จัดยารายวัน ---------- */
-function Dispense({ drugs, setDrugs, packs, setPacks, go, me, focus, onAddDrug, onWithdraw }: { drugs: Drug[]; setDrugs: (x: Drug[]) => void; packs: Pack[]; setPacks: (x: Pack[]) => void; go: (p: Page) => void; me: string; focus: { who: string; date: string } | null; onAddDrug: (who: string) => void; onWithdraw: (who: string) => void }) {
+/* ---------- จัดยาตามมื้อ: ทีละมื้อ (ทั้งสาขา) / ทีละคน ---------- */
+type PackState = "wait" | "qa" | "pass" | "bad" | "given";
+const PACK_TH: Record<PackState, string> = { wait: "ยังไม่จัด", qa: "จัดแล้ว · รอตรวจ", pass: "ตรวจแล้ว · รอให้ยา", bad: "QA แจ้งว่าจัดผิด", given: "ให้ยาแล้ว" };
+const PACK_TONE: Record<PackState, string> = { wait: "bg-amber-50 text-amber-800 ring-1 ring-amber-200", qa: "bg-sky-50 text-sky-800", pass: "bg-violet-50 text-violet-800", bad: "bg-red-50 text-red-700", given: "bg-emerald-50 text-emerald-800" };
+const mealByClock = () => { const h = new Date().getHours(); return h < 10 ? MEALS[0] : h < 14 ? MEALS[1] : h < 19 ? MEALS[2] : MEALS[3]; };
+
+/**
+ * จัดยาตามมื้อ: เริ่มจากมื้อ (ห้องยาจัดซองเช้าให้ทุกคนรวดเดียว) · แถบมื้อบอกความคืบหน้าทั้งสาขา
+ *  แถวละ 1 คน เรียงตามห้อง · กด "จัด" แล้วติ๊กยา + ถ่ายรูป + บันทึกในแถว · บันทึกแล้วกางแถวถัดไปให้เอง
+ *  มุมมองทีละคน = ตาราง คน × 4 มื้อ แตะช่องรอจัดไปจัดมื้อนั้น
+ */
+function MealBoard({ drugs, setDrugs, packs, setPacks, go, me, focus, allergy, onAddDrug }: { drugs: Drug[]; setDrugs: (x: Drug[]) => void; packs: Pack[]; setPacks: (x: Pack[]) => void; go: (p: Page) => void; me: string; focus: { who: string; date: string } | null; allergy: Record<string, string>; onAddDrug: (who: string) => void }) {
   const RESIDENTS = useNames();
+  const { residents: live } = useResidents();
   const { toast, confirm } = useApp();
-  const [who, setWho] = useState(focus?.who ?? RESIDENTS[0]);
-  useEffect(() => { if (!RESIDENTS.includes(who)) setWho(RESIDENTS[0]); }, [RESIDENTS]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [date, setDate] = useState(focus?.date ?? iso());
+  const [view, setView] = useState<"meal" | "person">("meal");
+  const [meal, setMeal] = useState(mealByClock);
+  const [filt, setFilt] = useState<"wait" | "all">("wait");
+  const [q, setQ] = useState("");
+  const [open, setOpen] = useState<string | null>(null); // `${ผู้ป่วย}|${มื้อ}`
+  const [ticks, setTicks] = useState<number[]>([]);
+  const [photo, setPhoto] = useState("");
+  const [err, setErr] = useState("");
+  const [sum, setSum] = useState(false);
+  // คนที่เบิกยานอกรอบไปแล้ววันนั้น (เมนูเบิกยาตามใช้) · เตือนในการ์ดก่อนจัดซอง กันให้ยาซ้ำ
+  const [wdDay, setWdDay] = useState<Record<string, { n: number; last: string }>>({});
+  useEffect(() => {
+    fetch(`/api/pharmstock?op=withdrawals_day&date=${date}`, { cache: "no-store" }).then((r) => (r.ok ? r.json() : { items: [] }))
+      .then((d: { items: { name: string; n: number; last: string }[] }) => setWdDay(Object.fromEntries((d.items ?? []).map((x) => [x.name, { n: x.n, last: x.last }])))).catch(() => {});
+  }, [date]);
+  const roomOf = (w: string) => { const r = live.find((x) => x.full_name === w)?.room ?? ""; return r && r !== "-" ? r : ""; };
+  const packOf = (w: string, m: string, d = date) => packs.find((p) => p.date === d && p.who === w && p.meal === m);
+  const stateOf = (w: string, m: string): PackState => { const p = packOf(w, m); if (!p) return "wait"; if (p.given) return "given"; return p.qa === "ตรวจผ่าน" ? "pass" : p.qa === "แจ้งจัดยาผิด" ? "bad" : "qa"; };
+  const listOf = (w: string, m: string, d = date) => drugsFor(drugs, w, m, d);
+  const slots = (m: string) => RESIDENTS.filter((w) => listOf(w, m).length || packOf(w, m));
+  const byRoom = (a: string, b: string) => (roomOf(a) || "~").localeCompare(roomOf(b) || "~") || a.localeCompare(b, "th");
+  const match = (w: string) => !q.trim() || `${w} ${roomOf(w)}`.toLowerCase().includes(q.trim().toLowerCase());
+  const openSlot = (w: string, m: string) => { setOpen(`${w}|${m}`); setTicks([]); setPhoto(""); setErr(""); };
+  // จาก QA "รีเซตซองนี้แล้วจัดใหม่" → เปิดมื้อที่ต้องจัดของคนนั้น
+  useEffect(() => {
+    if (!focus) return;
+    setDate(focus.date); setView("meal"); setFilt("wait");
+    const m = MEALS.find((x) => listOf(focus.who, x, focus.date).length && !packOf(focus.who, x, focus.date));
+    if (m) { setMeal(m); openSlot(focus.who, m); }
+  }, [focus]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const [ow, om] = open ? open.split("|") : ["", ""];
+  const save = () => {
+    if (!open) return;
+    const list = listOf(ow, om);
+    if (ticks.length < list.length) return setErr(`ติ๊กยาให้ครบก่อนบันทึก (ติ๊กแล้ว ${ticks.length} จาก ${list.length})`);
+    if (!photo) return setErr("ยังไม่ได้ถ่ายรูปซอง · ถ่ายรูปก่อนบันทึก");
+    const items = list.map((x) => (x.stock >= x.dose ? (isLiquid(x) ? `${x.name} ${x.dose} ml` : `${x.name} × ${x.dose} ${x.unit}`) : `${x.name} (ยาหมด/รอเติม)`));
+    setDrugs(drugs.map((x) => (list.some((y) => y.id === x.id) ? { ...x, stock: Math.max(0, x.stock - x.dose) } : x)));
+    const id = Date.now();
+    setPacks([{ id, date, who: ow, meal: om, items, qa: "รอตรวจ", given: false, by: me }, ...packs]);
+    saveMedPhoto("pack", id, photo, toast);
+    toast(`จัดซองมื้อ${om}แล้ว · ${ow} · รอตรวจ QA`);
+    const next = slots(om).filter((w) => w !== ow && stateOf(w, om) === "wait" && match(w)).sort(byRoom)[0];
+    if (next) openSlot(next, om); else setOpen(null);
+  };
+  const reset = (w: string, m: string) => {
+    const p = packOf(w, m); if (!p || p.given) return;
+    confirm({ title: "รีเซตซองยา", danger: true, okLabel: "รีเซต", message: `ล้างซองมื้อ${m}ของ ${w} และคืนคงเหลือยา ใช่หรือไม่${p.qa === "ตรวจผ่าน" ? " (ซองนี้ตรวจ QA ผ่านแล้วและอยู่ในคิวจ่ายยาของ KinApp)" : ""}`, onOk: () => {
+      const list = listOf(w, m);
+      setDrugs(drugs.map((y) => (list.some((z) => z.id === y.id) ? { ...y, stock: y.stock + y.dose } : y)));
+      setPacks(packs.filter((x) => x.id !== p.id)); toast(`รีเซตแล้ว · ${w} มื้อ${m} · จัดใหม่ได้`);
+    } });
+  };
+
+  const mealSlots = slots(meal).filter(match).sort(byRoom);
+  const waitN = mealSlots.filter((w) => stateOf(w, meal) === "wait").length;
+  const shown = mealSlots.filter((w) => filt === "all" || stateOf(w, meal) === "wait" || `${w}|${meal}` === open);
+  const people = RESIDENTS.filter((w) => MEALS.some((m) => listOf(w, m).length || packOf(w, m))).filter(match).sort(byRoom);
+
+  return (
+    <>
+      <PageHeader title="จัดยาตามมื้อ" sub="สำหรับยาที่กินตามมื้อ · เลือกมื้อ แล้วจัดซองให้ทีละคน › ให้อีกคนตรวจซอง (QA) › พนักงานให้ยาใน KinApp"
+        actions={<><button className="btn-soft" onClick={() => onAddDrug(ow)}><Icon name="plus" className="h-4 w-4" /> เพิ่มยา</button>{view === "meal" && <button className="btn-soft" onClick={() => setSum(true)}><Icon name="files" className="h-4 w-4" /> รายการยาที่ต้องหยิบ</button>}</>} />
+
+      <div className="mb-3 grid gap-2 sm:grid-cols-[180px_minmax(0,1fr)_auto] sm:items-center">
+        <ThaiDateInput label="วันกินยา" value={date} onChange={(v) => { if (v) { setDate(v); setOpen(null); } }} />
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="ค้นหาชื่อหรือเลขห้อง" aria-label="ค้นหาผู้ป่วย" />
+        <div className="inline-flex justify-self-start rounded-xl border border-cream-300 bg-white p-0.5 text-sm" role="group" aria-label="มุมมอง">
+          {([["meal", "ดูทีละมื้อ"], ["person", "ดูทีละคน"]] as const).map(([k, t]) => <button key={k} type="button" aria-pressed={view === k} onClick={() => { setView(k); setOpen(null); }}
+            className={`rounded-lg px-3.5 py-1.5 ${view === k ? "bg-gold-700 font-medium text-white" : "text-gold-600"}`}>{t}</button>)}
+        </div>
+      </div>
+
+      {/* แถบมื้อ: ตัวเลขใหญ่ = ซองที่ยังไม่จัด · แถบสี = ความคืบหน้าทั้งสาขา */}
+      <div className="mb-5 grid grid-cols-2 gap-2 lg:grid-cols-4" role="group" aria-label="เลือกมื้อ">
+        {MEALS.map((m) => {
+          const ss = slots(m).map((w) => stateOf(w, m)), n = ss.length || 1, c = (k: PackState) => ss.filter((s) => s === k).length;
+          const on = view === "meal" && meal === m, wait = c("wait");
+          return (
+            <button key={m} type="button" aria-pressed={on} onClick={() => { setMeal(m); setView("meal"); setOpen(null); }}
+              className={`grid gap-1.5 rounded-2xl border p-3 text-left transition ${on ? "border-gold-600 bg-gold-100/60 shadow-[inset_0_0_0_1.5px] shadow-gold-600" : "border-cream-300 bg-white hover:border-gold-300"} ${ss.length ? "" : "opacity-60"}`}>
+              <span className="flex items-baseline justify-between gap-2"><b className="text-[15px] text-gold-900">มื้อ{m}</b>{ss.length > 0 && <small className="tabular-nums text-xs text-gold-500">{ss.length - wait}/{ss.length}</small>}</span>
+              <span className={`text-sm font-semibold ${!ss.length ? "font-normal text-gold-500" : wait ? "text-amber-800" : "text-emerald-700"}`}>{!ss.length ? "ไม่มียามื้อนี้" : wait ? `${wait} ซองยังไม่จัด` : "✓ จัดครบแล้ว"}</span>
+              <span className="flex h-1.5 overflow-hidden rounded-full bg-cream-300">
+                <i className="block h-full bg-emerald-600" style={{ width: `${(c("given") / n) * 100}%` }} />
+                <i className="block h-full bg-violet-500" style={{ width: `${(c("pass") / n) * 100}%` }} />
+                <i className="block h-full bg-sky-500" style={{ width: `${((c("qa") + c("bad")) / n) * 100}%` }} />
+              </span>
+              <small className="truncate text-[11.5px] text-gold-500">{[c("qa") + c("bad") ? `รอตรวจ ${c("qa") + c("bad")}` : "", c("pass") ? `รอให้ยา ${c("pass")}` : "", c("given") ? `ให้ยาแล้ว ${c("given")}` : ""].filter(Boolean).join(" · ") || (ss.length ? "ยังไม่มีซองที่จัด" : " ")}</small>
+            </button>
+          );
+        })}
+      </div>
+
+      {view === "meal" ? <>
+        <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2">
+          <h2 className="text-lg font-semibold text-gold-900">ซองยามื้อ{meal} <small className="text-sm font-normal text-gold-500">· {thai(date)}</small></h2>
+          <div className="flex gap-1.5 text-sm" role="group" aria-label="กรองซอง">
+            {([["wait", `ยังไม่จัด ${waitN}`], ["all", `ทุกซอง ${mealSlots.length}`]] as const).map(([k, t]) => <button key={k} type="button" aria-pressed={filt === k} onClick={() => setFilt(k)}
+              className={`rounded-full border px-3 py-1 ${filt === k ? "border-gold-800 bg-gold-800 font-medium text-white" : "border-cream-300 bg-white text-gold-700"}`}>{t}</button>)}
+          </div>
+          <p className="w-full text-xs text-gold-500 sm:ml-auto sm:w-auto">วิธีจัด: กด <b>จัดซองนี้</b> › ติ๊กยาที่หยิบ › ถ่ายรูปซอง › บันทึก (ระบบเปิดคนถัดไปให้)</p>
+        </div>
+        {!shown.length ? (
+          mealSlots.length ? <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-emerald-50 px-4 py-3 text-sm text-emerald-800"><span>✓ จัดซองมื้อ{meal}ครบทุกคนแล้ว · ขั้นต่อไป ให้อีกคนตรวจซองยา (QA)</span><button className="btn-soft" onClick={() => go("qa")}>ไปตรวจซองยา ›</button></div>
+            : <div className="card empty-state"><Icon name="pill" /><p>{q ? `ไม่พบ "${q}"` : `ไม่มีใครต้องกินยามื้อ${meal}ในวันนี้`}</p></div>
+        ) : <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{shown.map((w) => {
+          const s = stateOf(w, meal), p = packOf(w, meal), list = listOf(w, meal), isOpen = open === `${w}|${meal}`;
+          const items: { name: string; dose: string; low: boolean }[] = p ? p.items.map((t) => ({ name: t, dose: "", low: t.includes("รอเติม") }))
+            : list.map((x) => ({ name: x.name, dose: `${x.dose} ${x.unit}`, low: x.stock < x.dose }));
+          return (
+            <li key={w} className={`flex flex-col overflow-hidden rounded-2xl border bg-white ${isOpen ? "border-gold-600 shadow-soft sm:col-span-2 xl:col-span-3" : "border-cream-300"}`}>
+              <div className="flex items-start gap-3 p-4 pb-3">
+                <span className={`shrink-0 rounded-xl px-2.5 py-1 text-center tabular-nums ${roomOf(w) ? "bg-gold-100 text-base font-bold text-gold-800" : "bg-cream-100 text-xs text-gold-500"}`}>{roomOf(w) || "ไม่มีห้อง"}</span>
+                <span className="min-w-0 flex-1"><b className="block truncate text-[15px] text-gold-900">{w}</b>
+                  {allergy[w] && <span className="mt-0.5 inline-block rounded bg-red-50 px-1.5 text-[11.5px] font-semibold text-red-700">⚠ แพ้ยา: {allergy[w]}</span>}</span>
+                {s !== "wait" && <span className={`shrink-0 whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium ${PACK_TONE[s]}`}>{PACK_TH[s]}</span>}
+              </div>
+              {wdDay[w] && s === "wait" && <button type="button" onClick={() => go("withdraw")} className="mx-4 mb-2 rounded-lg bg-amber-100/70 px-3 py-1.5 text-left text-xs text-amber-900">
+                ⚠ วันนี้เบิกยานอกรอบให้คนนี้แล้ว <b>{wdDay[w].n} ครั้ง</b> (ล่าสุด {wdDay[w].last} น.) · ตรวจว่าไม่ใช่มื้อเดียวกัน ก่อนจัดซอง ›</button>}
+              <ul className={`mx-4 flex-1 divide-y divide-cream-200 rounded-xl bg-cream-50 px-3 ${isOpen ? "hidden" : ""}`}>
+                {items.map((it, i) => (
+                  <li key={it.name + i} className="flex items-baseline justify-between gap-3 py-1.5 text-sm">
+                    <span className={`min-w-0 ${it.low ? "font-medium text-amber-800" : "text-gold-800"}`}>{it.name}{it.low && !p ? " · ยาเหลือไม่พอ" : ""}</span>
+                    {it.dose && <b className="shrink-0 tabular-nums text-gold-900">{it.dose}</b>}
+                  </li>
+                ))}
+              </ul>
+              <div className="p-4 pt-3">
+                {s === "wait" ? (isOpen ? <button type="button" className="btn-soft w-full !py-2" onClick={() => setOpen(null)}>ยกเลิก ไม่จัดตอนนี้</button>
+                  : <button type="button" className="btn-primary w-full !py-2" onClick={() => openSlot(w, meal)}>จัดซองนี้</button>)
+                  : s === "given" ? <p className="text-center text-xs text-emerald-800">ให้ยาแล้ว{p?.gby ? ` โดย ${p.gby}` : ""}{p?.gat ? ` · ${p.gat.slice(11, 16)} น.` : ""}</p>
+                  : <div className="flex items-center justify-between gap-2"><small className="text-xs text-gold-500">จัดโดย {p?.by ?? "-"}{p?.qby ? ` · ตรวจโดย ${p.qby}` : ""}</small>
+                    <button type="button" className="btn-soft !py-1.5 text-sm text-red-700" onClick={() => reset(w, meal)}>{s === "bad" ? "ล้างซองแล้วจัดใหม่" : "จัดผิด? ล้างซอง"}</button></div>}
+              </div>
+              {isOpen && (
+                <div className="grid gap-4 border-t border-cream-200 bg-cream-50 p-4 md:grid-cols-[minmax(0,1fr)_300px]">
+                  <div className="space-y-2">
+                    <p className="text-xs font-medium text-gold-600">ขั้นที่ 1 · ติ๊กยาที่หยิบใส่ซองแล้ว ({ticks.length}/{list.length})</p>
+                    {list.map((x, i) => { const on = ticks.includes(i);
+                      return (
+                        <label key={x.id} className={`flex cursor-pointer items-center gap-3 rounded-xl border p-3 transition ${on ? "border-emerald-300 bg-emerald-50" : "border-cream-300 bg-white"}`}>
+                          <input type="checkbox" className="!h-5 !w-5 !min-h-0 accent-emerald-700" checked={on} onChange={() => { setTicks(on ? ticks.filter((y) => y !== i) : [...ticks, i]); setErr(""); }} />
+                          <span className="min-w-0 flex-1"><b className="block text-sm font-medium text-gold-900">{x.name}</b>
+                            <small className={`text-xs ${x.stock < x.dose ? "font-medium text-amber-800" : "text-gold-500"}`}>{x.stock < x.dose ? `เหลือ ${stockText(x)} · จัดเท่าที่มี ติดป้ายรอเติม` : `${x.how || ""}${x.how ? " · " : ""}คงเหลือ ${stockText(x)}`}</small>
+                            {x.warn.length > 0 && <small className="block text-xs text-red-700">คำเตือน: {x.warn.join(" · ")}</small>}</span>
+                          <b className="shrink-0 text-lg tabular-nums text-gold-700">{x.dose} {x.unit}</b>
+                        </label>
+                      ); })}
+                  </div>
+                  <div className="space-y-2">
+                    <p className="text-xs font-medium text-gold-600">ขั้นที่ 2 · ถ่ายรูปซองที่จัดเสร็จ ให้เห็นเม็ดยาคู่ฉลาก (บังคับ)</p>
+                    <Photo value={photo} onChange={(u) => { setPhoto(u); setErr(""); }} label="ถ่ายรูปซองยา" invalid={err.includes("ถ่ายรูป")} />
+                    {err && <p role="alert" className="form-error"><Icon name="alert" className="h-4 w-4 shrink-0" />{err}</p>}
+                    <button type="button" className="btn-primary w-full" onClick={save}>ขั้นที่ 3 · บันทึก แล้วไปคนถัดไป</button>
+                  </div>
+                </div>
+              )}
+            </li>
+          );
+        })}</ul>}
+      </> : (
+        /* ทีละคน: ตาราง คน × 4 มื้อ */
+        <div className="overflow-x-auto rounded-2xl border border-cream-300 bg-white">
+          <table className="w-full min-w-[560px] text-sm">
+            <thead><tr className="text-left text-xs text-gold-500"><th className="px-3 py-2">ห้อง</th><th className="px-3 py-2">ผู้ป่วย</th>{MEALS.map((m) => <th key={m} className="px-2 py-2 text-center">{m}</th>)}</tr></thead>
+            <tbody>{people.map((w) => (
+              <tr key={w} className="border-t border-cream-200">
+                <td className="px-3 py-2 font-bold tabular-nums text-gold-700">{roomOf(w) || "-"}</td>
+                <td className="px-3 py-2"><b className="font-medium text-gold-900">{w}</b>{allergy[w] && <span className="ml-1.5 rounded bg-red-50 px-1.5 text-[11px] font-semibold text-red-700">⚠ แพ้ยา</span>}</td>
+                {MEALS.map((m) => {
+                  const has = listOf(w, m).length || packOf(w, m);
+                  if (!has) return <td key={m} className="px-2 py-2 text-center text-gold-300">-</td>;
+                  const s = stateOf(w, m);
+                  return <td key={m} className="px-2 py-2 text-center">
+                    {s === "wait" ? <button type="button" onClick={() => { setMeal(m); setView("meal"); setFilt("wait"); openSlot(w, m); }} className={`w-full rounded-lg px-2 py-1 text-xs font-medium ${PACK_TONE[s]}`}>ยังไม่จัด · จัด ›</button>
+                      : <span className={`inline-block w-full rounded-lg px-2 py-1 text-xs font-medium ${PACK_TONE[s]}`}>{PACK_TH[s].split(" ·")[0]}</span>}
+                  </td>;
+                })}
+              </tr>
+            ))}</tbody>
+          </table>
+          {!people.length && <p className="py-6 text-center text-sm text-gold-500">{q ? `ไม่พบ "${q}"` : "ยังไม่มีผู้ป่วยที่มียาตามมื้อ"}</p>}
+        </div>
+      )}
+
+      <Modal open={sum} wide title={`รายการยาที่ต้องหยิบ · มื้อ${meal}`} onClose={() => setSum(false)} footer={<button className="btn-primary" onClick={() => setSum(false)}>ปิด</button>}>
+        <p className="mb-4 text-sm text-gold-600">ยาของทุกซองที่ยังไม่จัดในมื้อ{meal} วันที่ {thai(date)} · หยิบยาตามรายการนี้มาไว้ก่อน แล้วค่อยจัดทีละซอง</p>
+        <DataTable columns={["ห้อง", "ผู้ป่วย", "ชื่อยา", "จำนวน", "คงเหลือ"]} empty="ไม่มีซองที่ต้องจัด"
+          rows={mealSlots.filter((w) => stateOf(w, meal) === "wait").flatMap((w) => listOf(w, meal).map((x) => [roomOf(w) || "-", w, x.name, `${x.dose} ${x.unit}`, stockText(x)]))} />
+      </Modal>
+    </>
+  );
+}
+
+/* ---------- จัดยาตามมื้อ / เบิกยาตามใช้ ---------- */
+/**
+ * 2 เมนูแยกกัน ใช้รายชื่อผู้ป่วยแบบเดียวกัน (เลือกคนไว้แล้วสลับเมนูยังเป็นคนเดิม)
+ *  mode "meal" = จัดยาตามมื้อ: ซองตามมื้อ (จัด › QA › ให้ยา) · mode "use" = เบิกยาตามใช้: ยาขวด ยาทา ตามอาการ (lib/pharmacy isUseDrug)
+ *  ยาหนึ่งตัวอยู่เมนูเดียว ไม่ตัดคงเหลือซ้ำ · ไทม์ไลน์ของแต่ละเมนูแสดงเฉพาะงานของเมนูนั้น
+ */
+function Dispense({ mode, who, setWho, drugs, setDrugs, packs, setPacks, go, me, focus, onAddDrug, canVoidAll }: { mode: "meal" | "use"; who: string; setWho: (w: string) => void; drugs: Drug[]; setDrugs: (x: Drug[]) => void; packs: Pack[]; setPacks: (x: Pack[]) => void; go: (p: Page) => void; me: string; focus: { who: string; date: string } | null; onAddDrug: (who: string) => void; canVoidAll: boolean }) {
+  const RESIDENTS = useNames();
+  const { residents: live } = useResidents();
+  const { toast, confirm } = useApp();
+  const isMeal = mode === "meal";
+  const [tlKey, setTlKey] = useState(0);
+  const [pq, setPq] = useState("");
+  /** มือถือ: กางรายชื่อผู้ป่วยหรือไม่ */
+  const [pickOpen, setPickOpen] = useState(false);
+  // แพ้ยา (จากสัญญา) ขึ้นแถบแดงบนหัวหน้า
+  const [allergy, setAllergy] = useState<Record<string, string>>({});
+  useEffect(() => {
+    fetch("/api/care?op=allergies", { cache: "no-store" }).then((r) => (r.ok ? r.json() : { items: [] })).then((d: { items: { name: string; drug: string | null }[] }) => {
+      const m: Record<string, string> = {};
+      for (const x of d.items ?? []) { const v = String(x.drug ?? "").trim(); if (v && v !== "-" && !/^(ไม่มี|ไม่แพ้|ปฏิเสธ)/.test(v)) m[x.name] = v; }
+      setAllergy(m);
+    }).catch(() => {});
+  }, []);
+  useEffect(() => { if (focus?.who) setWho(focus.who); }, [focus]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (!RESIDENTS.includes(who)) setWho(RESIDENTS[0]); }, [RESIDENTS, who]); // eslint-disable-line react-hooks/exhaustive-deps
   const [date, setDate] = useState(focus?.date ?? iso());
   const [meal, setMeal] = useState<string | null>(null);
   const [photo, setPhoto] = useState("");
@@ -211,9 +435,38 @@ function Dispense({ drugs, setDrugs, packs, setPacks, go, me, focus, onAddDrug, 
   const [saveErr, setSaveErr] = useState<"" | "check" | "photo">("");
   const meals = MEALS.map((m) => ({ m, list: drugsFor(drugs, who, m, date), pack: packs.find((p) => p.date === date && p.who === who && p.meal === m) })).filter((x) => x.list.length || x.pack);
   const sel = meals.find((x) => x.m === meal);
-  // ยาขวด/ยาทา/ยาน้ำ เบิกตามจำนวนที่ใช้จริงที่เมนูเบิกยา (เก็บประวัติการเบิก)
-  const bulkCount = drugs.filter((x) => x.who === who && (x.bulk || isLiquid(x))).length;
   const done = meals.filter((x) => x.pack).length;
+  /** ความคืบหน้าของแต่ละคนในวันที่เลือก (รายชื่อซ้าย) */
+  const progressOf = (w: string) => {
+    const ms = MEALS.filter((m) => drugsFor(drugs, w, m, date).length || packs.some((p) => p.date === date && p.who === w && p.meal === m));
+    return { all: ms.length, done: ms.filter((m) => packs.some((p) => p.date === date && p.who === w && p.meal === m)).length, use: drugs.filter((x) => x.who === w && isUseDrug(x)).length };
+  };
+  const roomOf = (w: string) => live.find((r) => r.full_name === w)?.room ?? "";
+  /** รายชื่อ: ต้องจัด = ยังจัดซองไม่ครบ · มียา = มียาในตะกร้า · เรียง ต้องจัดก่อน แล้วตามห้อง · คนที่ยังไม่มียาอยู่ท้าย */
+  const [pf, setPf] = useState<"todo" | "has" | "done" | "all">("has");
+  // เบิกยาตามใช้: คนที่เบิกแล้วในวันที่เลือก (จำนวนครั้ง · เวลาล่าสุด)
+  const [wdDay, setWdDay] = useState<Record<string, { n: number; last: string }>>({});
+  // การให้ยาของวันที่เลือก: ยา × มื้อ ที่บันทึกแล้ว (ให้ หรือไม่ได้ให้) · ใช้นับ "ให้ยาตามมื้อแล้ว x/y" ในรายชื่อ
+  const [daySlots, setDaySlots] = useState<DaySlot[]>([]);
+  useEffect(() => {
+    if (isMeal) return;
+    fetch(`/api/pharmstock?op=withdrawals_day&date=${date}`, { cache: "no-store" }).then((r) => (r.ok ? r.json() : { items: [], slots: [] }))
+      .then((d: { items: { name: string; n: number; last: string }[]; slots?: DaySlot[] }) => {
+        setWdDay(Object.fromEntries((d.items ?? []).map((x) => [x.name, { n: x.n, last: x.last }]))); setDaySlots(d.slots ?? []);
+      }).catch(() => {});
+  }, [isMeal, date, tlKey]);
+  /** ยาตามมื้อของวันที่เลือก: ต้องให้กี่ (ยา × มื้อ) · บันทึกแล้วกี่ */
+  const doseProgress = (w: string) => {
+    const pairs = MEALS.flatMap((m) => drugsFor(drugs, w, m, date).map((d) => ({ d, m })));
+    return { all: pairs.length, done: pairs.filter(({ d, m }) => slotOf(daySlots, d.id, m).length).length };
+  };
+  // เบิกยา: มียา = มียาตัวใดก็ได้ · ยังให้ไม่ครบ = ยาตามมื้อของวันนี้ยังบันทึกไม่ครบ
+  const people = RESIDENTS.map((w) => { const g = isMeal ? progressOf(w) : { ...progressOf(w), ...doseProgress(w) }; return { w, g, has: isMeal ? g.all > 0 : drugs.some((x) => x.who === w), wd: wdDay[w] }; });
+  const pCount = { todo: people.filter((p) => p.g.all > p.g.done).length, has: people.filter((p) => p.has).length, done: people.filter((p) => p.wd).length, all: people.length };
+  const peopleShown = people
+    .filter((p) => (pf === "all" || (pf === "has" ? p.has : pf === "done" ? !!p.wd : p.g.all > p.g.done) || p.w === who) && (!pq.trim() || `${p.w} ${roomOf(p.w)}`.toLowerCase().includes(pq.trim().toLowerCase())))
+    .sort((a, b) => Number(b.g.all > b.g.done) - Number(a.g.all > a.g.done) || Number(b.has) - Number(a.has) || roomOf(a.w).localeCompare(roomOf(b.w)) || a.w.localeCompare(b.w, "th"));
+  const otherCount = isMeal ? progressOf(who).use : 0;
 
   const save = () => {
     if (!sel) return;
@@ -228,6 +481,8 @@ function Dispense({ drugs, setDrugs, packs, setPacks, go, me, focus, onAddDrug, 
     setMeal(null); toast(`จัดยาแล้ว · มื้อ${sel.m} · ส่งเข้าตะกร้ายา รอตรวจ QA`);
   };
 
+  // จัดยาตามมื้อใช้หน้าแบบทีละมื้อ (MealBoard) · ส่วนล่างของฟังก์ชันนี้เป็นของเบิกยาตามใช้
+  if (isMeal) return <MealBoard drugs={drugs} setDrugs={setDrugs} packs={packs} setPacks={setPacks} go={go} me={me} focus={focus} allergy={allergy} onAddDrug={onAddDrug} />;
   if (sel) {
     const short = sel.list.filter((x) => x.stock < x.dose);
     return (
@@ -268,26 +523,70 @@ function Dispense({ drugs, setDrugs, packs, setPacks, go, me, focus, onAddDrug, 
 
   return (
     <>
-      <PageHeader title="จัดยาใหม่ (Dispense)" sub="เลือกผู้ป่วยและวันที่ แล้วแตะมื้อยาเพื่อเริ่มจัด"
-        actions={<><button className="btn-soft" onClick={() => onAddDrug(who)}><Icon name="plus" className="h-4 w-4" /> เพิ่มยาให้ {who || "ผู้ป่วย"}</button><button className="btn-soft" onClick={() => setPreview(true)}><Icon name="eye" className="h-4 w-4" /> ตรวจสอบซองมื้อยาก่อนจัด</button></>} />
-      <div className="card mb-6 grid gap-4 p-5 sm:grid-cols-2">
-        <Field label="เลือกผู้สูงอายุ"><ResidentPicker names={RESIDENTS} requireRoom clearable={false} value={who} onChange={(v) => { setWho(v || RESIDENTS[0]); }} /></Field>
-        <Field label="วันกินยา"><input type="date" value={date} onChange={(e) => e.target.value && setDate(e.target.value)} /></Field>
-      </div>
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-[17px] font-medium text-gold-800">ซองยาที่ต้องจัดของ: {who}</h2>
-        <span className="text-sm text-gold-600">จัดแล้ว {done} / {meals.length} มื้อ</span>
-      </div>
-      {meals.length === 0 ? <div className="card empty-state"><Icon name="pill" /><p>{drugs.some((x) => x.who === who) ? "ไม่มียาที่ต้องจัดลงซองในวันนี้" : `${who} ยังไม่มียาในระบบ`}</p>
-        <p className="mt-1 text-xs text-gold-500">{drugs.some((x) => x.who === who) ? "ยาทุกตัวอาจเป็นยาขวด/ยาทา งดชั่วคราว หรือไม่ได้กินวันนี้" : "เพิ่มยาที่ญาตินำมาหรือแพทย์สั่ง แล้วซองยาตามมื้อจะขึ้นในหน้านี้"}</p>
-        {bulkCount > 0 && <p className="mt-3 text-sm text-gold-700">{who} มียาน้ำ / ยาขวด / ยาทา {bulkCount} รายการ ที่ไม่ต้องจัดลงซอง · เบิกตามจำนวนที่ใช้ได้ที่เมนูเบิกยา</p>}
-        <div className="mt-4 flex flex-wrap justify-center gap-2">
-          {bulkCount > 0 && <button className="btn-primary" onClick={() => onWithdraw(who)}><Icon name="download" className="h-4 w-4" /> ไปเบิกยาของ {who}</button>}
-          <button className={bulkCount > 0 ? "btn-soft" : "btn-primary"} onClick={() => onAddDrug(who)}><Icon name="plus" className="h-4 w-4" /> เพิ่มยาให้ {who}</button>
-        </div></div> : (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <PageHeader title={isMeal ? "จัดยาตามมื้อ" : "เบิกยา"}
+        sub={isMeal ? "ยาที่กินตามมื้อประจำ (ยาเม็ด · ยาน้ำตามมื้อ) · จัดลงซอง › ตรวจซองยา (QA) › พนักงานให้ยาใน KinApp" : "ยาทุกตัวของผู้ป่วย · ยาตามมื้อบอกว่ามื้อไหนให้แล้ว · เบิกแล้วระบบตัดคงเหลือ และบันทึกเป็นการให้ยาของมื้อนั้น"}
+        actions={<><button className="btn-soft" onClick={() => onAddDrug(who)}><Icon name="plus" className="h-4 w-4" /> เพิ่มยา<span className="hidden sm:inline">ให้ {who || "ผู้ป่วย"}</span></button>{isMeal && <button className="btn-soft" onClick={() => setPreview(true)}><Icon name="eye" className="h-4 w-4" /> ตรวจซอง<span className="hidden sm:inline">มื้อยาก่อนจัด</span></button>}</>} />
+      {/* จอกว้าง (≥1024px): รายชื่อซ้ายตรึงไว้ + เนื้อหาขวา · แท็บเล็ต/มือถือ: รายชื่อเป็นแถบเลื่อนแนวนอนด้านบน */}
+      <div className="grid items-start gap-4 lg:grid-cols-[260px_minmax(0,1fr)] lg:gap-5">
+        <aside className="card min-w-0 space-y-2 p-3 lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto">
+          {/* มือถือ/แท็บเล็ต: ปุ่มผู้ป่วยที่เลือก กดแล้วกางรายชื่อ (ไม่มีแถบเลื่อนแนวนอน) · จอกว้าง: รายชื่อเปิดตลอด */}
+          <button type="button" aria-expanded={pickOpen} onClick={() => setPickOpen(!pickOpen)}
+            className="flex w-full items-center justify-between gap-3 rounded-xl border border-gold-600 bg-gold-100/60 px-3 py-2.5 text-left lg:hidden">
+            <span className="min-w-0"><small className="block text-[11px] text-gold-500">ผู้ป่วย</small><b className="block truncate text-[15px] text-gold-900">{who || "เลือกผู้ป่วย"}{roomOf(who) && roomOf(who) !== "-" ? ` · ${roomOf(who)}` : ""}</b></span>
+            <span className="shrink-0 text-sm font-medium text-gold-700">{pickOpen ? "ปิด ▴" : "เปลี่ยน ▾"}</span>
+          </button>
+          <div className={`${pickOpen ? "grid" : "hidden"} gap-2 lg:grid`}>
+          <div className="grid grid-cols-2 gap-2 lg:grid-cols-1">
+            <ThaiDateInput label="วันกินยา" value={date} onChange={(v) => v && setDate(v)} />
+            <input value={pq} onChange={(e) => setPq(e.target.value)} placeholder="ค้นหาชื่อ / ห้อง" aria-label="ค้นหาผู้ป่วย" />
+          </div>
+          <div className="flex gap-1 text-xs" role="radiogroup" aria-label="กรองรายชื่อ">
+            {(isMeal ? [["todo", "ต้องจัด"], ["has", "มีซอง"], ["all", "ทั้งหมด"]] as const : [["todo", "ยังให้ไม่ครบ"], ["has", "มียา"], ["all", "ทั้งหมด"]] as const).map(([k, t]) => (
+              <button key={k} type="button" role="radio" aria-checked={pf === k} onClick={() => setPf(k)}
+                className={`flex-1 rounded-full border px-2 py-1 ${pf === k ? "border-gold-700 bg-gold-700 font-medium text-white" : "border-cream-300 bg-white text-gold-700"}`}>{t} {pCount[k]}</button>
+            ))}
+          </div>
+          <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-1">{peopleShown.map(({ w, g, has, wd }) => {
+            const on = w === who, pending = g.all > g.done;
+            return (
+              <li key={w} className="min-w-0">
+                <button type="button" aria-pressed={on} onClick={() => { setWho(w); setPickOpen(false); }} className={`grid w-full gap-1 rounded-xl border px-3 py-2 text-left transition ${on ? "border-gold-600 bg-gold-100/60 shadow-[inset_0_0_0_1px] shadow-gold-600" : "border-cream-300 bg-white hover:border-gold-300"} ${has ? "" : "opacity-60"}`}>
+                  <span className="flex items-baseline justify-between gap-2"><b className="truncate text-sm text-gold-900">{w}</b><small className="shrink-0 text-xs text-gold-500">{roomOf(w) && roomOf(w) !== "-" ? roomOf(w) : ""}</small></span>
+                  {(isMeal || g.all > 0) && (g.all > 0 ? <span className="h-1.5 overflow-hidden rounded-full bg-cream-300"><i className={`block h-full rounded-full ${pending ? "bg-amber-500" : "bg-emerald-600"}`} style={{ width: `${(g.done / g.all) * 100}%` }} /></span> : <span className="h-1.5 rounded-full bg-cream-200" />)}
+                  <small className={`truncate text-[11.5px] ${pending ? "font-medium text-amber-800" : "text-gold-500"}`}>{isMeal
+                    ? (!has ? "ไม่มีซองตามมื้อ" : pending ? `จัดซองแล้ว ${g.done}/${g.all} มื้อ` : `✓ จัดซองครบ ${g.all} มื้อ`)
+                    : (!has ? "ยังไม่มียา" : g.all ? (pending ? `ให้ยาตามมื้อแล้ว ${g.done}/${g.all}` : `✓ ให้ยาตามมื้อครบ ${g.all}`) : `ยาใช้เมื่อจำเป็น ${g.use} รายการ`)}</small>
+                  {!isMeal && wd && <small className="truncate text-[11.5px] text-gold-500">เบิกวันนี้ {wd.n} ครั้ง · ล่าสุด {wd.last} น.</small>}
+                </button>
+              </li>
+            );
+          })}</ul>
+          {!peopleShown.length && <p className="py-3 text-center text-xs text-gold-500">{pq ? `ไม่พบ "${pq}"` : pf === "todo" ? (isMeal ? "จัดซองครบทุกคนแล้ว" : "ให้ยาตามมื้อครบทุกคนแล้ว") : isMeal ? "ไม่มีใครมีซองตามมื้อ" : pf === "done" ? "ยังไม่มีใครเบิกยาวันนี้" : "ไม่มีใครมียา"}</p>}
+          </div>
+        </aside>
+
+        <div className="min-w-0 space-y-5">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div><h2 className="text-lg font-semibold text-gold-900 sm:text-xl">{who || "-"}</h2><p className="text-sm text-gold-500">{roomOf(who) ? `ห้อง ${roomOf(who)} · ` : ""}ยา {drugs.filter((x) => x.who === who).length} รายการ · {thai(date)}</p></div>
+            {allergy[who] && <p role="alert" className="rounded-xl bg-red-50 px-3 py-1.5 text-sm font-semibold text-red-700">⚠ แพ้ยา: {allergy[who]}</p>}
+          </div>
+
+          {/* อีกเมนู: บอกว่ามียาอีกแบบของคนนี้ กดไปได้เลย */}
+          {otherCount > 0 && <button type="button" onClick={() => go(isMeal ? "withdraw" : "dispense")}
+            className={`flex w-full flex-wrap items-center justify-between gap-2 rounded-xl border px-4 py-2.5 text-left text-sm ${isMeal ? "border-amber-200 bg-amber-50 text-amber-900" : "border-sky-200 bg-sky-50 text-sky-900"}`}>
+            <span>{isMeal ? `${who} มียาเบิกตามใช้ (ยาขวด · ยาทา · ตามอาการ) ${otherCount} รายการ · ไม่อยู่ในหน้านี้` : `${who} มีซองยาตามมื้อ ${otherCount} มื้อวันนี้ · จัดที่เมนูจัดยาตามมื้อ`}</span>
+            <b className="whitespace-nowrap">{isMeal ? "ไปเบิกยาตามใช้ ›" : "ไปจัดยาตามมื้อ ›"}</b></button>}
+
+          {/* จัดยาตามมื้อ */}
+          {isMeal && <section className="space-y-3 rounded-2xl border border-sky-200 bg-sky-50/60 p-3 sm:p-4">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h3 className="flex items-center gap-2 text-base font-semibold text-gold-900"><i className="h-2.5 w-2.5 rounded-full bg-sky-600" aria-hidden />ซองยาตามมื้อ</h3>
+              <span className="text-xs text-gold-600">จัดลงซอง › ตรวจซองยา (QA) › พนักงานให้ยาใน KinApp · จัดแล้ว {done}/{meals.length} มื้อ</span>
+            </div>
+      {meals.length === 0 ? <div className="rounded-xl bg-white px-4 py-5 text-center text-sm text-gold-600">{drugs.some((x) => x.who === who) ? "ไม่มียาที่ต้องจัดลงซองวันนี้ (ยาอาจเป็นยาเบิกตามใช้ งดชั่วคราว หรือไม่ได้กินวันนี้)" : <>{who} ยังไม่มียาในระบบ · <button type="button" className="font-medium text-gold-800 underline" onClick={() => onAddDrug(who)}>เพิ่มยาให้ {who}</button></>}</div> : (
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {meals.map((x) => (
-            <div key={x.m} className={`card flex min-w-0 flex-col p-5 ${x.pack ? "!border-emerald-200 bg-emerald-50/40" : ""}`}>
+            <div key={x.m} className={`card flex min-w-0 flex-col p-4 ${x.pack ? "!border-emerald-200 bg-emerald-50/40" : ""}`}>
               <div className="flex items-center justify-between gap-2"><h3 className="text-lg font-medium text-gold-800">{x.m}</h3>{x.pack ? <StatusBadge value="จัดยาแล้ว" /> : <StatusBadge value={`รอจัด ${x.list.length} รายการ`} />}</div>
               <ul className="mt-3 flex-1 space-y-1 text-sm text-gold-600">{(x.pack ? x.pack.items : x.list.map((y) => (isLiquid(y) ? `${y.name} ${y.dose} ml` : `${y.name} × ${y.dose} ${y.unit}`))).map((t) => <li key={t} className="truncate">• {t}</li>)}</ul>
               {x.pack?.given ? (
@@ -304,7 +603,21 @@ function Dispense({ drugs, setDrugs, packs, setPacks, go, me, focus, onAddDrug, 
           ))}
         </div>
       )}
-      {done > 0 && done === meals.length && <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-emerald-50 p-5 text-sm text-emerald-800"><span>จัดยาครบทุกมื้อแล้ว ส่งเข้าตะกร้ายารอตรวจ QA</span><button className="btn-soft" onClick={() => go("qa")}>ไปตรวจตะกร้ายา</button></div>}
+      {done > 0 && done === meals.length && <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-800"><span>จัดยาครบทุกมื้อแล้ว ส่งเข้าตะกร้ายารอตรวจ QA</span><button className="btn-soft" onClick={() => go("qa")}>ไปตรวจซองยา</button></div>}
+          </section>}
+
+          {/* เบิกยาตามใช้ */}
+          {!isMeal && <section className="space-y-3 rounded-2xl border border-amber-200 bg-amber-50/60 p-3 sm:p-4">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h3 className="flex items-center gap-2 text-base font-semibold text-gold-900"><i className="h-2.5 w-2.5 rounded-full bg-amber-600" aria-hidden />ยาของ {who || "ผู้ป่วย"}</h3>
+              <span className="text-xs text-gold-600">เลือกมื้อ › ติ๊กตรวจแล้ว › เบิก · ระบบตัดคงเหลือและบันทึกการให้ยา</span>
+            </div>
+            <WithdrawBox drugs={drugs} who={who} reload={tlKey} onDone={() => setTlKey((k) => k + 1)} />
+          </section>}
+
+          <DayTimeline only={isMeal ? "pack" : "use"} who={who} date={date} packs={packs} me={me} canVoidAll={canVoidAll} reload={tlKey} onVoided={() => setTlKey((k) => k + 1)} />
+        </div>
+      </div>
 
       <Modal open={preview} wide title="ตรวจสอบซองมื้อยาก่อนจัด" onClose={() => setPreview(false)} footer={<button className="btn-primary" onClick={() => setPreview(false)}>ปิด</button>}>
         <p className="mb-4 text-sm text-gold-600">สรุปยาที่ต้องหยิบมาจัดของ {who} วันที่ {thai(date)}</p>
@@ -339,11 +652,11 @@ function QA({ packs, setPacks, drugs, setDrugs, go, me, onRedo }: { packs: Pack[
   const count = (t: string) => packs.filter((p) => t === "ทั้งหมด" || p.qa === t).length;
   return (
     <>
-      <PageHeader title="ตรวจซองยา (QA)" sub="ตรวจซองที่จัดเสร็จก่อนส่งให้ยา"
-        actions={<button className="btn-soft" onClick={() => { go("audit"); toast("สุ่มตรวจสต็อก: เลือกผู้รับบริการเพื่อนับยาเทียบกับระบบ"); }}><Icon name="refresh" className="h-4 w-4" /> สุ่มตรวจ (Cycle Count)</button>} />
+      <PageHeader title="ตรวจซองยา" sub="ให้คนที่ไม่ได้จัดซองเป็นคนตรวจ · เทียบรูปซองกับฉลาก ว่าถูกคน ถูกยา ถูกขนาด ถูกมื้อ แล้วกดตรวจผ่าน"
+        actions={<button className="btn-soft" onClick={() => { go("audit"); toast("สุ่มตรวจสต็อก: เลือกผู้รับบริการเพื่อนับยาเทียบกับระบบ"); }}><Icon name="refresh" className="h-4 w-4" /> นับยาคงเหลือ</button>} />
       <div className="mb-5"><Tabs tabs={["รอตรวจ", "ตรวจผ่าน", "แจ้งจัดยาผิด", "ทั้งหมด"].map((t) => `${t} (${count(t)})`)} value={`${tab} (${count(tab)})`} onChange={(v) => setTab(v.split(" (")[0])} /></div>
       {list.length === 0 ? (
-        <div className="card empty-state"><Icon name="check" /><p>{packs.length ? "ไม่มีซองยาในสถานะนี้" : "ยังไม่มีซองยาในตะกร้า เริ่มจากเมนูจัดยารายวัน"}</p>{!packs.length && <button className="btn-primary mt-4" onClick={() => go("dispense")}>ไปจัดยารายวัน</button>}</div>
+        <div className="card empty-state"><Icon name="check" /><p>{packs.length ? "ไม่มีซองยาในสถานะนี้" : "ยังไม่มีซองยาในตะกร้า เริ่มจากเมนูจัดยาตามมื้อ"}</p>{!packs.length && <button className="btn-primary mt-4" onClick={() => go("dispense")}>ไปจัดยาตามมื้อ</button>}</div>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {list.map((p) => (
@@ -414,9 +727,9 @@ function Inventory({ drugs, setDrugs, master, addFor, onAdded, lowView, onLowVie
     const old = drugs.find((x) => x.id === edit.id);
     if (!old) return setEdit(null);
     const { doseText: _d, tag: _t, ...rest } = edit; // eslint-disable-line @typescript-eslint/no-unused-vars
-    const next: Drug = { ...rest, name: edit.name.trim(), dose: edit.bulk ? old.dose : dose, store: edit.fridge ? "ตู้เย็น" : edit.store === "ตู้เย็น" ? STORES[0] : edit.store };
+    const next: Drug = { ...rest, name: edit.name.trim(), dose: dose > 0 ? dose : old.dose, store: edit.fridge ? "ตู้เย็น" : edit.store === "ตู้เย็น" ? STORES[0] : edit.store };
     setDrugs(drugs.map((x) => (x.id === edit.id ? next : x)));
-    const changed = [old.dose !== next.dose ? `ครั้งละ ${old.dose} → ${next.dose} ${next.unit}` : "", old.meals.join(",") !== next.meals.join(",") ? `มื้อ ${next.meals.join(", ") || "-"}` : "", old.hold !== next.hold ? (next.hold ? "งดยาชั่วคราว" : "ยกเลิกงดยา") : ""].filter(Boolean);
+    const changed = [isUseDrug(old) !== isUseDrug(next) ? (isUseDrug(next) ? "เปลี่ยนเป็นใช้เมื่อจำเป็น" : "เปลี่ยนเป็นกินตามมื้อ") : "", old.dose !== next.dose ? `ครั้งละ ${old.dose} → ${next.dose} ${next.unit}` : "", old.meals.join(",") !== next.meals.join(",") ? `มื้อ ${next.meals.join(", ") || "-"}` : "", old.hold !== next.hold ? (next.hold ? "งดยาชั่วคราว" : "ยกเลิกงดยา") : ""].filter(Boolean);
     toast(`แก้ไขยาแล้ว · ${next.name} · ${next.who}${changed.length ? ` · ${changed.join(" · ")}` : ""} · ซองที่จัดหลังจากนี้ใช้ข้อมูลใหม่`);
     setEdit(null);
   };
@@ -485,21 +798,21 @@ function Inventory({ drugs, setDrugs, master, addFor, onAdded, lowView, onLowVie
     setDrugs([{ id, who: f.who, name: f.name.trim(), use: f.use, how: f.how, store: f.fridge ? "ตู้เย็น" : f.store, form: f.form, bulk: f.bulk, dose: Number(f.dose) || 1, timing: f.timing, meals: f.meals, days: f.days, warn: f.warn,
       stock, received: stock, unit: liquid ? "ml" : f.unit || "เม็ด", fridge: f.fridge, hold: f.hold, status: "ปกติ", ...(liquid ? { pack: size } : {}) }, ...drugs]);
     saveMedPhoto("label", id, f.photo, toast);
-    setF({ ...blankForm(), who: f.who }); setOpen(false); toast(`รับยาเข้าตะกร้าแล้ว · ${f.name.trim()} · ${f.who} · ระบบสร้างซองยาตามมื้อให้`);
+    setF({ ...blankForm(), who: f.who }); setOpen(false); toast(`เพิ่มยาแล้ว · ${f.name.trim()} · ${f.who} · ${f.bulk ? "ใช้เมื่อจำเป็น · เบิกที่เมนูเบิกยา" : "กินตามมื้อ · ขึ้นในรายการให้ยาของแต่ละมื้อ"}`);
   };
   return (
     <>
-      <PageHeader title="ยาของผู้ป่วย (รับเข้า · แก้ไข)" sub="รับยาเข้าและแก้ยอดยาของแต่ละคน"
-        actions={<><button className="btn-soft" onClick={() => window.print()}><Icon name="print" className="h-4 w-4" /> พิมพ์ใบรับยาเข้า</button><button className="btn-primary" onClick={() => { setF(blankForm()); setOpen(true); }}><Icon name="plus" className="h-4 w-4" /> บันทึกข้อมูลยาใหม่จากโรงพยาบาล</button></>} />
-      <Section title="คลังยาทั้งหมด (แยกตามผู้สูงอายุ)" actions={<div className="min-w-52"><Select options={RESIDENTS} placeholder="ผู้สูงอายุทั้งหมด" value={filter} onChange={setFilter} /></div>}>
+      <PageHeader title="ยาของผู้ป่วย" sub="เพิ่มยาใหม่ที่ได้มา แก้วิธีให้ยา และดูคงเหลือของแต่ละคน"
+        actions={<><button className="btn-soft" onClick={() => window.print()}><Icon name="print" className="h-4 w-4" /> พิมพ์ใบรับยาเข้า</button><button className="btn-primary" onClick={() => { setF(blankForm()); setOpen(true); }}><Icon name="plus" className="h-4 w-4" /> เพิ่มยาใหม่</button></>} />
+      <Section title="ยาทั้งหมด แยกตามผู้ป่วย" actions={<div className="min-w-52"><Select options={RESIDENTS} placeholder="ผู้ป่วยทุกคน" value={filter} onChange={setFilter} /></div>}>
         <StatFilter label="กรองยา" value={lowView} onChange={onLowView} items={[
           { k: "", t: "ทั้งหมด", n: mine.length, tone: "all" },
           { k: "low", t: "ใกล้หมด", n: mine.filter(isLowDrug).length, tone: "bad" },
           { k: "hold", t: "งดยาชั่วคราว", n: mine.filter((x) => x.hold).length, tone: "muted" },
         ]} />
         <DataTable
-          columns={["ผู้สูงอายุ", "ชื่อยา", "วิธีทาน", "มื้อ", "คงเหลือ", "สถานะ"]}
-          rows={shown.map((x) => [x.who, `${x.name} · [${x.src === CENTRAL ? CENTRAL : "ญาตินำมา"}]`, x.how || "-", x.bulk ? "ยาขวด / ไม่แพ็คซอง" : `${x.meals.join(", ")} · ครั้งละ ${x.dose} ${x.unit}`, stockText(x), x.hold ? "งดยาชั่วคราว" : x.status])}
+          columns={["ผู้สูงอายุ", "ชื่อยา", "วิธีทาน", "วิธีให้ยา / มื้อ", "คงเหลือ", "สถานะ"]}
+          rows={shown.map((x) => [x.who, `${x.name} · [${x.src === CENTRAL ? CENTRAL : "ญาตินำมา"}]`, x.how || "-", isUseDrug(x) ? `ใช้เมื่อจำเป็น${x.bulk ? " · ยาขวด / ยาทา" : ""}` : `กินตามมื้อ · ${x.meals.join(", ")} · ครั้งละ ${x.dose} ${x.unit}`, stockText(x), x.hold ? "งดยาชั่วคราว" : x.status])}
           onRow={(i) => setView(shown[i])} rowLabel="กดเพื่อดูรายละเอียดยา"
           // ปุ่มหลัก 1 ปุ่มต่อแถว: ยาคลังกลางที่ใกล้หมด = เติม · นอกนั้น = แก้ไข · ที่เหลืออยู่ในเมนู ⋯
           actions={[
@@ -513,13 +826,13 @@ function Inventory({ drugs, setDrugs, master, addFor, onAdded, lowView, onLowVie
         />
       </Section>
 
-      <Modal open={open} wide title="บันทึกข้อมูลยาใหม่จากโรงพยาบาล" onClose={() => setOpen(false)}
+      <Modal open={open} wide title="เพิ่มยาใหม่ของผู้ป่วย" onClose={() => setOpen(false)}
         footer={<><button className="btn-soft" onClick={() => setOpen(false)}>ยกเลิก</button>{f.src === "central"
           ? <button className="btn-primary" disabled={busy} onClick={saveCentral}>เบิกและเพิ่มเข้าตะกร้า</button>
-          : <button className="btn-primary" onClick={save}>บันทึกรับยาเข้าตะกร้าผู้สูงอายุ</button>}</>}>
+          : <button className="btn-primary" onClick={save}>บันทึกยา</button>}</>}>
         <div className="space-y-6">
-          <Field label="1. เลือกผู้สูงอายุที่รับยามา" required><ResidentPicker names={RESIDENTS} value={f.who} onChange={(v) => setF({ ...f, who: v, sdrug: "" })} /></Field>
-          <div><p className="label">แหล่งที่มาของยา</p><div className="flex flex-wrap gap-2">
+          <Field label="1. ยานี้ของใคร" required><ResidentPicker names={RESIDENTS} value={f.who} onChange={(v) => setF({ ...f, who: v, sdrug: "" })} /></Field>
+          <div><p className="label">2. ได้ยามาจากไหน</p><div className="flex flex-wrap gap-2">
             <Chip on={f.src === "own"} onClick={() => setF({ ...f, src: "own" })}>ญาตินำมา / จากโรงพยาบาล</Chip>
             <Chip on={f.src === "central"} onClick={() => setF({ ...f, src: "central", form: FORMS[0], unit: "เม็ด", dose: "1" })}>เบิกจากคลังกลางของศูนย์</Chip>
           </div></div>
@@ -532,34 +845,34 @@ function Inventory({ drugs, setDrugs, master, addFor, onAdded, lowView, onLowVie
             <p className="self-end pb-3 text-sm text-gold-700">{cd ? (cd.price !== null ? `ราคา ${cd.price.toLocaleString("en-US")} บาท/${cd.unit}${Number(f.sqty) > 0 ? ` = ${(cd.price * Number(f.sqty)).toLocaleString("en-US")} บาท` : ""}` : "ยานี้ยังไม่ได้ตั้งราคา (ไม่ขึ้นที่การเงิน)") : ""}</p>
             <p className="text-xs text-gold-600 md:col-span-2">ยาของศูนย์ ไม่ต้องถ่ายรูปฉลาก · กดบันทึกแล้วระบบหักคลังกลาง เพิ่มเข้าตะกร้า และขึ้นค่ายาที่การเงินในครั้งเดียว</p>
           </div> : <>
-          <div><p className="label">ถ่ายรูปกล่องยา / ฉลากยา (สำคัญมากสำหรับตรวจสอบก่อนบันทึก) <span className="text-red-500">*</span></p><Photo value={f.photo} onChange={(u) => setF({ ...f, photo: u })} /></div>
+          <div><p className="label">3. ถ่ายรูปกล่องหรือฉลากยา (ใช้เทียบตอนตรวจซอง) <span className="text-red-500">*</span></p><Photo value={f.photo} onChange={(u) => setF({ ...f, photo: u })} /></div>
           <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-cream-300 bg-cream-50 p-4 text-sm">
             <input type="checkbox" className="mt-1" checked={f.bulk} onChange={(e) => setF({ ...f, bulk: e.target.checked, unit: e.target.checked ? "ขวด" : "เม็ด" })} />
-            <span><b className="font-medium">เป็นยาที่ไม่ต้องจัดรายมื้อ (เช่น ยาทา ยาพ่น ยาที่ให้เมื่อมีอาการ)</b><span className="block text-gold-600">ยาจะไม่ขึ้นในหน้าจัดยารายวัน ต้องกดเบิกทั้งขวดแทน · ยาน้ำที่ให้ตามมื้อ (เช่น ครั้งละ 15 ml) ไม่ต้องติ๊กข้อนี้ ระบบจะตัดเป็น ml</span></span>
+            <span><b className="font-medium">ยานี้ไม่ได้กินเป็นมื้อ (ยาขวด ยาทา ยาพ่น ยาที่ให้เมื่อมีอาการ)</b><span className="block text-gold-600">ติ๊ก = ใช้เมื่อจำเป็น เบิกเมื่อใช้จริง · ไม่ติ๊ก = กินตามมื้อ ขึ้นในรายการให้ยาของแต่ละมื้อ (ยาน้ำที่ให้ตามมื้อ เช่น ครั้งละ 15 ml ไม่ต้องติ๊ก)</span></span>
           </label>
           </>}
           <div className="form-grid">
             {f.src === "own" && <Field label="ชื่อยา (พิมพ์เพื่อค้นหา)" required><input list="master-drugs" value={f.name} placeholder="เช่น Atorvastatin 40mg" onChange={(e) => { const m = master.find((x) => x[0] === e.target.value); setF({ ...f, name: e.target.value, use: m ? m[1] : f.use }); }} /><datalist id="master-drugs">{master.map((x) => <option key={x[0]} value={x[0]} />)}</datalist></Field>}
             <Field label="สรรพคุณ / ข้อบ่งใช้"><input value={f.use} placeholder="เช่น ยาลดไขมัน, ยาลดความดัน" onChange={(e) => setF({ ...f, use: e.target.value })} /></Field>
             <Field label="วิธีทานตามฉลาก"><input value={f.how} placeholder="เช่น วันละ 1 ครั้ง ก่อนนอน" onChange={(e) => setF({ ...f, how: e.target.value })} /></Field>
-            <Field label="แหล่งเก็บยา"><Select options={STORES} value={f.store} onChange={(v) => setF({ ...f, store: v || STORES[0] })} /></Field>
+            <Field label="เก็บยาไว้ที่"><Select options={STORES} value={f.store} onChange={(v) => setF({ ...f, store: v || STORES[0] })} /></Field>
             {f.src === "own" && <Field label="รูปแบบยา"><Select options={FORMS} value={f.form} onChange={(v) => setF({ ...f, form: v || FORMS[0], ...(v === LIQUID ? { unit: "ml", dose: "" } : f.unit === "ml" ? { unit: "เม็ด", dose: "1" } : {}) })} /></Field>}
-            <Field label="ช่วงเวลา (Timing)"><Select options={TIMINGS} value={f.timing} onChange={(v) => setF({ ...f, timing: v || TIMINGS[0] })} /></Field>
+            <Field label="กินก่อนหรือหลังอาหาร"><Select options={TIMINGS} value={f.timing} onChange={(v) => setF({ ...f, timing: v || TIMINGS[0] })} /></Field>
           </div>
           {!f.bulk && (
             <div className="rounded-2xl border border-cream-300 p-4">
-              <p className="mb-3 font-medium text-gold-800">ข้อมูลสำหรับการจัดยา (กำหนดมื้อ)</p>
+              <p className="mb-3 font-medium text-gold-800">มื้อและขนาดยา</p>
               <div className="form-grid">
                 <Field label={liquid ? "ให้ครั้งละ (ml)" : "กินครั้งละ (Dose)"}><div className="flex items-center gap-2"><input type="number" min={liquid ? "1" : "0.5"} step={liquid ? "1" : "0.5"} value={f.dose} placeholder={liquid ? "เช่น 15" : ""} onChange={(e) => setF({ ...f, dose: e.target.value })} /><span className="shrink-0 text-sm text-gold-600">{f.src === "central" ? cd?.unit ?? "" : liquid ? "ml" : f.unit}</span></div></Field>
-                <div><p className="label">มื้อยาที่ต้องทาน (เลือกได้หลายข้อ)</p><div className="flex flex-wrap gap-2">{MEALS.map((m) => <Chip key={m} on={f.meals.includes(m)} onClick={() => toggle("meals", m)}>{m}</Chip>)}</div></div>
+                <div><p className="label">กินมื้อไหนบ้าง (เลือกได้หลายมื้อ)</p><div className="flex flex-wrap gap-2">{MEALS.map((m) => <Chip key={m} on={f.meals.includes(m)} onClick={() => toggle("meals", m)}>{m}</Chip>)}</div></div>
               </div>
-              <p className="label mt-5">เงื่อนไขวันกิน (ปล่อยว่างไว้ถ้าทานทุกวัน)</p>
+              <p className="label mt-5">กินเฉพาะบางวัน (ไม่เลือก = กินทุกวัน)</p>
               <div className="flex flex-wrap gap-2">{DAYS.map((x) => <Chip key={x} on={f.days.includes(x)} onClick={() => toggle("days", x)}>{x}</Chip>)}</div>
             </div>
           )}
           <div>
             <p className="label">คำเตือน / ข้อควรระวังจากฉลากยา (ถ้ามี)</p>
-            <div className="mb-2 flex flex-wrap gap-2">{f.warn.length ? f.warn.map((w) => <button type="button" key={w} onClick={() => toggle("warn", w)} className="rounded-full bg-red-50 px-3 py-1 text-xs text-red-700">{w} ×</button>) : <span className="text-sm text-gold-500">ยังไม่มีคำเตือน (คลิกเพิ่มด้านล่าง)</span>}</div>
+            <div className="mb-2 flex flex-wrap gap-2">{f.warn.length ? f.warn.map((w) => <button type="button" key={w} onClick={() => toggle("warn", w)} className="rounded-full bg-red-50 px-3 py-1 text-xs text-red-700">{w} ×</button>) : <span className="text-sm text-gold-500">ยังไม่มีคำเตือน</span>}</div>
             <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); if (tag.trim() && !f.warn.includes(tag.trim())) setF({ ...f, warn: [...f.warn, tag.trim()] }); setTag(""); }}>
               <input value={tag} onChange={(e) => setTag(e.target.value)} placeholder="พิมพ์คำเตือนใหม่แล้วกด Enter..." /><button className="btn-soft shrink-0">เพิ่ม</button>
             </form>
@@ -592,23 +905,39 @@ function Inventory({ drugs, setDrugs, master, addFor, onAdded, lowView, onLowVie
       <Modal open={!!edit} wide title={edit ? `แก้ไขยา · ${edit.name}` : ""} onClose={() => setEdit(null)}
         footer={<><button className="btn-soft" onClick={() => setEdit(null)}>ยกเลิก</button><button className="btn-primary" onClick={saveEdit}>บันทึกการแก้ไข</button></>}>
         {edit && <div className="space-y-5">
-          <p className="rounded-xl bg-cream-50 px-4 py-3 text-sm text-gold-700">{edit.who} · คงเหลือ <b>{stockText(edit)}</b> · แก้ยอดคงเหลือได้ที่เมนู &quot;ตรวจนับและปรับยอดยา&quot; · ซองที่จัดไปแล้วไม่เปลี่ยน</p>
+          <p className="rounded-xl bg-cream-50 px-4 py-3 text-sm text-gold-700">{edit.who} · คงเหลือ <b>{stockText(edit)}</b> · แก้คงเหลือได้ที่เมนู นับยาคงเหลือ</p>
           <div className="form-grid">
             <Field label="ชื่อยา" required><input value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} /></Field>
             <Field label="สรรพคุณ / ข้อบ่งใช้"><input value={edit.use} onChange={(e) => setEdit({ ...edit, use: e.target.value })} /></Field>
             <Field label="วิธีทานตามฉลาก"><input value={edit.how} onChange={(e) => setEdit({ ...edit, how: e.target.value })} placeholder="เช่น ครั้งละ 20 ml ก่อนนอน" /></Field>
-            <Field label="ช่วงเวลา (Timing)"><Select options={TIMINGS} value={edit.timing} onChange={(v) => setEdit({ ...edit, timing: v || TIMINGS[0] })} /></Field>
-            <Field label="แหล่งเก็บยา"><Select options={STORES} value={edit.fridge ? "ตู้เย็น" : edit.store} onChange={(v) => setEdit({ ...edit, store: v || STORES[0], fridge: v === "ตู้เย็น" })} /></Field>
+            <Field label="กินก่อนหรือหลังอาหาร"><Select options={TIMINGS} value={edit.timing} onChange={(v) => setEdit({ ...edit, timing: v || TIMINGS[0] })} /></Field>
+            <Field label="เก็บยาไว้ที่"><Select options={STORES} value={edit.fridge ? "ตู้เย็น" : edit.store} onChange={(v) => setEdit({ ...edit, store: v || STORES[0], fridge: v === "ตู้เย็น" })} /></Field>
           </div>
+          {/* ยาหนึ่งตัว หนึ่งทาง: จัดตามมื้อ (เมนูจัดยาตามมื้อ) หรือ เบิกตามใช้ (เมนูเบิกยาตามใช้) */}
+          <div className="space-y-2">
+            <p className="label">ยานี้ให้แบบไหน</p>
+            <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="ทางของยา">
+              {[{ use: false, t: "กินตามมื้อ", d: "มีมื้อประจำ · ขึ้นในรายการให้ยาของมื้อนั้น (KinApp และเมนูเบิกยา) · ระบบเตือนมื้อที่ยังไม่ให้", c: "border-sky-500 bg-sky-50" },
+                { use: true, t: "ใช้เมื่อจำเป็น", d: "ยาขวด ยาทา ยาพ่น ยาตามอาการ · ไม่มีมื้อประจำ · เบิกเมื่อใช้ที่เมนูเบิกยา", c: "border-amber-500 bg-amber-50" }].map((o) => {
+                const on = isUseDrug(edit) === o.use;
+                return <button key={o.t} type="button" role="radio" aria-checked={on} onClick={() => setEdit({ ...edit, bulk: o.use })}
+                  className={`rounded-xl border-2 px-4 py-3 text-left transition ${on ? o.c : "border-cream-300 bg-white hover:border-gold-300"}`}><b className="block text-sm text-gold-900">{on ? "✓ " : ""}{o.t}</b><small className="text-xs text-gold-600">{o.d}</small></button>;
+              })}
+            </div>
+            {!edit.bulk && !edit.meals.length && <p className="field-hint">กินตามมื้อต้องเลือกมื้อยาด้านล่างอย่างน้อย 1 มื้อ</p>}
+          </div>
+          {edit.bulk && (
+            <Field label={`ใช้ครั้งละ (ค่าเริ่มต้นตอนเบิก)`}><div className="flex max-w-xs items-center gap-2"><input type="number" min={0} step={isLiquid(edit) ? "1" : "0.5"} value={edit.doseText} onChange={(e) => setEdit({ ...edit, doseText: e.target.value })} /><span className="shrink-0 text-sm text-gold-600">{edit.unit}</span></div></Field>
+          )}
           {!edit.bulk && (
             <div className="rounded-2xl border border-cream-300 p-4">
-              <p className="mb-3 font-medium text-gold-800">ข้อมูลสำหรับการจัดยา</p>
+              <p className="mb-3 font-medium text-gold-800">มื้อและขนาดยา</p>
               <div className="form-grid">
                 <Field label={isLiquid(edit) ? "ให้ครั้งละ (ml)" : "กินครั้งละ (Dose)"}><div className="flex items-center gap-2"><input type="number" min={isLiquid(edit) ? "1" : "0.5"} step={isLiquid(edit) ? "1" : "0.5"} value={edit.doseText} onChange={(e) => setEdit({ ...edit, doseText: e.target.value })} /><span className="shrink-0 text-sm text-gold-600">{edit.unit}</span></div>
                   {Number(edit.doseText) !== edit.dose && Number(edit.doseText) > 0 && <p className="field-hint is-ok">เดิม {edit.dose} {edit.unit} → ใหม่ {edit.doseText} {edit.unit}</p>}</Field>
-                <div><p className="label">มื้อยาที่ต้องทาน</p><div className="flex flex-wrap gap-2">{MEALS.map((m) => <Chip key={m} on={edit.meals.includes(m)} onClick={() => toggleEdit("meals", m)}>{m}</Chip>)}</div></div>
+                <div><p className="label">กินมื้อไหนบ้าง</p><div className="flex flex-wrap gap-2">{MEALS.map((m) => <Chip key={m} on={edit.meals.includes(m)} onClick={() => toggleEdit("meals", m)}>{m}</Chip>)}</div></div>
               </div>
-              <p className="label mt-5">เงื่อนไขวันกิน (ปล่อยว่างไว้ถ้าทานทุกวัน)</p>
+              <p className="label mt-5">กินเฉพาะบางวัน (ไม่เลือก = กินทุกวัน)</p>
               <div className="flex flex-wrap gap-2">{DAYS.map((x) => <Chip key={x} on={edit.days.includes(x)} onClick={() => toggleEdit("days", x)}>{x}</Chip>)}</div>
             </div>
           )}
@@ -655,7 +984,7 @@ function Audit({ drugs, setDrugs }: { drugs: Drug[]; setDrugs: (x: Drug[]) => vo
     const next = () => {
       setDrugs(drugs.map((x) => (x.id === cur.id ? { ...x, stock: count, status } : x)));
       setDone(Array.from(new Set([...done, cur.id])));
-      if (idx + 1 < list.length) setIdx(idx + 1); else { setWho(null); toast(`ตรวจนับคลังยาครบแล้ว · ${who}`); }
+      if (idx + 1 < list.length) setIdx(idx + 1); else { setWho(null); toast(`นับยาครบทุกตัวแล้ว · ${who}`); }
     };
     return (
       <div className="mx-auto max-w-xl">
@@ -668,17 +997,26 @@ function Audit({ drugs, setDrugs }: { drugs: Drug[]; setDrugs: (x: Drug[]) => vo
             <div className="rounded-xl bg-cream-50 p-3"><dt className="text-gold-500">แหล่งเก็บ</dt><dd className="font-medium">{cur.store}</dd></div>
             <div className="rounded-xl bg-cream-50 p-3"><dt className="text-gold-500">ยอดคงเหลือในระบบ</dt><dd className="font-medium">{cur.stock} {cur.unit}</dd></div>
           </dl>
-          <p className="mt-6 text-center text-sm font-medium text-gold-700">คุณนับยาในคลังของผู้สูงอายุได้เท่าไหร่? <span className="block text-xs font-normal text-gold-500">(ไม่รวมยาที่จัดใส่ซองไปแล้ว)</span></p>
+          <p className="mt-6 text-center text-sm font-medium text-gold-700">นับได้จริงเท่าไร <span className="block text-xs font-normal text-gold-500">(ไม่รวมยาที่จัดใส่ซองไปแล้ว)</span></p>
+          {/* พิมพ์ตัวเลขได้ตรง ๆ · ยาน้ำ (ml) ปุ่ม −/+ ทีละ 10 และมีปุ่มขวดเต็ม */}
           <div className="mt-3 flex items-center justify-center gap-3">
-            <button className="icon-button !h-14 !w-14 text-2xl" aria-label="ลด 1" onClick={() => setCount(Math.max(0, count - 1))}>−</button>
-            <input type="number" aria-label="จำนวนที่นับได้" className="!w-28 text-center !text-2xl font-semibold" value={count} onChange={(e) => setCount(Math.max(0, Number(e.target.value)))} />
-            <button className="icon-button !h-14 !w-14 text-2xl" aria-label="เพิ่ม 1" onClick={() => setCount(count + 1)}>+</button>
+            <button className="icon-button !h-14 !w-14 text-2xl" aria-label={`ลด ${isLiquid(cur) ? 10 : 1}`} onClick={() => setCount(Math.max(0, Math.round((count - (isLiquid(cur) ? 10 : 1)) * 100) / 100))}>−</button>
+            <input type="number" inputMode="decimal" aria-label="จำนวนที่นับได้" className="!w-32 text-center !text-2xl font-semibold" value={count} onFocus={(e) => e.target.select()} onChange={(e) => setCount(Math.max(0, Number(e.target.value) || 0))} />
+            <button className="icon-button !h-14 !w-14 text-2xl" aria-label={`เพิ่ม ${isLiquid(cur) ? 10 : 1}`} onClick={() => setCount(Math.round((count + (isLiquid(cur) ? 10 : 1)) * 100) / 100)}>+</button>
           </div>
+          <p className="mt-1 text-center text-xs text-gold-500">{cur.unit} · แตะช่องแล้วพิมพ์ตัวเลขได้เลย</p>
           <div className="mt-3 grid grid-cols-3 gap-2">
-            <button className="btn-soft !px-2 text-xs" onClick={() => setCount(count + 10)}>+1 แผง (10)</button>
-            <button className="btn-soft !px-2 text-xs" onClick={() => setCount(count + 30)}>+1 กล่อง (30)</button>
-            <button className="btn-soft !px-2 text-xs" onClick={() => setCount(cur.stock)}>ครบถ้วน (ตรงเป๊ะ)</button>
+            {isLiquid(cur) ? <>
+              <button className="btn-soft !px-2 text-xs" onClick={() => setCount(cur.pack || 1000)}>ขวดเต็ม ({(cur.pack || 1000).toLocaleString("en-US")} ml)</button>
+              <button className="btn-soft !px-2 text-xs" onClick={() => setCount(0)}>หมด (0)</button>
+            </> : <>
+              <button className="btn-soft !px-2 text-xs" onClick={() => setCount(count + 10)}>+1 แผง (10)</button>
+              <button className="btn-soft !px-2 text-xs" onClick={() => setCount(count + 30)}>+1 กล่อง (30)</button>
+            </>}
+            <button className="btn-soft !px-2 text-xs" onClick={() => setCount(cur.stock)}>ตรงกับระบบ</button>
           </div>
+          <p className={`mt-3 rounded-xl px-3 py-2 text-center text-sm ${count === cur.stock ? "bg-cream-50 text-gold-600" : count > cur.stock ? "bg-emerald-50 text-emerald-800" : "bg-red-50 text-red-700"}`}>
+            {count === cur.stock ? "ตรงกับในระบบ" : `${count > cur.stock ? "มากกว่า" : "น้อยกว่า"}ในระบบ ${Math.abs(Math.round((count - cur.stock) * 100) / 100).toLocaleString("en-US")} ${cur.unit} · บันทึกแล้วคงเหลือเป็น ${count.toLocaleString("en-US")} ${cur.unit}`}</p>
           <p className="label mt-6">สถานะยา (อัปเดตหากพบปัญหา)</p>
           <div className="grid grid-cols-2 gap-2">{AUDIT_STATUS.map((s) => <Chip key={s} on={status === s} onClick={() => setStatus(s)}>{s}</Chip>)}</div>
           <button className="btn-primary mt-6 w-full" onClick={next}>บันทึก & ถัดไป <Icon name="arrow" className="h-4 w-4" /></button>
@@ -688,7 +1026,7 @@ function Audit({ drugs, setDrugs }: { drugs: Drug[]; setDrugs: (x: Drug[]) => vo
   }
   return (
     <>
-      <PageHeader title="ตรวจนับและปรับยอดยา" sub="เช็กสต็อกเพื่อความแม่นยำก่อนจัดยา" />
+      <PageHeader title="นับยาคงเหลือ" sub="นับยาจริงในตะกร้าของผู้ป่วย แล้วแก้ตัวเลขในระบบให้ตรง · ควรนับสัปดาห์ละครั้ง" />
       <Section title="ความคืบหน้าวันนี้">
         <div className="flex items-center justify-between text-sm text-gold-600"><span>ตรวจแล้ว {done.length} / {total} รายการ</span><b className="text-gold-700">{total ? Math.round((done.length / total) * 100) : 0}%</b></div>
         <div className="mt-2 h-2 overflow-hidden rounded-full bg-cream-200"><div className="h-full rounded-full bg-gold-600 transition-all" style={{ width: `${total ? (done.length / total) * 100 : 0}%` }} /></div>
@@ -721,7 +1059,7 @@ function Templates({ drugs, setDrugs }: { drugs: Drug[]; setDrugs: (x: Drug[]) =
   const mine = drugs.filter((x) => x.who === who);
   return (
     <>
-      <PageHeader title="ซองมื้อยา" sub="ยาที่จัดลงแต่ละซอง" />
+      <PageHeader title="ยาแต่ละมื้อของผู้ป่วย" sub="ดูว่าแต่ละคนกินยาอะไรมื้อไหน · งดยาชั่วคราวได้จากหน้านี้" />
       <div className="card mb-6 p-5"><Field label="เลือกผู้สูงอายุ"><ResidentPicker names={RESIDENTS} value={who} onChange={setWho} /></Field></div>
       {!who ? <div className="card empty-state"><Icon name="files" /><p>กรุณาเลือกผู้สูงอายุด้านบนเพื่อแสดงแม่แบบซองยา</p></div> : (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -765,7 +1103,7 @@ function Master({ master, setMaster, drugs }: { master: string[][]; setMaster: (
   const [use, setUse] = useState("");
   return (
     <>
-      <PageHeader title="ฐานข้อมูลยา (Master Drugs)" sub="รายชื่อยากลางของระบบ" actions={<button className="btn-primary" onClick={() => { setName(""); setUse(""); setOpen(true); }}><Icon name="plus" className="h-4 w-4" /> เพิ่มยาตัวใหม่</button>} />
+      <PageHeader title="รายชื่อยา" sub="รายชื่อยาที่ใช้ค้นหาตอนเพิ่มยาใหม่ของผู้ป่วย" actions={<button className="btn-primary" onClick={() => { setName(""); setUse(""); setOpen(true); }}><Icon name="plus" className="h-4 w-4" /> เพิ่มยาตัวใหม่</button>} />
       <Section title="รายชื่อยาทั้งหมด">
         <DataTable columns={["ชื่อยา", "สรรพคุณ / การออกฤทธิ์", "ผู้ป่วยที่ใช้", "คงเหลือรวม", "ใช้ไปแล้ว"]} rows={rows}
           onRow={(i) => setOpen2(master[i][0])} rowLabel="กดเพื่อดูคงเหลือรายคน"
@@ -799,21 +1137,21 @@ function Report({ packs }: { packs: Pack[] }) {
   const [q, setQ] = useState({ who: "", from: "", to: "", status: "" });
   const cols = ["วันกินยา", "ชื่อผู้รับบริการ", "มื้อยา", "รายการยา", "จัดโดย", "ตรวจ QA โดย", "ผู้ให้ยา", "เวลาที่ให้ยา", "สถานะ"];
   const rows = useMemo(() => packs
-    .filter((p) => (!q.who || p.who === q.who) && (!q.from || p.date >= q.from) && (!q.to || p.date <= q.to) && (!q.status || (q.status === "จ่ายยาแล้ว") === p.given))
-    .map((p) => [thai(p.date), p.who, p.meal, p.items.join(", "), p.by || "-", p.qby || "-", p.gby || "-", p.gat || "-", p.given ? "จ่ายยาแล้ว" : "รอจ่าย"]), [packs, q]);
+    .filter((p) => (!q.who || p.who === q.who) && (!q.from || p.date >= q.from) && (!q.to || p.date <= q.to) && (!q.status || (q.status === "ให้ยาแล้ว") === p.given))
+    .map((p) => [thai(p.date), p.who, p.meal, p.items.join(", "), p.by || "-", p.qby || "-", p.gby || "-", p.gat || "-", p.given ? "ให้ยาแล้ว" : "ยังไม่ให้"]), [packs, q]);
   return (
     <>
-      <PageHeader title="รายงานการจัดยา" sub="ประวัติการจัดยา แยกตามวัน สาขา และผู้จัด"
+      <PageHeader title="ซองยาระบบเดิม" sub="ซองยาที่จัดก่อนเปลี่ยนมาให้ยาแบบใหม่ ดูย้อนหลังได้อย่างเดียว · การให้ยาแบบใหม่ดูที่ ประวัติผู้รับบริการ › ยาและการให้ยา"
         actions={<><button className="btn-soft" onClick={() => downloadCsv("รายงานการจัดยา", cols, rows)}><CsvIcon /> ส่งออก CSV</button><button className="btn-primary" onClick={() => window.print()}><Icon name="print" className="h-4 w-4" /> พิมพ์รายงานจัดยา (A4)</button></>} />
       <form className="card mb-6 grid gap-4 p-5 sm:grid-cols-2 lg:grid-cols-[1.3fr_1fr_1fr_1fr_auto] lg:items-end" onSubmit={(e) => { e.preventDefault(); setQ({ who, from, to, status }); }}>
-        <Field label="ค้นหาผู้สูงอายุ"><Select options={RESIDENTS} placeholder="-- ทั้งหมด --" value={who} onChange={setWho} /></Field>
+        <Field label="ผู้ป่วย"><Select options={RESIDENTS} placeholder="-- ทั้งหมด --" value={who} onChange={setWho} /></Field>
         <Field label="วันกินยา (เริ่มต้น)"><input type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></Field>
         <Field label="วันกินยา (สิ้นสุด)"><input type="date" value={to} onChange={(e) => setTo(e.target.value)} /></Field>
-        <Field label="สถานะ"><Select options={["รอจ่าย", "จ่ายยาแล้ว"]} placeholder="-- ทั้งหมด --" value={status} onChange={setStatus} /></Field>
+        <Field label="สถานะ"><Select options={["ยังไม่ให้", "ให้ยาแล้ว"]} placeholder="-- ทั้งหมด --" value={status} onChange={setStatus} /></Field>
         <button className="btn-primary sm:col-span-2 lg:col-span-1"><Icon name="search" className="h-4 w-4" /> ค้นหา</button>
       </form>
-      <Section title="รายงานการจัดยา (Medication Dispensing Report)" sub="จัดยาโดยหลักการ 5R เพื่อความปลอดภัยสูงสุดของผู้รับบริการ">
-        <DataTable columns={cols} rows={rows} empty="ยังไม่มีประวัติการจัดยา เริ่มจัดยาได้ที่เมนูจัดยารายวัน" />
+      <Section title="ซองยาที่จัดไว้" sub="ระบบเดิม">
+        <DataTable columns={cols} rows={rows} empty="ไม่มีซองยาระบบเดิมในช่วงนี้" />
       </Section>
     </>
   );
@@ -822,16 +1160,17 @@ function Report({ packs }: { packs: Pack[] }) {
 /* ---------- คู่มือ ---------- */
 function Manual() {
   const parts = [
-    ["1. การรับยาเข้าตะกร้าผู้ป่วย", "ยาที่ญาติหรือโรงพยาบาลนำมา: ถ่ายรูปฉลาก ระบุมื้อและจำนวนต่อครั้ง (Dose) ยาที่ไม่ได้กินทุกวันให้ติ๊กวันที่ต้องกิน · ยาของศูนย์: เลือกแหล่งที่มา \"เบิกจากคลังกลางของศูนย์\" ระบบหักคลังกลางและขึ้นค่ายาที่การเงินให้ ยาที่ใกล้หมดกด \"เติมจากคลังกลาง\" ได้ เมื่อบันทึกแล้วระบบสร้างซองมื้อยาให้อัตโนมัติ"],
-    ["2. การจัดยา (Dispensing Process)", "เลือกผู้รับบริการและวันกินยา แล้วกด \"เริ่มจัดยามื้อนี้\" ถ้ายาในคลังมีไม่พอ ระบบจะแจ้งเตือนสีเหลืองทันทีและจัดเท่าที่มี สำหรับยาที่มีเงื่อนไขวันกิน ระบบจะดึงยาเข้าซองเฉพาะวันที่ตรงเงื่อนไขให้อัตโนมัติ ถ่ายรูปซองยาที่จัดเสร็จแล้วกดบันทึก สถานะจะเปลี่ยนเป็น \"จัดยาแล้ว\" และรูปซองถูกเก็บไว้ให้ผู้ตรวจ QA ดู"],
-    ["3. การแก้ไขเมื่อทำผิดพลาด (Reset)", "หากจัดยาผิด ถ่ายรูปผิด หรือต้องการจัดใหม่ ให้กดปุ่ม \"รีเซต\" บนการ์ดมื้อยา ระบบจะล้างการจัดยาของมื้อนั้นและคืนสต็อกยา"],
-    ["4. ระบบตรวจสอบการจัดยา (QA & Near Miss)", "ใช้หลัก 5R (Right Patient, Right Drug, Right Dose, Right Time, Right Route) ร่วมกับรูปถ่าย ผู้ตรวจกด \"ดูรูปซองเทียบฉลากยา\" เพื่อเทียบรูปซองกับรูปฉลากต้นฉบับ หากถูกต้องกด \"ตรวจผ่าน\" ซองจะขึ้นคิวจ่ายยาใน KinApp หากพบว่าจัดผิดกด \"แจ้งจัดยาผิด\" ระบุสาเหตุ แล้วกด \"รีเซตซองนี้แล้วจัดใหม่\" ระบบคืนยาและเปิดหน้าจัดยาของผู้ป่วยคนนั้นให้ การดักจับความผิดพลาดตรงนี้เรียกว่า Category B (Near Miss)"],
-    ["5. การให้ยา (KinApp)", "พยาบาลเปิดคิวจ่ายยาวันนี้ใน KinApp ให้ยาแล้วกดบันทึก ระบบเก็บชื่อผู้ให้ยาและเวลา ขึ้นในบันทึกการให้ยา (MAR) ของประวัติผู้ป่วย"],
-    ["6. การสุ่มตรวจ (Cycle Count)", "ใช้เมนูตรวจนับและปรับยอดยาเพื่อนับยาจริงเทียบกับระบบเป็นประจำ และอัปเดตสถานะยา เช่น ยาหมด ยาหมดอายุ หรือยางดใช้"],
+    ["1. รับยาเข้า (ยาของผู้ป่วย › เพิ่มยาใหม่)", "เลือกว่ายาของใคร และได้มาจากไหน (ญาติหรือโรงพยาบาลนำมา หรือเบิกจากคลังกลางของศูนย์) ถ่ายรูปฉลาก แล้วกรอกชื่อยา วิธีใช้ จำนวนที่ได้มา · ยาที่กินเป็นมื้อ เลือกมื้อและขนาดต่อครั้ง · ยาขวด ยาทา ยาพ่น หรือยาที่ให้เมื่อมีอาการ ติ๊ก \"ยานี้ไม่ได้กินเป็นมื้อ\" · ยาที่กินเฉพาะบางวัน เลือกวันไว้ด้วย"],
+    ["2. ให้ยาตามมื้อ (KinApp › แท็บให้ยา)", "เลือกมื้อ จะเห็นทุกคนที่ต้องกินยามื้อนั้นเรียงตามห้อง กด \"ให้ยา\" ที่คน ยาทุกรายการติ๊กไว้แล้ว (ให้ยาครบ n รายการ) · ตัวไหนไม่ได้ให้ เอาติ๊กออก แล้วเลือกเหตุผล (ปฏิเสธยา หลับอยู่ งดน้ำงดอาหาร ยาหมด อื่น ๆ) · ติ๊ก \"ตรวจชื่อผู้ป่วยและยาแล้ว\" แล้วกดบันทึก ระบบตัดคงเหลือเฉพาะยาที่ให้ และเก็บเป็นบันทึกการให้ยา"],
+    ["3. เบิกยา (KINmed › เบิกยา)", "หน้าเดียวกันสำหรับห้องยาและพยาบาลที่ใช้คอมพิวเตอร์ เลือกผู้ป่วย จะเห็นยาทุกตัว ยาตามมื้อบอกว่ามื้อไหนให้แล้ว มื้อไหนยังไม่ให้ · ใส่จำนวน เลือกมื้อหรือตามอาการ ติ๊ก \"ตรวจชื่อผู้ป่วยและยาแล้ว\" แล้วกดเบิก · ใช้กับยาขวด ยาทา ยาพ่น ยาตามอาการ และยาที่แพทย์สั่งเพิ่มนอกมื้อ"],
+    ["4. กันให้ยาซ้ำ", "ถ้าเลือกมื้อที่ให้ไปแล้ว หรือเบิกยาตามอาการซ้ำในวันเดียวกัน ระบบเตือนสีแดงพร้อมเวลาและชื่อคนที่ให้ก่อนหน้า ให้ตรวจก่อนยืนยัน"],
+    ["5. ให้ยาผิด หรือกดผิด", "ที่ KINmed › เบิกยา › ให้ยาและเบิกยาของวันที่เลือก กด \"ยกเลิก\" แล้วเลือกเหตุผล ระบบคืนคงเหลือและเก็บรายการไว้ · คนที่บันทึกยกเลิกเองได้ภายใน 24 ชั่วโมง หัวหน้าพยาบาลยกเลิกได้ทุกรายการ"],
+    ["6. ดูย้อนหลัง", "ประวัติผู้รับบริการ › ยาและการให้ยา มีบันทึกการให้ยาทุกครั้ง (ให้ / ไม่ได้ให้พร้อมเหตุผล) · ญาติเห็นว่าได้รับยามื้อไหนแล้วในหน้าครอบครัว · ภาพรวมและรายงานมีตัวชี้วัดให้ยาครบ"],
+    ["7. นับยาคงเหลือ", "สัปดาห์ละครั้ง นับยาจริงในตะกร้าของผู้ป่วย แล้วพิมพ์ตัวเลขที่นับได้ ระบบบอกว่าต่างจากในระบบเท่าไร ก่อนบันทึก · แก้สถานะยาได้ เช่น ยาหมด ยาหมดอายุ หรือหยุดใช้"],
   ];
   return (
     <>
-      <PageHeader title="คู่มือผู้ใช้งานระบบ (User Manual)" sub="วิธีทำแต่ละขั้น ตั้งแต่รับยาจนถึงให้ยา" />
+      <PageHeader title="วิธีใช้งาน" sub="ทำทีละขั้น ตั้งแต่รับยาเข้าจนถึงให้ยา · ไม่มีขั้นจัดซองและตรวจซองแล้ว" />
       <div className="mb-6"><TutorialVideos only={[5, 4]} /></div>
       <div className="grid gap-4 lg:grid-cols-2">{parts.map(([t, p]) => <section key={t} className="card p-6"><h2 className="text-[17px] font-medium text-gold-800">{t}</h2><p className="mt-2 text-sm leading-7 text-gold-600">{p}</p></section>)}</div>
     </>

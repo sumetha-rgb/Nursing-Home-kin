@@ -152,7 +152,7 @@ export default function CentralStock() {
           <Field label={`จำนวน (${issue.drug.unit})`}><input type="number" min={0} value={issue.qty} onChange={(e) => setIssue({ ...issue, qty: e.target.value })} /></Field>
           <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-cream-300 bg-cream-50 p-4 text-sm">
             <input type="checkbox" className="mt-1" checked={issue.basket} onChange={(e) => setIssue({ ...issue, basket: e.target.checked })} />
-            <span><b className="font-medium">ใส่เข้าตะกร้ายาผู้ป่วย</b><span className="block text-gold-600">ยาที่ต้องให้ประจำ จะขึ้นในหน้าจัดยารายวันตามมื้อ · ไม่ติ๊ก = ให้ครั้งคราว เช่น ยาแก้ไข้</span></span>
+            <span><b className="font-medium">ใส่เข้าตะกร้ายาผู้ป่วย</b><span className="block text-gold-600">ยาที่ต้องให้ประจำ จะขึ้นในรายการให้ยาของแต่ละมื้อ · ไม่ติ๊ก = ให้ครั้งคราว เช่น ยาแก้ไข้</span></span>
           </label>
           {issue.basket && <div className="rounded-2xl border border-cream-300 p-4">
             <Field label={`กินครั้งละ (${issue.drug.unit})`}><input type="number" min="0.5" step="0.5" value={issue.dose} onChange={(e) => setIssue({ ...issue, dose: e.target.value })} /></Field>

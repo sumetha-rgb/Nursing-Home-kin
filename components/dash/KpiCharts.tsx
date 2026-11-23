@@ -45,6 +45,22 @@ function Columns({ list, m, sel, onPick }: { list: PctKpi[]; m: number; sel: str
   const bw = Math.max(6, (inner - (m - 1) * 3) / m);
   const y = (v: number) => T + (1 - Math.min(100, Math.max(0, v)) / 100) * (H - T - B);
   const col = rampOf(m);
+  // จอแคบ (โทรศัพท์): กลุ่มแท่งเบียดจนชื่อหักทีละพยางค์ → เป็นรายการทีละแถว แถบ = ค่าล่าสุด เส้นแดง = เป้า · เดือนก่อนๆ เป็นตัวเลขใต้แถว
+  if (w < 560) return (
+    <div ref={ref} className="kc-list" role="list">
+      {list.map((k) => {
+        const gap = k.cur === null ? null : k.cur - k.goal, on = k.key === sel;
+        const prev = (k.monthly ?? []).slice(-m, -1).filter((p) => p.v !== null);
+        return (
+          <button key={k.key} type="button" role="listitem" className={`kc-li ${on ? "is-on" : ""}`} aria-pressed={on} onClick={() => onPick(k.key)}>
+            <span className="kc-li-h"><b>{k.label}</b><span><em>{k.cur === null ? "-" : `${k.cur}%`}</em> <small className={gap === null ? "" : gap >= 0 ? "is-ok" : "is-bad"}>{gap === null ? "ไม่มีข้อมูล" : gap >= 0 ? "ถึงเป้า" : `ขาด ${Math.abs(gap)}%`}</small></span></span>
+            <span className="kc-li-track" aria-hidden="true"><i style={{ width: `${Math.min(100, Math.max(0, k.cur ?? 0))}%` }} /><u style={{ left: `${Math.min(100, Math.max(0, k.goal))}%` }} /></span>
+            <small className="kc-li-sub">{k.base ?? ""}{prev.length ? `${k.base ? " · " : ""}${prev.map((p) => `${p.label} ${p.v}%`).join(" · ")}` : ""}</small>
+          </button>
+        );
+      })}
+    </div>
+  );
   return (
     <div ref={ref} className="kc-cols" onMouseLeave={() => setTip(null)}>
       <svg width={w} height={H} role="img" aria-label={`ตัวชี้วัดเทียบ ${m} เดือน: ${list.map((k) => `${k.label} ${(k.monthly ?? []).slice(-m).map((p) => `${p.label} ${p.v ?? "-"}%`).join(", ")} · เป้า ${k.goal}%`).join(" · ")}`}>
@@ -129,8 +145,9 @@ function Growth({ pts, goal, name }: { pts: Pt[]; goal: number; name: string }) 
 export type DrillCtx = { from: string; to: string; label: string; branch: string; money: boolean; ranges?: Record<string, { from: string; to: string; label: string }>; go?: (v: ViewId) => void };
 
 /** curNote = ตัวเลขใต้กราฟมาจากช่วงไหน (เมื่อไม่ใช่ทั้งเดือน เช่น เลือกวันนี้/ช่วงวันที่) */
-export default function KpiCharts({ pct, counts, vs, drill, curNote }: { pct: PctKpi[]; counts: CountKpi[]; vs: string; drill?: DrillCtx; curNote?: string }) {
-  const [sel, setSel] = useState(pct[0]?.key);
+/** initial = ตัวชี้วัดที่เลือกไว้ตอนเปิด (ไม่ส่ง = ตัวแรก) */
+export default function KpiCharts({ pct, counts, vs, drill, curNote, initial }: { pct: PctKpi[]; counts: CountKpi[]; vs: string; drill?: DrillCtx; curNote?: string; initial?: string }) {
+  const [sel, setSel] = useState(initial ?? pct[0]?.key);
   const [m, setM] = useState<number>(3);
   const [by, setBy] = useState<"month" | "week">("month");
   const k = pct.find((x) => x.key === sel) ?? pct[0];

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { sql } from "@/lib/db";
 import { currentUser, forbidden, unauthorized } from "@/lib/auth";
 import { ACTION_GROUPS } from "@/lib/auditLabels";
-import { can } from "@/lib/perms";
+import { can, seesMoney } from "@/lib/perms";
 import { audit } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
@@ -19,7 +19,7 @@ const PAGE = 50;
  */
 /**
  * บันทึกการส่งออกไฟล์ที่มีข้อมูลส่วนบุคคล (เช่น ทะเบียนสัญญา CSV)
- *  POST { what: "contracts" | "health" | "spend" | "appointments", count }
+ *  POST { what: "contracts" | "health" | "spend" | "appointments" | "mar" | "missed" | "vround" | "incidents", count }
  */
 export async function POST(req: NextRequest) {
   const me = await currentUser(req);
@@ -31,10 +31,18 @@ export async function POST(req: NextRequest) {
     await audit(req, me, [{ area: "contracts", action: "export", recordId: null, summary: `ส่งออกทะเบียนสัญญา CSV ${n} สัญญา (มีเลขบัตรประชาชนและที่อยู่)`, branch }]);
   } else if (b.what === "health" && can(me, "health_logs")) {
     await audit(req, me, [{ area: "health", action: "export", recordId: null, summary: `ส่งออกบันทึกสุขภาพ CSV ${n} รายการ (ข้อมูลสุขภาพ)`, branch }]);
-  } else if (b.what === "spend" && (can(me, "billing") || can(me, "dashboard"))) {
+  } else if (b.what === "spend" && seesMoney(me)) {
     await audit(req, me, [{ area: "billing", action: "export", recordId: null, summary: `ส่งออกค่าใช้จ่ายรายบุคคล CSV ${n} แถว (มีชื่อและยอดเงินของผู้รับบริการ)`, branch }]);
   } else if (b.what === "appointments" && can(me, "appointments")) {
     await audit(req, me, [{ area: "appointments", action: "export", recordId: null, summary: `ส่งออกนัดหมาย CSV ${n} รายการ (มีชื่อผู้รับบริการ)`, branch }]);
+  } else if (b.what === "mar" && (can(me, "app.pharmacy") || can(me, "app.staff") || can(me, "health_logs"))) {
+    await audit(req, me, [{ area: "pharmacy", action: "export", recordId: null, summary: `ส่งออกบันทึกการให้ยา CSV ${n} รายการ (ข้อมูลสุขภาพ)`, branch }]);
+  } else if (b.what === "missed" && (can(me, "app.pharmacy") || can(me, "app.staff") || can(me, "health_logs"))) {
+    await audit(req, me, [{ area: "pharmacy", action: "export", recordId: null, summary: `ส่งออกยาที่ยังไม่ได้ให้ CSV ${n} รายการ (ข้อมูลสุขภาพ)`, branch }]);
+  } else if (b.what === "vround" && (can(me, "health_logs") || can(me, "residents"))) {
+    await audit(req, me, [{ area: "health", action: "export", recordId: null, summary: `ส่งออกรอบวัดสัญญาณชีพรายคน CSV ${n} คน (ข้อมูลสุขภาพ)`, branch }]);
+  } else if (b.what === "incidents" && (can(me, "health_logs") || can(me, "residents") || can(me, "tasks.review"))) {
+    await audit(req, me, [{ area: "health", action: "export", recordId: null, summary: `ส่งออกเหตุการณ์ไม่พึงประสงค์ CSV ${n} เรื่อง (มีชื่อผู้รับบริการ)`, branch }]);
   } else return forbidden();
   return NextResponse.json({ ok: true });
 }

@@ -280,6 +280,8 @@ export const invoiceBranch = (inv: Invoice, contracts: string[][], residents: st
 export const money = (n: number | undefined) => (n ?? 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 /** 2026-10-28 → 28-10-2569 (รูปแบบวันที่ในใบเสร็จ) */
 export const docDate = (iso?: string) => { if (!iso) return "-"; const [y, m, d] = iso.slice(0, 10).split("-"); return `${d}-${m}-${Number(y) + 543}`; };
+/** วันที่ในไฟล์ CSV: 2026-11-23 → 23/11/2569 (ว่าง = "") · ใช้แบบเดียวกันทุกไฟล์ในหน้าส่งออกข้อมูล */
+export const csvDate = (iso?: string | null) => { const m = String(iso ?? "").match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? `${m[3]}/${m[2]}/${Number(m[1]) + 543}` : ""; };
 export const todayIso = () => new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10);
 
 /* ---------- จำนวนเงินเป็นตัวอักษร ---------- */

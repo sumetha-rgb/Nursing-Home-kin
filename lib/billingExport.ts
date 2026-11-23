@@ -1,7 +1,7 @@
 "use client";
 // ส่งออกข้อมูลการเงินเป็น CSV สำหรับฝ่ายบัญชี (หน้าใบแจ้งหนี้และใบเสร็จ และแท็บการเงินในภาพรวมและรายงาน)
 import { useEffect, useState } from "react";
-import { BILL_GROUPS, creditOf, docDate, groupOf, Invoice, lineAmount, lineDiscount, lineNet, lineSign, money, parseItems, payTake, BillItem } from "./billing";
+import { BILL_GROUPS, creditOf, csvDate, docDate, groupOf, Invoice, lineAmount, lineDiscount, lineNet, lineSign, money, parseItems, payTake, BillItem } from "./billing";
 import { downloadCsv } from "./store";
 import { lineCode } from "./priceList";
 
@@ -83,11 +83,11 @@ export function exportInvoiceLines(list: Invoice[], branchOf: (x: Invoice) => st
     parseItems(x.items).map((i, k) => {
       if (i.credit) {
         const amt = lineAmount(i);
-        return [x.no ?? "", docDate(x.date), branchOf(x), x.who, x.hn || "", x.kind, x.status, String(k + 1), "", i.desc, catCode(i), receiptGroup(i), itemCategory(i), String(i.qty), money(i.price), money(-amt), "0.00", money(-amt), "0", "0.00", money(-amt)];
+        return [x.no ?? "", csvDate(x.date), branchOf(x), x.who, x.hn || "", x.kind, x.status, String(k + 1), "", i.desc, catCode(i), receiptGroup(i), itemCategory(i), String(i.qty), money(i.price), money(-amt), "0.00", money(-amt), "0", "0.00", money(-amt)];
       }
       // ใบลดหนี้: ยอดทุกช่องเป็นลบ
       const sg = lineSign(x), base = lineNet(i), vat = r2((base * (i.vat ?? 0)) / 100);
-      return [x.no ?? "", docDate(x.date), branchOf(x), x.who, x.hn || "", x.kind, x.status, String(k + 1), lineCode(i), i.desc, catCode(i), receiptGroup(i), itemCategory(i), String(i.qty), money(i.price), money(sg * lineAmount(i)), money(sg * lineDiscount(i)), money(sg * base), String(i.vat ?? 0), money(sg * vat), money(sg * (base + vat))];
+      return [x.no ?? "", csvDate(x.date), branchOf(x), x.who, x.hn || "", x.kind, x.status, String(k + 1), lineCode(i), i.desc, catCode(i), receiptGroup(i), itemCategory(i), String(i.qty), money(i.price), money(sg * lineAmount(i)), money(sg * lineDiscount(i)), money(sg * base), String(i.vat ?? 0), money(sg * vat), money(sg * (base + vat))];
     }));
   downloadCsv(name, ["เลขที่เอกสาร", "วันที่", "สาขา", "ผู้รับบริการ", "HN", "ประเภทใบ", "สถานะใบ", "บรรทัด", "รหัสสินค้า", "รายการ", "รหัสหมวด", "หมวดในใบเสร็จ", "หมวด", "จำนวน", "ราคาต่อหน่วย", "ยอดก่อนส่วนลด", "ส่วนลด", "ก่อน VAT", "VAT (%)", "VAT", "สุทธิ"], rows);
   return rows.length;
@@ -110,6 +110,6 @@ export async function exportPayments(branch: string, name: string, inRange: (d: 
   if (!r.ok) throw new Error(d.error || "ดึงข้อมูลการรับเงินไม่สำเร็จ");
   const items = ((d.items ?? []) as PayRow[]).filter((p) => inRange(String(p.date ?? "").slice(0, 10)));
   downloadCsv(name, ["วันที่รับเงิน", "เลขที่ใบเสร็จ", "เลขที่เอกสาร", "งวดที่", "สาขา", "ผู้รับบริการ", "HN", "ผู้ชำระ", "ประเภทใบ", "สถานะใบ", "ประเภทรายการ", "เงินสด", "เงินโอน", "โอนเข้าบัญชี", "รูดบัตร EDC", "เครื่อง EDC", "บัตรเครดิตอื่น", "ช่องทางบัตร", "รวมรับเงิน", "ภาษีหัก ณ ที่จ่าย", "ตัดยอดค้างรวม", "มูลค่าที่มี VAT (ก่อน VAT)", "VAT 7%", "มูลค่าที่ไม่มี VAT", "รายการที่ชำระ", "เลขอ้างอิงการโอน", "ผู้รับเงิน", "มีสลิป", "หมายเหตุ"],
-    items.map((p) => [docDate(p.date), p.receiptNo ?? "", p.no ?? "", String(p.n), p.branch ?? "", p.who ?? "", p.hn ?? "", p.payer ?? "", p.kind ?? "", p.status ?? "", p.pkind === "credit" ? "ใบลดหนี้หักยอด" : "รับเงิน", money(p.cash), money(p.transfer), p.transferAccount ?? "", money(p.edc ?? 0), p.edcAccount ?? "", money(p.credit - (p.edc ?? 0)), p.cardAccount ?? "", money(p.cash + p.transfer + p.credit), money(p.wht ?? 0), money(p.amount), ...payCells(p), p.transferRef ?? "", p.cashier, p.slip ? "มี" : "", p.note]));
+    items.map((p) => [csvDate(p.date), p.receiptNo ?? "", p.no ?? "", String(p.n), p.branch ?? "", p.who ?? "", p.hn ?? "", p.payer ?? "", p.kind ?? "", p.status ?? "", p.pkind === "credit" ? "ใบลดหนี้หักยอด" : "รับเงิน", money(p.cash), money(p.transfer), p.transferAccount ?? "", money(p.edc ?? 0), p.edcAccount ?? "", money(p.credit - (p.edc ?? 0)), p.cardAccount ?? "", money(p.cash + p.transfer + p.credit), money(p.wht ?? 0), money(p.amount), ...payCells(p), p.transferRef ?? "", p.cashier, p.slip ? "มี" : "", p.note]));
   return items.length;
 }

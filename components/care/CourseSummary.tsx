@@ -6,6 +6,7 @@ import Icon from "../Icon";
 import { docDate, money } from "@/lib/billing";
 import { downloadCsv } from "@/lib/store";
 import { useSession } from "@/lib/session";
+import { seesMoney } from "@/lib/perms";
 import PhysioHistoryModal from "./PhysioHistoryModal";
 
 type Course = { id: string; resident_name: string; branch_name: string; name: string; total: number; used: number; price: number; status: string; created_by: string; billed: boolean; day: string; last_used: string | null };
@@ -18,6 +19,8 @@ const TABS = ["ยังเหลือ", "ใช้ครบแล้ว", "ท
 export default function CourseSummary({ branch, compact, onTiles }: { branch: string; compact?: boolean; onTiles?: (t: Tile[]) => void }) {
   const { user } = useSession();
   const global = user?.role === "Global Admin";
+  // ไม่มีสิทธิ์การเงิน (เช่น หัวหน้าพยาบาล) = ไม่เห็นราคาและยอดขายคอร์ส
+  const fin = seesMoney(user);
   const [items, setItems] = useState<Course[] | null>(null);
   const [tab, setTab] = useState(TABS[0]);
   const [hist, setHist] = useState<Course | null>(null);
@@ -32,12 +35,18 @@ export default function CourseSummary({ branch, compact, onTiles }: { branch: st
   const thisMonth = list.filter((c) => c.day.startsWith(month));
   const buyers = new Set(list.map((c) => `${c.branch_name}|${c.resident_name}`)).size;
   const shown = list.filter((c) => tab === "ทั้งหมด" || (tab === "ยังเหลือ" ? left(c) > 0 : left(c) === 0));
-  const cols = ["ผู้รับบริการ", ...(global ? ["สาขา"] : []), "คอร์ส", "วันที่ซื้อ", "ใช้แล้ว", "คงเหลือ", "ใช้ล่าสุด", "ราคา (บาท)", "ใบแจ้งหนี้"];
-  const rows = shown.map((c) => [c.resident_name, ...(global ? [c.branch_name] : []), c.name, docDate(c.day), `${c.used}/${c.total} ครั้ง`, `${left(c)} ครั้ง`, c.last_used ? docDate(c.last_used) : "ยังไม่ได้ใช้", c.price ? money(c.price) : "-", c.billed ? "ออกแล้ว" : c.price ? "รอออกใบ" : "-"]);
+  const cols = ["ผู้รับบริการ", ...(global ? ["สาขา"] : []), "คอร์ส", "วันที่ซื้อ", "ใช้แล้ว", "คงเหลือ", "ใช้ล่าสุด", ...(fin ? ["ราคา (บาท)", "ใบแจ้งหนี้"] : [])];
+  const rows = shown.map((c) => [c.resident_name, ...(global ? [c.branch_name] : []), c.name, docDate(c.day), `${c.used}/${c.total} ครั้ง`, `${left(c)} ครั้ง`, c.last_used ? docDate(c.last_used) : "ยังไม่ได้ใช้", ...(fin ? [c.price ? money(c.price) : "-", c.billed ? "ออกแล้ว" : c.price ? "รอออกใบ" : "-"] : [])]);
 
-  const tiles = [
-        { label: "คอร์สกายภาพที่ขาย", value: list.length, unit: "คอร์ส", icon: "receipt", accent: true, note: `เดือนนี้ ${thisMonth.length} คอร์ส · ${money(thisMonth.reduce((n, c) => n + c.price, 0))} บาท` },
-        { label: "ผู้ซื้อคอร์ส", value: buyers, unit: "คน", icon: "user", note: `ยอดขายรวม ${money(list.reduce((n, c) => n + c.price, 0))} บาท` },
+  // ไม่มีสิทธิ์การเงิน (มุมงานดูแล): ดูการใช้คอร์ส ไม่แสดงจำนวนที่ขายและผู้ซื้อ
+  const tiles = !fin ? [
+        { label: "คอร์สที่ใช้อยู่", value: list.filter((c) => left(c) > 0).length, unit: "คอร์ส", icon: "receipt", accent: true, note: `ผู้รับบริการ ${buyers} คน` },
+        { label: "ใช้ไปแล้ว", value: list.reduce((n, c) => n + c.used, 0), unit: "ครั้ง", icon: "check", note: `จาก ${list.reduce((n, c) => n + c.total, 0)} ครั้งในคอร์ส` },
+        { label: "คงเหลือ", value: list.reduce((n, c) => n + left(c), 0), unit: "ครั้ง", icon: "history", note: `${list.filter((c) => left(c) > 0).length} คอร์สที่ยังใช้ไม่ครบ` },
+        { label: "ใกล้หมด", value: list.filter((c) => left(c) > 0 && left(c) <= 2).length, unit: "คอร์ส", icon: "alert", note: "เหลือ 1–2 ครั้ง · แจ้งญาติเรื่องต่อคอร์ส" },
+  ] : [
+        { label: "คอร์สกายภาพที่ขาย", value: list.length, unit: "คอร์ส", icon: "receipt", accent: true, note: `เดือนนี้ ${thisMonth.length} คอร์ส${fin ? ` · ${money(thisMonth.reduce((n, c) => n + c.price, 0))} บาท` : ""}` },
+        { label: "ผู้ซื้อคอร์ส", value: buyers, unit: "คน", icon: "user", note: fin ? `ยอดขายรวม ${money(list.reduce((n, c) => n + c.price, 0))} บาท` : `ซื้อรวม ${list.length} คอร์ส` },
         { label: "ใช้ไปแล้ว", value: list.reduce((n, c) => n + c.used, 0), unit: "ครั้ง", icon: "check", note: `จาก ${list.reduce((n, c) => n + c.total, 0)} ครั้งที่ขาย` },
         { label: "คงเหลือ", value: list.reduce((n, c) => n + left(c), 0), unit: "ครั้ง", icon: "history", note: `${list.filter((c) => left(c) > 0).length} คอร์สที่ยังใช้ไม่ครบ` },
   ];
@@ -52,7 +61,7 @@ export default function CourseSummary({ branch, compact, onTiles }: { branch: st
           <Tabs tabs={TABS} value={tab} onChange={setTab} />
           <button className="btn-soft" onClick={() => downloadCsv(`คอร์สกายภาพ-${tab}`, cols, rows)}><CsvIcon /> ส่งออก CSV</button>
         </>}>
-        <DataTable columns={cols} rows={rows} badgeCols={[cols.length - 1]} empty={items ? (tab === "ยังเหลือ" ? "ไม่มีคอร์สที่ยังใช้ไม่ครบ" : "ยังไม่มีคอร์สกายภาพ") : "กำลังโหลด…"}
+        <DataTable columns={cols} rows={rows} badgeCols={fin ? [cols.length - 1] : []} empty={items ? (tab === "ยังเหลือ" ? "ไม่มีคอร์สที่ยังใช้ไม่ครบ" : "ยังไม่มีคอร์สกายภาพ") : "กำลังโหลด…"}
           actions={[{ label: "ประวัติ / สรุปผล", hidden: (k) => !shown[k].used, onClick: (k) => setHist(shown[k]) }]} />
       </Section>
       <PhysioHistoryModal courseId={hist?.id ?? null} title={hist?.resident_name ?? ""} onClose={() => setHist(null)} />
