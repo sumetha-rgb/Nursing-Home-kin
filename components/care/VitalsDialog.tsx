@@ -138,7 +138,8 @@ export default function VitalsDialog({ open, residents, resident, recorder, onCl
             const dim = d && (d.due.cls === "rest" || d.due.cls === "off") && !f[x.k] ? "opacity-60" : "";
             return (
               <div key={x.k} className="min-w-0">
-                <Field label={x.label}>
+                {/* ยังไม่ถึงรอบ / ไม่ต้องวัด = บอก "ไม่บังคับ" ที่ชื่อช่อง · ช่องที่ถึงรอบหรือขาดวัดไม่ใส่ (ควรวัดตอนนี้) */}
+                <Field label={x.label} optional={!!d && (d.due.cls === "rest" || d.due.cls === "off")}>
                   <input inputMode={x.mode ?? "decimal"} className={[ai?.keys.includes(x.k) ? "is-ai" : "", ring, dim].filter(Boolean).join(" ") || undefined} value={f[x.k]} placeholder={x.ph} onChange={(e) => { setF({ ...f, [x.k]: e.target.value }); setDoubt(false); if (ai) setAi({ ...ai, keys: ai.keys.filter((k) => k !== x.k) }); }} />
                 </Field>
                 {d && first && <p className="mt-1 flex flex-wrap items-center gap-1.5 text-[11.5px] text-gold-500"><DueBadge cls={d.due.cls} text={d.due.text} />{d.due.cls !== "off" && d.last && <span>ล่าสุด {thShort(d.last)}</span>}</p>}

@@ -68,10 +68,11 @@ export function ThaiDateInput({ value, onChange, label, required, min, max, disa
   );
 }
 
-export function Field({label,required,children,className=""}:{label:string;required?:boolean;children:ReactNode;className?:string}) {
+/** optional = ต่อท้ายชื่อช่องด้วย "ไม่บังคับ" ตัวเล็กสีเทา (เช่น ค่าที่ยังไม่ถึงรอบวัด) */
+export function Field({label,required,optional,children,className=""}:{label:string;required?:boolean;optional?:boolean;children:ReactNode;className?:string}) {
  const labelId=useId();
  const controls=Children.map(children,child=>isValidElement(child)?cloneElement(child as ReactElement<{"aria-label"?:string}>, {"aria-label":(child.props as {"aria-label"?:string})["aria-label"]||label}):child);
- return <div className={className} role="group" aria-labelledby={labelId}><div id={labelId} className="label">{label}{required&&<span className="ml-1 text-red-500">*</span>}</div><div className="field-control">{controls}</div></div>;
+ return <div className={className} role="group" aria-labelledby={labelId}><div id={labelId} className="label">{label}{required&&<span className="ml-1 text-red-500">*</span>}{optional&&<span className="ml-1.5 text-[11.5px] font-normal text-gold-400">ไม่บังคับ</span>}</div><div className="field-control">{controls}</div></div>;
 }
 
 export function Select({ options, placeholder, name, value, onChange, "aria-label": ariaLabel }: { "aria-label"?:string; options: string[]; placeholder?: string; name?: string; value?: string; onChange?: (v: string) => void }) {
