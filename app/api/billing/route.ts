@@ -83,9 +83,14 @@ async function salesTax(req: NextRequest) {
   if (!me) return unauthorized();
   if (!canSalesTax(me)) return forbidden("รายงานภาษีขายดูได้เฉพาะผู้บริหาร ผู้จัดการสาขา และการเงิน");
   const q = req.nextUrl.searchParams;
+  // ?month=YYYY-MM (ทั้งเดือน) หรือ ?from=&to= (ช่วงวันที่จากปฏิทิน · ไม่เกิน 1 ปี)
+  const D = /^\d{4}-\d{2}-\d{2}$/;
   const month = /^\d{4}-\d{2}$/.test(q.get("month") ?? "") ? q.get("month")! : "";
-  if (!month) return bad("เดือนไม่ถูกต้อง");
-  const from = `${month}-01`, to = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).toISOString().slice(0, 10);
+  let from = "", to = "";
+  if (D.test(q.get("from") ?? "") && D.test(q.get("to") ?? "")) { from = q.get("from")!; to = q.get("to")!; if (to < from) [from, to] = [to, from]; }
+  else if (month) { from = `${month}-01`; to = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).toISOString().slice(0, 10); }
+  else return bad("ช่วงวันที่ไม่ถูกต้อง");
+  if ((Date.parse(to) - Date.parse(from)) / 864e5 > 366) return bad("เลือกช่วงได้ไม่เกิน 1 ปี");
   const br = seesAllBranches(me.role) ? q.get("branch") || null : me.branch;
   const pays = await sql(`SELECT p.id, p.pay_date::text AS date, p.amount::float, i.id AS "invId", i.doc_no AS no, p.receipt_no AS "receiptNo", i.items_json AS items, i.net::float,
       i.payer_name AS payer, i.resident_name AS who, coalesce(i.payer_tax_id, '') AS "taxId", coalesce(i.payer_branch, '') AS "payerBranch", i.branch_name AS branch, i.status,
