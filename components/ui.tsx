@@ -181,10 +181,15 @@ export function DataTable({ columns, rows = [], empty = "ไม่พบข้�
         <div className="mdr-c-foot">{rest.length>0?<details className="mdr-c-more" onClick={(e)=>e.stopPropagation()}><summary>รายละเอียด</summary><dl className="mdr-grid">{rest.map(j=><div key={j}><dt>{label(j)}</dt><dd>{cell(r[j],j,i)}</dd></div>)}</dl></details>:<span />}
         {actions&&<div className="row-actions mdr-c-acts">{buttons(i)}</div>}</div>
       </div>;}
+    // ช่องชื่อคน และข้อความยาว (ไทย > 16 ตัว) กว้างเต็มการ์ด ไม่ถูกบีบครึ่งจนตัดกลางคำ
+    const wide=(j:number,c:string)=>{const n=String(c??"").length;return n>16||(n>9&&/ชื่อ|ผู้รับบริการ|ผู้ป่วย|ผู้สูงอายุ|รายการ|หมายเหตุ|โรค/.test(label(j)??""));};
+    // ไม่มีปุ่มหลักในแถวนี้ = ปุ่ม ⋯ ย้ายไปมุมขวาบน (ไม่ต้องมีแถวปุ่มที่มีแต่ ⋯ เต็มแถว)
+    const mainBtns=actions?.filter(x=>!x.more&&!x.hidden?.(i))??[];
+    const moreOnly=!!actions&&!mainBtns.length&&actions.some(x=>x.more&&!x.hidden?.(i));
     return <dl key={i} {...rowProps(i)} className={"mobile-data-row mdr"+(onRow?" is-clickable":"")}>
-      <div className="mdr-head"><dt className="sr-only">{label(0)}</dt><dd className="mdr-title">{cell(r[0],0,i)}</dd>{st>0&&<dd className="mdr-status">{cell(r[st],st,i)}</dd>}</div>
-      <div className="mdr-grid">{r.map((c,j)=>j===0||j===st||!String(c??"").trim()||c==="-"?null:<div key={j}><dt>{label(j)}</dt><dd>{cell(c,j,i)}</dd></div>)}</div>
-      {actions&&<div className="row-actions mdr-acts">{buttons(i)}</div>}
+      <div className="mdr-head"><dt className="sr-only">{label(0)}</dt><dd className="mdr-title">{cell(r[0],0,i)}</dd>{st>0&&<dd className="mdr-status">{cell(r[st],st,i)}</dd>}{moreOnly&&<dd className="mdr-more"><RowMenu items={actions!.filter(x=>x.more)} i={i} /></dd>}</div>
+      <div className="mdr-grid">{r.map((c,j)=>j===0||j===st||!String(c??"").trim()||c==="-"?null:<div key={j} className={wide(j,c)?"mdr-wide":undefined}><dt>{label(j)}</dt><dd>{cell(c,j,i)}</dd></div>)}</div>
+      {actions&&!moreOnly&&<div className="row-actions mdr-acts">{buttons(i)}</div>}
     </dl>;
   }):blank}</div><div className="table-pagination"><span>{filtered.length?(current*PAGE_SIZE+1)+"–"+Math.min((current+1)*PAGE_SIZE,filtered.length)+" จาก "+filtered.length+" รายการ":"0 รายการ"}</span>{pages>1&&<div className="table-pagination-controls"><button type="button" disabled={current===0} aria-label="หน้าก่อนหน้า" onClick={()=>setPage(current-1)}><Icon name="chevron" className="h-3.5 w-3.5 rotate-90" /></button><span>หน้า {current+1} / {pages}</span><button type="button" disabled={current>=pages-1} aria-label="หน้าถัดไป" onClick={()=>setPage(current+1)}><Icon name="chevron" className="h-3.5 w-3.5 -rotate-90" /></button></div>}</div></div>;
 }

@@ -7,6 +7,7 @@ import { fromDb, selectExpr, specFor } from "@/lib/schema";
 import type { Invoice } from "@/lib/billing";
 import { bkkToday, cycleDue, nextCycle } from "@/lib/servicePeriod";
 import { vitalDueSummary } from "@/lib/vitalDue";
+import { INTAKE_SINCE } from "@/lib/vitalPlan";
 
 /**
  * สัญญารายเดือนที่ครบรอบบิลแล้วหรือจะครบภายใน 7 วัน แต่ยังไม่มีใบของรอบนั้น
@@ -71,6 +72,11 @@ async function compute([tasks, health, billing, contracts, stock, rooms, roster,
   if (health) {
     // คนที่ถึงรอบวัดสัญญาณชีพตอนนี้ (ตามรอบที่ตั้งให้แต่ละคน · lib/vitalDue)
     job(() => vitalDueSummary(br).catch(() => undefined), (v) => { if (v) out.vitalDue = v; });
+    // รอแรกรับและตั้งรอบการวัด: เข้าอยู่แล้ว (เข้าทะเบียนตั้งแต่วันที่เปิดใช้) แต่ยังไม่มีแบบประเมินแรกรับ · late = เกิน 1 วัน
+    job(() => sql(`SELECT r.full_name AS name, ((now() AT TIME ZONE 'Asia/Bangkok')::date - (r.created_at AT TIME ZONE 'Asia/Bangkok')::date)::int AS days
+        FROM residents r WHERE coalesce(r.status, '') LIKE 'เข้าอยู่%' AND r.created_at >= ($${p.length + 1}::date::timestamp AT TIME ZONE 'Asia/Bangkok')
+          AND NOT EXISTS (SELECT 1 FROM resident_admissions a WHERE a.resident_id = r.id) ${w("r.branch_name")} ORDER BY r.created_at`, [...p, INTAKE_SINCE]).catch(() => undefined),
+      (v) => { if (v) { const xs = v as { name: string; days: number }[]; out.intake = { n: xs.length, late: xs.filter((x) => x.days >= 1).length, names: xs.map((x) => x.name) }; } });
   }
   if (feedbacks) {
     // เรื่องร้องเรียนจากญาติที่ยังไม่ได้แก้ไข (เสียงจากครอบครัว)

@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { useApp } from "@/lib/app";
+import { useSession } from "@/lib/session";
 import { dueAll, DueCls, fetchVitalDue, presetLabel, saveVitalPlan, thShort, VITAL_DUE_EVENT, VITAL_PRESETS, VitalDueRow, VitalKey, PresetKey } from "@/lib/vitalPlan";
 
 /** ป้ายสถานะรอบการวัด (ใช้ร่วมกับฟอร์มสัญญาณชีพและ KinApp) */
@@ -16,11 +17,13 @@ export function DueBadge({ cls, text }: { cls: DueCls; text: string }) {
 
 /**
  * การ์ดรอบการวัด (ประวัติผู้รับบริการ › สัญญาณชีพ)
- *  ตั้งรอบด้วยปุ่มภาษาคน ทีละรายการ (หัวหน้าพยาบาล/ผู้จัดการ) · คนอื่นเห็นอย่างเดียว
+ *  ตั้งรอบด้วยปุ่มภาษาคน ทีละรายการ (พยาบาลที่มีสิทธิ์ตั้งรอบ หัวหน้าพยาบาล ผู้จัดการ · lib/perms canVitalPlan) · คนอื่นเห็นอย่างเดียว
+ *  ตั้งครั้งแรกได้ในแบบประเมินแรกรับ (components/care/Clinical) · ยังไม่มีใครตั้ง = แถบให้ยืนยันค่าเริ่มต้น
  *  ระบบนับจากครั้งล่าสุดที่บันทึกจริง → ฟอร์มสัญญาณชีพขึ้นป้ายถึงรอบ และ KinApp มีรายการถึงรอบวัด
  */
 export default function VitalPlanCard({ residentId }: { residentId: string }) {
   const { toast } = useApp();
+  const { user } = useSession();
   const [row, setRow] = useState<VitalDueRow | null>(null);
   const [canEdit, setCanEdit] = useState(false);
   const [err, setErr] = useState("");
@@ -40,6 +43,15 @@ export default function VitalPlanCard({ residentId }: { residentId: string }) {
     finally { setBusy(null); }
   };
 
+  const [confirming, setConfirming] = useState(false);
+  const confirmDefault = async () => {
+    if (!row) return;
+    setConfirming(true);
+    try { await saveVitalPlan(row.id, row.plan); setRow({ ...row, custom: true, by: user?.name ?? row.by }); toast("ยืนยันรอบการวัดแล้ว"); }
+    catch (e) { toast((e as Error).message); }
+    finally { setConfirming(false); }
+  };
+
   if (err) return <p className="rounded-xl bg-cream-50 px-4 py-3 text-sm text-gold-600">{err}</p>;
   if (!row) return <p className="py-4 text-center text-sm text-gold-500">กำลังโหลดรอบการวัด…</p>;
   const items = dueAll(row);
@@ -49,7 +61,12 @@ export default function VitalPlanCard({ residentId }: { residentId: string }) {
         <h4 className="!mb-0">รอบการวัด</h4>
         <span className="text-xs text-gold-500">{row.custom ? `ตั้งโดย ${row.by ?? "-"}` : "ใช้ค่าเริ่มต้น"} · นับจากครั้งล่าสุดที่บันทึกจริง</span>
       </div>
-      {!canEdit && <p className="mb-1 text-xs text-gold-500">หัวหน้าพยาบาลหรือผู้จัดการสาขาเป็นคนตั้งรอบ · บันทึกสัญญาณชีพแล้วระบบนับรอบใหม่ให้เอง</p>}
+      {/* ยังไม่มีใครตั้งรอบ: ยืนยันค่าเริ่มต้นได้ในปุ่มเดียว (บันทึกเป็นรอบของคนนี้ พร้อมชื่อคนยืนยัน) */}
+      {canEdit && !row.custom && <div className="my-2 flex flex-wrap items-center justify-between gap-2 rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-800 ring-1 ring-amber-200">
+        <span>ยังไม่มีใครตั้งรอบให้คนนี้ · ตรวจรอบด้านล่างแล้วกดยืนยัน หรือกดเลือกรอบใหม่</span>
+        <button type="button" className="btn-primary !px-3 !py-1 text-xs" disabled={confirming} onClick={confirmDefault}>{confirming ? "กำลังบันทึก…" : "ใช้รอบนี้"}</button>
+      </div>}
+      {!canEdit && <p className="mb-1 text-xs text-gold-500">บัญชีนี้ดูรอบได้อย่างเดียว (ขอสิทธิ์ ตั้งรอบวัดสัญญาณชีพรายคน จากหัวหน้าพยาบาล) · บันทึกสัญญาณชีพแล้วระบบนับรอบใหม่ให้เอง</p>}
       <ul className="divide-y divide-cream-200">
         {items.map((it) => (
           <li key={it.k} className="grid gap-2 py-2.5 md:grid-cols-[140px_minmax(0,1fr)_200px] md:items-center">

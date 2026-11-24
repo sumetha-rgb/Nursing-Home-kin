@@ -17,6 +17,7 @@ import { ADMISSION_FIELDS } from "@/lib/clinic";
 import { fetchProfile, Profile, thDate, thWhen } from "@/lib/care";
 import { evaluateVitals, LEVEL_TH, levelOf, LIMITS, parseVitals, Vitals } from "@/lib/vitals";
 import { isNoAllergy } from "@/lib/medicalLists";
+import { INTAKE_SINCE } from "@/lib/vitalPlan";
 
 type Row = Record<string, unknown>;
 const str = (v: unknown) => (v === null || v === undefined || v === "" ? "-" : Array.isArray(v) ? (v.length ? v.join(", ") : "-") : String(v));
@@ -71,11 +72,14 @@ const TAB_GROUPS = [
 const CLINICAL: Record<string, ClinicalTab> = { "แรกรับ/ประเมิน": "admission", "บันทึกพยาบาล": "nursing", "บันทึกผู้ช่วยพยาบาล": "aide", "กายภาพ": "physio", "เวชภัณฑ์": "supplies" };
 
 /** ประวัติรายบุคคล: กดชื่อผู้รับบริการแล้วเห็นทุกอย่างในหน้าเดียว (พิมพ์เป็นเอกสารได้) */
-/** initialTab = เปิดที่แท็บนี้ (เช่น "กายภาพ" จากหน้าตารางกายภาพ) */
-export default function ResidentProfile({ id, onClose, initialTab }: { id: string | null; onClose: () => void; initialTab?: string }) {
+/** initialTab = เปิดที่แท็บนี้ (เช่น "กายภาพ" จากหน้าตารางกายภาพ) · startAdmission = เปิดแท็บแรกรับพร้อมฟอร์มบันทึกแรกรับ (ป้ายรอแรกรับ) */
+export default function ResidentProfile({ id, onClose, initialTab, startAdmission }: { id: string | null; onClose: () => void; initialTab?: string; startAdmission?: boolean }) {
   const [p, setP] = useState<Profile | null>(null);
   const [err, setErr] = useState("");
   const [tab, setTab] = useState(TABS[0]);
+  /** เปิดฟอร์มบันทึกแรกรับทันทีเมื่อแท็บแรกรับโหลดเสร็จ */
+  const [autoAdm, setAutoAdm] = useState(false);
+  const startAdm = () => { setTab("แรกรับ/ประเมิน"); setAutoAdm(true); };
   const { toast } = useApp();
   const { c, reload } = useClinic(id);
   const { user } = useSession();
@@ -87,7 +91,7 @@ export default function ResidentProfile({ id, onClose, initialTab }: { id: strin
   const [ref, setRef] = useState({ to: "", reason: "", summary: "" });
   useEffect(() => {
     if (!id) return;
-    setP(null); setErr(""); setTab(initialTab && TABS.includes(initialTab) ? initialTab : TABS[0]);
+    setP(null); setErr(""); setTab(startAdmission ? "แรกรับ/ประเมิน" : initialTab && TABS.includes(initialTab) ? initialTab : TABS[0]); setAutoAdm(!!startAdmission);
     fetchProfile(id).then(setP).catch((e) => setErr((e as Error).message));
   }, [id]);
 
@@ -140,6 +144,18 @@ export default function ResidentProfile({ id, onClose, initialTab }: { id: strin
   const txt = (v: unknown) => { const s = String(v ?? "").trim(); return s && s !== "-" ? s : ""; };
   const allergy = ci ? [isNoAllergy(txt(ci.drug_allergy)) ? "" : `แพ้ยา: ${txt(ci.drug_allergy)}`, isNoAllergy(txt(ci.food_allergy)) ? "" : `แพ้อาหาร: ${txt(ci.food_allergy)}`].filter(Boolean) : [];
   const phone = ci ? txt(ci.employer_phone).replace(/\D/g, "") : "";
+  /** การ์ดรับเข้าใหม่ (แท็บภาพรวม): คนที่เข้าทะเบียนตั้งแต่วันที่เปิดใช้ · หายเองเมื่อมีห้อง แรกรับแล้ว และมียาประจำครบ */
+  const created = String(r?.created ?? "");
+  const regMeds = ci ? txt(ci.regular_meds) : "";
+  const hasRoom = !!txt(r?.room);
+  type Step = { t: string; done: boolean; sub: string; keep: boolean; act?: () => void; label?: string; primary?: boolean };
+  const intakeSteps: Step[] = r && c ? [
+    { t: "เปิดสัญญา", done: p!.contracts.length > 0 || !!ci, sub: p!.contracts.length ? `สัญญา ${str(p!.contracts[0].contract_no)}` : ci ? "มีข้อมูลจากสัญญาแล้ว" : "ยังไม่มีสัญญาในระบบ", keep: false },
+    { t: "เข้าห้องและเตียง", done: hasRoom, sub: hasRoom ? `ห้อง ${str(r.room)}` : "หัวหน้าพยาบาลหรือผู้จัดการสาขาจัดห้องที่เมนูห้องพักและเตียง", keep: true },
+    { t: "บันทึกแรกรับและตั้งรอบการวัด", done: !!c.admission, sub: c.admission ? `โดย ${c.admission.assessed_by ?? "-"} · ${c.admission.at}` : "ประวัติ ประเมินแรกรับ อาหาร และรอบวัดสัญญาณชีพในฟอร์มเดียว", keep: true, act: startAdm, label: "บันทึกแรกรับ", primary: true },
+    { t: "ยาประจำตัว", done: activeMeds.length > 0 || !regMeds || /^ไม่มี/.test(regMeds), sub: activeMeds.length ? `ในแท็บยา ${activeMeds.length} รายการ` : regMeds && !/^ไม่มี/.test(regMeds) ? `สัญญาระบุ ${regMeds} · ยังไม่ได้เพิ่มในแท็บยา` : "สัญญาระบุว่าไม่มียาประจำ", keep: true, act: () => setTab("ยาและการให้ยา"), label: "เพิ่มยา" },
+  ] : [];
+  const intake = created >= INTAKE_SINCE && String(r?.status ?? "").startsWith("เข้าอยู่") && intakeSteps.some((s) => s.keep && !s.done) ? intakeSteps : null;
 
   return (
     <>
@@ -171,6 +187,16 @@ export default function ResidentProfile({ id, onClose, initialTab }: { id: strin
           {tab === "ค่าใช้จ่าย" && canMoney && <ResidentBilling name={r.full_name} hn={r.hn as string | null | undefined} />}
           {tab === TABS[0] && (
             <div className="grid gap-4 md:grid-cols-2">
+              {intake && <section className="profile-box md:col-span-2 !border-sky-200 !bg-sky-50/60">
+                <h4>รับเข้าใหม่ · เหลือ {intake.filter((s) => s.keep && !s.done).length} ขั้นตอน <span className="text-xs font-normal text-gold-500">เข้าทะเบียน {thDate(created, false)}</span></h4>
+                <ul className="space-y-2">{intake.map((s) => (
+                  <li key={s.t} className={`flex flex-wrap items-center justify-between gap-2 rounded-xl border bg-white px-3 py-2 ${s.done ? "border-cream-200" : "border-sky-300"}`}>
+                    <span className="min-w-0"><b className={`block text-sm ${s.done ? "text-gold-600" : "text-gold-900"}`}>{s.done ? "✓ " : ""}{s.t}</b><small className="block text-xs text-gold-500">{s.sub}</small></span>
+                    {s.done ? <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">เสร็จ</span>
+                      : s.act && <button type="button" className={s.primary ? "btn-primary !px-3 !py-1.5 text-sm" : "btn-soft !px-3 !py-1.5 text-sm"} onClick={s.act}>{s.label}</button>}
+                  </li>
+                ))}</ul>
+              </section>}
               {ci && <section className="profile-box md:col-span-2">
                 <h4>ข้อมูลสำคัญสำหรับการดูแล</h4>
                 <dl className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
@@ -262,7 +288,7 @@ export default function ResidentProfile({ id, onClose, initialTab }: { id: strin
             </div>
           )}
 
-          {CLINICAL[tab] && id && <ClinicalPanel id={id} tab={CLINICAL[tab]} c={c} reload={reload} name={r.full_name} />}
+          {CLINICAL[tab] && id && <ClinicalPanel id={id} tab={CLINICAL[tab]} c={c} reload={reload} name={r.full_name} autoEdit={autoAdm && tab === "แรกรับ/ประเมิน"} onAutoDone={() => setAutoAdm(false)} />}
 
           {tab === "สมุดส่งเวร" && (
             <DataTable search={false} columns={["หัวข้อ", "รายละเอียด", "ผู้เขียน", "เวลา"]} empty="ไม่มีบันทึกส่งเวร"

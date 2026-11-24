@@ -82,7 +82,7 @@ const unbilledSql = (col: string) => `(${col} IS NULL OR EXISTS (SELECT 1 FROM i
 const billedId = `CASE WHEN ${unbilledSql("invoice_id")} THEN NULL ELSE invoice_id END`;
 
 async function residentOf(me: SessionUser, id: string) {
-  const [r] = (await sql`SELECT id, full_name, branch_name FROM residents WHERE id = ${id}`) as { id: string; full_name: string; branch_name: string }[];
+  const [r] = (await sql`SELECT id, full_name, branch_name, chronic_diseases FROM residents WHERE id = ${id}`) as { id: string; full_name: string; branch_name: string; chronic_diseases: string | null }[];
   if (!r) return { res: bad("ไม่พบผู้รับบริการ", 404) };
   if (scoped(me) && r.branch_name !== me.branch) return { res: forbidden("ดูได้เฉพาะผู้รับบริการในสาขาของคุณ") };
   return { r };
@@ -219,8 +219,8 @@ export async function GET(req: NextRequest) {
         const visits = await sql(`SELECT id, note_id, ${HM("checkin_at")} AS checkin, ${HM("done_at")} AS done, round(extract(epoch FROM done_at - checkin_at) / 60)::int AS minutes, ${WORK_N("work_photo")} AS work_n
             FROM physio_visits WHERE resident_id = $1 AND note_id IS NOT NULL`, [id]);
         // ค่าเริ่มต้นช่องแพ้ยา/แพ้อาหารในแบบประเมินแรกรับ จากสัญญาล่าสุด
-        const [fromContract] = (await sql(`SELECT drug_allergy, food_allergy FROM contracts WHERE (resident_id = $1 OR (resident_id IS NULL AND resident_name = $2)) AND coalesce(status, '') <> 'ยกเลิกสัญญา' ORDER BY created_at DESC LIMIT 1`, [id, o.r.full_name])) as { drug_allergy: string | null; food_allergy: string | null }[];
-        return NextResponse.json({ admission: adm ?? null, notes, courses, supplies, visits, contractAllergy: fromContract ?? null });
+        const [fromContract] = (await sql(`SELECT drug_allergy, food_allergy, regular_meds FROM contracts WHERE (resident_id = $1 OR (resident_id IS NULL AND resident_name = $2)) AND coalesce(status, '') <> 'ยกเลิกสัญญา' ORDER BY created_at DESC LIMIT 1`, [id, o.r.full_name])) as { drug_allergy: string | null; food_allergy: string | null; regular_meds: string | null }[];
+        return NextResponse.json({ admission: adm ?? null, notes, courses, supplies, visits, contractAllergy: fromContract ?? null, chronic: o.r.chronic_diseases ?? null });
       }
       case "courses": {
         if (!canRead(me) && !can(me, "billing") && !can(me, "dashboard")) return forbidden();

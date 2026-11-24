@@ -125,9 +125,9 @@ async function revenue(req: NextRequest) {
   const from = qf && qt && qf <= qt ? qf : `${month}-01`, to = qf && qt && qf <= qt ? qt : new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).toISOString().slice(0, 10);
   const br = seesAllBranches(me.role) ? q.get("branch") || null : me.branch;
   const invs = await sql(`SELECT i.id, i.doc_no AS no, i.doc_date::text AS date, i.items_json AS items, i.net::float, coalesce(i.paid_total, 0)::float AS paid,
-      i.branch_name AS branch, i.status, (coalesce(i.category, '') = $3) AS cn
+      i.branch_name AS branch, i.status, (coalesce(i.category, '') = $3) AS cn, coalesce(i.resident_name, '') AS who
     FROM invoices i WHERE i.doc_date BETWEEN $1::date AND $2::date AND coalesce(i.status, '') NOT IN ('ยกเลิก', 'รอตรวจสอบยอด') ${br ? "AND i.branch_name = $4" : ""}`, br ? [from, to, CN_KIND, br] : [from, to, CN_KIND]);
-  const pays = await sql(`SELECT p.id, p.pay_date::text AS date, p.amount::float, i.items_json AS items, i.branch_name AS branch,
+  const pays = await sql(`SELECT p.id, p.pay_date::text AS date, p.amount::float, i.items_json AS items, i.branch_name AS branch, i.doc_no AS no, coalesce(p.receipt_no, '') AS "receiptNo", coalesce(i.resident_name, '') AS who,
       coalesce((SELECT sum(q.amount) FROM invoice_payments q WHERE q.invoice_id = i.id AND (q.created_at, q.id) < (p.created_at, p.id)), 0)::float AS "paidBefore"
     FROM invoice_payments p JOIN invoices i ON i.id = p.invoice_id
     WHERE coalesce(p.kind, 'pay') <> 'credit' AND p.pay_date BETWEEN $1::date AND $2::date AND coalesce(i.status, '') <> 'ยกเลิก' AND coalesce(i.category, '') <> $3

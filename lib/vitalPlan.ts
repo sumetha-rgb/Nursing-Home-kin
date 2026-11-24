@@ -88,3 +88,40 @@ export const saveVitalPlan = async (residentId: string, plan: VitalPlan) => {
 /** บอกหน้าที่แสดงรอบการวัดให้ดึงใหม่ (หลังบันทึกสัญญาณชีพ/ตั้งรอบ) */
 export const VITAL_DUE_EVENT = "kin-vital-due";
 export const notifyVitalDue = () => setTimeout(() => window.dispatchEvent(new Event(VITAL_DUE_EVENT)), 1200);
+
+/* ---------- รับเข้าใหม่: แรกรับ + ตั้งรอบการวัด ---------- */
+/** นับ "รอแรกรับ" เฉพาะคนที่เข้าทะเบียนตั้งแต่วันที่เปิดใช้ (คนที่อยู่ก่อนหน้าไม่ขึ้น) */
+export const INTAKE_SINCE = "2026-11-24";
+/** คนที่เข้าอยู่แล้วแต่ยังไม่มีแบบประเมินแรกรับ · days = เข้าทะเบียนมากี่วัน (0 = วันนี้) */
+export type Intake = { id: string; name: string; room: string | null; bed: string | null; branch: string | null; days: number };
+export const fetchIntake = () =>
+  fetch("/api/care?op=intake", { cache: "no-store" }).then((r) => (r.ok ? r.json() : { items: [] })).then((d: { items?: Intake[] }) => d.items ?? []);
+/** บอกหน้าที่แสดงรายการรอแรกรับให้ดึงใหม่ (หลังบันทึกแรกรับ) */
+export const INTAKE_EVENT = "kin-intake";
+export const notifyIntake = () => window.dispatchEvent(new Event(INTAKE_EVENT));
+export const intakeAgo = (days: number) => (days <= 0 ? "วันนี้" : `${days} วัน`);
+
+/**
+ * รอบที่แนะนำจากแบบประเมินแรกรับ (ค่าที่เลือกไว้ให้ก่อน พยาบาลเปลี่ยนเองได้)
+ *  extra = ข้อความอื่นที่ใช้หาโรค เช่น โรคประจำตัวในทะเบียน ยาประจำที่แจ้งตอนเปิดสัญญา
+ *  why = เหตุผลของรายการที่ระบบเลือกให้ (แสดงใต้ปุ่ม) · ไม่ตรงข้อไหน = ค่าเริ่มต้น
+ */
+export function suggestPlan(a: Record<string, string | undefined>, extra = ""): { plan: VitalPlan; why: Partial<Record<VitalKey, string>> } {
+  const plan: VitalPlan = { ...DEFAULT_PLAN };
+  const why: Partial<Record<VitalKey, string>> = {};
+  const v = (k: string) => (a[k] ?? "").trim();
+  const dev = v("devices").replace(/^(ไม่มี|-)$/, "");
+  if (/เบาหวาน|\bDM\b|diabet|insulin|อินซูลิน/i.test(`${v("diagnosis")} ${v("history")} ${v("diet_type")} ${v("diet_note")} ${extra}`)) {
+    plan.dtx = "2d"; why.dtx = "มีเบาหวานในประวัติ";
+  }
+  if (/trach|เจาะคอ|ออกซิเจน|\bO2\b|ventilat|เครื่องช่วยหายใจ/i.test(dev) || v("consciousness") === "ไม่รู้สึกตัว") {
+    plan.vs = "2d"; plan.o2 = "2d"; why.vs = why.o2 = "ใช้อุปกรณ์ช่วยหายใจ หรือไม่รู้สึกตัว";
+  } else if (v("mobility") === "เดินได้เอง" && v("consciousness") === "รู้สึกตัวดี" && !dev) {
+    plan.vs = "1d"; why.vs = "เดินได้เอง รู้สึกตัวดี ไม่มีอุปกรณ์";
+  }
+  if (v("feeding") === "ทางสายให้อาหาร" || /ทางสาย/.test(v("diet_type")) || /\bNG\b|PEG|สายให้อาหาร/i.test(dev)) {
+    plan.wt = "1w"; why.wt = "ให้อาหารทางสาย";
+  }
+  if (v("mobility") === "ติดเตียง") { plan.ht = "off"; why.ht = "ติดเตียง วัดส่วนสูงยาก"; }
+  return { plan, why };
+}

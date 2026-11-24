@@ -3,9 +3,9 @@ import { sql } from "@/lib/db";
 import { currentUser, forbidden, unauthorized } from "@/lib/auth";
 import { audit } from "@/lib/audit";
 import type { SessionUser } from "@/lib/roles";
-import { can } from "@/lib/perms";
+import { can, canVitalPlan } from "@/lib/perms";
 import { SHARED_BRANCHES } from "@/lib/schema";
-import { planOf, presetLabel, VITAL_ITEMS } from "@/lib/vitalPlan";
+import { INTAKE_SINCE, planOf, presetLabel, VITAL_ITEMS } from "@/lib/vitalPlan";
 import { vitalDueRows } from "@/lib/vitalDue";
 import { vitalRounds } from "@/lib/vitalRound";
 import { dueAll } from "@/lib/vitalPlan";
@@ -65,7 +65,7 @@ const SHARED_SQL = SHARED_BRANCHES.map((b) => `'${b.replace(/'/g, "''")}'`).join
 const MINE = `(resident_id = $1 OR (resident_id IS NULL AND resident_name = $2 AND (branch_name IS NULL OR branch_name = $3 OR branch_name IN (${SHARED_SQL}))))`;
 
 async function profile(me: SessionUser, id: string) {
-  const [r] = (await sql`SELECT id, full_name, age, room, branch_name, chronic_diseases, status, hn FROM residents WHERE id = ${id}`) as Record<string, unknown>[];
+  const [r] = (await sql`SELECT id, full_name, age, room, branch_name, chronic_diseases, status, hn, to_char(created_at AT TIME ZONE 'Asia/Bangkok', 'YYYY-MM-DD') AS created FROM residents WHERE id = ${id}`) as Record<string, unknown>[];
   if (!r) return null;
   if (scoped(me) && r.branch_name !== me.branch) return "forbidden";
   const p = [r.id, r.full_name, r.branch_name];
@@ -137,11 +137,22 @@ export async function GET(req: NextRequest) {
         const rows = await sql(`SELECT doc_no AS no, branch_name AS branch FROM care_assessments WHERE doc_no IS NOT NULL ${scoped(me) ? "AND branch_name = $1" : ""}`, scoped(me) ? [me.branch] : []);
         return NextResponse.json({ items: rows });
       }
+      case "intake": {
+        // รอแรกรับ: เข้าอยู่แล้ว (เข้าทะเบียนตั้งแต่วันที่เปิดใช้) แต่ยังไม่มีแบบประเมินแรกรับ · ทะเบียนผู้รับบริการ แถบต้องจัดการ KinApp
+        if (!can(me, "app.staff") && !can(me, "residents") && !can(me, "health_logs")) return forbidden();
+        const items = await sql(`SELECT r.id, r.full_name AS name, nullif(nullif(r.room, ''), '-') AS room, nullif(r.bed, '') AS bed, r.branch_name AS branch,
+            ((now() AT TIME ZONE 'Asia/Bangkok')::date - (r.created_at AT TIME ZONE 'Asia/Bangkok')::date)::int AS days
+          FROM residents r
+          WHERE coalesce(r.status, '') LIKE 'เข้าอยู่%' AND r.created_at >= ($1::date::timestamp AT TIME ZONE 'Asia/Bangkok')
+            AND NOT EXISTS (SELECT 1 FROM resident_admissions a WHERE a.resident_id = r.id) ${scoped(me) ? "AND r.branch_name = $2" : ""}
+          ORDER BY r.created_at`, scoped(me) ? [INTAKE_SINCE, me.branch] : [INTAKE_SINCE]);
+        return NextResponse.json({ items });
+      }
       case "vital_due": {
         // รอบการวัดรายบุคคล + ครั้งล่าสุดที่วัดแต่ละรายการ (lib/vitalDue · หน้าเว็บคิดสถานะด้วย lib/vitalPlan) · ?id= หรือ ?name= = คนเดียว · ไม่ส่ง = ทุกคนในสาขา
         if (!can(me, "app.staff") && !can(me, "residents") && !can(me, "health_logs")) return forbidden();
         const items = await vitalDueRows({ branch: scoped(me) ? me.branch : null, id: qs.get("id"), name: qs.get("name") });
-        return NextResponse.json({ items, canEdit: can(me, "residents") });
+        return NextResponse.json({ items, canEdit: canVitalPlan(me) });
       }
       case "facility": {
         if (!canFacility(me)) return forbidden();
@@ -303,8 +314,8 @@ export async function POST(req: NextRequest) {
   if (!me) return unauthorized();
   const b = await req.json().catch(() => ({}));
   if (b.op === "vital_plan") {
-    // ตั้งรอบการวัดรายบุคคล: หัวหน้าพยาบาล ผู้จัดการสาขา ผู้บริหาร (สิทธิ์ผู้รับบริการ)
-    if (!can(me, "residents")) return forbidden("ตั้งรอบการวัดได้เฉพาะหัวหน้าพยาบาลและผู้จัดการสาขา");
+    // ตั้งรอบการวัดรายบุคคล: พยาบาล หัวหน้าพยาบาล ผู้จัดการสาขา ผู้บริหาร (lib/perms canVitalPlan)
+    if (!canVitalPlan(me)) return forbidden("บัญชีนี้ไม่มีสิทธิ์ตั้งรอบการวัด ให้หัวหน้าพยาบาลเปิดสิทธิ์ ตั้งรอบวัดสัญญาณชีพรายคน ให้");
     const [r] = (await sql`SELECT id, full_name, branch_name FROM residents WHERE id = ${String(b.residentId ?? "")}`) as Record<string, string>[];
     if (!r) return bad("ไม่พบผู้รับบริการ", 404);
     if (scoped(me) && r.branch_name !== me.branch) return forbidden("ตั้งได้เฉพาะผู้รับบริการในสาขาของคุณ");

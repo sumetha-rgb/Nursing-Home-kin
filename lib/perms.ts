@@ -6,7 +6,7 @@
 import type { ViewId } from "./nav";
 import type { Role } from "./roles";
 
-export type Perm = ViewId | "rooms.manage" | "rooms.move" | "contracts.delete" | "invoices.void" | "tasks.review" | "physio.record" | "physio.assign" | "app.staff" | "app.pharmacy";
+export type Perm = ViewId | "rooms.manage" | "rooms.move" | "contracts.delete" | "invoices.void" | "tasks.review" | "vitals.plan" | "physio.record" | "physio.assign" | "app.staff" | "app.pharmacy";
 type Item = { id: Perm; label: string; hint?: string };
 
 export const PERM_GROUPS: { title: string; items: Item[] }[] = [
@@ -34,6 +34,7 @@ export const PERM_GROUPS: { title: string; items: Item[] }[] = [
     { id: "rooms.move", label: "จัดคนเข้าห้อง / ย้ายห้อง", hint: "ห้องเต็มย้ายเข้าไม่ได้" },
     { id: "rooms.manage", label: "สร้าง/แก้/ลบห้อง และกำหนดจำนวนผู้ป่วยต่อห้อง" },
     { id: "tasks.review", label: "ตรวจงาน ให้ดาว และตั้งงานประจำ" },
+    { id: "vitals.plan", label: "ตั้งรอบวัดสัญญาณชีพรายคน", hint: "วันละ 2 ครั้ง วันละครั้ง ทุก 3 วัน … หรือไม่ต้องวัด · ทุกการเปลี่ยนมีบันทึกการใช้งาน" },
     { id: "physio.record", label: "บันทึกกายภาพ (ตัดคอร์ส)", hint: "นักกายภาพ · คนที่ไม่มีสิทธิ์อ่านบันทึกได้อย่างเดียว" },
     { id: "physio.assign", label: "จ่ายเคสกายภาพ", hint: "ผู้จัดการสาขาและฝ่ายขาย · เลือกนักกายภาพ วัน และเวลาของแต่ละคอร์ส" },
     { id: "contracts.delete", label: "ลบสัญญา" },
@@ -56,12 +57,13 @@ export const ROLE_PERMS: Record<Role, Perm[]> = {
   "Global Admin": ALL_PERMS,
   "Branch Admin": ALL_PERMS,
   // หัวหน้าพยาบาล: งานดูแล + เสียงจากครอบครัว · KPI/รีวิวพนักงาน · ภาพรวมและรายงาน (เห็นเฉพาะตัวชี้วัดงานดูแล ไม่เห็นตัวเลขเงิน เพราะไม่มีสิทธิ์ billing)
-  "Head Nurse": [...CARE, "physio", "feedbacks", "kpi", "reviews", "dashboard", "rooms.move", "rooms.manage", "tasks.review", ...TOOLS, "app.staff", "app.pharmacy"],
+  "Head Nurse": [...CARE, "physio", "feedbacks", "kpi", "reviews", "dashboard", "rooms.move", "rooms.manage", "tasks.review", "vitals.plan", ...TOOLS, "app.staff", "app.pharmacy"],
   // แคชเชียร์ = ฝ่ายขาย: ขายคอร์สกายภาพและจ่ายเคสให้นักกายภาพ (ร่วมกับผู้จัดการสาขา)
   Cashier: ["contracts", "billing", "rooms", "contracts.delete", "prices", "physio", "physio.assign"],
   // การเงิน/บัญชี: เห็นทุกสาขา ดูและส่งออกอย่างเดียว (lib/roles readOnlyRole)
   Finance: ["billing", "dashboard", "prices"],
-  Nurse: ["app.staff", "app.pharmacy"],
+  // พยาบาล: KinApp ห้องยา และตั้งรอบวัดสัญญาณชีพรายคน (เอาออกรายคนได้)
+  Nurse: ["app.staff", "app.pharmacy", "vitals.plan"],
   Physio: ["app.staff", "physio.record"],
 };
 
@@ -77,6 +79,8 @@ export const can = (u: { role: Role; perms?: string[] } | null | undefined, p: P
 /** เห็นตัวเลขเงิน (รับชำระ ค้างชำระ ยอดขาย เป้ายอดขาย ราคาคอร์ส) = มีสิทธิ์การเงิน หรือผู้บริหาร/ผู้จัดการสาขา
  *  มีแค่ ภาพรวมและรายงาน (เช่น หัวหน้าพยาบาล) = เห็นเฉพาะตัวชี้วัดงานดูแล */
 export const seesMoney = (u: { role: Role; perms?: string[] } | null | undefined) => !!u && (can(u, "billing") || u.role === "Global Admin" || u.role === "Branch Admin");
+/** ตั้งรอบวัดสัญญาณชีพรายคนได้ = สิทธิ์ผู้รับบริการ (หัวหน้าพยาบาล ผู้จัดการสาขา ผู้บริหาร) หรือสิทธิ์ตั้งรอบวัด (พยาบาล) */
+export const canVitalPlan = (u: { role: Role; perms?: string[] } | null | undefined) => can(u, "residents") || can(u, "vitals.plan");
 /** เปิดระบบจัดการได้ = มีเมนูอย่างน้อย 1 เมนู */
 export const MENU_PERMS = PERM_GROUPS.slice(0, 3).flatMap((g) => g.items.map((i) => i.id));
 export const hasConsole = (u: { role: Role; perms?: string[] } | null | undefined) => MENU_PERMS.some((p) => can(u, p));

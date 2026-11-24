@@ -15,7 +15,7 @@ export function BuSettings() {
   // ยังไม่มีในระบบ = แสดงค่าตั้งต้น (แก้ครั้งแรกจะบันทึกทั้งชุด)
   const list = saved.length ? saved : meta.loaded ? DEFAULT_DIVISIONS : [];
   const { rows: branches } = useCrud("branches", []);
-  const { toast } = useApp();
+  const { toast, confirm } = useApp();
   const [edit, setEdit] = useState<{ id: string; name: string } | null>(null);
   const [adding, setAdding] = useState("");
   const companies = [...new Set([COMPANY.th, ...branches.map((b) => b[2]).filter((x) => x && x !== "-")])];
@@ -25,6 +25,14 @@ export function BuSettings() {
   const free = BU_CATS.filter(([c]) => !used(c).length);
   const dupes = BU_CATS.filter(([c]) => used(c).length > 1);
   const toggleCat = (d: Division, cat: string) => save({ ...d, cats: d.cats.includes(cat) ? d.cats.filter((c) => c !== cat) : [...d.cats, cat] }, `${d.name}: ${d.cats.includes(cat) ? "เอาออก" : "เพิ่ม"} ${BU_CAT_TH[cat]}`);
+  /** ลบฝ่าย: หมวดของฝ่ายนี้จะไปฝ่ายอื่นที่ผูกหมวดเดียวกัน หรือขึ้นเป็น "ยังไม่ได้กำหนดฝ่าย" · รายงานคิดใหม่ทันที (ไม่แตะใบแจ้งหนี้/ใบเสร็จ) */
+  const remove = (d: Division) => {
+    if (list.length <= 1) return toast("ต้องมีอย่างน้อย 1 ฝ่าย");
+    const moves = d.cats.map((c) => { const to = list.find((x) => x.id !== d.id && x.active && x.cats.includes(c)); return `${BU_CAT_TH[c]} → ${to ? to.name : "ยังไม่ได้กำหนดฝ่าย"}`; });
+    confirm({ title: `ลบ ${d.name}`, danger: true, okLabel: "ลบฝ่าย",
+      message: `ลบ ${d.name} ออกจากการตั้งค่า BU ใช่หรือไม่${moves.length ? `\n\nหมวดของฝ่ายนี้จะย้ายไป: ${moves.join(" · ")}` : ""}\n\nรายงานรายได้ตาม BU คิดใหม่ทันที ใบแจ้งหนี้และใบเสร็จไม่เปลี่ยน`,
+      onOk: () => { setList(list.filter((x) => x.id !== d.id)); toast(`ลบ ${d.name} แล้ว`); } });
+  };
   const add = () => {
     const name = adding.replace(/\s+/g, " ").trim();
     if (name.length < 2) return toast("ใส่ชื่อฝ่ายอย่างน้อย 2 ตัวอักษร");
@@ -59,6 +67,7 @@ export function BuSettings() {
                 <i aria-hidden="true" /><span>{d.active ? "เปิดใช้งาน" : "ปิดใช้งาน"}</span>
               </button>
               {edit?.id !== d.id && <button type="button" className="row-action" onClick={() => setEdit({ id: d.id, name: d.name })}>แก้ชื่อ</button>}
+              {edit?.id !== d.id && <button type="button" className="row-action danger" onClick={() => remove(d)}>ลบ</button>}
             </div>
             <div className="bu-cats" role="group" aria-label={`หมวดของ ${d.name}`}>
               {BU_CATS.map(([c, t]) => <button key={c} type="button" aria-pressed={d.cats.includes(c)} className={`bu-cat ${d.cats.includes(c) ? "is-on" : ""}`} onClick={() => toggleCat(d, c)}>{d.cats.includes(c) && <Icon name="check" className="h-3.5 w-3.5" />}{t}</button>)}

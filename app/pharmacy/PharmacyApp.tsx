@@ -12,7 +12,9 @@ import PhotoPicker from "@/components/PhotoPicker";
 import TutorialVideos from "@/components/TutorialVideos";
 import CashierOnly from "@/components/CashierOnly";
 import CentralStock from "@/components/pharmacy/CentralStock";
+import { RangePicker } from "@/components/PeriodPicker";
 import { DayTimeline, WithdrawBox } from "@/components/pharmacy/Withdraw";
+import MedRound from "@/components/pharmacy/MedRound";
 import { DaySlot, slotOf } from "@/components/pharmacy/GiveMeds";
 import { ResidentPicker } from "@/components/SearchSelect";
 import SupplyStock from "@/components/pharmacy/SupplyStock";
@@ -483,6 +485,9 @@ function Dispense({ mode, who, setWho, drugs, setDrugs, packs, setPacks, go, me,
 
   // จัดยาตามมื้อใช้หน้าแบบทีละมื้อ (MealBoard) · ส่วนล่างของฟังก์ชันนี้เป็นของเบิกยาตามใช้
   if (isMeal) return <MealBoard drugs={drugs} setDrugs={setDrugs} packs={packs} setPacks={setPacks} go={go} me={me} focus={focus} allergy={allergy} onAddDrug={onAddDrug} />;
+  // เบิกยา: แบบ ข-1 (หน้าเดียวต่อคน · แถบเลือกคนด้านบน · ยามื้อนี้บันทึกครั้งเดียว · components/pharmacy/MedRound)
+  if (!isMeal) return <MedRound drugs={drugs} who={who} setWho={setWho} allergy={allergy} me={me} canVoidAll={canVoidAll} onAddDrug={onAddDrug} go={go}
+    people={RESIDENTS.map((w) => { const r = live.find((x) => x.full_name === w); return { id: r?.id, name: w, room: r?.room ?? "", age: r?.age ?? null }; })} />;
   if (sel) {
     const short = sel.list.filter((x) => x.stock < x.dose);
     return (
@@ -810,7 +815,36 @@ function Inventory({ drugs, setDrugs, master, addFor, onAdded, lowView, onLowVie
           { k: "low", t: "ใกล้หมด", n: mine.filter(isLowDrug).length, tone: "bad" },
           { k: "hold", t: "งดยาชั่วคราว", n: mine.filter((x) => x.hold).length, tone: "muted" },
         ]} />
-        <DataTable
+        {/* มือถือ: 1 การ์ดต่อคน ยาเป็นแถวในการ์ด (ชื่อคนไม่ซ้ำทุกใบ) · คงเหลือบอกเป็นวัน · ใกล้หมดเป็นแถวแดง · กดแถว = รายละเอียดยา */}
+        <div className="space-y-3 sm:hidden">
+          {!shown.length && <p className="rounded-xl bg-cream-50 px-4 py-6 text-center text-sm text-gold-500">ไม่มียาในรายการนี้</p>}
+          {[...new Set(shown.map((x) => x.who))].map((w) => {
+            const items = shown.filter((x) => x.who === w), room = residents.find((r) => r.full_name === w)?.room;
+            return (
+              <div key={w} className="overflow-hidden rounded-2xl border border-cream-300 bg-white">
+                <div className="flex items-center gap-2.5 px-3 py-2.5">
+                  <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-cream-100 text-sm font-semibold text-gold-700">{initialsOf(w)}</span>
+                  <span className="min-w-0 flex-1"><b className="block truncate text-[15px] text-gold-900">{w}</b><small className="block text-xs text-gold-500">{[room && room !== "-" ? `ห้อง ${room}` : "", `ยา ${items.length} รายการ`].filter(Boolean).join(" · ")}</small></span>
+                  <button type="button" className="btn-soft !min-h-[32px] shrink-0 !px-3 !py-1 text-xs" onClick={() => { setF({ ...blankForm(), who: w }); setOpen(true); }}><Icon name="plus" className="h-3.5 w-3.5" /> ยา</button>
+                </div>
+                {items.map((x) => {
+                  const low = isLowDrug(x), dl = daysLeft(x), refillable = !!x.sdid && low;
+                  return (
+                    <div key={x.id} role="button" tabIndex={0} aria-label={`รายละเอียด ${x.name}`} onClick={() => setView(x)} onKeyDown={(e) => { if (e.key === "Enter") setView(x); }}
+                      className={`flex items-center gap-2 border-t border-cream-200 px-3 py-2 ${low ? "bg-red-50/70" : x.hold ? "bg-cream-50 opacity-70" : ""}`}>
+                      <span className="min-w-0 flex-1"><b className="block text-sm font-medium text-gold-900">{x.name}</b>
+                        <small className="block text-xs text-gold-500">{isUseDrug(x) ? `ใช้เมื่อจำเป็น${x.bulk ? " · ยาขวด / ยาทา" : ""}` : `${x.meals.join(" ")} · ครั้งละ ${x.dose} ${x.unit}`}{x.hold ? " · งดชั่วคราว" : ""}</small></span>
+                      <span className="shrink-0 text-right text-xs leading-tight"><b className="block text-[13px] text-gold-900">{stockText(x)}</b><span className={low ? "font-semibold text-red-700" : "text-emerald-700"}>{low ? "ใกล้หมด" : dl !== null ? `พอ ${dl} วัน` : "คงเหลือ"}</span></span>
+                      <button type="button" className={`${refillable ? "btn-primary" : "btn-soft"} !min-h-[30px] shrink-0 !px-2.5 !py-1 text-xs`}
+                        onClick={(e) => { e.stopPropagation(); if (refillable) setRefill({ x, qty: "" }); else setEdit({ ...x, doseText: String(x.dose), tag: "" }); }}>{refillable ? "เติม" : "แก้ไข"}</button>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </div>
+        <div className="hidden sm:block"><DataTable
           columns={["ผู้สูงอายุ", "ชื่อยา", "วิธีทาน", "วิธีให้ยา / มื้อ", "คงเหลือ", "สถานะ"]}
           rows={shown.map((x) => [x.who, `${x.name} · [${x.src === CENTRAL ? CENTRAL : "ญาตินำมา"}]`, x.how || "-", isUseDrug(x) ? `ใช้เมื่อจำเป็น${x.bulk ? " · ยาขวด / ยาทา" : ""}` : `กินตามมื้อ · ${x.meals.join(", ")} · ครั้งละ ${x.dose} ${x.unit}`, stockText(x), x.hold ? "งดยาชั่วคราว" : x.status])}
           onRow={(i) => setView(shown[i])} rowLabel="กดเพื่อดูรายละเอียดยา"
@@ -823,7 +857,7 @@ function Inventory({ drugs, setDrugs, master, addFor, onAdded, lowView, onLowVie
             { label: "รายละเอียดยา", more: true, onClick: (i) => setView(shown[i]) },
             { label: "ลบ", more: true, danger: true, onClick: (i) => confirm({ title: "ลบยาออกจากตะกร้า", message: `ต้องการลบ ${shown[i].name} ของ ${shown[i].who} ใช่หรือไม่`, danger: true, okLabel: "ลบ", onOk: () => { setDrugs(drugs.filter((x) => x.id !== shown[i].id)); toast("ลบยาแล้ว"); } }) },
           ]}
-        />
+        /></div>
       </Section>
 
       <Modal open={open} wide title="เพิ่มยาใหม่ของผู้ป่วย" onClose={() => setOpen(false)}
@@ -955,7 +989,11 @@ function Inventory({ drugs, setDrugs, master, addFor, onAdded, lowView, onLowVie
       </Modal>
 
       <MedPhotoModal open={!!label} title={label ? `รูปฉลากยา · ${label.name}` : ""} items={label ? [{ kind: "label", id: label.id, title: `${label.name} · ${label.who}` }] : []} onClose={() => setLabel(null)} />
-      <Modal open={!!view} title={view?.name ?? ""} onClose={() => setView(null)} footer={<><button className="btn-soft" onClick={() => { setLabel(view); setView(null); }}>ดูรูปฉลากยา</button><button className="btn-primary" onClick={() => setView(null)}>ปิดหน้าต่าง</button></>}>
+      <Modal open={!!view} title={view?.name ?? ""} onClose={() => setView(null)} footer={<>
+        {/* ลบ/แก้ไขจากหน้ารายละเอียดได้ด้วย (มือถือไม่มีเมนู ⋯ ในการ์ดแบบกลุ่มตามคน) */}
+        {view && <button className="btn-danger mr-auto" onClick={() => { const v = view; setView(null); confirm({ title: "ลบยาออกจากตะกร้า", message: `ต้องการลบ ${v.name} ของ ${v.who} ใช่หรือไม่`, danger: true, okLabel: "ลบ", onOk: () => { setDrugs(drugs.filter((x) => x.id !== v.id)); toast("ลบยาแล้ว"); } }); }}>ลบ</button>}
+        {view && <button className="btn-soft" onClick={() => { const v = view; setView(null); setEdit({ ...v, doseText: String(v.dose), tag: "" }); }}>แก้ไข</button>}
+        <button className="btn-soft" onClick={() => { setLabel(view); setView(null); }}>ดูรูปฉลากยา</button><button className="btn-primary" onClick={() => setView(null)}>ปิดหน้าต่าง</button></>}>
         {view && <dl className="space-y-3 text-sm">{[
           ["ผู้สูงอายุ", view.who], ["สรรพคุณ/ข้อบ่งใช้", view.use || "-"], ["วิธีทาน", view.how || "-"], ["รูปแบบยา", view.form], ["แหล่งเก็บ", view.store],
           ["มื้อยา", view.bulk ? "ยาขวด / ไม่แพ็คซอง" : `${view.meals.join(", ")} · ครั้งละ ${view.dose} ${view.unit}`], ["วันกิน", view.days.length ? view.days.join(" ") : "ทุกวัน"],
@@ -967,6 +1005,8 @@ function Inventory({ drugs, setDrugs, master, addFor, onAdded, lowView, onLowVie
 }
 
 /* ---------- เคลียร์คลังยา ---------- */
+/** ตัวย่อชื่อ 2 ตัว (ตัดคำนำหน้า ข้ามสระนำ เ แ โ ใ ไ) เช่น นายหมา กินดี → หก */
+const initialsOf = (name: string) => name.replace(/^(คุณ|นางสาว|นาย|นาง)\s*/, "").split(/\s+/).filter(Boolean).slice(0, 2).map((p) => p.replace(/^[เแโใไ]/, "").charAt(0)).join("") || name.charAt(0);
 function Audit({ drugs, setDrugs }: { drugs: Drug[]; setDrugs: (x: Drug[]) => void }) {
   const RESIDENTS = useNames();
   const { toast } = useApp();
@@ -978,6 +1018,14 @@ function Audit({ drugs, setDrugs }: { drugs: Drug[]; setDrugs: (x: Drug[]) => vo
   const total = drugs.length;
   const list = who ? drugs.filter((x) => x.who === who) : [];
   const cur = list[idx];
+  // รายชื่อ: มียา (เริ่มต้น) · ยังไม่นับ · ทุกคน · เรียงคนที่ยังไม่นับก่อน แล้วตามห้อง
+  const { residents: aLive } = useResidents();
+  const roomOfA = (w: string) => { const r = aLive.find((x) => x.full_name === w)?.room; return r && r !== "-" ? `ห้อง ${r}` : ""; };
+  const [af, setAf] = useState<"has" | "todo" | "all">("has");
+  const aPeople = RESIDENTS.map((w) => { const mine = drugs.filter((x) => x.who === w); return { w, n: mine.length, ok: mine.filter((x) => done.includes(x.id)).length }; });
+  const aCount = { has: aPeople.filter((p) => p.n).length, todo: aPeople.filter((p) => p.n && p.ok < p.n).length, all: aPeople.length };
+  const aShown = aPeople.filter((p) => af === "all" || (af === "has" ? p.n > 0 : p.n > 0 && p.ok < p.n))
+    .sort((a, b) => Number(b.n > 0 && b.ok < b.n) - Number(a.n > 0 && a.ok < a.n) || Number(b.n > 0) - Number(a.n > 0) || roomOfA(a.w).localeCompare(roomOfA(b.w), "th", { numeric: true }) || a.w.localeCompare(b.w, "th"));
   useEffect(() => { if (cur) { setCount(cur.stock); setStatus(cur.status); } }, [cur?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (who && cur) {
@@ -1031,21 +1079,25 @@ function Audit({ drugs, setDrugs }: { drugs: Drug[]; setDrugs: (x: Drug[]) => vo
         <div className="flex items-center justify-between text-sm text-gold-600"><span>ตรวจแล้ว {done.length} / {total} รายการ</span><b className="text-gold-700">{total ? Math.round((done.length / total) * 100) : 0}%</b></div>
         <div className="mt-2 h-2 overflow-hidden rounded-full bg-cream-200"><div className="h-full rounded-full bg-gold-600 transition-all" style={{ width: `${total ? (done.length / total) * 100 : 0}%` }} /></div>
       </Section>
-      <h2 className="mb-4 mt-6 text-[17px] font-medium text-gold-800">เลือกลิสต์ผู้รับบริการเพื่อตรวจ</h2>
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {RESIDENTS.map((w) => {
-          const mine = drugs.filter((x) => x.who === w);
-          const ok = mine.filter((x) => done.includes(x.id)).length;
-          return (
-            <button key={w} disabled={!mine.length} onClick={() => { setWho(w); setIdx(0); }} className="card min-w-0 p-5 text-left transition hover:border-gold-300 disabled:opacity-50">
-              <span className="grid h-11 w-11 place-items-center rounded-full bg-cream-100 font-semibold text-gold-700">{w.replace("คุณ", "").charAt(0)}</span>
-              <p className="mt-3 truncate font-medium text-gold-800">{w}</p>
-              <p className="text-sm text-gold-500">ยา {mine.length} รายการ</p>
-              <div className="mt-3">{ok === mine.length && mine.length ? <StatusBadge value="ตรวจแล้ว" /> : <StatusBadge value={`รอตรวจ ${mine.length - ok}`} />}</div>
-            </button>
-          );
-        })}
+      {/* รายชื่อแถวละคน · ซ่อนคนที่ไม่มียา (ตัวกรอง มียา · ยังไม่นับ · ทุกคน) */}
+      <div className="mb-3 mt-6 flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-[17px] font-medium text-gold-800">เลือกผู้รับบริการเพื่อนับยา</h2>
+        <div className="mr-chips" role="group" aria-label="กรองรายชื่อ">{([["has", "มียา"], ["todo", "ยังไม่นับ"], ["all", "ทุกคน"]] as const).map(([k, l]) =>
+          <button key={k} type="button" aria-pressed={af === k} onClick={() => setAf(k)}>{l} <b>{aCount[k]}</b></button>)}</div>
       </div>
+      {af !== "all" && aCount.all > aCount.has && <p className="mb-2 text-xs text-gold-500">ซ่อน {aCount.all - aCount.has} คนที่ไม่มียา · กด “ทุกคน” เพื่อดู</p>}
+      {!aShown.length ? <p className="card px-4 py-6 text-center text-sm text-gold-500">{af === "todo" ? "นับยาครบทุกคนแล้ว" : "ยังไม่มีผู้ป่วยที่มียา"}</p> : (
+        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+          {aShown.map((p) => (
+            <button key={p.w} type="button" disabled={!p.n} onClick={() => { setWho(p.w); setIdx(0); }} className="card flex min-w-0 items-center gap-3 px-3 py-2.5 text-left transition hover:border-gold-300 disabled:opacity-50">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-cream-100 text-sm font-semibold text-gold-700">{initialsOf(p.w)}</span>
+              <span className="min-w-0 flex-1"><b className="block truncate text-[15px] font-medium text-gold-900">{p.w}</b><small className="block text-xs text-gold-500">{[roomOfA(p.w), `ยา ${p.n} รายการ`].filter(Boolean).join(" · ")}</small></span>
+              {p.n > 0 && (p.ok === p.n ? <StatusBadge value="ตรวจแล้ว" /> : <StatusBadge value={`รอตรวจ ${p.n - p.ok}`} />)}
+              {p.n > 0 && <Icon name="chevron" className="h-4 w-4 shrink-0 -rotate-90 text-gold-400" />}
+            </button>
+          ))}
+        </div>
+      )}
     </>
   );
 }
@@ -1057,11 +1109,26 @@ function Templates({ drugs, setDrugs }: { drugs: Drug[]; setDrugs: (x: Drug[]) =
   const [who, setWho] = useState("");
   const date = iso();
   const mine = drugs.filter((x) => x.who === who);
+  const { residents: tLive } = useResidents();
+  const withMeds = RESIDENTS.map((w) => {
+    const ms = drugs.filter((x) => x.who === w && !x.hold), r = tLive.find((x) => x.full_name === w)?.room;
+    return { w, mine: ms, room: r && r !== "-" ? `ห้อง ${r}` : "", meals: [...MEALS.filter((m) => ms.some((x) => !x.bulk && x.meals.includes(m))).map((m) => (m === "ก่อนนอน" ? "นอน" : m === "กลางวัน" ? "เที่ยง" : m)), ...(ms.some(isUseDrug) ? ["ตามอาการ"] : [])] };
+  }).filter((p) => p.mine.length);
   return (
     <>
       <PageHeader title="ยาแต่ละมื้อของผู้ป่วย" sub="ดูว่าแต่ละคนกินยาอะไรมื้อไหน · งดยาชั่วคราวได้จากหน้านี้" />
       <div className="card mb-6 p-5"><Field label="เลือกผู้สูงอายุ"><ResidentPicker names={RESIDENTS} value={who} onChange={setWho} /></Field></div>
-      {!who ? <div className="card empty-state"><Icon name="files" /><p>กรุณาเลือกผู้สูงอายุด้านบนเพื่อแสดงแม่แบบซองยา</p></div> : (
+      {/* ยังไม่เลือก: รายชื่อคนที่มียา (จำนวนยา · มื้อที่กิน) กดเลือกได้เลย */}
+      {!who ? (!withMeds.length ? <div className="card empty-state"><Icon name="files" /><p>ยังไม่มีผู้ป่วยที่มียาในระบบ</p></div> : <>
+        <p className="mb-2 text-sm text-gold-600">ผู้ป่วยที่มียา {withMeds.length} คน · กดเพื่อดูยาแต่ละมื้อ</p>
+        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">{withMeds.map((p) => (
+          <button key={p.w} type="button" onClick={() => setWho(p.w)} className="card flex min-w-0 items-center gap-3 px-3 py-2.5 text-left transition hover:border-gold-300">
+            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-cream-100 text-sm font-semibold text-gold-700">{initialsOf(p.w)}</span>
+            <span className="min-w-0 flex-1"><b className="block truncate text-[15px] font-medium text-gold-900">{p.w}</b><small className="block text-xs text-gold-500">{[p.room, `ยา ${p.mine.length} รายการ`].filter(Boolean).join(" · ")}</small></span>
+            <span className="flex shrink-0 flex-wrap justify-end gap-1">{p.meals.map((m) => <i key={m} className="rounded-md bg-gold-100 px-1.5 text-[11px] font-semibold not-italic text-gold-700">{m}</i>)}</span>
+            <Icon name="chevron" className="h-4 w-4 shrink-0 -rotate-90 text-gold-400" />
+          </button>))}</div>
+      </>) : (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           {MEALS.map((m) => {
             const list = mine.filter((x) => !x.bulk && x.meals.includes(m));
@@ -1143,10 +1210,12 @@ function Report({ packs }: { packs: Pack[] }) {
     <>
       <PageHeader title="ซองยาระบบเดิม" sub="ซองยาที่จัดก่อนเปลี่ยนมาให้ยาแบบใหม่ ดูย้อนหลังได้อย่างเดียว · การให้ยาแบบใหม่ดูที่ ประวัติผู้รับบริการ › ยาและการให้ยา"
         actions={<><button className="btn-soft" onClick={() => downloadCsv("รายงานการจัดยา", cols, rows)}><CsvIcon /> ส่งออก CSV</button><button className="btn-primary" onClick={() => window.print()}><Icon name="print" className="h-4 w-4" /> พิมพ์รายงานจัดยา (A4)</button></>} />
-      <form className="card mb-6 grid gap-4 p-5 sm:grid-cols-2 lg:grid-cols-[1.3fr_1fr_1fr_1fr_auto] lg:items-end" onSubmit={(e) => { e.preventDefault(); setQ({ who, from, to, status }); }}>
+      <form className="card mb-6 grid gap-4 p-5 sm:grid-cols-2 lg:grid-cols-[1.3fr_1.4fr_1fr_auto] lg:items-end" onSubmit={(e) => { e.preventDefault(); setQ({ who, from, to, status }); }}>
         <Field label="ผู้ป่วย"><Select options={RESIDENTS} placeholder="-- ทั้งหมด --" value={who} onChange={setWho} /></Field>
-        <Field label="วันกินยา (เริ่มต้น)"><input type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></Field>
-        <Field label="วันกินยา (สิ้นสุด)"><input type="date" value={to} onChange={(e) => setTo(e.target.value)} /></Field>
+        {/* ช่วงวันกินยา: ปุ่มปฏิทินแบบเดียวกับทุกหน้า (วว/ดด/ปปปป · ปุ่มลัด) · เลือกแล้วกรองทันที · ✕ = ทุกวัน */}
+        <Field label="ช่วงวันกินยา"><RangePicker from={from || `${iso().slice(0, 7)}-01`} to={to || iso()} active={!!from} label={from ? undefined : "ทุกวัน · เลือกช่วงวันที่"}
+          onChange={(a, b) => { setFrom(a); setTo(b); setQ({ who, from: a, to: b, status }); }}
+          onClear={() => { setFrom(""); setTo(""); setQ({ who, from: "", to: "", status }); }} /></Field>
         <Field label="สถานะ"><Select options={["ยังไม่ให้", "ให้ยาแล้ว"]} placeholder="-- ทั้งหมด --" value={status} onChange={setStatus} /></Field>
         <button className="btn-primary sm:col-span-2 lg:col-span-1"><Icon name="search" className="h-4 w-4" /> ค้นหา</button>
       </form>

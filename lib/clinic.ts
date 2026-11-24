@@ -17,7 +17,9 @@ export type Clinic = { admission: { data: Record<string, string>; assessed_by: s
   /** เช็คอิน/รูปงานของบันทึกกายภาพ (ผูกด้วย note_id) */
   visits?: { id: string; note_id: string; checkin: string | null; done: string | null; minutes: number | null; work_n: number }[];
   /** แพ้ยา / แพ้อาหารที่กรอกตอนเปิดสัญญา (ใช้เติมแบบประเมินแรกรับ) */
-  contractAllergy?: { drug_allergy: string | null; food_allergy: string | null } | null };
+  contractAllergy?: { drug_allergy: string | null; food_allergy: string | null; regular_meds?: string | null } | null;
+  /** โรคประจำตัวในทะเบียน (ใช้หารอบการวัดที่แนะนำในแบบประเมินแรกรับ) */
+  chronic?: string | null };
 
 /** ช่องในแบบประวัติและประเมินแรกรับ (เก็บเป็น JSON ตาม key) */
 export type AdmField = { key: string; label: string; options?: string[]; area?: boolean; placeholder?: string };

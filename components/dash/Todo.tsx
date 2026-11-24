@@ -2,7 +2,7 @@
 // (ยอดเงินในรายการเตือนไม่มีทศนิยม · วันที่แบบสั้น "30 ต.ค.")
 import { bkkToday, thDateText } from "@/lib/servicePeriod";
 import { can } from "@/lib/perms";
-import { taskHandoff } from "@/lib/handoff";
+import { residentsHandoff, taskHandoff } from "@/lib/handoff";
 import type { ViewId } from "@/lib/nav";
 import type { SessionUser } from "@/lib/roles";
 import { wantStaffFilter } from "@/lib/staffIntent";
@@ -27,6 +27,8 @@ export type HomeData = {
   physioReq?: { name: string; date: string; who: string; reason: string }[];
   /** คนที่ถึงรอบวัดสัญญาณชีพตอนนี้ · over = มีรายการเลยกำหนด */
   vitalDue?: { n: number; over: number; names: string[] };
+  /** รับเข้าใหม่ที่ยังไม่บันทึกแรกรับ (และตั้งรอบการวัด) · late = เกิน 1 วัน */
+  intake?: { n: number; late: number; names: string[] };
   /** เรื่องร้องเรียนจากญาติที่ยังไม่แก้ไข · days = ค้างนานสุดกี่วัน */
   complaints?: { n: number; days: number };
 };
@@ -39,7 +41,7 @@ export type TodoItem = { key: string; title: string; short: string; meta?: strin
 
 /** ด้านของงาน (ใช้ทั้งหน้าแรกและแถบต้องจัดการ) · ตำแหน่งที่ไม่มีสิทธิ์ด้านนั้นจะไม่เห็นกล่อง */
 export const TODO_AREAS = [
-  { name: "การดูแลและทีม", keys: ["alerts", "incidents", "late", "vitalDue", "complaints", "review", "gap", "checkin", "signup", "physioReq", "physioCase", "physioMissed"] },
+  { name: "การดูแลและทีม", keys: ["alerts", "incidents", "late", "vitalDue", "intake", "complaints", "review", "gap", "checkin", "signup", "physioReq", "physioCase", "physioMissed"] },
   { name: "การเงิน", keys: ["bills", "debt60", "monthDue", "drafts", "courses", "deposit", "quoteCall", "physio", "physioLow"] },
   { name: "ห้อง ยา และคลัง", keys: ["room", "stock"] },
 ];
@@ -47,7 +49,7 @@ export const TODO_AREAS = [
 export const SAFETY_KEYS = ["alerts", "incidents", "late", "checkin"];
 /** ปุ่มสั้นด้านขวาของแต่ละเรื่อง */
 export const TODO_ACT: Record<string, string> = {
-  alerts: "ดูรายการ", vitalDue: "ไปวัด", complaints: "ดูเรื่อง", signup: "อนุมัติ", physioCase: "จ่ายเคส", physioMissed: "ดูงาน", physioReq: "จัดคนแทน", physioLow: "เสนอต่อ", late: "ตามงาน", review: "ตรวจงาน", gap: "จัดเวร", checkin: "ดูเวร", bills: "รับชำระ", debt60: "ดูลูกหนี้",
+  alerts: "ดูรายการ", vitalDue: "ไปวัด", intake: "แรกรับ", complaints: "ดูเรื่อง", signup: "อนุมัติ", physioCase: "จ่ายเคส", physioMissed: "ดูงาน", physioReq: "จัดคนแทน", physioLow: "เสนอต่อ", late: "ตามงาน", review: "ตรวจงาน", gap: "จัดเวร", checkin: "ดูเวร", bills: "รับชำระ", debt60: "ดูลูกหนี้",
   monthDue: "ออกใบ", quoteCall: "โทรติดตาม", incidents: "รับทราบ", drafts: "ตรวจยอด", courses: "ออกใบ", deposit: "ดูสัญญา", physio: "ใส่ราคา", room: "จัดห้อง", stock: "ห้องยา",
 };
 
@@ -68,6 +70,12 @@ export function buildTodos(d: HomeData, user: SessionUser | null | undefined): T
     const v = d.vitalDue;
     c.push({ key: "vitalDue", short: "ถึงรอบวัด", meta: v.over ? `เลยกำหนด ${v.over} คน` : undefined, title: "ถึงรอบวัดสัญญาณชีพ", brief: v.n ? namesOf(v.names) : undefined, hot: v.over > 0, n: v.n, unit: "คน",
       detail: v.n ? `${v.over ? `เลยกำหนด ${v.over} คน · ` : ""}ตามรอบที่ตั้งให้แต่ละคน · ดูรายชื่อที่บันทึกสุขภาพ แท็บถึงรอบวัด` : "วัดครบตามรอบแล้ว", cta: "ไปที่บันทึกสุขภาพ", warn: v.over > 0, view: "health_logs" });
+  }
+  if (d.intake) {
+    const t = d.intake;
+    c.push({ key: "intake", short: "รอแรกรับ", meta: t.late ? `เกิน 1 วัน ${t.late} คน` : undefined, title: "รอแรกรับและตั้งรอบการวัด", brief: t.n ? namesOf(t.names) : undefined, hot: t.late > 0, n: t.n, unit: "คน",
+      detail: t.n ? `${t.late ? `ค้างเกิน 1 วัน ${t.late} คน · ` : ""}รับเข้าใหม่แล้วยังไม่บันทึกแรกรับ · บันทึกแรกรับแล้วตั้งรอบวัดสัญญาณชีพในฟอร์มเดียวกัน` : "บันทึกแรกรับครบทุกคนแล้ว",
+      cta: "ไปที่ผู้รับบริการ", warn: t.n > 0, open: () => residentsHandoff.set("intake"), view: "residents" });
   }
   if (d.complaints) {
     const k = d.complaints;

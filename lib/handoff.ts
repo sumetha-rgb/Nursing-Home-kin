@@ -20,6 +20,13 @@ export const taskHandoff = {
   take: () => { const h = taskFilter; taskFilter = null; return h; },
 };
 
+/** แถบต้องจัดการ → ผู้รับบริการ: เปิดตัวกรองไว้ให้ ("intake" = รอแรกรับ) */
+let residentsFilter: string | null = null;
+export const residentsHandoff = {
+  set: (f: string) => { residentsFilter = f; },
+  take: () => { const h = residentsFilter; residentsFilter = null; return h; },
+};
+
 /** date = วันที่ D/C (YYYY-MM-DD) ใช้คิดค่าบริการเดือนสุดท้าย */
 let bill: { id: string; dc?: boolean; date?: string } | null = null;
 export const billHandoff = {

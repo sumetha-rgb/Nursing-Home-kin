@@ -1,6 +1,6 @@
 "use client";
 import { courseHandoff } from "@/lib/handoff";
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import Icon from "../Icon";
 import { useApp } from "@/lib/app";
 import { useSession } from "@/lib/session";
@@ -16,6 +16,7 @@ import PhysioCloseCourse, { CloseTarget } from "./PhysioCloseCourse";
 import { courseOptText, fillFromCourse, physioCourses } from "@/lib/priceList";
 import { usePriceList } from "@/lib/usePrices";
 import { closedInfo, PhysioBoard, PhysioCase, PhysioHistory, schedText, teamText } from "@/lib/physio";
+import { fetchVitalDue, notifyIntake, notifyVitalDue, PresetKey, saveVitalPlan, suggestPlan, VITAL_ITEMS, VITAL_PRESETS, VitalKey, VitalPlan } from "@/lib/vitalPlan";
 
 /**
  * งานพยาบาลและกายภาพรายบุคคล (แท็บในหน้าประวัติผู้รับบริการ · ใช้ได้ทั้งระบบจัดการและ KinApp)
@@ -34,9 +35,10 @@ export function useClinic(id: string | null) {
   return { c, err, reload: load };
 }
 
-export default function ClinicalPanel({ id, tab, c, reload, name = "" }: { id: string; tab: ClinicalTab; c: Clinic | null; reload: () => void; name?: string }) {
+/** autoEdit = เปิดฟอร์มบันทึกแรกรับทันที (จากป้ายรอแรกรับ / การ์ดรับเข้าใหม่) · onAutoDone = เปิดแล้ว */
+export default function ClinicalPanel({ id, tab, c, reload, name = "", autoEdit, onAutoDone }: { id: string; tab: ClinicalTab; c: Clinic | null; reload: () => void; name?: string; autoEdit?: boolean; onAutoDone?: () => void }) {
   if (!c) return <p className="py-8 text-center text-sm text-gold-500">กำลังโหลด…</p>;
-  if (tab === "admission") return <Admission id={id} c={c} reload={reload} />;
+  if (tab === "admission") return <Admission id={id} c={c} reload={reload} autoEdit={autoEdit} onAutoDone={onAutoDone} />;
   if (tab === "nursing") return <Nursing id={id} c={c} reload={reload} />;
   if (tab === "aide") return <Aide id={id} c={c} reload={reload} />;
   if (tab === "physio") return <Physio id={id} c={c} reload={reload} name={name} />;
@@ -49,19 +51,72 @@ const run = async (toast: (m: string) => void, body: object, ok: string, after: 
 };
 
 /* ---------- ประวัติและประเมินแรกรับ ---------- */
-function Admission({ id, c, reload }: P) {
+/** รอบการวัดตอนเปิดฟอร์ม: can = ตั้งรอบได้ (lib/perms canVitalPlan) · custom = มีคนตั้งไว้แล้ว */
+type PlanNow = { can: boolean; custom: boolean; by: string | null; plan: VitalPlan };
+function Admission({ id, c, reload, autoEdit, onAutoDone }: P & { autoEdit?: boolean; onAutoDone?: () => void }) {
   const { toast } = useApp();
   const [edit, setEdit] = useState<Record<string, string> | null>(null);
+  // รอบการวัด (ท้ายแบบประเมิน): ค่าที่กดเลือกเอง > รอบที่ตั้งไว้แล้ว > รอบแนะนำจากข้อมูลในฟอร์ม (lib/vitalPlan suggestPlan)
+  const [vp, setVp] = useState<PlanNow | null>(null);
+  const [picked, setPicked] = useState<Partial<VitalPlan>>({});
+  const [saving, setSaving] = useState(false);
   const data = c.admission?.data ?? {};
   const filled = ADMISSION.flatMap((s) => s.fields).filter((f) => data[f.key]).length;
   // ช่องแพ้ยา/แพ้อาหารที่ยังว่าง เติมจากสัญญาให้ก่อน (พยาบาลแก้ได้)
   const ca = c.contractAllergy, ok = (v?: string | null) => !!v && v.trim() !== "" && v.trim() !== "-";
   const fromContract: Record<string, string> = { ...(ok(ca?.drug_allergy) ? { allergy_drug: ca!.drug_allergy! } : {}), ...(ok(ca?.food_allergy) ? { allergy_food: ca!.food_allergy! } : {}) };
+  // โรคประจำตัวในทะเบียน + ยาประจำที่แจ้งตอนเปิดสัญญา ใช้หารอบแนะนำ (เช่น ยาเบาหวาน → DTX)
+  const extra = [c.chronic, ca?.regular_meds].filter((x) => ok(x)).join(" ");
+  const open = () => {
+    setEdit({ ...ADM_DEFAULTS, ...fromContract, ...data }); setPicked({}); setVp(null);
+    fetchVitalDue({ id }).then((d) => { const r = d.items[0]; setVp(r ? { can: d.canEdit, custom: !!r.custom, by: r.by ?? null, plan: r.plan } : null); }).catch(() => setVp(null));
+  };
+  useEffect(() => { if (autoEdit) { open(); onAutoDone?.(); } }, [autoEdit]); // eslint-disable-line react-hooks/exhaustive-deps
+  const sug = edit ? suggestPlan(edit, extra) : null;
+  const planOfK = (k: VitalKey): PresetKey => picked[k] ?? (vp?.custom ? vp.plan[k] : sug?.plan[k] ?? vp?.plan[k] ?? "off");
+  const save = async () => {
+    if (!edit || saving) return;
+    setSaving(true);
+    try {
+      await clinic({ op: "admission", residentId: id, data: edit });
+      let plan = "";
+      if (vp?.can) {
+        const next = Object.fromEntries(VITAL_ITEMS.map(({ k }) => [k, planOfK(k)])) as VitalPlan;
+        // ยังไม่เคยตั้ง = บันทึกเสมอ (ถือว่ายืนยันแล้ว) · ตั้งไว้แล้ว = บันทึกเฉพาะเมื่อเปลี่ยน
+        if (!vp.custom || VITAL_ITEMS.some(({ k }) => next[k] !== vp.plan[k])) {
+          try { await saveVitalPlan(id, next); plan = " และรอบการวัด"; notifyVitalDue(); }
+          catch (e) { toast(`บันทึกแบบประเมินแล้ว แต่ตั้งรอบการวัดไม่สำเร็จ · ${(e as Error).message} · ตั้งใหม่ได้ที่แท็บสัญญาณชีพ`); setEdit(null); reload(); notifyIntake(); return; }
+        }
+      }
+      toast(`บันทึกประวัติและประเมินแรกรับ${plan}แล้ว`);
+      setEdit(null); reload(); notifyIntake();
+    } catch (e) { toast((e as Error).message); }
+    finally { setSaving(false); }
+  };
+  const planBox = vp && (vp.can ? (
+    <fieldset className="space-y-2 rounded-2xl border border-cream-300 bg-cream-50 p-4">
+      <legend className="px-1 text-sm font-semibold text-gold-800">รอบการวัด</legend>
+      <p className="text-xs text-gold-500">{vp.custom ? `ใช้รอบที่ตั้งไว้แล้ว (ตั้งโดย ${vp.by ?? "-"}) · กดเปลี่ยนได้` : "ระบบเลือกรอบแนะนำจากข้อมูลในแบบประเมินนี้ไว้ให้ · ตรวจแล้วกดเปลี่ยนได้ · นับรอบจากครั้งล่าสุดที่บันทึกจริง"}</p>
+      <ul className="divide-y divide-cream-200">{VITAL_ITEMS.map((it) => {
+        const cur = planOfK(it.k), why = !vp.custom && !picked[it.k] ? sug?.why[it.k] : undefined;
+        return <li key={it.k} className="grid gap-2 py-2.5 md:grid-cols-[150px_minmax(0,1fr)] md:items-start">
+          <span><b className="block text-sm text-gold-900">{it.label}</b><small className="text-xs text-gold-500">{it.sub}</small></span>
+          <div>
+            <div className="flex flex-wrap gap-1.5" role="group" aria-label={`รอบการวัด ${it.label}`}>{VITAL_PRESETS.map((p) => (
+              <button key={p.k} type="button" aria-pressed={cur === p.k} onClick={() => setPicked({ ...picked, [it.k]: p.k })}
+                className={`rounded-full border px-2.5 py-1 text-xs transition ${cur === p.k ? "border-gold-700 bg-gold-700 font-medium text-white" : "border-cream-300 bg-white text-gold-700 hover:border-gold-300"}`}>{p.label}</button>
+            ))}</div>
+            {why && <p className="mt-1 text-xs font-medium text-sky-700">แนะนำ · {why}</p>}
+          </div>
+        </li>;
+      })}</ul>
+    </fieldset>
+  ) : <p className="rounded-xl bg-cream-50 px-4 py-2.5 text-sm text-gold-600">รอบการวัด: บัญชีนี้ดูได้อย่างเดียว · พยาบาลที่มีสิทธิ์ตั้งรอบหรือหัวหน้าพยาบาลตั้งได้ที่แท็บสัญญาณชีพ</p>);
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-gold-600">{c.admission ? `บันทึกล่าสุดโดย ${c.admission.assessed_by ?? "-"} · ${c.admission.at}` : "ยังไม่ได้บันทึกประวัติและประเมินแรกรับ"}</p>
-        <button className="btn-primary !py-2" onClick={() => setEdit({ ...ADM_DEFAULTS, ...fromContract, ...data })}><Icon name={c.admission ? "doc" : "plus"} className="h-4 w-4" /> {c.admission ? "แก้ไขแบบประเมิน" : "บันทึกแรกรับ"}</button>
+        <button className="btn-primary !py-2" onClick={open}><Icon name={c.admission ? "doc" : "plus"} className="h-4 w-4" /> {c.admission ? "แก้ไขแบบประเมิน" : "บันทึกแรกรับ"}</button>
       </div>
       {filled > 0 && ADMISSION.map((s) => {
         const items = s.fields.filter((f) => data[f.key]);
@@ -70,9 +125,10 @@ function Admission({ id, c, reload }: P) {
         </section> : null;
       })}
       <Modal open={!!edit} wide title="ประวัติและประเมินแรกรับ" onClose={() => setEdit(null)}
-        footer={<><button className="btn-soft" onClick={() => setEdit(null)}>ยกเลิก</button><button className="btn-primary" onClick={() => edit && run(toast, { op: "admission", residentId: id, data: edit }, "บันทึกประวัติและประเมินแรกรับแล้ว · ดูได้ในแท็บแรกรับ", () => { setEdit(null); reload(); })}>บันทึกแบบประเมิน</button></>}>
-        {edit && <div className="space-y-6">{ADMISSION.map((s) => (
-          <fieldset key={s.title} className="space-y-3">
+        footer={<><button className="btn-soft" onClick={() => setEdit(null)}>ยกเลิก</button><button className="btn-primary" disabled={saving} onClick={save}>{saving ? "กำลังบันทึก…" : vp?.can ? "บันทึกแบบประเมินและรอบการวัด" : "บันทึกแบบประเมิน"}</button></>}>
+        {edit && <div className="space-y-6">{ADMISSION.map((s) => (<Fragment key={s.title}>
+          {s.title === "หมายเหตุ" && planBox}
+          <fieldset className="space-y-3">
             <legend className="mb-2 text-sm font-semibold text-gold-800">{s.title}</legend>
             <div className="form-grid">{s.fields.map((f) => (
               <Field key={f.key} label={f.label} className={f.area ? "md:col-span-2" : ""}>
@@ -82,7 +138,7 @@ function Admission({ id, c, reload }: P) {
               </Field>
             ))}</div>
           </fieldset>
-        ))}</div>}
+        </Fragment>))}</div>}
       </Modal>
     </div>
   );

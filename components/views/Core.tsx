@@ -25,7 +25,8 @@ import { roomByPrice, roomShareOf, rooms as priceRooms } from "@/lib/priceList";
 import { usePriceList } from "@/lib/usePrices";
 import { clinic, fetchDocSettings } from "@/lib/clinic";
 import { fetchProfile } from "@/lib/care";
-import { billHandoff, contractHandoff, handoff, invoiceHandoff, QuoteHandoff } from "@/lib/handoff";
+import { billHandoff, contractHandoff, handoff, invoiceHandoff, QuoteHandoff, residentsHandoff } from "@/lib/handoff";
+import { fetchIntake, INTAKE_EVENT, intakeAgo } from "@/lib/vitalPlan";
 import { buildTodos, HomeData, runTodo, SAFETY_KEYS, TODO_ACT, TODO_AREAS, TodoItem } from "../dash/Todo";
 import { apptIso, TH_MONTHS, upcomingAppts } from "@/lib/appointments";
 import { useApp } from "@/lib/app";
@@ -1639,8 +1640,19 @@ export function Residents() {
   const noRoomOf = (r: string[]) => (!r[2] || r[2] === "-") && staying(r[5] ?? "");
   const byRoom = rows.map((r, i) => ({ r, i })).filter(({ r }) => !roomF || (roomF === NO_ROOM_F ? !r[2] || r[2] === "-" : roomName(r[2], r[3]) === roomF));
   const statusCount = (k: string) => byRoom.filter(({ r }) => !k || r[5].startsWith(k)).length;
-  const shown = byRoom.filter(({ r }) => !statusF || r[5].startsWith(statusF));
+  // รอแรกรับ: เข้าอยู่แล้วแต่ยังไม่มีแบบประเมินแรกรับ (api/care?op=intake) · ป้ายข้างชื่อ + ตัวกรอง + ปุ่มบันทึกแรกรับ
+  const [intake, setIntake] = useState<Record<string, number>>({});
+  const [intakeF, setIntakeF] = useState(() => residentsHandoff.take() === "intake");
+  const [admit, setAdmit] = useState(false);
+  useEffect(() => {
+    const load = () => { fetchIntake().then((xs) => setIntake(Object.fromEntries(xs.map((x) => [x.id, x.days])))).catch(() => {}); };
+    load(); window.addEventListener(INTAKE_EVENT, load); return () => window.removeEventListener(INTAKE_EVENT, load);
+  }, []);
+  const pendingOf = (i: number) => intake[ids[i]];
+  const shown = byRoom.filter(({ r, i }) => (!statusF || r[5].startsWith(statusF)) && (!intakeF || pendingOf(i) !== undefined));
   const noRoomN = rows.filter(noRoomOf).length;
+  const intakeN = rows.filter((_, i) => pendingOf(i) !== undefined).length;
+  const openAdmit = (i: number) => { setAdmit(true); setProfile(ids[i]); };
   // ประวัติแพ้ยา/อาหารจากสัญญาล่าสุด (ป้ายแดงข้างชื่อ)
   const [allergy, setAllergy] = useState<Record<string, string>>({});
   useEffect(() => {
@@ -1662,7 +1674,7 @@ export function Residents() {
       />
       <Section title="ทะเบียนผู้รับบริการ" actions={<div className="flex flex-wrap gap-2">
           <div className="min-w-40"><Select aria-label="กรองตามห้อง" options={[...roomOpts, NO_ROOM_F]} placeholder="ทุกห้อง" value={roomF} onChange={setRoomF} /></div>
-          {(roomF || statusF) && <button type="button" className="row-action" onClick={() => { setRoomF(""); setStatusF(""); }}>ล้างตัวกรอง</button>}
+          {(roomF || statusF || intakeF) && <button type="button" className="row-action" onClick={() => { setRoomF(""); setStatusF(""); setIntakeF(false); }}>ล้างตัวกรอง</button>}
         </div>}>
         <div className="stat-filter" role="radiogroup" aria-label="กรองตามสถานะ">
           {STATUS_F.map((f) => (
@@ -1671,6 +1683,7 @@ export function Residents() {
             </button>
           ))}
           {noRoomN > 0 && <button type="button" aria-pressed={roomF === NO_ROOM_F} className={`is-review ${roomF === NO_ROOM_F ? "is-on" : ""}`} onClick={() => setRoomF(roomF === NO_ROOM_F ? "" : NO_ROOM_F)}><i aria-hidden />ยังไม่มีห้อง <b>{noRoomN}</b></button>}
+          {intakeN > 0 && <button type="button" aria-pressed={intakeF} className={`is-review ${intakeF ? "is-on" : ""}`} onClick={() => setIntakeF(!intakeF)}><i aria-hidden />รอแรกรับ <b>{intakeN}</b></button>}
         </div>
         <DataTable
           columns={cols}
@@ -1678,17 +1691,23 @@ export function Residents() {
           render={(k, col, value) => {
             const r = shown[k]?.r;
             if (!r) return undefined;
-            if (col === 1) { const a = allergy[`${r[0]}|${r[3]}`]; return <span className="flex items-center gap-2.5"><Avatar kind="resident" id={ids[shown[k].i]} name={r[0]} size={32} /><span>{value}{a && <> <span className="v-check" title={a}>{/แพ้ยา/.test(a) ? "แพ้ยา" : "แพ้อาหาร"}</span></>}</span></span>; }
+            if (col === 1) {
+              const a = allergy[`${r[0]}|${r[3]}`], wait = pendingOf(shown[k].i);
+              return <span className="flex items-center gap-2.5"><Avatar kind="resident" id={ids[shown[k].i]} name={r[0]} size={32} /><span>{value}{a && <> <span className="v-check" title={a}>{/แพ้ยา/.test(a) ? "แพ้ยา" : "แพ้อาหาร"}</span></>}
+                {wait !== undefined && <> <span className={`whitespace-nowrap rounded-full px-2 py-0.5 text-[11.5px] font-medium ${wait >= 1 ? "bg-amber-50 text-amber-800 ring-1 ring-amber-200" : "bg-sky-50 text-sky-800 ring-1 ring-sky-200"}`}>รอแรกรับ · {intakeAgo(wait)}</span></>}</span></span>;
+            }
             if (col === 3 && noRoomOf(r)) return <span className="text-gold-500">ยังไม่มีห้อง</span>;
             return undefined;
           }}
-          empty={roomF || statusF ? "ไม่พบผู้รับบริการตามตัวกรอง" : undefined}
+          empty={roomF || statusF || intakeF ? "ไม่พบผู้รับบริการตามตัวกรอง" : undefined}
           onRow={(k) => setProfile(ids[shown[k].i])} rowLabel="กดเพื่อเปิดประวัติ"
           actions={[
             // กดแถว = ประวัติ · จัดห้องขึ้นเฉพาะคนที่ยังพักอยู่แต่ยังไม่มีห้อง · ที่เหลืออยู่ใน ⋯ (ลบท้ายสุด)
             // จองห้องไว้ (สัญญารอชำระมัดจำ): ปุ่มหลัก = เปิดสัญญา (ฟอร์มเปิดสัญญาที่ดึงข้อมูลตอนจองมาให้ เลือกห้องในขั้นที่ 3)
             { label: "เริ่มใช้สัญญา (รับมัดจำ)", tone: "primary", hidden: (k) => !reservedOf(shown[k].r), onClick: (k) => { const c = reservedOf(shown[k].r); if (!c) return; contractHandoff.set(conIds[conRows.indexOf(c)]); go("contracts"); } },
             { label: "จัดห้อง", tone: "primary", hidden: (k) => !noRoomOf(shown[k].r) || !can(user, "rooms") || !!reservedOf(shown[k].r), onClick: () => go("rooms") },
+            // รอแรกรับ: เปิดประวัติที่แท็บแรกรับพร้อมฟอร์ม (มีส่วนรอบการวัดท้ายฟอร์ม)
+            { label: "บันทึกแรกรับ", tone: "primary", hidden: (k) => pendingOf(shown[k].i) === undefined || (noRoomOf(shown[k].r) && can(user, "rooms") && !reservedOf(shown[k].r)), onClick: (k) => openAdmit(shown[k].i) },
             { label: "ประวัติ", more: true, onClick: (k) => setProfile(ids[shown[k].i]) },
             { label: "ลิงก์ครอบครัว", more: true, onClick: (k) => setFamily(ids[shown[k].i]) },
             { label: "แก้ไขข้อมูล", more: true, onClick: (k) => setDlg({ mode: "edit", i: shown[k].i }) },
@@ -1726,7 +1745,7 @@ export function Residents() {
           update(dlg.i, [norm(v[0]), v[1], v[2], v[3], v[4], v[5], oldRow[6] ?? "", bed]).then(() => refreshData("contracts")); setDlg(null); toast("บันทึกการแก้ไขแล้ว · ข้อมูลที่เกี่ยวข้องเปลี่ยนชื่อตามให้แล้ว");
         }} saveLabel="บันทึกการแก้ไข"
       />
-      <ResidentProfile id={profile} onClose={() => setProfile(null)} />
+      <ResidentProfile id={profile} startAdmission={admit} onClose={() => { setProfile(null); setAdmit(false); }} />
       <FamilyHub open={hub} onClose={() => setHub(false)} />
       <FamilyLinkDialog open={!!family} residentId={family ?? ""} onClose={() => setFamily(null)} />
       <BlankForm open={sample} title="แบบประเมินแรกรับ (แบบฟอร์มเปล่า)" onClose={() => setSample(false)}

@@ -6,11 +6,12 @@
  */
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import CsvIcon from "../CsvIcon";
-import { COMPANY, PageHeader } from "../ui";
+import { COMPANY, Modal, PageHeader } from "../ui";
+import { lineCode } from "@/lib/priceList";
 import { MonthPicker, RangePicker } from "../PeriodPicker";
 import { useBranchInfo } from "./Billing";
 import { creditOf, money, parseItems, payOrder, payTake } from "@/lib/billing";
-import { buCatOf, DEFAULT_DIVISIONS, Division, divisionOf, NO_DIV } from "@/lib/bu";
+import { BU_CAT_TH, buCatOf, DEFAULT_DIVISIONS, Division, divisionOf, NO_DIV } from "@/lib/bu";
 import { downloadCsv, useRecords } from "@/lib/store";
 import { useBranchNames } from "@/lib/branches";
 import { usePriceList } from "@/lib/usePrices";
@@ -18,8 +19,10 @@ import { useSession } from "@/lib/session";
 import { seesAllBranches } from "@/lib/roles";
 import { useApp } from "@/lib/app";
 
-type Inv = { id: string; no: string; date: string; items: string; net: number; paid: number; branch: string; status: string; cn: boolean };
-type Pay = { id: string; date: string; amount: number; items: string; branch: string; paidBefore: number };
+type Inv = { id: string; no: string; date: string; items: string; net: number; paid: number; branch: string; status: string; cn: boolean; who?: string };
+type Pay = { id: string; date: string; amount: number; items: string; branch: string; paidBefore: number; no?: string; receiptNo?: string; who?: string };
+/** บรรทัดที่นับเข้าฝ่าย (ปุ่ม "ดูรายการ"): bill = ยอดออกใบ · recv = เงินที่รับจริง */
+type Line = { kind: "bill" | "recv"; date: string; no: string; rcpt: string; who: string; branch: string; desc: string; code: string; cat: string; amount: number; vat: number; owe: number };
 type Cell = { billed: number; recv: number; base: number; vat: number; owe: number };
 type Div = Cell & { name: string; byBranch: Map<string, Cell> };
 type Co = Cell & { name: string; divs: Map<string, Div> };
@@ -79,8 +82,11 @@ export function Revenue() {
   }, [month, branch, all, useRange, from, to]);
 
   const legalOf = (b: string) => branchInfo(b).legal || COMPANY.th;
-  const { cos, total, dep } = useMemo(() => {
+  const { cos, total, dep, lines } = useMemo(() => {
     const cos = new Map<string, Co>(), total = zero();
+    /** บรรทัดของแต่ละ บริษัท|ฝ่าย (ใช้กับหน้าต่างดูรายการ) */
+    const lines = new Map<string, Line[]>();
+    const keep = (k: string, ln: Line) => { if (!lines.has(k)) lines.set(k, []); lines.get(k)!.push(ln); };
     let dep = 0;
     const slot = (coName: string, divName: string, b: string) => {
       if (!cos.has(coName)) cos.set(coName, { name: coName, divs: new Map(), ...zero() });
@@ -90,25 +96,28 @@ export function Revenue() {
       if (!dv.byBranch.has(b)) dv.byBranch.set(b, zero());
       return [co, dv, dv.byBranch.get(b)!] as const;
     };
-    const put = (b: string, cat: string, d: Partial<Cell>) => {
+    const put = (b: string, cat: string, d: Partial<Cell>, ln: Omit<Line, "cat">) => {
       const dv = divisionOf(divs, cat);
       const [co, div, br] = slot(dv?.company || legalOf(b), dv?.name ?? NO_DIV, b);
       [co, div, br, total].forEach((c) => add(c, d));
+      keep(`${co.name}|${div.name}`, { ...ln, cat });
     };
-    if (!data) return { cos: [] as Co[], total, dep };
+    if (!data) return { cos: [] as Co[], total, dep, lines };
     for (const x of data.invs) {
       const its = parseItems(x.items);
       if (x.cn) { // ใบลดหนี้: ลดยอดออกใบของบริษัทสาขา
         const sum = payOrder(its).reduce((n, l) => n + l.incl, 0);
         const [co, div, br] = slot(legalOf(x.branch), CN_DIV, x.branch);
         [co, div, br, total].forEach((c) => add(c, { billed: -sum }));
+        keep(`${co.name}|${div.name}`, { kind: "bill", date: x.date, no: x.no, rcpt: "", who: x.who ?? "", branch: x.branch, desc: "ใบลดหนี้", code: "", cat: "CN", amount: -r2(sum), vat: 0, owe: 0 });
         continue;
       }
       const paidK = new Map(payTake(its, 0, creditOf(its) + x.paid).lines.map((l) => [l.k, l.take]));
       for (const l of payOrder(its)) {
         const cat = buCatOf(l.item);
         if (cat === "dep") continue;
-        put(x.branch, cat, { billed: l.incl, owe: Math.max(0, r2(l.incl - (paidK.get(l.k) ?? 0))) });
+        const owe = Math.max(0, r2(l.incl - (paidK.get(l.k) ?? 0)));
+        put(x.branch, cat, { billed: l.incl, owe }, { kind: "bill", date: x.date, no: x.no, rcpt: "", who: x.who ?? "", branch: x.branch, desc: l.item.desc, code: lineCode(l.item), amount: l.incl, vat: 0, owe });
       }
     }
     for (const p of data.pays) {
@@ -116,11 +125,12 @@ export function Revenue() {
       for (const l of payTake(its, creditOf(its) + p.paidBefore, p.amount).lines) {
         const cat = buCatOf(l.item);
         if (cat === "dep") { dep = r2(dep + l.take); continue; }
-        put(p.branch, cat, { recv: l.take, vat: l.takeVat, base: r2(l.take - l.takeVat) });
+        put(p.branch, cat, { recv: l.take, vat: l.takeVat, base: r2(l.take - l.takeVat) },
+          { kind: "recv", date: p.date, no: p.no ?? "", rcpt: p.receiptNo ?? "", who: p.who ?? "", branch: p.branch, desc: l.item.desc, code: lineCode(l.item), amount: l.take, vat: l.takeVat, owe: 0 });
       }
     }
     const sorted = [...cos.values()].sort((a, b) => b[basis] - a[basis]);
-    return { cos: sorted, total, dep };
+    return { cos: sorted, total, dep, lines };
   }, [data, divs, basis]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // เลือกบริษัท: ตารางและตัวเลขด้านบนเหลือบริษัทนั้น · สัดส่วนคิดภายในบริษัทนั้น
@@ -134,6 +144,34 @@ export function Revenue() {
     downloadCsv(`รายได้ตาม BU-${useRange ? `${from}-ถึง-${to}` : month}${branch ? `-${branch}` : ""}${company ? `-${company}` : ""}`, ["บริษัท", "ฝ่าย", "สาขา", "ยอดออกใบ", "รับเงินจริง", "ก่อน VAT (เงินที่รับ)", "VAT (เงินที่รับ)", "ค้างรับ", `สัดส่วน (${basis === "recv" ? "เงินที่รับ" : "ยอดออกใบ"})`],
       [...view.flatMap((co) => [row(co.name, "รวมบริษัท", "", co), ...[...co.divs.values()].flatMap((d) => [row(co.name, d.name, "ทุกสาขา", d), ...[...d.byBranch.entries()].map(([b, x]) => row(co.name, d.name, b, x))])]), row(company ? `รวม ${company}` : "รวมทุกบริษัท", "", "", vt)]);
     toast(`ส่งออกรายได้ตาม BU ${label} แล้ว`);
+  };
+
+  // แท็บ: สรุป (บริษัท › ฝ่าย › สาขา) · รายการทั้งหมด (ทุกบรรทัด กรองได้ ใช้กระทบยอด)
+  const [tab, setTab] = useState<"sum" | "lines">("sum");
+  const [lf, setLf] = useState({ kind: "recv" as "recv" | "billed", div: "", cat: "", nocode: false, q: "" });
+  const allLines = [...lines.entries()].flatMap(([k, arr]) => { const [co, div] = k.split("|"); return arr.map((x) => ({ ...x, co, div })); })
+    .filter((x) => !company || x.co === company);
+  const divNames = [...new Set(allLines.map((x) => x.div))];
+  const catsIn = [...new Set(allLines.map((x) => x.cat))];
+  const lq = lf.q.trim().toLowerCase();
+  const lfShown = allLines.filter((x) => (lf.kind === "recv" ? x.kind === "recv" : x.kind === "bill") && (!lf.div || x.div === lf.div) && (!lf.cat || x.cat === lf.cat)
+    && (!lf.nocode || (!x.code && x.cat !== "CN")) && (!lq || `${x.no} ${x.rcpt} ${x.who} ${x.desc} ${x.code} ${x.branch}`.toLowerCase().includes(lq)))
+    .sort((a, b) => b.date.localeCompare(a.date) || a.no.localeCompare(b.no));
+  const LF_MAX = 300;
+  const noCodeN = allLines.filter((x) => (lf.kind === "recv" ? x.kind === "recv" : x.kind === "bill") && !x.code && x.cat !== "CN").length;
+  const exportAll = () => downloadCsv(`รายการรายได้ตาม BU-${useRange ? `${from}-ถึง-${to}` : month}${branch ? `-${branch}` : ""}`,
+    ["วันที่", "เลขที่ใบเสร็จ", "เลขที่ใบแจ้งหนี้", "ผู้รับบริการ", "สาขา", "บริษัท", "ฝ่าย", "รายการ", "รหัส", "หมวด", lf.kind === "recv" ? "รับเงิน" : "ยอดออกใบ", lf.kind === "recv" ? "VAT" : "ค้างรับ"],
+    lfShown.map((x) => [dTh(x.date), x.rcpt, x.no, x.who, x.branch, x.co, x.div, x.desc, x.code, x.cat === "CN" ? "ใบลดหนี้" : BU_CAT_TH[x.cat] ?? x.cat, money(x.amount), money(lf.kind === "recv" ? x.vat : x.owe)]));
+  // หน้าต่างดูรายการของฝ่าย
+  const [linesOf, setLinesOf] = useState<{ co: string; div: string } | null>(null);
+  const [linesTab, setLinesTab] = useState<"recv" | "billed">("recv");
+  const lnAll = linesOf ? lines.get(`${linesOf.co}|${linesOf.div}`) ?? [] : [];
+  const lnShown = lnAll.filter((x) => (linesTab === "recv" ? x.kind === "recv" : x.kind === "bill")).sort((a, b) => b.date.localeCompare(a.date) || a.no.localeCompare(b.no));
+  const lnCats = [...lnShown.reduce((m, x) => { const v = m.get(x.cat) ?? [0, 0]; m.set(x.cat, [v[0] + 1, r2(v[1] + x.amount)]); return m; }, new Map<string, [number, number]>()).entries()].map(([c, [n, s]]) => [c, n, s] as const);
+  const exportLines = () => {
+    if (!linesOf) return;
+    downloadCsv(`รายการ-${linesOf.div}-${useRange ? `${from}-ถึง-${to}` : month}`, ["วันที่", "เลขที่ใบเสร็จ", "เลขที่ใบแจ้งหนี้", "ผู้รับบริการ", "สาขา", "รายการ", "รหัส", "หมวด", linesTab === "recv" ? "รับเงิน" : "ยอดออกใบ", linesTab === "recv" ? "VAT" : "ค้างรับ"],
+      lnShown.map((x) => [dTh(x.date), x.rcpt, x.no, x.who, x.branch, x.desc, x.code, x.cat === "CN" ? "ใบลดหนี้" : BU_CAT_TH[x.cat] ?? x.cat, money(x.amount), money(linesTab === "recv" ? x.vat : x.owe)]));
   };
 
   useEffect(() => { checkMore(); window.addEventListener("resize", checkMore); return () => window.removeEventListener("resize", checkMore); }, [checkMore, data, open, company, basis]);
@@ -157,7 +195,47 @@ export function Revenue() {
         <div><small>VAT ของเงินที่รับ</small><b>{data ? money(vt.vat) : "…"}</b></div>
         <div><small>ค้างรับ (ใบ{useRange ? "ในช่วงนี้" : "ของเดือนนี้"})</small><b>{data ? money(vt.owe) : "…"}</b></div>
       </div>
-      <section className="card st-paper rv-card">
+      <div className="seg rv-tabs" role="tablist" aria-label="มุมมอง">
+        <button type="button" role="tab" aria-pressed={tab === "sum"} onClick={() => setTab("sum")}>สรุปตามบริษัทและฝ่าย</button>
+        <button type="button" role="tab" aria-pressed={tab === "lines"} onClick={() => setTab("lines")}>รายการทั้งหมด{data ? ` ${allLines.length}` : ""}</button>
+      </div>
+
+      {/* รายการทั้งหมด: ทุกบรรทัดที่นับเป็นรายได้ กรองตามชนิดยอด ฝ่าย หมวด ไม่มีรหัส ค้นหา · ใช้กระทบยอดและหาบรรทัดที่เข้าฝ่ายผิด */}
+      {tab === "lines" && <section className="card st-paper rv-card">
+        {!data && !err ? <p className="st-empty">กำลังโหลด…</p> : <>
+          <div className="rv-lf">
+            <div className="seg" role="tablist" aria-label="ชนิดยอด">
+              <button type="button" role="tab" aria-pressed={lf.kind === "recv"} onClick={() => setLf({ ...lf, kind: "recv" })}>รับเงินจริง</button>
+              <button type="button" role="tab" aria-pressed={lf.kind === "billed"} onClick={() => setLf({ ...lf, kind: "billed" })}>ยอดออกใบ</button>
+            </div>
+            <select value={lf.div} onChange={(e) => setLf({ ...lf, div: e.target.value })} aria-label="ฝ่าย"><option value="">ทุกฝ่าย</option>{divNames.map((d) => <option key={d} value={d}>{d}</option>)}</select>
+            <select value={lf.cat} onChange={(e) => setLf({ ...lf, cat: e.target.value })} aria-label="หมวด"><option value="">ทุกหมวด</option>{catsIn.map((c) => <option key={c} value={c}>{c === "CN" ? "ใบลดหนี้" : `${c} · ${BU_CAT_TH[c] ?? c}`}</option>)}</select>
+            <button type="button" aria-pressed={lf.nocode} className={`rv-nocode ${lf.nocode ? "is-on" : ""}`} onClick={() => setLf({ ...lf, nocode: !lf.nocode })}>ไม่มีรหัส {noCodeN}</button>
+            <input value={lf.q} onChange={(e) => setLf({ ...lf, q: e.target.value })} placeholder="ค้นหา เลขที่ ชื่อ รายการ รหัส" aria-label="ค้นหารายการ" />
+            {(lf.div || lf.cat || lf.nocode || lf.q) && <button type="button" className="row-action" onClick={() => setLf({ ...lf, div: "", cat: "", nocode: false, q: "" })}>ล้างตัวกรอง</button>}
+            <button type="button" className="btn-soft ml-auto" disabled={!lfShown.length} onClick={exportAll}><CsvIcon /> CSV</button>
+          </div>
+          <p className="mb-2 text-sm text-gold-700">{lfShown.length} บรรทัด · รวม <b>{money(lfShown.reduce((n, x) => n + x.amount, 0))}</b> บาท{lfShown.length > LF_MAX ? ` · แสดง ${LF_MAX} บรรทัดแรก ใช้ตัวกรองหรือส่งออก CSV เพื่อดูทั้งหมด` : ""}</p>
+          {!lfShown.length ? <p className="st-empty">ไม่มีรายการตามตัวกรองใน{label}</p> : (
+            <div className="overflow-x-auto"><table className="rv-lines">
+              <thead><tr><th>วันที่</th><th>เลขที่</th><th>ผู้รับบริการ · สาขา</th><th>รายการในใบ</th><th>รหัส · หมวด</th><th>ฝ่าย · บริษัท</th><th className="num">{lf.kind === "recv" ? "รับเงิน" : "ยอดออกใบ"}</th><th className="num">{lf.kind === "recv" ? "VAT" : "ค้างรับ"}</th></tr></thead>
+              <tbody>{lfShown.slice(0, LF_MAX).map((x, k) => (
+                <tr key={k} className={!x.code && x.cat !== "CN" ? "is-nocode" : ""}>
+                  <td className="whitespace-nowrap">{dTh(x.date)}</td>
+                  <td className="whitespace-nowrap">{x.rcpt ? <>{x.rcpt}<small>{x.no}</small></> : x.no}</td>
+                  <td>{x.who || "-"}<small>{x.branch}</small></td>
+                  <td>{x.desc}</td>
+                  <td className="whitespace-nowrap">{x.code || (x.cat === "CN" ? "-" : "ไม่มีรหัส")}<small>{x.cat === "CN" ? "ใบลดหนี้" : BU_CAT_TH[x.cat] ?? x.cat}</small></td>
+                  <td>{x.div}<small>{x.co}</small></td>
+                  <td className="num">{money(x.amount)}</td>
+                  <td className="num">{money(lf.kind === "recv" ? x.vat : x.owe)}</td>
+                </tr>))}</tbody>
+            </table></div>)}
+          <p className="field-hint mt-2">หมวดมาจากรหัสสินค้า 2 ตัวแรก (ราคาสินค้าและบริการ) · ไม่มีรหัส = ยา เวชภัณฑ์ หรือรายการที่พิมพ์เอง จะเข้าหมวดอื่น ๆ · ฝ่ายของแต่ละหมวดตั้งได้ที่ ตั้งค่า › BU (ฝ่ายและบริษัท)</p>
+        </>}
+      </section>}
+
+      {tab === "sum" && <section className="card st-paper rv-card">
         {!data && !err ? <p className="st-empty">กำลังโหลด…</p> : !view.length ? <p className="st-empty">ไม่มีรายได้ใน{label}{company ? ` ของ${company}` : ""}</p> : <>
           <div className="rv-bar" role="img" aria-label={view.map((c) => `${c.name} ${share(c)}%`).join(" · ")}>
             {view.map((c) => <i key={c.name} style={{ width: `${Math.max(0, share(c))}%`, background: CO_COLORS[cos.indexOf(c) % CO_COLORS.length] }} />)}
@@ -177,7 +255,8 @@ export function Revenue() {
                         <Fragment key={k}>
                           <tr className={`is-div ${isOpen ? "is-open" : ""}`} onClick={() => setOpen(isOpen ? null : k)} tabIndex={0} aria-expanded={isOpen}
                             onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setOpen(isOpen ? null : k); } }}>
-                            <td><span className="rv-caret" aria-hidden="true">{isOpen ? "▾" : "▸"}</span>{d.name}{d.name === NO_DIV && <small> · ตั้งได้ที่ ตั้งค่า › BU (ฝ่ายและบริษัท)</small>}</td>
+                            <td><span className="rv-caret" aria-hidden="true">{isOpen ? "▾" : "▸"}</span>{d.name}{d.name === NO_DIV && <small> · ตั้งได้ที่ ตั้งค่า › BU (ฝ่ายและบริษัท)</small>}
+                              <button type="button" className="rv-lines-btn" onClick={(e) => { e.stopPropagation(); setLinesOf({ co: co.name, div: d.name }); setLinesTab(basis); }}>ดูรายการ</button></td>
                             <td>{money(d.billed)}</td><td>{money(d.recv)}</td><td>{money(d.base)}</td><td>{money(d.vat)}</td><td>{money(d.owe)}</td><td className="rv-pct">{share(d)}%</td>
                           </tr>
                           {isOpen && [...d.byBranch.entries()].sort((a, b) => b[1][basis] - a[1][basis]).map(([b, x]) => (
@@ -192,9 +271,38 @@ export function Revenue() {
               </tbody>
             </table>
           </div></div>
-          <p className="field-hint">กดแถวฝ่ายเพื่อดูแยกตามสาขา{dep ? ` · เงินประกัน/มัดจำที่รับในเดือนนี้ ${money(dep)} บาท ไม่นับเป็นรายได้` : ""} · ฝ่ายและบริษัทของแต่ละหมวด ตั้งได้ที่ ตั้งค่า › BU (ฝ่ายและบริษัท) (ผู้บริหาร)</p>
+          <p className="field-hint">กดแถวฝ่ายเพื่อดูแยกตามสาขา · กด “ดูรายการ” เพื่อดูว่าบรรทัดไหนจากใบไหนถูกนับเข้าฝ่ายนั้น{dep ? ` · เงินประกัน/มัดจำที่รับในเดือนนี้ ${money(dep)} บาท ไม่นับเป็นรายได้` : ""} · ฝ่ายและบริษัทของแต่ละหมวด ตั้งได้ที่ ตั้งค่า › BU (ฝ่ายและบริษัท) (ผู้บริหาร)</p>
         </>}
-      </section>
+      </section>}
+
+      {/* ดูรายการของฝ่าย: บรรทัดไหนจากใบไหนถูกนับเข้าฝ่ายนี้ · แยกแท็บ รับเงินจริง / ยอดออกใบ · สรุปตามหมวด · บรรทัดที่ไม่มีรหัสขึ้นสีส้ม */}
+      <Modal open={!!linesOf} wide title={linesOf ? `${linesOf.div} · ${linesOf.co}` : ""} onClose={() => setLinesOf(null)}
+        footer={<><span className="mr-auto text-xs text-gold-500">{label}{branch ? ` · สาขา${branch}` : ""} · หมวดมาจากรหัสสินค้า (2 ตัวแรก) · ไม่มีรหัส = อื่น ๆ</span>
+          <button type="button" className="btn-soft" onClick={() => { if (!linesOf) return; setLf({ kind: linesTab, div: linesOf.div, cat: "", nocode: false, q: "" }); setTab("lines"); setLinesOf(null); }}>เปิดในรายการทั้งหมด ›</button>
+          <button type="button" className="btn-soft" disabled={!lnShown.length} onClick={exportLines}><CsvIcon /> CSV</button><button type="button" className="btn-primary" onClick={() => setLinesOf(null)}>ปิด</button></>}>
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <div className="seg" role="tablist" aria-label="ชนิดยอด">
+            <button type="button" role="tab" aria-pressed={linesTab === "recv"} onClick={() => setLinesTab("recv")}>รับเงินจริง {lnAll.filter((x) => x.kind === "recv").length}</button>
+            <button type="button" role="tab" aria-pressed={linesTab === "billed"} onClick={() => setLinesTab("billed")}>ยอดออกใบ {lnAll.filter((x) => x.kind === "bill").length}</button>
+          </div>
+          <span className="text-sm text-gold-700">รวม <b>{money(lnShown.reduce((n, x) => n + x.amount, 0))}</b> บาท</span>
+        </div>
+        {lnCats.length > 0 && <p className="mb-3 flex flex-wrap gap-1.5 text-xs">{lnCats.map(([c, n, sum]) => <span key={c} className="rounded-full bg-cream-100 px-2.5 py-0.5 text-gold-800">{c === "CN" ? "ใบลดหนี้" : `${c} · ${BU_CAT_TH[c] ?? c}`} · {n} บรรทัด · <b>{money(sum)}</b></span>)}</p>}
+        {!lnShown.length ? <p className="rounded-xl bg-cream-50 px-4 py-8 text-center text-sm text-gold-500">ไม่มีรายการ{linesTab === "recv" ? "รับเงิน" : "ออกใบ"}ของฝ่ายนี้ใน{label}</p> : (
+          <div className="overflow-x-auto"><table className="rv-lines">
+            <thead><tr><th>วันที่</th><th>เลขที่</th><th>ผู้รับบริการ · สาขา</th><th>รายการในใบ</th><th>รหัส · หมวด</th><th className="num">{linesTab === "recv" ? "รับเงิน" : "ยอดออกใบ"}</th><th className="num">{linesTab === "recv" ? "VAT" : "ค้างรับ"}</th></tr></thead>
+            <tbody>{lnShown.map((x, k) => (
+              <tr key={k} className={!x.code && x.cat !== "CN" ? "is-nocode" : ""}>
+                <td className="whitespace-nowrap">{dTh(x.date)}</td>
+                <td className="whitespace-nowrap">{x.rcpt ? <>{x.rcpt}<small>{x.no}</small></> : x.no}</td>
+                <td>{x.who || "-"}<small>{x.branch}</small></td>
+                <td>{x.desc}</td>
+                <td className="whitespace-nowrap">{x.code || (x.cat === "CN" ? "-" : "ไม่มีรหัส")}<small>{x.cat === "CN" ? "ใบลดหนี้" : BU_CAT_TH[x.cat] ?? x.cat}</small></td>
+                <td className="num">{money(x.amount)}</td>
+                <td className="num">{money(linesTab === "recv" ? x.vat : x.owe)}</td>
+              </tr>))}</tbody>
+          </table></div>)}
+      </Modal>
     </>
   );
 }

@@ -14,6 +14,8 @@ import { useAutoRefresh } from "@/lib/autoRefresh";
  */
 export type DaySlot = { id: string; name: string; med_id: string | null; meal: string | null; qty: number; skip_reason: string | null; by: string | null; at: string };
 export const SKIP_REASONS = ["ปฏิเสธยา", "หลับอยู่", "งดน้ำงดอาหาร", "ยาหมด", "อื่น ๆ"];
+/** บอกหน้าอื่น (หน้างานวันนี้ใน KinApp) ให้ดึงสถานะการให้ยาใหม่หลังบันทึก */
+export const MEDS_EVENT = "kin-meds-given";
 export const mealByClock = () => { const h = new Date().getHours(); return h < 10 ? MEALS[0] : h < 14 ? MEALS[1] : h < 19 ? MEALS[2] : MEALS[3]; };
 export const bkkToday = () => new Date(Date.now() + 7 * 3600e3).toISOString().slice(0, 10);
 export const fetchDaySlots = (date: string) => fetch(`/api/pharmstock?op=withdrawals_day&date=${date}`, { cache: "no-store" })
@@ -54,9 +56,13 @@ export default function GiveMeds({ drugs, people }: { drugs: Drug[]; people: { n
   const who = useMemo(() => people.map((p) => p.name).filter((w) => listOf(w, meal).length)
     .sort((a, b) => (roomOf(a) || "~").localeCompare(roomOf(b) || "~") || a.localeCompare(b, "th")), [people, listOf, meal]); // eslint-disable-line react-hooks/exhaustive-deps
   const pending = who.filter((w) => !statusOf(w, meal).done);
-  const shown = showDone ? who : pending;
+  // คนที่ยังไม่ได้ให้ขึ้นก่อน · กาง "ให้แล้ว" = ต่อท้ายด้วยคนที่ให้แล้ว
+  const shown = showDone ? [...pending, ...who.filter((w) => !pending.includes(w))] : pending;
 
-  const start = (w: string) => { setOpen(w); setForm({ on: listOf(w, meal).map((_, i) => i), why: {}, ok: false }); };
+  /** all = เริ่มแบบให้ครบทุกรายการ · false = เริ่มแบบไม่ได้ให้ (เลือกเหตุผลทีละรายการ) */
+  const start = (w: string, all = true) => { setOpen(w); setForm({ on: all ? listOf(w, meal).map((_, i) => i) : [], why: {}, ok: false }); };
+  const nowMeal = mealByClock();
+  const doneN = who.length - pending.length;
   const save = async (w: string) => {
     const list = listOf(w, meal);
     const skips = list.map((_, i) => i).filter((i) => !form.on.includes(i));
@@ -72,32 +78,33 @@ export default function GiveMeds({ drugs, people }: { drugs: Drug[]; people: { n
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d.error || "บันทึกการให้ยาไม่สำเร็จ");
       toast(`บันทึกแล้ว · ${w} มื้อ${meal} · ให้ ${form.on.length}${skips.length ? ` · ไม่ได้ให้ ${skips.length}` : ""} รายการ`);
-      setOpen(null); refreshData("pharmacy-drugs"); load();
+      setOpen(null); refreshData("pharmacy-drugs"); load(); window.dispatchEvent(new Event(MEDS_EVENT));
     } catch (e) { toast((e as Error).message); } finally { setBusy(false); }
   };
 
   return (
     <div className="space-y-3">
-      <div className="ka-head"><div><h1>ให้ยา</h1><p>{new Date().toLocaleDateString("th-TH", { weekday: "short", day: "numeric", month: "short" })} · มื้อ{meal} ให้แล้ว {who.length - pending.length}/{who.length} คน</p></div></div>
-      <div className="grid grid-cols-4 gap-1.5" role="group" aria-label="เลือกมื้อ">
+      <div className="ka-head"><div><h1>ให้ยา · มื้อ{meal}</h1><p>{new Date().toLocaleDateString("th-TH", { weekday: "short", day: "numeric", month: "short" })} · ให้แล้ว {doneN} จาก {who.length} คน</p></div></div>
+      {/* เลือกมื้อ: ตัวเลข ให้แล้ว/ทั้งหมด · ป้าย "ตอนนี้" ที่มื้อตามเวลา */}
+      <div className="kn-meals" role="group" aria-label="เลือกมื้อ">
         {MEALS.map((m) => {
           const ws = people.map((p) => p.name).filter((w) => listOf(w, m).length), d = ws.filter((w) => statusOf(w, m).done).length;
-          return <button key={m} type="button" aria-pressed={meal === m} onClick={() => { setMeal(m); setOpen(null); }}
-            className={`rounded-xl border px-1 py-2 text-center text-sm ${meal === m ? "border-gold-700 bg-gold-700 font-semibold text-white" : "border-cream-300 bg-white text-gold-700"} ${ws.length ? "" : "opacity-50"}`}>
-            {m}<small className="block text-[11px] opacity-80">{ws.length ? `${d}/${ws.length}` : "-"}</small></button>;
+          return <button key={m} type="button" aria-pressed={meal === m} onClick={() => { setMeal(m); setOpen(null); setShowDone(false); }} className={ws.length ? "" : "is-empty"}>
+            <b>{m}</b><small>{ws.length ? `${d}/${ws.length}` : "-"}{m === nowMeal ? " · ตอนนี้" : ""}</small></button>;
         })}
       </div>
-      {who.length > 0 && <label className="flex items-center gap-2 text-sm text-gold-700"><input type="checkbox" className="!h-4 !w-4 !min-h-0" checked={showDone} onChange={(e) => setShowDone(e.target.checked)} /> แสดงคนที่ให้ยาแล้วด้วย</label>}
+      {who.length > 0 && <div className="kn-bar" role="progressbar" aria-valuenow={doneN} aria-valuemin={0} aria-valuemax={who.length} aria-label={`ให้ยามื้อ${meal}แล้ว`}><i style={{ width: `${Math.round((doneN / who.length) * 100)}%` }} /></div>}
       {slots === null ? <p className="py-6 text-center text-sm text-gold-500">กำลังโหลด…</p>
         : !who.length ? <p className="rounded-2xl bg-white px-4 py-8 text-center text-sm text-gold-500">ไม่มีใครต้องกินยามื้อ{meal}วันนี้</p>
-        : !shown.length ? <p className="rounded-2xl bg-emerald-50 px-4 py-6 text-center text-sm font-medium text-emerald-800">✓ ให้ยามื้อ{meal}ครบทุกคนแล้ว</p>
-        : <ul className="space-y-2.5">{shown.map((w) => {
+        : <>
+        {pending.length ? <p className="kn-h"><span>ยังไม่ได้ให้ · {pending.length} คน</span></p> : <p className="rounded-2xl bg-emerald-50 px-4 py-4 text-center text-sm font-medium text-emerald-800">✓ ให้ยามื้อ{meal}ครบทุกคนแล้ว</p>}
+        <ul className="space-y-2.5">{shown.map((w) => {
           const st = statusOf(w, meal), isOpen = open === w, n = st.list.length;
           const allOn = form.on.length === n;
           return (
             <li key={w} className={`overflow-hidden rounded-2xl border ${st.done ? "border-emerald-200 bg-emerald-50/60" : isOpen ? "border-gold-600 bg-white shadow-soft" : "border-cream-300 bg-white"}`}>
               <div className="flex items-center gap-2.5 px-3.5 pt-3">
-                <span className={`shrink-0 rounded-lg px-2 py-0.5 text-sm font-bold tabular-nums ${roomOf(w) ? "bg-gold-100 text-gold-800" : "bg-cream-100 text-xs font-normal text-gold-500"}`}>{roomOf(w) || "ไม่มีห้อง"}</span>
+                {roomOf(w) && <span className="shrink-0 rounded-lg bg-gold-100 px-2 py-0.5 text-sm font-bold tabular-nums text-gold-800">{roomOf(w)}</span>}
                 <span className="min-w-0 flex-1"><b className="block truncate text-[15px] text-gold-900">{w}</b>
                   {allergy[w] && <span className="inline-block rounded bg-red-50 px-1.5 text-[11px] font-semibold text-red-700">⚠ แพ้ยา: {allergy[w]}</span>}</span>
                 {st.done && <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-800">✓ บันทึกแล้ว</span>}
@@ -147,11 +154,19 @@ export default function GiveMeds({ drugs, people }: { drugs: Drug[]; people: { n
                   <button type="button" className="btn-soft !py-2" onClick={() => setOpen(null)}>ยกเลิก</button>
                   <button type="button" className="btn-primary flex-1 !py-2" disabled={busy || !form.ok || st.list.some((_, i) => !form.on.includes(i) && !form.why[i])} onClick={() => save(w)}>
                     {busy ? "กำลังบันทึก…" : allOn ? `บันทึกการให้ยา ${n} รายการ` : `บันทึก · ให้ยา ${form.on.length} · ไม่ได้ให้ ${n - form.on.length}`}</button>
-                </> : <button type="button" className="btn-primary w-full !py-2.5" onClick={() => start(w)}><Icon name="pill" className="h-4 w-4" /> ให้ยา</button>}
+                </> : <>
+                  <button type="button" className="btn-primary flex-1 !py-2.5" onClick={() => start(w)}><Icon name="pill" className="h-4 w-4" /> ให้ครบ {n} รายการ</button>
+                  <button type="button" className="btn-soft !py-2.5" onClick={() => start(w, false)}>ไม่ได้ให้…</button>
+                </>}
               </div>
             </li>
           );
-        })}</ul>}
+        })}</ul>
+        {/* คนที่ให้แล้วพับไว้ (แทนช่องติ๊กแสดงคนที่ให้แล้ว) */}
+        {doneN > 0 && <button type="button" className="kn-fold" aria-expanded={showDone} onClick={() => setShowDone(!showDone)}>
+          <span><b>ให้แล้ว {doneN} คน</b><small>{showDone ? "แตะเพื่อพับ" : "แตะเพื่อดูว่าใครให้ยาไปแล้ว"}</small></span><Icon name="chevron" className={`h-4 w-4 transition ${showDone ? "rotate-180" : ""}`} />
+        </button>}
+        </>}
       <p className="text-center text-xs text-gold-500">ให้ยาผิด แจ้งห้องยายกเลิกได้ที่ KINmed › เบิกยา · ยาขวด ยาทา ยาตามอาการ เบิกที่ KINmed › เบิกยา</p>
     </div>
   );

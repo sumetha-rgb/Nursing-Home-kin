@@ -1,7 +1,6 @@
 "use client";
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import TutorialVideos from "@/components/TutorialVideos";
-import Image from "next/image";
 import Link from "next/link";
 import Login from "@/components/Login";
 import AppSwitcher from "@/components/AppSwitcher";
@@ -20,15 +19,15 @@ import { downloadCsv, SYNC_ERROR_EVENT, useCrud, useRecords } from "@/lib/store"
 import { useResidents } from "@/lib/care";
 import { useAutoRefresh } from "@/lib/autoRefresh";
 import { HEALTH } from "@/lib/mock";
-import { daysLeft, Drug, DRUGS0, iso, MEALS, nowTh, Pack } from "@/lib/pharmacy";
+import { daysLeft, Drug, DRUGS0, drugsFor, iso, MEALS, nowTh, Pack } from "@/lib/pharmacy";
 import AlertsBell from "@/components/care/AlertsBell";
 import BranchNotice from "@/components/BranchNotice";
 import ResidentProfile from "@/components/care/ResidentProfile";
 import { IncidentReport } from "@/components/care/Incidents";
 import VitalsDialog from "@/components/care/VitalsDialog";
-import GiveMeds from "@/components/pharmacy/GiveMeds";
+import GiveMeds, { bkkToday as medDay, DaySlot, fetchDaySlots, mealByClock, MEDS_EVENT, slotOf } from "@/components/pharmacy/GiveMeds";
 import { DueBadge } from "@/components/care/VitalPlanCard";
-import { fetchVitalDue, needOf, VITAL_DUE_EVENT, VitalDueRow } from "@/lib/vitalPlan";
+import { fetchIntake, fetchVitalDue, Intake, INTAKE_EVENT, intakeAgo, needOf, VITAL_DUE_EVENT, VitalDueRow } from "@/lib/vitalPlan";
 import FamilyLinkDialog from "@/components/care/FamilyLinkDialog";
 import PhotoPicker from "@/components/PhotoPicker";
 import { OfflineBar, usePwa } from "@/components/Pwa";
@@ -38,6 +37,8 @@ import { fetchToday, shortName, SHIFTS, stampPhoto } from "@/lib/roster";
 import type { StaffReview } from "@/lib/reviews";
 import { KPI_PARTS, KpiResp, pointsOf } from "@/lib/kpi";
 import { NO_ALLERGY } from "@/lib/medicalLists";
+import { evaluateVitals, parseVitals } from "@/lib/vitals";
+import { APPS, appsFor, rememberApp } from "@/lib/apps";
 import PhysioKin from "@/components/care/PhysioKin";
 
 /* ---------- ข้อมูลจำลอง ---------- */
@@ -70,6 +71,8 @@ const PHYSIO_VIEWS: Tab[] = ["ptoday", "pweek", "pcases"];
 /** เหตุผลที่ทำแทน (ต่อท้ายในบันทึกงาน "ทำแทน <ชื่อ> · <เหตุผล>") */
 const PROXY_REASONS = ["ไม่อยู่ในเวร", "ติดงานอื่น", "งานด่วน", "อื่น ๆ"];
 const LATE_MIN = 30;
+/** ชื่อย่อรายการวัดบนป้ายสถานะ */
+const VITAL_SHORT: Record<string, string> = { vs: "VS", o2: "O2", dtx: "DTX", wt: "น้ำหนัก", ht: "ส่วนสูง" };
 /** ตัวย่อในวงกลม: ตัดคำนำหน้า และข้ามสระนำ (เ แ โ ใ ไ) เช่น นางเชียงราย ไทรงาม → ชท */
 
 
@@ -167,6 +170,10 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   const tomorrowIso = new Date(Date.now() + 7 * 3600e3 + 864e5).toISOString().slice(0, 10);
   const appts = upcomingAppts(apptRows).filter(({ r }) => apptIso(r[0]) <= tomorrowIso).map(({ r }) => ({ who: r[2], what: r[3], when: `${apptIso(r[0]) === iso() ? "วันนี้" : "พรุ่งนี้"} ${(r[1] ?? "").slice(0, 5)}`, by: r[4] }));
   const [profile, setProfile] = useState<string | null>(null);
+  /** เปิดประวัติพร้อมฟอร์มบันทึกแรกรับ (จากการ์ดรอแรกรับ) */
+  const [admitP, setAdmitP] = useState(false);
+  /** เปิดประวัติที่แท็บนี้ (เช่น บันทึกพยาบาล จากหน้ารายคน) */
+  const [profTab, setProfTab] = useState<string | null>(null);
   const [vitalsFor, setVitalsFor] = useState<string | null>(null);
   const todayIso = iso();
   const queue = packs.filter((p) => p.date === todayIso).sort((a, b) => MEALS.indexOf(a.meal) - MEALS.indexOf(b.meal) || a.who.localeCompare(b.who, "th"));
@@ -300,7 +307,6 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   const myLate = myPending.filter(isLate);
   const myGroups = Object.entries(myPending.filter((k) => !isLate(k)).reduce<Record<string, Task[]>>((g, k) => ({ ...g, [k.time]: [...(g[k.time] ?? []), k] }), {})).sort(([a], [b]) => a.localeCompare(b));
   const others = pendingAll.filter((k) => !isMine(k));
-  const nextTask = myPending.filter((k) => !isLate(k))[0] ?? myLate[0];
   const doneForMe = doneTasks.filter((k) => k.owner === user.name && k.by && k.by !== user.name);
   const fixCount = myReviews.filter((r) => r.stars <= 2).length;
   const myShiftText = shownShift === undefined ? "กำลังตรวจตารางเวร…" : shownShift ? `เวร${shownShift} ${SHIFTS.find((x) => x.key === shownShift)?.time ?? ""}` : "วันนี้ไม่มีเวรในตาราง";
@@ -317,15 +323,16 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
     if (!r.ok) { toast(d.error || "ส่งไม่สำเร็จ"); return; }
     toast(`แจ้งหัวหน้าแล้ว · ${n.task} · ${reason}`); setWhy(null); loadFeed();
   };
+  /** แถวงานแบบเส้นเวลา: เวลา + อีกกี่นาที · ชื่องาน · ผู้รับบริการและห้อง · ปุ่มส่งงาน (ถ่ายรูป) หรือทำแทน */
   const taskRow = (k: Task) => (
-    <li key={k.id} className={`ka-task ${isLate(k) ? "is-late" : ""} ${canSubmit(k) ? "" : "is-other"}`}>
-      <button type="button" className="ka-task-main" onClick={() => open("sop", k.id)}>
-        <span className="ka-time"><b>{k.time || "-"}</b></span>
-        <span className="ka-t"><b>{k.title}{k.rid && nudged.has(k.rid) && <em className="ka-nudged">ถูกตาม</em>}</b><small>{k.who}{ownerTag(k) && <> · {ownerTag(k)}</>}</small></span>
+    <li key={k.id} className={`kn-tl-row ${isLate(k) ? "is-late" : ""} ${canSubmit(k) ? "" : "is-other"}`}>
+      <button type="button" className="kn-tl-main" onClick={() => open("sop", k.id)}>
+        <span className="kn-tm"><b>{k.time || "-"}</b>{dueIn(k)}</span>
+        <span className="ka-t"><b>{k.title}{k.rid && nudged.has(k.rid) && <em className="ka-nudged">ถูกตาม</em>}</b><small>{k.who}{roomOf(k.who) ? ` · ห้อง ${roomOf(k.who)}` : ""}{ownerTag(k) && <> · {ownerTag(k)}</>}</small></span>
       </button>
       {canSubmit(k)
-        ? <button type="button" className="ka-send" onClick={() => { open("task", k.id); setProxyFor(null); }}><Icon name="camera" className="h-5 w-5" /><span>ส่งงาน</span></button>
-        : <button type="button" className="ka-send is-ghost" onClick={() => doFor(k)}>ทำแทน</button>}
+        ? <button type="button" className="kn-cam" onClick={() => { open("task", k.id); setProxyFor(null); }}><Icon name="camera" className="h-4 w-4" />ส่ง</button>
+        : <button type="button" className="kn-cam is-ghost" onClick={() => doFor(k)}>ทำแทน</button>}
     </li>
   );
   // ผู้รับบริการ: วัดสัญญาณชีพวันนี้แล้วหรือยัง (จากบันทึกสุขภาพ) · ประวัติแพ้ยา (จากสัญญา)
@@ -341,8 +348,8 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
     }).catch(() => {});
   }, []);
   const [resQ, setResQ] = useState("");
-  /** กรองผู้รับบริการ: all ทั้งหมด · todo ยังไม่วัดวันนี้ · due ถึงรอบวัด (รอบการวัดรายบุคคล) */
-  const [resTodo, setResTodo] = useState<"all" | "todo" | "due">("all");
+  /** กรองผู้รับบริการ: all ทั้งหมด · due ต้องวัด (รอบการวัดรายบุคคล) · todo ยังไม่วัดวันนี้ · meds ยามื้อนี้ค้าง · intake รอแรกรับ */
+  const [resTodo, setResTodo] = useState<"all" | "todo" | "due" | "meds" | "intake">("all");
   const [resPick, setResPick] = useState<(typeof RESIDENTS)[number] | null>(null);
   // รายงานเหตุการณ์ไม่พึงประสงค์ (หกล้ม ยาผิด แผลใหม่) · แจ้งหัวหน้าพยาบาลทันที
   const [incOpen, setIncOpen] = useState(false);
@@ -351,11 +358,39 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   const loadVdue = () => { fetchVitalDue().then((d) => setVdue(d.items)).catch(() => {}); };
   useEffect(() => { loadVdue(); window.addEventListener(VITAL_DUE_EVENT, loadVdue); return () => window.removeEventListener(VITAL_DUE_EVENT, loadVdue); }, []);
   useAutoRefresh(loadVdue);
+  // รอแรกรับและตั้งรอบการวัด: คนรับเข้าใหม่ที่ยังไม่มีแบบประเมินแรกรับ · กดชื่อแล้วเปิดประวัติพร้อมฟอร์มแรกรับ
+  const [intake, setIntake] = useState<Intake[]>([]);
+  const loadIntake = () => { fetchIntake().then(setIntake).catch(() => {}); };
+  useEffect(() => { loadIntake(); window.addEventListener(INTAKE_EVENT, loadIntake); return () => window.removeEventListener(INTAKE_EVENT, loadIntake); }, []);
+  useAutoRefresh(loadIntake);
   const needBy: Record<string, ReturnType<typeof needOf>> = Object.fromEntries(vdue.map((r) => [r.name, needOf(r)]).filter(([, n]) => (n as unknown[]).length));
   const dueCount = Object.keys(needBy).length, overCount = Object.values(needBy).filter((n) => n.some((x) => x.due.cls === "over")).length;
-  const resList = RESIDENTS.filter((r) => (!resQ.trim() || `${r.name} ${r.room}`.toLowerCase().includes(resQ.trim().toLowerCase())) && (resTodo === "all" || (resTodo === "todo" ? !measured[r.name] : !!needBy[r.name])))
-    .sort((a, b) => (resTodo === "due" ? Number(!!needBy[b.name]?.some((x) => x.due.cls === "over")) - Number(!!needBy[a.name]?.some((x) => x.due.cls === "over")) : 0));
   const goDue = () => { setTab("residents"); setResTodo("due"); setResQ(""); window.scrollTo(0, 0); };
+  const goMeds = () => { setTab("meds"); window.scrollTo(0, 0); };
+  // ยามื้อนี้ที่ยังไม่ได้ให้ (ข้อมูลชุดเดียวกับแท็บให้ยา · components/pharmacy/GiveMeds) · ดึงใหม่หลังบันทึกการให้ยา
+  const [slots, setSlots] = useState<DaySlot[]>([]);
+  const loadSlots = () => { fetchDaySlots(medDay()).then(setSlots).catch(() => {}); };
+  useEffect(() => { loadSlots(); window.addEventListener(MEDS_EVENT, loadSlots); return () => window.removeEventListener(MEDS_EVENT, loadSlots); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useAutoRefresh(loadSlots);
+  const nowMeal = mealByClock();
+  const medsLeftOf = (name: string) => drugsFor(drugs, name, nowMeal, medDay()).filter((d) => !slotOf(slots, d.id, nowMeal).length).length;
+  const medsLeft = physio ? [] : RESIDENTS.map((r) => ({ name: r.name, n: medsLeftOf(r.name) })).filter((x) => x.n > 0);
+  const intakeOf = (name: string) => intake.find((x) => x.name === name);
+  /** ป้ายสถานะสั้นของคนนี้ (แท็บผู้รับบริการ): เลยกำหนดวัด · ถึงรอบ · ยามื้อนี้ค้าง · รอแรกรับ · ไม่มีเรื่องค้าง = วัดแล้ว/ยังไม่วัด */
+  const statusOf = (name: string): [string, string][] => {
+    const out: [string, string][] = [], n = needBy[name] ?? [];
+    const over = n.filter((x) => x.due.cls === "over"), due = n.filter((x) => x.due.cls === "due");
+    if (over.length) out.push(["bad", `${VITAL_SHORT[over[0].k]} ${over[0].due.text}`]);
+    if (due.length) out.push(["warn", `ถึงรอบ ${due.map((x) => VITAL_SHORT[x.k]).join(" ")}`]);
+    const m = medsLeftOf(name);
+    if (m) out.push(["warn", `ยามื้อ${nowMeal}ค้าง ${m}`]);
+    if (intakeOf(name)) out.push(["info", "รอแรกรับ"]);
+    if (!out.length) out.push(measured[name] ? ["ok", `วัดแล้ว ${measured[name]} น.`] : ["", "ยังไม่วัดวันนี้"]);
+    if (ptDone[name]) out.push(["ok", "กายภาพแล้ว"]);
+    return out;
+  };
+  // ความคืบหน้าของเวร: งานของฉัน (ระบุชื่อฉัน หรืองานกลางของเวรที่ฉันเข้า) ที่ส่งแล้ว / ทั้งหมด
+  const myDoneN = doneTasks.filter(isMine).length, myTotalN = myDoneN + myPending.length;
   // จ่ายยา: เปิดที่มื้อตามเวลาตอนนี้ · กรองตามสถานะซอง
   const [meal, setMeal] = useState(() => { const h = new Date().getHours() + new Date().getMinutes() / 60; return h < 10.5 ? MEALS[0] : h < 15 ? MEALS[1] : h < 19.5 ? MEALS[2] : MEALS[3]; });
   const [medF, setMedF] = useState<"" | "ready" | "wait" | "done">("");
@@ -393,23 +428,21 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   return (
     <div className="staff-app mx-auto min-h-dvh w-full max-w-lg pb-28 sm:border-x sm:border-cream-300/60">
       {/* header */}
-      <header className="sticky top-0 z-30 flex items-center justify-between gap-3 border-b border-cream-300/60 bg-white/95 px-4 py-3 backdrop-blur">
-        <div className="flex min-w-0 items-center gap-2.5">
-          <Image src="/logo-mark.png" alt="KIN" width={44} height={33} className="h-9 w-auto shrink-0" />
-          <div className="min-w-0 leading-tight"><p className="text-[15px] font-semibold text-gold-800">KinApp</p><p className="line-clamp-2 break-words text-xs font-medium text-gold-600" title={`สาขา${user.branch || "-"}`}>{user.branch || "-"}</p></div>
+      {/* แถบบนแบบบาง: รูปของฉัน (กด = หน้าฉัน) · สาขาและเวร · วันเวลา · กระดิ่งแจ้งเตือน (ปุ่มสลับแอปย้ายไปหน้า ฉัน) */}
+      <header className="kn-top sticky top-0 z-30 flex items-center gap-2.5 border-b border-cream-300/60 bg-white/95 px-4 py-2.5 backdrop-blur">
+        <button type="button" className="shrink-0 rounded-full" onClick={goMe} aria-label="หน้าฉัน: รูปโปรไฟล์ ผลงาน และตั้งค่า">
+          <Avatar kind="staff" id={user.id} name={user.name} size={36} />
+        </button>
+        <div className="min-w-0 flex-1 leading-tight">
+          <p className="truncate text-[14px] font-semibold text-gold-900" title={`สาขา${user.branch || "-"}`}>{user.branch || "-"}{shownShift ? ` · เวร${shownShift}` : ""}</p>
+          <p className="truncate text-xs text-gold-600">{shownShift ? `${SHIFTS.find((x) => x.key === shownShift)?.time ?? ""} · ` : ""}{new Date(now).toLocaleDateString("th-TH", { weekday: "short", day: "numeric", month: "short" })} · {new Date(now).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" })}</p>
         </div>
-        <div className="flex items-center gap-2">
-          <AlertsBell compact />
-          <AppSwitcher user={user} current="kinapp" compact />
-          <button type="button" className={`ka-me ${tab === "perf" ? "is-on" : ""}`} onClick={goMe} aria-label="หน้าฉัน: รูปโปรไฟล์ ผลงาน และตั้งค่า">
-            <Avatar kind="staff" id={user.id} name={user.name} size={30} />
-            <span>{shortName(user.name)}</span>
-            <Icon name="chevron" className="h-3.5 w-3.5" />
-          </button>
-        </div>
+        <AlertsBell compact />
+        {/* ปุ่มสลับแอป (ระบบจัดการ · ห้องยา) · ขึ้นเฉพาะบัญชีที่ใช้ได้มากกว่า 1 แอป */}
+        <AppSwitcher user={user} current="kinapp" compact />
         {prefs && !hidden.includes("kin-coach-me") && tab !== "perf" && (
           <div className="ka-coach" role="note">
-            <p>รูปโปรไฟล์ แจ้งเตือน และตั้งค่า อยู่ที่ปุ่มชื่อของคุณ หรือแท็บ <b>ฉัน</b> ด้านล่าง</p>
+            <p>รูปโปรไฟล์ แจ้งเตือน และตั้งค่า อยู่ที่รูปของคุณมุมซ้ายบน หรือแท็บ <b>ฉัน</b> ด้านล่าง</p>
             <button type="button" onClick={() => hideCard("kin-coach-me")}>เข้าใจแล้ว</button>
           </div>
         )}
@@ -418,123 +451,128 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
 
       <main className="space-y-4 px-4 py-5" style={big ? { zoom: 1.12 } : undefined}>
         <BranchNotice user={user} />
-        {tab === "tasks" && (
-          <>
-            <div className="ka-head">
-              <div><div className="ka-hello"><h1>สวัสดี {shortName(user.name)}</h1>
-                {/* งานที่หัวหน้าให้ดาวต่ำ (ต้องแก้) · กดไปดูที่แท็บ "ฉัน" */}
-                {fixCount > 0 && <button type="button" className="ka-fix" onClick={() => { setTab("perf"); setPerfView("me"); window.scrollTo(0, 0); }} aria-label={`งานต้องแก้ ${fixCount} งาน · ดูที่แท็บฉัน`}><Icon name="alert" className="h-3.5 w-3.5" />ต้องแก้ {fixCount}</button>}
-              </div><p>{new Date().toLocaleDateString("th-TH", { weekday: "short", day: "numeric", month: "short" })} · {myShiftText}</p></div>
-              <div className="ka-head-acts relative flex flex-wrap justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
-                <button type="button" className="ka-pill is-alert" onClick={() => setIncOpen(true)}><Icon name="alert" className="h-4 w-4" />รายงานเหตุการณ์</button>
-                <button type="button" className="ka-pill" aria-expanded={fab} onClick={() => setFab(!fab)}><Icon name="plus" className="h-4 w-4" />ผลงานพิเศษ</button>
-                {fab && (
-                  <div className="absolute right-0 top-[calc(100%+6px)] z-20 w-64 overflow-hidden rounded-2xl border border-cream-300 bg-white shadow-soft">
-                    <button className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm hover:bg-cream-100" onClick={() => { setFab(false); setBonusWho(""); setBonusText("ภาพประทับใจส่งญาติ"); open("bonus"); }}><Icon name="camera" className="h-5 w-5 text-gold-600" /><span>ภาพประทับใจส่งญาติ<span className="block text-xs text-gold-500">(ได้ดาว)</span></span></button>
-                    <button className="flex w-full items-center gap-3 border-t border-cream-300/60 px-4 py-3 text-left text-sm hover:bg-cream-100" onClick={() => { setFab(false); setBonusWho(""); setBonusText(""); open("bonus"); }}><Icon name="alert" className="h-5 w-5 text-gold-600" /><span>แจ้งงาน/เก็บตกด่วน<span className="block text-xs text-gold-500">(ฮีโร่ +1)</span></span></button>
-                  </div>
-                )}
+        {/* งานวันนี้ (แบบใหม่): ทักทาย + ความคืบหน้าของเวร · เช็คชื่อ · ปุ่มลัด 4 ปุ่ม · ต้องทำตอนนี้ (เรียงด่วนก่อน กดทำได้ทันที) · งานต่อไปในเวร · ส่งเวร */}
+        {tab === "tasks" && (() => {
+          const openNudges = nudges.filter((n) => !tasks.find((k) => k.rid === n.taskId)?.done);
+          const lateRows = myLate.filter((k) => !(k.rid && nudged.has(k.rid)));
+          const facLate = fac.filter((f) => !f.done && f.late);
+          const medsN = medsLeft.reduce((s, x) => s + x.n, 0);
+          const urgentN = openNudges.length + lateRows.length + (medsLeft.length ? 1 : 0) + (dueCount ? 1 : 0) + intake.length + (facLate.length ? 1 : 0);
+          const upcoming = (taskView === "mine" ? myPending : pendingAll).filter((k) => !(isMine(k) && isLate(k)));
+          const pct = myTotalN ? Math.round((myDoneN / myTotalN) * 100) : 0;
+          return <>
+            <div className="kn-hello">
+              <div className="min-w-0 flex-1">
+                <h1>สวัสดี {shortName(user.name)}</h1>
+                <p>{myShiftText}</p>
+                {myTotalN > 0 && <>
+                  <p className="kn-prog-t">เวรนี้ทำไปแล้ว <b>{myDoneN}</b> จาก {myTotalN} งาน</p>
+                  <div className="kn-bar" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label="ความคืบหน้าของเวร"><i style={{ width: `${pct}%` }} /></div>
+                </>}
               </div>
+              {/* งานที่หัวหน้าให้ดาวต่ำ (ต้องแก้) · กดไปดูที่แท็บ "ฉัน" */}
+              {fixCount > 0 && <button type="button" className="ka-fix" onClick={() => { setTab("perf"); setPerfView("me"); window.scrollTo(0, 0); }} aria-label={`งานต้องแก้ ${fixCount} งาน · ดูที่แท็บฉัน`}><Icon name="alert" className="h-3.5 w-3.5" />ต้องแก้ {fixCount}</button>}
             </div>
-
-            {nudges.map((n) => {
-              const t = tasks.find((k) => k.rid === n.taskId);
-              if (t?.done) return null; // ส่งงานแล้ว: ซ่อนทันที ไม่ต้องรอดึงข้อมูลรอบถัดไป
-              return (
-                <section key={n.id} className="ka-nudge" role="alert">
-                  <p className="ka-nudge-h"><Icon name="bell" className="h-4 w-4" />หัวหน้าตามงาน<span>{n.at}</span></p>
-                  <p className="ka-nudge-b"><b>{n.task}{n.resident ? ` · ${n.resident}` : ""}</b><small>{n.time ? `กำหนด ${n.time} น. · ` : ""}{n.sentBy}{n.message ? `: "${n.message}"` : ""}</small></p>
-                  {why === n.id
-                    ? <div className="ka-nudge-why"><small>ทำไม่ได้เพราะ</small>{NUDGE_WHY.map((w) => <button key={w} type="button" onClick={() => replyNudge(n, w)}>{w}</button>)}<button type="button" className="is-x" onClick={() => setWhy(null)}>ยกเลิก</button></div>
-                    : <div className="ka-nudge-a">
-                      {t && canSubmit(t) && <button type="button" className="ka-nudge-go" onClick={() => { open("task", t.id); setProxyFor(null); }}><Icon name="camera" className="h-4 w-4" />ทำเลย · ถ่ายรูปส่ง</button>}
-                      {t && !canSubmit(t) && <button type="button" className="ka-nudge-go" onClick={() => open("sop", t.id)}>ดูงาน</button>}
-                      <button type="button" className="ka-nudge-no" onClick={() => setWhy(n.id)}>ทำไม่ได้</button>
-                    </div>}
-                </section>
-              );
-            })}
 
             <CheckInCard user={user} compact />
 
-            {/* ถึงรอบวัด (รอบการวัดรายบุคคล) · กดแล้วไปแท็บผู้รับบริการ กรองเฉพาะคนที่ถึงรอบ */}
-            {dueCount > 0 && <button type="button" onClick={goDue}
-              className={`flex w-full items-center gap-3 rounded-2xl border px-4 py-3 text-left ${overCount ? "border-red-200 bg-red-50" : "border-amber-200 bg-amber-50"}`}>
-              <Icon name="pulse" className={`h-5 w-5 shrink-0 ${overCount ? "text-red-700" : "text-amber-700"}`} />
-              <span className="min-w-0 flex-1"><b className="block text-sm text-gold-900">ถึงรอบวัด {dueCount} คน{overCount ? ` · เลยกำหนด ${overCount} คน` : ""}</b>
-                <small className="block truncate text-xs text-gold-600">{Object.entries(needBy).slice(0, 3).map(([n, x]) => `${n.split(" ")[0]}: ${x.map((y) => y.label).join(", ")}`).join(" · ")}</small></span>
-              <Icon name="chevron" className="h-4 w-4 shrink-0 -rotate-90 text-gold-500" />
-            </button>}
-
-            {nextTask && taskTab === "todo" && <>
-              <p className="ka-h">งานถัดไป</p>
-              <div className="ka-next">
-                <button type="button" className="ka-next-main" onClick={() => open("sop", nextTask.id)}>
-                  <span className="ka-time"><b>{nextTask.time || "-"}</b>{dueIn(nextTask)}</span>
-                  <span className="ka-t"><b>{nextTask.title}</b><small>{nextTask.who}{roomOf(nextTask.who) ? ` · ห้อง ${roomOf(nextTask.who)}` : ""}</small></span>
-                </button>
-                <button type="button" className="btn-primary ka-btn-sm" onClick={() => { open("task", nextTask.id); setProxyFor(null); }}><Icon name="camera" className="h-4 w-4" />ส่งงาน</button>
-              </div>
-            </>}
-
-            {/* ต้องรู้ก่อนเริ่มงาน: แถวเดียว กดเพื่อกาง/พับ (เริ่มต้นพับไว้) · ไม่มีส่งเวรค้าง = ลิงก์เขียนส่งเวรอยู่ในแถวเดียวกัน */}
-            <section className="ka-know" aria-label="ต้องรู้ก่อนเริ่มงาน">
-              <div className="ka-know-bar">
-                {(handover.length > 0 || appts.length > 0) && (
-                  <button type="button" className="ka-know-t" aria-expanded={know} aria-controls="ka-know-body" onClick={() => setKnow(!know)}>
-                    <span className={`ka-dot ${handover.length > 0 ? "is-warn" : ""}`} />
-                    <span className="ka-know-x">{[handover.length > 0 ? `สมุดส่งเวร ${handover.length} เรื่อง` : "", appts.length > 0 ? `นัด ${appts.length} รายการ` : ""].filter(Boolean).join(" · ")}</span>
-                    <Icon name="chevron" className={`ka-know-c ${know ? "is-open" : ""}`} />
-                  </button>
-                )}
-                {handover.length === 0 && <button type="button" className="ka-link" onClick={() => open("handover")}><Icon name="book" className="h-4 w-4" />สมุดส่งเวร · เขียนส่งเวร</button>}
-              </div>
-              {know && (handover.length > 0 || appts.length > 0) && (
-                <ul id="ka-know-body" className="ka-list">
-                  {handover.length > 0 && (
-                    <li><button type="button" className="ka-row" onClick={() => open("handover")}>
-                      <span className="ka-dot is-warn" /><span className="ka-t"><b>สมุดส่งเวร {handover.length} เรื่อง</b><small>{handover[0].who ? `${handover[0].who} · ` : ""}{handover[0].text}</small></span><Icon name="chevron" className="ka-chev" />
-                    </button></li>
-                  )}
-                  {appts.map((a, k) => (
-                    <li key={k} className="ka-row"><span className="ka-dot" /><span className="ka-t"><b>นัด{a.when} น.</b><small>{a.who} · {a.what}</small></span></li>
-                  ))}
-                </ul>
-              )}
-            </section>
-
-            {/* แถบเดียวบรรทัดเดียว: ติดตั้งแอปมาก่อน แล้วจึงเปิดแจ้งเตือน · × = ไว้ทีหลัง (จำในเครื่อง) */}
-            {pushCard && (
-              <section className="ka-pbar" aria-label={pushCard === "install" ? "ติดตั้ง KinApp" : "เปิดการแจ้งเตือน"}>
-                <Icon name={pushCard === "install" ? "download" : "bell"} className="h-4 w-4 shrink-0" />
-                <p>{pushCard === "install" ? (push.state === "on" ? "ติดตั้งให้แจ้งเตือนเป็น KinApp" : "ติดตั้ง KinApp ก่อนรับแจ้งเตือน")
-                  : pushCard === "enable" ? "รับแจ้งเตือนเมื่อหัวหน้าตามงาน" : "เปิดแจ้งเตือนได้ที่ตั้งค่าเครื่อง"}</p>
-                {pushCard === "install" && pwa.canInstall && <button type="button" className="ka-pbar-go" onClick={async () => { if (await pwa.install()) toast(push.state === "on" ? "ติดตั้ง KinApp แล้ว · แจ้งเตือนครั้งต่อไปจะขึ้นเป็น KinApp" : "ติดตั้ง KinApp แล้ว · เปิดจากไอคอนบนหน้าจอโทรศัพท์ แล้วกดเปิดการแจ้งเตือน"); }}>ติดตั้ง</button>}
-                {pushCard === "install" && !pwa.canInstall && pwa.iosHint && <button type="button" className="ka-pbar-go" onClick={() => setIosHelp(true)}>วิธีติดตั้ง</button>}
-                {pushCard === "enable" && <button type="button" className="ka-pbar-go" disabled={push.busy} aria-label="เปิดการแจ้งเตือน" onClick={async () => toast(await push.enable())}>{push.busy ? "กำลังเปิด…" : "เปิด"}</button>}
-                <button type="button" className="ka-pbar-x" aria-label="ซ่อนไว้ก่อน" title="ซ่อนไว้ก่อน" onClick={() => hideCard(pushCard === "install" ? "kin-install-hide" : "kin-push-hide")}><Icon name="close" className="h-4 w-4" /></button>
-              </section>
-            )}
-
-            <div className="ka-seg" role="tablist" aria-label="รายการงาน">
-              <button type="button" role="tab" aria-selected={taskTab === "todo"} onClick={() => setTaskTab("todo")}>รอทำ {taskView === "mine" ? myPending.length : pendingAll.length}</button>
-              <button type="button" role="tab" aria-selected={taskTab === "sent"} onClick={() => setTaskTab("sent")}>ส่งแล้ว {mySent.length}</button>
-              <button type="button" role="tab" aria-selected={taskTab === "fac"} onClick={() => setTaskTab("fac")}>ส่วนกลาง {facLeft.length}</button>
+            {/* ปุ่มลัด: นักกายภาพใช้เฉพาะรายงานเหตุการณ์และผลงานพิเศษ */}
+            <div className={`kn-quick ${physio ? "is-two" : ""}`}>
+              {!physio && <button type="button" onClick={goDue}><Icon name="pulse" />วัดสัญญาณชีพ</button>}
+              {!physio && <button type="button" onClick={goMeds}><Icon name="pill" />ให้ยา</button>}
+              <button type="button" onClick={() => { setBonusWho(""); setBonusText("ภาพประทับใจส่งญาติ"); open("bonus"); }}><Icon name="camera" />{physio ? "ผลงานพิเศษ" : "ส่งรูปให้ญาติ"}</button>
+              <button type="button" className="is-alert" onClick={() => setIncOpen(true)}><Icon name="alert" />รายงานเหตุการณ์</button>
             </div>
 
-            {taskTab === "todo" && <>
-              {/* นักกายภาพ: เห็นเฉพาะงานที่ระบุชื่อตัวเอง (ไม่มีมุมมองทั้งสาขา) */}
-              {!physio && <div className="ka-chips" role="radiogroup" aria-label="แสดงงาน">
-                <button type="button" role="radio" aria-checked={taskView === "mine"} onClick={() => setTaskView("mine")}>ของฉันและทีม {myPending.length}</button>
-                <button type="button" role="radio" aria-checked={taskView === "all"} onClick={() => setTaskView("all")}>ทั้งสาขา {pendingAll.length}</button>
-              </div>}
-              {myShift === null && taskView === "mine" && <p className="ka-note">{shownShift ? `เวร${shownShift}ของคุณเป็นของวันทำงานอื่น (เปลี่ยนวัน 07:00 น.)` : "วันนี้ไม่มีเวรของคุณในตาราง"} · แสดงเฉพาะงานที่ระบุชื่อคุณ</p>}
-              {myPending.length === 0 && (taskView === "mine" || pendingAll.length === 0) && <Empty t={pendingAll.length ? "ไม่มีงานของคุณค้างแล้ว · กด \"ทั้งสาขา\" เพื่อดูงานของทีม" : tasks.length ? "ไม่มีงานค้างแล้ว เยี่ยมมาก" : "ยังไม่มีงานที่ผู้จัดการมอบหมายสำหรับวันนี้"} />}
-              {myLate.length > 0 && <><p className="ka-h is-bad">เลยเวลา · {myLate.length}</p><ul className="ka-list">{myLate.map(taskRow)}</ul></>}
-              {myGroups.map(([time, list]) => <div key={time}><p className="ka-h">{time || "ไม่ระบุเวลา"} · {list.length} งาน</p><ul className="ka-list">{list.map(taskRow)}</ul></div>)}
-              {taskView === "all" && others.length > 0 && <><p className="ka-h">{others.some((k) => !canSubmit(k)) ? "ของคนอื่นหรือเวรอื่น · ทำแทนได้" : "งานของเวรอื่น"}</p><ul className="ka-list">{others.map(taskRow)}</ul></>}
-            </>}
+            <p className="kn-h"><span>ต้องทำตอนนี้{urgentN ? ` · ${urgentN} เรื่อง` : ""}</span></p>
+            {urgentN === 0 && <p className="kn-clear"><Icon name="check" className="h-4 w-4" />ไม่มีเรื่องด่วนตอนนี้</p>}
 
+            {openNudges.map((n) => {
+              const t = tasks.find((k) => k.rid === n.taskId);
+              return (
+                <div key={n.id} className="kn-todo is-red" role="alert">
+                  <div className="kn-todo-t">
+                    <span className="kn-k">หัวหน้าตามงาน · {n.at}</span>
+                    <b>{n.task}{n.resident ? ` · ${n.resident}` : ""}</b>
+                    <small>{n.time ? `กำหนด ${n.time} น. · ` : ""}{n.sentBy}{n.message ? `: "${n.message}"` : ""}</small>
+                    {why === n.id && <div className="kn-why"><small>ทำไม่ได้เพราะ</small>{NUDGE_WHY.map((w) => <button key={w} type="button" onClick={() => replyNudge(n, w)}>{w}</button>)}<button type="button" className="is-x" onClick={() => setWhy(null)}>ยกเลิก</button></div>}
+                  </div>
+                  {why !== n.id && <div className="kn-todo-a">
+                    {t && canSubmit(t) && <button type="button" className="kn-go" onClick={() => { open("task", t.id); setProxyFor(null); }}>ส่งงาน</button>}
+                    {t && !canSubmit(t) && <button type="button" className="kn-go" onClick={() => open("sop", t.id)}>ดูงาน</button>}
+                    <button type="button" className="kn-go is-text" onClick={() => setWhy(n.id)}>ทำไม่ได้</button>
+                  </div>}
+                </div>
+              );
+            })}
+
+            {lateRows.map((k) => (
+              <div key={k.id} className="kn-todo is-red">
+                <button type="button" className="kn-todo-t" onClick={() => open("sop", k.id)}>
+                  <span className="kn-k">เลยเวลา · กำหนด {k.time || "-"} น.</span><b>{k.title}</b><small>{k.who}{roomOf(k.who) ? ` · ห้อง ${roomOf(k.who)}` : ""}</small>
+                </button>
+                <button type="button" className="kn-go" onClick={() => { open("task", k.id); setProxyFor(null); }}>ส่งงาน</button>
+              </div>
+            ))}
+
+            {medsLeft.length > 0 && (
+              <div className="kn-todo is-amb">
+                <button type="button" className="kn-todo-t" onClick={goMeds}>
+                  <span className="kn-k">ยามื้อ{nowMeal}ยังไม่ได้ให้</span><b>{medsLeft.length} คน · {medsN} รายการ</b>
+                  <small>{medsLeft.slice(0, 3).map((x) => shortName(x.name)).join(" · ")}{medsLeft.length > 3 ? ` และอีก ${medsLeft.length - 3} คน` : ""}</small>
+                </button>
+                <button type="button" className="kn-go" onClick={goMeds}>ให้ยา</button>
+              </div>
+            )}
+
+            {dueCount > 0 && (
+              <div className={`kn-todo ${overCount ? "is-red" : "is-amb"}`}>
+                <button type="button" className="kn-todo-t" onClick={goDue}>
+                  <span className="kn-k">ถึงรอบวัด{overCount ? ` · เลยกำหนด ${overCount} คน` : ""}</span><b>{dueCount} คน</b>
+                  <small>{Object.entries(needBy).slice(0, 3).map(([n, x]) => `${shortName(n)} (${x.map((y) => VITAL_SHORT[y.k]).join(" ")})`).join(" · ")}{dueCount > 3 ? ` และอีก ${dueCount - 3} คน` : ""}</small>
+                </button>
+                <button type="button" className="kn-go" onClick={goDue}>ไปวัด</button>
+              </div>
+            )}
+
+            {intake.slice(0, 3).map((x) => (
+              <div key={x.id} className="kn-todo is-blue">
+                <button type="button" className="kn-todo-t" onClick={() => { setAdmitP(true); setProfile(x.id); }}>
+                  <span className="kn-k">รับเข้าใหม่ · {intakeAgo(x.days) === "วันนี้" ? "วันนี้" : `${intakeAgo(x.days)}แล้ว`}</span><b>บันทึกแรกรับ {x.name}</b>
+                  <small>{x.room ? `ห้อง ${x.room}${x.bed ? ` · เตียง ${x.bed}` : ""}` : "ยังไม่มีห้อง"} · ตั้งรอบวัดในฟอร์มเดียวกัน</small>
+                </button>
+                <button type="button" className="kn-go is-ghost" onClick={() => { setAdmitP(true); setProfile(x.id); }}>แรกรับ</button>
+              </div>
+            ))}
+            {intake.length > 3 && <p className="ka-note">รอแรกรับอีก {intake.length - 3} คน · ดูได้ที่แท็บผู้รับบริการ ตัวกรอง รอแรกรับ</p>}
+
+            {facLate.length > 0 && (
+              <div className="kn-todo is-amb">
+                <button type="button" className="kn-todo-t" onClick={() => setTaskTab("fac")}>
+                  <span className="kn-k">งานส่วนกลางเลยเวลา</span><b>{facLate.length} งาน</b><small>{facLate.slice(0, 2).map((f) => f.name).join(" · ")}</small>
+                </button>
+                <button type="button" className="kn-go" onClick={() => setTaskTab("fac")}>ดูงาน</button>
+              </div>
+            )}
+
+            <div className="kn-h">
+              <span>{taskTab === "sent" ? "งานที่ฉันส่งแล้ววันนี้" : "ต่อไปในเวรนี้"}</span>
+              <button type="button" className="kn-link" onClick={() => setTaskTab(taskTab === "sent" ? "todo" : "sent")}>{taskTab === "sent" ? "‹ งานที่ต้องทำ" : `ส่งแล้ว ${mySent.length} ›`}</button>
+            </div>
+            {taskTab !== "sent" && (
+              <div className="kn-seg" role="tablist" aria-label="รายการงาน">
+                <button type="button" role="tab" aria-selected={taskTab === "todo" && taskView === "mine"} onClick={() => { setTaskTab("todo"); setTaskView("mine"); }}>ของฉัน {myPending.length}</button>
+                {!physio && <button type="button" role="tab" aria-selected={taskTab === "todo" && taskView === "all"} onClick={() => { setTaskTab("todo"); setTaskView("all"); }}>ทั้งทีม {pendingAll.length}</button>}
+                <button type="button" role="tab" aria-selected={taskTab === "fac"} onClick={() => setTaskTab("fac")}>ส่วนกลาง {facLeft.length}</button>
+              </div>
+            )}
+
+            {taskTab === "todo" && <>
+              {myShift === null && taskView === "mine" && <p className="ka-note">{shownShift ? `เวร${shownShift}ของคุณเป็นของวันทำงานอื่น (เปลี่ยนวัน 07:00 น.)` : "วันนี้ไม่มีเวรของคุณในตาราง"} · แสดงเฉพาะงานที่ระบุชื่อคุณ</p>}
+              {upcoming.length === 0
+                ? <Empty t={taskView === "mine" && pendingAll.length ? "ไม่มีงานของคุณที่ต้องทำต่อ · กด \"ทั้งทีม\" เพื่อดูงานของทีม" : tasks.length ? "ไม่มีงานค้างแล้ว เยี่ยมมาก" : "ยังไม่มีงานที่ผู้จัดการมอบหมายสำหรับวันนี้"} />
+                : <ul className="kn-tl">{upcoming.map(taskRow)}</ul>}
+            </>}
             {taskTab === "sent" && <>
               {mySent.length === 0 && doneForMe.length === 0 && <Empty t="ยังไม่มีงานที่คุณส่งวันนี้" />}
               {mySent.length > 0 && <ul className="ka-list">{mySent.map((k) => {
@@ -572,8 +610,47 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
               ))}</ul>}
               {fac.length > 0 && <p className="ka-note">ส่งได้รอบละ 1 ครั้ง · ใครทำก่อนกดส่ง · งานที่มอบหมายให้คุณ คุณเป็นคนส่ง</p>}
             </>}
-          </>
-        )}
+
+            {/* ต้องรู้ก่อนเริ่มงาน: แถวเดียว กดเพื่อกาง/พับ (เริ่มต้นพับไว้) · ไม่มีส่งเวรค้าง = ลิงก์เขียนส่งเวรอยู่ในแถวเดียวกัน */}
+            <section className="ka-know" aria-label="ต้องรู้ก่อนเริ่มงาน">
+              <div className="ka-know-bar">
+                {(handover.length > 0 || appts.length > 0) && (
+                  <button type="button" className="ka-know-t" aria-expanded={know} aria-controls="ka-know-body" onClick={() => setKnow(!know)}>
+                    <span className={`ka-dot ${handover.length > 0 ? "is-warn" : ""}`} />
+                    <span className="ka-know-x">{[handover.length > 0 ? `สมุดส่งเวร ${handover.length} เรื่อง` : "", appts.length > 0 ? `นัด ${appts.length} รายการ` : ""].filter(Boolean).join(" · ")}</span>
+                    <Icon name="chevron" className={`ka-know-c ${know ? "is-open" : ""}`} />
+                  </button>
+                )}
+                {handover.length === 0 && <button type="button" className="ka-link" onClick={() => open("handover")}><Icon name="book" className="h-4 w-4" />สมุดส่งเวร · เขียนส่งเวร</button>}
+              </div>
+              {know && (handover.length > 0 || appts.length > 0) && (
+                <ul id="ka-know-body" className="ka-list">
+                  {handover.length > 0 && (
+                    <li><button type="button" className="ka-row" onClick={() => open("handover")}>
+                      <span className="ka-dot is-warn" /><span className="ka-t"><b>สมุดส่งเวร {handover.length} เรื่อง</b><small>{handover[0].who ? `${handover[0].who} · ` : ""}{handover[0].text}</small></span><Icon name="chevron" className="ka-chev" />
+                    </button></li>
+                  )}
+                  {appts.map((a, k) => (
+                    <li key={k} className="ka-row"><span className="ka-dot" /><span className="ka-t"><b>นัด{a.when} น.</b><small>{a.who} · {a.what}</small></span></li>
+                  ))}
+                </ul>
+              )}
+            </section>
+
+            {/* แถบเดียวท้ายหน้า: ติดตั้งแอปก่อน แล้วจึงเปิดแจ้งเตือน (หัวหน้าตามงานเด้งที่โทรศัพท์) · × = ไว้ทีหลัง (จำในเครื่อง) */}
+            {pushCard && (
+              <div className="ka-pbar" role="note" aria-label={pushCard === "install" ? "ติดตั้ง KinApp" : "เปิดการแจ้งเตือน"}>
+                <Icon name={pushCard === "install" ? "download" : "bell"} className="h-4 w-4 shrink-0" />
+                <p>{pushCard === "install" ? (push.state === "on" ? "ติดตั้งให้แจ้งเตือนเป็น KinApp" : "ติดตั้ง KinApp ก่อนรับแจ้งเตือน")
+                  : pushCard === "enable" ? "รับแจ้งเตือนเมื่อหัวหน้าตามงาน" : "เปิดแจ้งเตือนได้ที่ตั้งค่าเครื่อง"}</p>
+                {pushCard === "install" && pwa.canInstall && <button type="button" className="ka-pbar-go" onClick={async () => { if (await pwa.install()) toast(push.state === "on" ? "ติดตั้ง KinApp แล้ว · แจ้งเตือนครั้งต่อไปจะขึ้นเป็น KinApp" : "ติดตั้ง KinApp แล้ว · เปิดจากไอคอนบนหน้าจอโทรศัพท์ แล้วกดเปิดการแจ้งเตือน"); }}>ติดตั้ง</button>}
+                {pushCard === "install" && !pwa.canInstall && pwa.iosHint && <button type="button" className="ka-pbar-go" onClick={() => setIosHelp(true)}>วิธีติดตั้ง</button>}
+                {pushCard === "enable" && <button type="button" className="ka-pbar-go" disabled={push.busy} aria-label="เปิดการแจ้งเตือน" onClick={async () => toast(await push.enable())}>{push.busy ? "กำลังเปิด…" : "เปิด"}</button>}
+                <button type="button" className="ka-pbar-x" aria-label="ซ่อนไว้ก่อน" title="ซ่อนไว้ก่อน" onClick={() => hideCard(pushCard === "install" ? "kin-install-hide" : "kin-push-hide")}><Icon name="close" className="h-4 w-4" /></button>
+              </div>
+            )}
+          </>;
+        })()}
 
         {tab === "roster" && <StaffRoster user={user} />}
 
@@ -582,35 +659,43 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
 
         {PHYSIO_VIEWS.includes(tab) && <PhysioKin view={tab as "ptoday" | "pweek" | "pcases"} user={user} onCount={setPkCount} />}
 
-        {tab === "residents" && (
-          <>
+        {/* ผู้รับบริการ (แบบใหม่): แถวละคน จัดกลุ่มตามห้อง · ป้ายสถานะสั้น 1–3 อัน · กดแถว = หน้ารายคน */}
+        {tab === "residents" && (() => {
+          const q = resQ.trim().toLowerCase();
+          const hit = (r: (typeof RESIDENTS)[number]) => resTodo === "all" ? true : resTodo === "todo" ? !measured[r.name] : resTodo === "due" ? !!needBy[r.name] : resTodo === "meds" ? medsLeftOf(r.name) > 0 : !!intakeOf(r.name);
+          const roomKey = (r: (typeof RESIDENTS)[number]) => (r.room && r.room !== "-" ? r.room : "");
+          const list = RESIDENTS.filter((r) => (!q || `${r.name} ${r.room}`.toLowerCase().includes(q)) && hit(r))
+            .sort((a, b) => Number(!roomKey(a)) - Number(!roomKey(b)) || roomKey(a).localeCompare(roomKey(b), "th", { numeric: true }) || a.name.localeCompare(b.name, "th"));
+          const chips: [typeof resTodo, string, number][] = [
+            ["all", "ทั้งหมด", RESIDENTS.length], ["due", overCount ? `ต้องวัด · เลย ${overCount}` : "ต้องวัด", dueCount], ["todo", "ยังไม่วัดวันนี้", RESIDENTS.filter((r) => !measured[r.name]).length],
+            ["meds", `ยามื้อ${nowMeal}ค้าง`, medsLeft.length], ["intake", "รอแรกรับ", intake.length],
+          ];
+          return <>
             <div className="ka-head"><div><h1>ผู้รับบริการ</h1><p>{RESIDENTS.length} คน · สาขา{user.branch || "-"}</p></div></div>
             <label className="ka-search"><Icon name="search" className="h-4 w-4" /><input value={resQ} onChange={(e) => setResQ(e.target.value)} placeholder="ค้นหาชื่อหรือเลขห้อง" aria-label="ค้นหาผู้รับบริการ" /></label>
-            <div className="ka-chips" role="radiogroup" aria-label="กรองผู้รับบริการ">
-              <button type="button" role="radio" aria-checked={resTodo === "all"} onClick={() => setResTodo("all")}>ทั้งหมด {RESIDENTS.length}</button>
-              <button type="button" role="radio" aria-checked={resTodo === "due"} onClick={() => setResTodo("due")}>ถึงรอบวัด {dueCount}{overCount ? ` · เลยกำหนด ${overCount}` : ""}</button>
-              <button type="button" role="radio" aria-checked={resTodo === "todo"} onClick={() => setResTodo("todo")}>ยังไม่วัดวันนี้ {RESIDENTS.filter((r) => !measured[r.name]).length}</button>
+            <div className="kn-chips" role="radiogroup" aria-label="กรองผู้รับบริการ">
+              {chips.filter(([k, , n]) => k === "all" || k === resTodo || n > 0).map(([k, l, n]) => <button key={k} type="button" role="radio" aria-checked={resTodo === k} onClick={() => setResTodo(k)}>{l} <b>{n}</b></button>)}
             </div>
-            {resTodo === "due" && <p className="text-xs text-gold-600">ตามรอบการวัดที่หัวหน้าพยาบาลตั้งไว้ · นับจากครั้งล่าสุดที่บันทึก · บันทึกแล้วรายการหายไปเอง</p>}
-            {resList.length === 0 ? <Empty t={resQ ? `ไม่พบ "${resQ}"` : resTodo === "due" ? "ไม่มีใครถึงรอบวัดตอนนี้" : "วัดสัญญาณชีพครบทุกคนแล้ว"} /> : (
-              <ul className="ka-res-list">{resList.map((r) => (
-                // การ์ดทั้งใบกดดูข้อมูลได้ ("ดูข้อมูล ›") · ปุ่มวัดสัญญาณชีพแยกลงบรรทัดล่าง ไม่ติดกับลูกศร
-                <li key={r.id ?? r.name} className="ka-res">
-                  <button type="button" className="ka-res-main" onClick={() => setResPick(r)} aria-label={`ดูข้อมูล ${r.name}`}>
-                    <Avatar kind="resident" id={r.id} name={r.name} size={46} />
-                    <span className="ka-t"><b>{r.name}</b><small>{r.room && r.room !== "-" ? `ห้อง ${r.room}` : "ยังไม่มีห้อง"} · {r.age} ปี{allergy[r.name] && <em className="ka-flag bad">แพ้ {allergy[r.name]}</em>}</small>{ptDone[r.name] && <em className="ka-pt">กายภาพแล้ว {ptDone[r.name]}</em>}</span>
-                    <span className="ka-res-go">ดูข้อมูล<Icon name="chevron" className="h-4 w-4 -rotate-90" /></span>
-                  </button>
-                  {needBy[r.name] && <div className="flex flex-wrap items-center gap-1.5 px-3 pb-1 text-xs text-gold-600"><span>ถึงรอบ:</span>{needBy[r.name].map((x) => <DueBadge key={x.k} cls={x.due.cls} text={`${x.label}${x.due.cls === "over" ? ` · ${x.due.text}` : ""}`} />)}</div>}
-                  <div className="ka-res-foot">
-                    <span className={`ka-res-st ${measured[r.name] ? "is-done" : ""}`}><i aria-hidden />{measured[r.name] ? `วัดแล้ว ${measured[r.name]} น.` : "ยังไม่วัดวันนี้"}</span>
-                    <button type="button" className="ka-res-vital" onClick={() => setVitalsFor(r.name)}><Icon name="pulse" className="h-4 w-4" />{measured[r.name] ? "วัดอีกครั้ง" : "วัดสัญญาณชีพ"}</button>
-                  </div>
-                </li>
-              ))}</ul>
+            {resTodo === "due" && <p className="text-xs text-gold-600">ตามรอบการวัดที่ตั้งไว้ของแต่ละคน · นับจากครั้งล่าสุดที่บันทึก · บันทึกแล้วรายการหายไปเอง</p>}
+            {list.length === 0 ? <Empty t={q ? `ไม่พบ "${resQ}"` : resTodo === "due" ? "ไม่มีใครถึงรอบวัดตอนนี้" : resTodo === "todo" ? "วัดสัญญาณชีพครบทุกคนแล้ว" : resTodo === "meds" ? `ให้ยามื้อ${nowMeal}ครบแล้ว` : resTodo === "intake" ? "ไม่มีคนรอแรกรับ" : "ยังไม่มีผู้รับบริการ"} /> : (
+              <div className="kn-res-list">{list.map((r, i) => {
+                const room = roomKey(r), head = i === 0 || roomKey(list[i - 1]) !== room;
+                return (
+                  <Fragment key={r.id ?? r.name}>
+                    {head && <p className="kn-room">{room ? `ห้อง ${room}` : "ยังไม่มีห้อง"}</p>}
+                    <button type="button" className="kn-res" onClick={() => setResPick(r)} aria-label={`เปิดหน้า ${r.name}`}>
+                      <Avatar kind="resident" id={r.id} name={r.name} size={40} />
+                      <span className="ka-t"><b>{r.name}{allergy[r.name] && <em className="ka-flag bad">แพ้ยา</em>}</b>
+                        <small>{r.age} ปี</small>
+                        <span className="ka-tags">{statusOf(r.name).map(([c, t]) => <em key={t} className={`ka-flag ${c}`}>{t}</em>)}</span></span>
+                      <Icon name="chevron" className="ka-chev" />
+                    </button>
+                  </Fragment>
+                );
+              })}</div>
             )}
-          </>
-        )}
+          </>;
+        })()}
 
         {tab === "perf" && (() => {
           const ranked = (kpi?.rows ?? []).filter((r) => r.total != null);
@@ -618,20 +703,12 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
           const sc = me ? { family: me.family?.score ?? null, manager: me.manager?.score ?? null, tasks: me.tasks?.score ?? null, punctual: me.punctual?.score ?? null } : null;
           return (
             <>
-              <section className="ka-me-card">
-                <AvatarEdit kind="staff" id={user.id} name={user.name} size={76} onDone={(m) => toast(m)}
-                  title={<span className="ka-me-name"><b>{user.name}</b><small>{ROLE_INFO[user.role].th} · สาขา{user.branch || "-"}</small></span>} />
-              </section>
-              <ul className="ka-set" aria-label="ตั้งค่าและบัญชี">
-                {push.state !== "loading" && push.state !== "none" && <li><button type="button" disabled={push.busy} onClick={togglePush}>
-                  <Icon name="bell" className="h-5 w-5" /><span><b>แจ้งเตือนบนโทรศัพท์</b><small>{push.state === "on" ? "เด้งเมื่อหัวหน้าตามงาน" : push.state === "ios" ? "ติดตั้งแอปที่หน้าจอโฮมก่อน" : push.state === "denied" ? "เปิดได้ที่ตั้งค่าของเครื่อง" : "ยังไม่ได้เปิด"}</small></span>
-                  <em className={push.state === "on" ? "is-on" : ""}>{push.state === "on" ? "เปิด" : "ปิด"}</em></button></li>}
-                {!pwa.installed && <li><button type="button" onClick={installApp}><Icon name="download" className="h-5 w-5" /><span><b>ติดตั้ง KinApp บนเครื่อง</b><small>เปิดจากไอคอนบนหน้าจอได้เลย</small></span><Icon name="chevron" className="ka-set-go h-4 w-4 -rotate-90" /></button></li>}
-                <li><button type="button" onClick={toggleBig}><span className="ka-set-aa" aria-hidden>Aa</span><span><b>ตัวอักษรใหญ่</b><small>ขยายทุกหน้าในแอปนี้</small></span><em className={big ? "is-on" : ""}>{big ? "เปิด" : "ปิด"}</em></button></li>
-                <li><button type="button" onClick={() => open("manual")}><Icon name="book" className="h-5 w-5" /><span><b>คู่มือผู้ใช้งาน</b></span><Icon name="chevron" className="ka-set-go h-4 w-4 -rotate-90" /></button></li>
-                <li><button type="button" onClick={() => open("pwd")}><Icon name="lock" className="h-5 w-5" /><span><b>เปลี่ยนรหัสผ่าน</b></span><Icon name="chevron" className="ka-set-go h-4 w-4 -rotate-90" /></button></li>
-                <li><button type="button" className="is-out" onClick={onLogout}><Icon name="logout" className="h-5 w-5" /><span><b>ออกจากระบบ</b></span></button></li>
-              </ul>
+              {/* งานที่หัวหน้าให้ดาวต่ำ: ขึ้นบนสุดของหน้า ฉัน */}
+              {fixCount > 0 && <div className="kn-todo is-amb">
+                <div className="kn-todo-t"><span className="kn-k">งานที่หัวหน้าให้แก้ · {fixCount} งาน</span>
+                  <b>{myReviews.filter((r) => r.stars <= 2)[0]?.task} · {myReviews.filter((r) => r.stars <= 2)[0]?.name}</b>
+                  {myReviews.filter((r) => r.stars <= 2)[0]?.note && <small>&ldquo;{myReviews.filter((r) => r.stars <= 2)[0]?.note}&rdquo;</small>}</div>
+              </div>}
               <p className="ka-h">ผลงาน · {new Date().toLocaleDateString("th-TH", { month: "long", year: "numeric" })}</p>
               <section className="ka-kpi">
                 <div className="ka-ring" style={{ ["--p" as string]: me?.total ?? 0 }}><b>{me?.total ?? "-"}</b><small>คะแนน</small></div>
@@ -707,6 +784,23 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
                   ))}</ol>
                 )}
               </>}
+
+              <p className="ka-h">บัญชีและตั้งค่า</p>
+              <section className="ka-me-card">
+                <AvatarEdit kind="staff" id={user.id} name={user.name} size={76} onDone={(m) => toast(m)}
+                  title={<span className="ka-me-name"><b>{user.name}</b><small>{ROLE_INFO[user.role].th} · สาขา{user.branch || "-"}</small></span>} />
+              </section>
+              <ul className="ka-set" aria-label="ตั้งค่าและบัญชี">
+                {push.state !== "loading" && push.state !== "none" && <li><button type="button" disabled={push.busy} onClick={togglePush}>
+                  <Icon name="bell" className="h-5 w-5" /><span><b>แจ้งเตือนบนโทรศัพท์</b><small>{push.state === "on" ? "เด้งเมื่อหัวหน้าตามงาน" : push.state === "ios" ? "ติดตั้งแอปที่หน้าจอโฮมก่อน" : push.state === "denied" ? "เปิดได้ที่ตั้งค่าของเครื่อง" : "ยังไม่ได้เปิด"}</small></span>
+                  <em className={push.state === "on" ? "is-on" : ""}>{push.state === "on" ? "เปิด" : "ปิด"}</em></button></li>}
+                {!pwa.installed && <li><button type="button" onClick={installApp}><Icon name="download" className="h-5 w-5" /><span><b>ติดตั้ง KinApp บนเครื่อง</b><small>เปิดจากไอคอนบนหน้าจอได้เลย</small></span><Icon name="chevron" className="ka-set-go h-4 w-4 -rotate-90" /></button></li>}
+                {appsFor(user).filter((x) => x !== "kinapp").map((x) => <li key={x}><button type="button" onClick={() => { rememberApp(x); window.location.href = APPS[x].href; }}><Icon name={APPS[x].icon} className="h-5 w-5" /><span><b>ไปที่{APPS[x].name}</b><small>{APPS[x].desc}</small></span><Icon name="chevron" className="ka-set-go h-4 w-4 -rotate-90" /></button></li>)}
+                <li><button type="button" onClick={toggleBig}><span className="ka-set-aa" aria-hidden>Aa</span><span><b>ตัวอักษรใหญ่</b><small>ขยายทุกหน้าในแอปนี้</small></span><em className={big ? "is-on" : ""}>{big ? "เปิด" : "ปิด"}</em></button></li>
+                <li><button type="button" onClick={() => open("manual")}><Icon name="book" className="h-5 w-5" /><span><b>คู่มือผู้ใช้งาน</b></span><Icon name="chevron" className="ka-set-go h-4 w-4 -rotate-90" /></button></li>
+                <li><button type="button" onClick={() => open("pwd")}><Icon name="lock" className="h-5 w-5" /><span><b>เปลี่ยนรหัสผ่าน</b></span><Icon name="chevron" className="ka-set-go h-4 w-4 -rotate-90" /></button></li>
+                <li><button type="button" className="is-out" onClick={onLogout}><Icon name="logout" className="h-5 w-5" /><span><b>ออกจากระบบ</b></span></button></li>
+              </ul>
             </>
           );
         })()}
@@ -792,18 +886,41 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
       </Modal>
 
       <Modal open={!!resPick} title={resPick?.name ?? ""} onClose={() => setResPick(null)}>
-        {resPick && <div className="space-y-3">
-          {resPick.id && <AvatarEdit kind="resident" id={resPick.id} name={resPick.name} size={72} onDone={(m) => toast(m)}
-            title={<span className="ka-me-name"><b>{resPick.name}</b></span>} />}
-          <p className="text-sm text-gold-600">{resPick.room && resPick.room !== "-" ? `ห้อง ${resPick.room}` : "ยังไม่มีห้อง"} · {resPick.age} ปี{measured[resPick.name] ? ` · วัดสัญญาณชีพแล้ว ${measured[resPick.name]} น.` : ""}</p>
-          {allergy[resPick.name] && <p className="ka-wait is-bad">แพ้ {allergy[resPick.name]}</p>}
-          <div className="ka-acts">
-            <button type="button" className="is-primary" onClick={() => { const n = resPick.name; setResPick(null); setVitalsFor(n); }}><Icon name="pulse" className="h-5 w-5" />บันทึกสัญญาณชีพ</button>
-            <button type="button" disabled={!resPick.id} onClick={() => { const id = resPick.id!; setResPick(null); setProfile(id); }}><Icon name="doc" className="h-5 w-5" />ประวัติและสรุปตอบญาติ</button>
-            <button type="button" disabled={!resPick.id} onClick={() => { const r = resPick; setResPick(null); setFu({ id: r.id!, name: r.name, text: "", photo: "", busy: false }); }}><Icon name="camera" className="h-5 w-5" />ส่งข่าวญาติ</button>
-            <button type="button" disabled={!resPick.id} onClick={() => { const id = resPick.id!; setResPick(null); setLinkFor(id); }}><Icon name="chat" className="h-5 w-5" />ลิงก์ญาติ</button>
-          </div>
-        </div>}
+        {/* หน้ารายคน: แพ้ยา · ค่าที่วัดล่าสุด (ค่าผิดปกติตัวแดง) · รอบที่ถึง · ปุ่มใหญ่ทำงานของคนนี้ · ส่งเวรล่าสุด */}
+        {resPick && (() => {
+          const name = resPick.name, id = resPick.id;
+          const key = (s: string) => `${s.slice(6, 10)}${s.slice(3, 5)}${s.slice(0, 2)}${s.slice(11, 16)}`;
+          const last = healthRows.filter((r) => r[1] === name).sort((a, b) => key(String(b[0])).localeCompare(key(String(a[0]))))[0];
+          const v = last ? parseVitals(last[2], last[3], last[4]) : {};
+          const bad = new Set(evaluateVitals(v).map((f) => f.key));
+          const show = (x?: number, unit = "") => (x === undefined ? "–" : `${x}${unit}`);
+          const cells: [string, string, boolean][] = [
+            ["ความดัน", v.sys !== undefined ? `${v.sys}/${v.dia ?? "-"}` : "–", bad.has("sys") || bad.has("dia")], ["ชีพจร", show(v.pr), bad.has("pr")], ["อุณหภูมิ", show(v.bt), bad.has("bt")],
+            ["ออกซิเจน", show(v.o2, "%"), bad.has("o2")], ["หายใจ", show(v.rr), bad.has("rr")], ["DTX", show(v.dtx), bad.has("dtx")],
+          ];
+          const n = needBy[name] ?? [], m = medsLeftOf(name), ik = intakeOf(name), ho = handover.find((h) => h.who === name);
+          const go = (f: () => void) => () => { setResPick(null); f(); };
+          return <div className="space-y-3">
+            {id && <AvatarEdit kind="resident" id={id} name={name} size={64} onDone={(msg) => toast(msg)}
+              title={<span className="ka-me-name"><b>{name}</b><small>{resPick.room && resPick.room !== "-" ? `ห้อง ${resPick.room}` : "ยังไม่มีห้อง"} · {resPick.age} ปี</small></span>} />}
+            {allergy[name] && <p className="ka-wait is-bad">แพ้ยา {allergy[name]}</p>}
+            <div className="kn-vit-box">
+              <p className="kn-vit-h">{last ? `วัดล่าสุด ${String(last[0])}${last[8] && last[8] !== "-" ? ` · ${last[8]}` : ""}` : "ยังไม่เคยบันทึกสัญญาณชีพ"}</p>
+              {last && <div className="kn-vit">{cells.map(([l, x, b]) => <div key={l} className={b ? "is-bad" : ""}><small>{l}</small><b>{x}</b></div>)}</div>}
+              <div className="ka-tags">{n.length ? n.map((x) => <em key={x.k} className={`ka-flag ${x.due.cls === "over" ? "bad" : "warn"}`}>{x.label} · {x.due.text}</em>) : <em className="ka-flag ok">วัดครบตามรอบ</em>}</div>
+            </div>
+            <div className="kn-acts">
+              <button type="button" className="is-main" onClick={go(() => setVitalsFor(name))}><Icon name="pulse" /><span>วัดสัญญาณชีพ<small>{n.length ? `ถึงรอบ ${n.map((x) => VITAL_SHORT[x.k]).join(" ")} · กรอกเฉพาะที่วัด` : measured[name] ? `วัดแล้ว ${measured[name]} น. · วัดอีกครั้งได้` : "กรอกเฉพาะค่าที่วัด"}</small></span></button>
+              {ik && id && <button type="button" className="is-main is-blue" onClick={go(() => { setAdmitP(true); setProfile(id); })}><Icon name="doc" /><span>บันทึกแรกรับ<small>รับเข้า{intakeAgo(ik.days) === "วันนี้" ? "วันนี้" : ` ${intakeAgo(ik.days)}แล้ว`} · ตั้งรอบวัดในฟอร์มเดียวกัน</small></span></button>}
+              <button type="button" onClick={go(goMeds)}><Icon name="pill" /><span>ให้ยา<small>{m ? `มื้อ${nowMeal}ค้าง ${m} รายการ` : `มื้อ${nowMeal}ไม่มีค้าง`}</small></span></button>
+              <button type="button" disabled={!id} onClick={go(() => { setProfTab("บันทึกพยาบาล"); setProfile(id!); })}><Icon name="book" /><span>บันทึกพยาบาล<small>Nurse Note</small></span></button>
+              <button type="button" disabled={!id} onClick={go(() => setFu({ id: id!, name, text: "", photo: "", busy: false }))}><Icon name="camera" /><span>ส่งข่าวญาติ<small>รูปและข้อความ</small></span></button>
+              <button type="button" disabled={!id} onClick={go(() => setLinkFor(id!))}><Icon name="chat" /><span>ลิงก์ญาติ<small>ส่งทาง LINE</small></span></button>
+              <button type="button" disabled={!id} onClick={go(() => setProfile(id!))}><Icon name="doc" /><span>ประวัติทั้งหมด<small>แรกรับ แผล ยา กายภาพ</small></span></button>
+            </div>
+            {ho && <p className="kn-ho"><b>ส่งเวรล่าสุด · {ho.type}</b>{ho.text}<small>{ho.by} · {ho.at}</small></p>}
+          </div>;
+        })()}
       </Modal>
 
       <Modal open={modal === "viewtask"} title="ผลการปฏิบัติงาน" onClose={close} footer={<button className="btn-soft w-full" onClick={close}>ปิดหน้าต่าง</button>}>
@@ -866,7 +983,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
       {/* บันทึกสัญญาณชีพ (ลงบันทึกสุขภาพ · ค่าเกินเกณฑ์แจ้งเตือนพยาบาลอัตโนมัติ) */}
       <VitalsDialog open={vitalsFor !== null} residents={RESIDENTS.map((r) => r.name)} resident={vitalsFor ?? undefined} recorder={user.name}
         onClose={() => setVitalsFor(null)} onSave={(row) => addHealth(row)} />
-      <ResidentProfile id={profile} onClose={() => setProfile(null)} />
+      <ResidentProfile id={profile} startAdmission={admitP} initialTab={profTab ?? undefined} onClose={() => { setProfile(null); setAdmitP(false); setProfTab(null); }} />
       <IncidentReport open={incOpen} compact residents={RESIDENTS} onClose={() => setIncOpen(false)} />
 
       {/* วิธีติดตั้ง KinApp บน iPhone (เปิดจากแถบติดตั้งบนหน้างานวันนี้) */}
