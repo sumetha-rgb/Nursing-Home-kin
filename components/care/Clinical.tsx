@@ -4,7 +4,8 @@ import { Fragment, useCallback, useEffect, useState } from "react";
 import Icon from "../Icon";
 import { useApp } from "@/lib/app";
 import { useSession } from "@/lib/session";
-import { can } from "@/lib/perms";
+import { can, canNurseNote } from "@/lib/perms";
+import { ROLE_INFO, Role } from "@/lib/roles";
 import { money } from "@/lib/billing";
 import { ADMISSION, call, Clinic, clinic, fetchClinic, Note, SupplyItem } from "@/lib/clinic";
 import { DataTable, Field, Modal } from "../ui";
@@ -36,16 +37,18 @@ export function useClinic(id: string | null) {
 }
 
 /** autoEdit = เปิดฟอร์มบันทึกแรกรับทันที (จากป้ายรอแรกรับ / การ์ดรับเข้าใหม่) · onAutoDone = เปิดแล้ว */
-export default function ClinicalPanel({ id, tab, c, reload, name = "", autoEdit, onAutoDone }: { id: string; tab: ClinicalTab; c: Clinic | null; reload: () => void; name?: string; autoEdit?: boolean; onAutoDone?: () => void }) {
+export default function ClinicalPanel({ id, tab, c, reload, name = "", autoEdit, onAutoDone, onAide }: { id: string; tab: ClinicalTab; c: Clinic | null; reload: () => void; name?: string; autoEdit?: boolean; onAutoDone?: () => void; onAide?: () => void }) {
   if (!c) return <p className="py-8 text-center text-sm text-gold-500">กำลังโหลด…</p>;
   if (tab === "admission") return <Admission id={id} c={c} reload={reload} autoEdit={autoEdit} onAutoDone={onAutoDone} />;
-  if (tab === "nursing") return <Nursing id={id} c={c} reload={reload} />;
+  if (tab === "nursing") return <Nursing id={id} c={c} reload={reload} onAide={onAide} />;
   if (tab === "aide") return <Aide id={id} c={c} reload={reload} />;
   if (tab === "physio") return <Physio id={id} c={c} reload={reload} name={name} />;
   return <Supplies id={id} c={c} reload={reload} />;
 }
 
 type P = { id: string; c: Clinic; reload: () => void };
+/** ชื่อผู้บันทึก + ตำแหน่ง เช่น "นภา (ผู้ช่วยพยาบาล)" */
+const byWho = (n: Note) => !n.author ? "-" : n.author_role && ROLE_INFO[n.author_role as Role] ? `${n.author} (${ROLE_INFO[n.author_role as Role].th})` : n.author;
 const run = async (toast: (m: string) => void, body: object, ok: string, after: () => void) => {
   try { await clinic(body); toast(ok); after(); } catch (e) { toast((e as Error).message); }
 };
@@ -162,16 +165,19 @@ function Aide({ id, c, reload }: P) {
         <button className="btn-primary !py-2" onClick={() => an.body.trim() ? run(toast, { op: "note", residentId: id, kind: "aide", title: an.shift, body: an.body }, `บันทึกผู้ช่วยพยาบาลแล้ว · ${an.shift}`, () => { setAn({ ...an, body: "" }); reload(); }) : toast("กรุณาพิมพ์บันทึก")}>บันทึก</button>
       </div>
       <DataTable search={false} columns={["วันเวลา", "เวร", "บันทึก", "ผู้บันทึก"]} empty="ยังไม่มีบันทึกผู้ช่วยพยาบาล"
-        rows={aide.map((n) => [n.at, n.title ?? "-", n.body ?? "-", n.author ?? "-"])}
+        rows={aide.map((n) => [n.at, n.title ?? "-", n.body ?? "-", byWho(n)])}
         actions={[{ label: "ลบ", danger: true, hidden: (i) => !mine(aide[i]), onClick: (i) => del(aide[i]) }]} />
     </section>
   );
 }
 
 /* ---------- Nurse Note · Problem list · ฉีดอินซูลิน ---------- */
-function Nursing({ id, c, reload }: P) {
+/** onAide = ไปหน้าบันทึกผู้ช่วยพยาบาล (คนที่ไม่มีสิทธิ์เขียนบันทึกพยาบาล) */
+function Nursing({ id, c, reload, onAide }: P & { onAide?: () => void }) {
   const { toast, confirm } = useApp();
   const { user } = useSession();
+  // ผู้ช่วยพยาบาล (ไม่มีสิทธิ์ เขียนบันทึกพยาบาล): Nurse Note และ Problem list ดูได้อย่างเดียว · ฉีดอินซูลินบันทึกได้ (เป็นการให้ยา)
+  const write = canNurseNote(user);
   const [nn, setNn] = useState({ shift: SHIFTS[0], body: "" });
   const [pb, setPb] = useState({ title: "", body: "" });
   const [ins, setIns] = useState({ drug: "", dose: "", site: SITES[0], dtx: "", body: "" });
@@ -185,28 +191,30 @@ function Nursing({ id, c, reload }: P) {
     <div className="space-y-6">
       <section className="space-y-3">
         <h4 className="profile-sub">Nurse Note</h4>
-        <div className="grid gap-2 sm:grid-cols-[140px_1fr_auto]">
+        {!write && <p className="rounded-xl border border-dashed border-amber-300 bg-amber-50 px-4 py-2.5 text-sm font-medium text-amber-900">
+          ดูได้อย่างเดียว · บันทึกพยาบาลเขียนได้เฉพาะพยาบาล{onAide && <> · <button type="button" className="font-semibold text-gold-800 underline underline-offset-2" onClick={onAide}>เขียนบันทึกผู้ช่วยพยาบาล ›</button></>}</p>}
+        {write && <div className="grid gap-2 sm:grid-cols-[140px_1fr_auto]">
           <select value={nn.shift} onChange={(e) => setNn({ ...nn, shift: e.target.value })} aria-label="เวร">{SHIFTS.map((x) => <option key={x}>{x}</option>)}</select>
           <textarea rows={2} value={nn.body} onChange={(e) => setNn({ ...nn, body: e.target.value })} placeholder="อาการ การดูแลที่ให้ และการตอบสนอง เช่น หลับได้ดี ไม่มีไข้ ทานอาหารได้ครึ่งจาน" aria-label="บันทึกพยาบาล" />
           <button className="btn-primary !py-2" onClick={() => nn.body.trim() ? run(toast, { op: "note", residentId: id, kind: "nurse", title: nn.shift, body: nn.body }, `บันทึก Nurse Note แล้ว · ${nn.shift}`, () => { setNn({ ...nn, body: "" }); reload(); }) : toast("กรุณาพิมพ์บันทึก")}>บันทึก</button>
-        </div>
+        </div>}
         <DataTable search={false} columns={["วันเวลา", "เวร", "บันทึก", "ผู้บันทึก"]} empty="ยังไม่มี Nurse Note"
-          rows={notes.map((n) => [n.at, n.title ?? "-", n.body ?? "-", n.author ?? "-"])}
+          rows={notes.map((n) => [n.at, n.title ?? "-", n.body ?? "-", byWho(n)])}
           actions={[{ label: "ลบ", danger: true, hidden: (i) => !mine(notes[i]), onClick: (i) => del(notes[i], "Nurse Note") }]} />
       </section>
 
       <section className="space-y-3">
         <h4 className="profile-sub">Problem list</h4>
-        <div className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+        {write && <div className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
           <input value={pb.title} onChange={(e) => setPb({ ...pb, title: e.target.value })} placeholder="ปัญหา เช่น เสี่ยงต่อการเกิดแผลกดทับ" aria-label="ปัญหา" />
           <input value={pb.body} onChange={(e) => setPb({ ...pb, body: e.target.value })} placeholder="เป้าหมาย / การดูแล เช่น พลิกตัวทุก 2 ชม." aria-label="การดูแล" />
           <button className="btn-primary !py-2" onClick={() => pb.title.trim() ? run(toast, { op: "note", residentId: id, kind: "problem", title: pb.title, body: pb.body, status: "Active" }, `เพิ่มปัญหาแล้ว · ${pb.title}`, () => { setPb({ title: "", body: "" }); reload(); }) : toast("กรุณาระบุปัญหา")}>เพิ่ม</button>
-        </div>
+        </div>}
         <DataTable search={false} badgeCols={[3]} columns={["เริ่มเมื่อ", "ปัญหา", "เป้าหมาย / การดูแล", "สถานะ"]} empty="ยังไม่มีปัญหาที่บันทึก"
           rows={problems.map((n) => [n.at, n.title ?? "-", n.body ?? "-", n.status === "Resolved" ? "แก้ไขแล้ว" : "กำลังดูแล"])}
           actions={[
-            { label: "ปิดปัญหา", hidden: (i) => problems[i].status === "Resolved", onClick: (i) => run(toast, { op: "note_status", id: problems[i].id, status: "Resolved" }, `ปิดปัญหาแล้ว · ${problems[i].title}`, reload) },
-            { label: "เปิดอีกครั้ง", hidden: (i) => problems[i].status !== "Resolved", onClick: (i) => run(toast, { op: "note_status", id: problems[i].id, status: "Active" }, `เปิดปัญหาอีกครั้ง · ${problems[i].title}`, reload) },
+            { label: "ปิดปัญหา", hidden: (i) => !write || problems[i].status === "Resolved", onClick: (i) => run(toast, { op: "note_status", id: problems[i].id, status: "Resolved" }, `ปิดปัญหาแล้ว · ${problems[i].title}`, reload) },
+            { label: "เปิดอีกครั้ง", hidden: (i) => !write || problems[i].status !== "Resolved", onClick: (i) => run(toast, { op: "note_status", id: problems[i].id, status: "Active" }, `เปิดปัญหาอีกครั้ง · ${problems[i].title}`, reload) },
             { label: "ลบ", danger: true, hidden: (i) => !mine(problems[i]), onClick: (i) => del(problems[i], "ปัญหา") },
           ]} />
       </section>
@@ -223,7 +231,7 @@ function Nursing({ id, c, reload }: P) {
             : run(toast, { op: "note", residentId: id, kind: "insulin", title: `${ins.drug} ${ins.dose} ยูนิต`, body: ins.body, data: { drug: ins.drug, dose: ins.dose, site: ins.site, dtx: ins.dtx } }, `บันทึกฉีดอินซูลินแล้ว · ${ins.drug} ${ins.dose} ยูนิต · ${ins.site}`, () => { setIns({ ...ins, dose: "", dtx: "", body: "" }); reload(); })}>บันทึก</button>
         </div>
         <DataTable search={false} columns={["วันเวลา", "อินซูลิน", "ตำแหน่ง", "DTX ก่อนฉีด", "หมายเหตุ", "ผู้ฉีด"]} empty="ยังไม่มีบันทึกฉีดอินซูลิน"
-          rows={insulin.map((n) => [n.at, n.title ?? "-", String(n.data.site ?? "-"), String(n.data.dtx || "-"), n.body ?? "-", n.author ?? "-"])}
+          rows={insulin.map((n) => [n.at, n.title ?? "-", String(n.data.site ?? "-"), String(n.data.dtx || "-"), n.body ?? "-", byWho(n)])}
           actions={[{ label: "ลบ", danger: true, hidden: (i) => !mine(insulin[i]), onClick: (i) => del(insulin[i], "บันทึกอินซูลิน") }]} />
       </section>
     </div>

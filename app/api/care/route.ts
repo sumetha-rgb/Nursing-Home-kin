@@ -241,8 +241,8 @@ export async function GET(req: NextRequest) {
       }
       case "nurses": {
         const rows = scoped(me)
-          ? await sql`SELECT full_name FROM staff_users WHERE branch_name = ${me.branch} AND status = 'ทำงาน' AND access_level IN ('Nurse','Head Nurse') ORDER BY full_name`
-          : await sql`SELECT full_name FROM staff_users WHERE status = 'ทำงาน' AND access_level IN ('Nurse','Head Nurse') ORDER BY full_name`;
+          ? await sql`SELECT full_name FROM staff_users WHERE branch_name = ${me.branch} AND status = 'ทำงาน' AND access_level IN ('Nurse','Nurse Aide','Head Nurse') ORDER BY full_name`
+          : await sql`SELECT full_name FROM staff_users WHERE status = 'ทำงาน' AND access_level IN ('Nurse','Nurse Aide','Head Nurse') ORDER BY full_name`;
         return NextResponse.json({ nurses: rows.map((r) => r.full_name) });
       }
       case "profile": {

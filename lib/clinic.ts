@@ -5,7 +5,9 @@ export const NOTE_KINDS = ["nurse", "problem", "insulin", "physio", "referral", 
 export type NoteKind = (typeof NOTE_KINDS)[number];
 export const NOTE_LABEL: Record<NoteKind, string> = { nurse: "Nurse Note", problem: "Problem list", insulin: "ฉีดอินซูลิน", physio: "กายภาพ", referral: "ใบส่งต่อ", aide: "บันทึกผู้ช่วยพยาบาล" };
 
-export type Note = { id: string; kind: NoteKind; title: string | null; body: string | null; data: Record<string, unknown>; status: string | null; author: string | null; at: string };
+export type Note = { id: string; kind: NoteKind; title: string | null; body: string | null; data: Record<string, unknown>; status: string | null; author: string | null; at: string;
+  /** ตำแหน่งของผู้บันทึก (staff_users.access_level) */
+  author_role?: string | null };
 export type Course = { id: string; name: string; total: number; used: number; price: number; status: string; created_by: string | null; invoice_id: string | null; at: string;
   /** นักกายภาพผู้รับผิดชอบและแผนรายสัปดาห์ (จ่ายเคสที่เมนูตารางกายภาพ) */
   therapist_id?: string | null; therapist_name?: string | null; plan_days?: number[] | null; plan_time?: string | null; plan_minutes?: number | null; plan_dates?: string[] | null; paid?: boolean;

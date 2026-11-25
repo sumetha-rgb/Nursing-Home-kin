@@ -112,7 +112,7 @@ export function DailyTasks() {
   // ผู้บริหาร (ทุกสาขา) ไม่มีรายชื่อทีมจากตารางเวร: ใช้รายชื่อพยาบาลที่ทำงานอยู่ของทุกสาขาแทน
   const [allNurses, setAllNurses] = useState<string[]>([]);
   useEffect(() => { fetchNurses().then(setAllNurses).catch(() => setAllNurses([])); }, []);
-  const teamNurses = (roster?.team ?? []).filter((t) => t.role === "Nurse" || t.role === "Head Nurse").map((t) => t.name);
+  const teamNurses = (roster?.team ?? []).filter((t) => t.role === "Nurse" || t.role === "Nurse Aide" || t.role === "Head Nurse").map((t) => t.name);
   const pool = roster?.team?.length ? teamNurses : allNurses;
   const isNurse = (n: string) => pool.includes(n);
   const onDuty = (sh: string) => (roster?.shifts ?? []).filter((x) => x.date === date && `กะ${x.shift}` === sh && isNurse(x.staff_name)).map((x) => x.staff_name);

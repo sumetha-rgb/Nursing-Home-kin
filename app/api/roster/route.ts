@@ -123,7 +123,7 @@ export async function POST(req: NextRequest) {
       if (!br) return bad("กรุณาเลือกสาขา");
       if (!dateOk(String(b.date)) || !(b.shift in SHIFT_START)) return bad("ข้อมูลเวรไม่ถูกต้อง");
       const ids = (Array.isArray(b.staffIds) ? b.staffIds : []).map(String);
-      const team = (await sql`SELECT id, full_name FROM staff_users WHERE branch_name = ${br} AND id = ANY(${ids}) AND access_level IN ('Nurse', 'Head Nurse')`) as { id: string; full_name: string }[];
+      const team = (await sql`SELECT id, full_name FROM staff_users WHERE branch_name = ${br} AND id = ANY(${ids}) AND access_level IN ('Nurse', 'Nurse Aide', 'Head Nurse')`) as { id: string; full_name: string }[];
       const before = (await sql`SELECT staff_name FROM staff_shifts WHERE branch_name = ${br} AND shift_date = ${b.date}::date AND shift = ${b.shift}`) as { staff_name: string }[];
       await sql.transaction([
         sql`DELETE FROM staff_shifts WHERE branch_name = ${br} AND shift_date = ${b.date}::date AND shift = ${b.shift}`,
@@ -142,7 +142,7 @@ export async function POST(req: NextRequest) {
       const staffId = String(b.staffId ?? "");
       const on = b.on !== false;
       const [t] = (on
-        ? await sql`SELECT id, full_name FROM staff_users WHERE branch_name = ${br} AND id = ${staffId} AND access_level IN ('Nurse', 'Head Nurse')`
+        ? await sql`SELECT id, full_name FROM staff_users WHERE branch_name = ${br} AND id = ${staffId} AND access_level IN ('Nurse', 'Nurse Aide', 'Head Nurse')`
         : await sql`SELECT id, full_name FROM staff_users WHERE branch_name = ${br} AND id = ${staffId}`) as { id: string; full_name: string }[];
       if (!t) return bad(on ? "ไม่พบพยาบาลคนนี้ในสาขา" : "ไม่พบพนักงานคนนี้ในสาขา", 404);
       const changed = on

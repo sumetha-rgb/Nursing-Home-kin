@@ -107,7 +107,7 @@ export function FacilityTasks() {
   const shown = rows.map((r, i) => ({ r, i })).filter(({ r }) =>
     (!q || r[0].includes(q)) && (!cat || r[1] === cat) && (mode === "ทั้งหมด" || (mode === "มอบหมายคนรับผิดชอบ") === isManual(r[3])));
   const needAssign = (n: number) => isManual(shown[n].r[3]) && !facOf(shown[n].i)?.assignee;
-  const startAssign = (n: number) => { setAssign({ i: shown[n].i, who: global ? "" : facOf(shown[n].i)?.assignee ?? "", branch: global ? "" : user?.branch ?? "" }); if (!nurses.length) fetchNurses().then(setNurses).catch(() => toast("โหลดรายชื่อพยาบาลไม่สำเร็จ")); };
+  const startAssign = (n: number) => { setAssign({ i: shown[n].i, who: global ? "" : facOf(shown[n].i)?.assignee ?? "", branch: global ? "" : user?.branch ?? "" }); if (!nurses.length) fetchNurses().then(setNurses).catch(() => toast("โหลดรายชื่อทีมดูแลไม่สำเร็จ")); };
   // ฟอร์มมี 6 ช่อง ส่วนตารางแสดง 4 คอลัมน์: ชื่องาน, หมวดหมู่, เวลา/ความถี่, ระบบจ่ายงาน
   const toRow = (v: string[]) => [v[0], v[1], [v[4], v[3]].filter(Boolean).join(" / "), v[2], v[5]];
   return (
@@ -158,7 +158,7 @@ export function FacilityTasks() {
         }}>บันทึก</button></>}>
         {assign && <div className="space-y-3">
           {global && <Field label="สาขา"><Select options={branchNames} placeholder="-- เลือกสาขา --" value={assign.branch} onChange={(v) => setAssign({ ...assign, branch: v })} /></Field>}
-          <Field label="พยาบาลผู้รับผิดชอบ"><Select options={nurses} placeholder={nurses.length ? "-- ยังไม่มอบหมาย --" : "กำลังโหลดรายชื่อ…"} value={assign.who} onChange={(v) => setAssign({ ...assign, who: v })} /></Field>
+          <Field label="ผู้รับผิดชอบ (พยาบาล / ผู้ช่วยพยาบาล)"><Select options={nurses} placeholder={nurses.length ? "-- ยังไม่มอบหมาย --" : "กำลังโหลดรายชื่อ…"} value={assign.who} onChange={(v) => setAssign({ ...assign, who: v })} /></Field>
           <p className="text-sm text-gold-600">งานนี้จะขึ้นใน KinApp เฉพาะคนที่เลือก ทุกรอบตามความถี่ คนอื่นส่งแทนไม่ได้ · เปลี่ยนคนได้ทุกเมื่อ · เลือก &quot;ยังไม่มอบหมาย&quot; เพื่อยกเลิก{global ? " · งานที่ตั้งไว้ทุกสาขา แต่ละสาขามอบหมายคนของตัวเอง" : ""}</p>
         </div>}
       </Modal>
@@ -183,7 +183,7 @@ export function FacilityTasks() {
       </Modal>
       <FormDialog
         open={!!dlg} mode={dlg?.mode ?? "add"} title={dlg?.mode === "edit" ? "แก้ไขงานการดูแล" : "เพิ่มงานทั่วไปประจำสาขา"}
-        fields={[...FAC_FIELDS.map((f) => (f.label.startsWith("หมวดหมู่") ? { ...f, options: facCats } : f)), { label: "พยาบาลผู้รับผิดชอบ", options: nurses, pick: "search", placeholder: nurses.length ? "พิมพ์ชื่อพยาบาลเพื่อค้นหา" : "กำลังโหลดรายชื่อ…", showIf: (v) => isManual(v[2]), wide: true }]}
+        fields={[...FAC_FIELDS.map((f) => (f.label.startsWith("หมวดหมู่") ? { ...f, options: facCats } : f)), { label: "ผู้รับผิดชอบ (พยาบาล / ผู้ช่วยพยาบาล)", options: nurses, pick: "search", placeholder: nurses.length ? "พิมพ์ชื่อเพื่อค้นหา" : "กำลังโหลดรายชื่อ…", showIf: (v) => isManual(v[2]), wide: true }]}
         value={dlg?.mode === "edit" ? [rows[dlg.i][0], rows[dlg.i][1], modeText(rows[dlg.i][3]), "", rows[dlg.i][2], "", facOf(dlg.i)?.assignee ?? ""] : undefined}
         onClose={() => setDlg(null)} saveLabel="บันทึกข้อมูล"
         onSave={(v) => {

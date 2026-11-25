@@ -12,7 +12,7 @@ import { MedPhotoModal } from "@/components/pharmacy/MedPhotos";
 import { useBranchInfo } from "@/components/views/Billing";
 import { useSession } from "@/lib/session";
 import ResidentBilling from "./ResidentBilling";
-import { can } from "@/lib/perms";
+import { can, canNurseNote } from "@/lib/perms";
 import { ADMISSION_FIELDS } from "@/lib/clinic";
 import { fetchProfile, Profile, thDate, thWhen } from "@/lib/care";
 import { evaluateVitals, LEVEL_TH, levelOf, LIMITS, parseVitals, Vitals } from "@/lib/vitals";
@@ -72,6 +72,8 @@ const TAB_GROUPS = [
 ];
 /** มือถือ: 4 หัวข้อหลักบนแถบ [แท็บ, ชื่อสั้น, ไอคอน] · ที่เหลืออยู่ในแผ่น "อื่น ๆ" */
 const MOBILE_MAIN: [string, string, string][] = [["ภาพรวม", "ภาพรวม", "heart"], ["สัญญาณชีพ", "สัญญาณชีพ", "pulse"], ["ยาและการให้ยา", "ยา", "pill"], ["บันทึกพยาบาล", "บันทึก", "doc"]];
+/** มือถือ: ปุ่ม "บันทึก" รวม 2 หน้า สลับด้วยปุ่มด้านบน · เปิดหน้าของตำแหน่งตัวเองก่อน (ผู้ช่วยพยาบาล = บันทึกผู้ช่วยพยาบาล) */
+const NOTE_TABS = ["บันทึกพยาบาล", "บันทึกผู้ช่วยพยาบาล"];
 const TAB_ICON: Record<string, string> = { "แรกรับ/ประเมิน": "files", "งานดูแลและนัดหมาย": "calendar", "สมุดส่งเวร": "book", "บันทึกผู้ช่วยพยาบาล": "user", "แผล": "alert", "กายภาพ": "trophy", "เวชภัณฑ์": "tag", "ค่าใช้จ่าย": "receipt" };
 const CLINICAL: Record<string, ClinicalTab> = { "แรกรับ/ประเมิน": "admission", "บันทึกพยาบาล": "nursing", "บันทึกผู้ช่วยพยาบาล": "aide", "กายภาพ": "physio", "เวชภัณฑ์": "supplies" };
 
@@ -158,6 +160,10 @@ export default function ResidentProfile({ id, onClose, initialTab, startAdmissio
   const medLeft = activeMeds.filter((m) => (Array.isArray(m.meals) ? (m.meals as string[]) : String(m.meals ?? "").split(/,\s*/)).includes(mealNow)
     && !(p?.withdrawals ?? []).some((w) => w.day === today && !w.void_reason && w.name === m.drug_name && String(w.meal ?? "").split(", ").includes(mealNow))).length;
   const hoN = p?.handovers.length ?? 0;
+  const noteHome = canNurseNote(user) ? NOTE_TABS[0] : NOTE_TABS[1];
+  const mainTabs: [string, string, string][] = MOBILE_MAIN.map((m) => (m[0] === NOTE_TABS[0] ? [noteHome, m[1], m[2]] : m));
+  /** แท็บนี้อยู่บนแถบหลักไหม (2 หน้าบันทึกนับเป็นปุ่ม "บันทึก") */
+  const onMain = (t: string) => mainTabs.some(([m]) => m === t) || NOTE_TABS.includes(t);
   /** สถานะสั้นของหัวข้อในแผ่น "อื่น ๆ" */
   const statusOf = (t: string) => {
     const last = (kind: string) => c?.notes.find((n) => n.kind === kind)?.at;
@@ -207,19 +213,20 @@ export default function ResidentProfile({ id, onClose, initialTab, startAdmissio
 
           {/* มือถือ: แถบ 4 หัวข้อหลัก + อื่น ๆ ติดหัวจอตอนเลื่อน · ตัวเลข = เรื่องค้าง · อื่น ๆ = แผ่นเลื่อนขึ้นจากล่าง (หัวข้อที่เหลือ จัดกลุ่ม พร้อมสถานะล่าสุด) */}
           <nav className="pf-tabs print-hide md:hidden" aria-label="หัวข้อ">
-            {MOBILE_MAIN.map(([t, short, ic]) => {
+            {mainTabs.map(([t, short, ic]) => {
               const n = t === "สัญญาณชีพ" ? vdN : t === "ยาและการให้ยา" ? medLeft : 0;
-              return <button key={t} type="button" aria-current={tab === t ? "page" : undefined} className={tab === t ? "is-on" : ""} onClick={() => { setTab(t); setSheet(false); }}>
+              const on = tab === t || (NOTE_TABS.includes(t) && NOTE_TABS.includes(tab));
+              return <button key={t} type="button" aria-current={on ? "page" : undefined} className={on ? "is-on" : ""} onClick={() => { setTab(t); setSheet(false); }}>
                 <Icon name={ic} className="h-[19px] w-[19px]" />{short}{n > 0 && <i className="pf-n">{n}</i>}</button>;
             })}
-            <button type="button" aria-haspopup="dialog" aria-expanded={sheet} className={MOBILE_MAIN.some(([t]) => t === tab) ? "" : "is-on"} onClick={() => setSheet(true)}>
-              <Icon name="menu" className="h-[19px] w-[19px]" />{MOBILE_MAIN.some(([t]) => t === tab) ? "อื่น ๆ" : tab.length > 8 ? `${tab.slice(0, 7)}…` : tab}{hoN > 0 && <i className="pf-dot" aria-label="มีเรื่องใหม่" />}</button>
+            <button type="button" aria-haspopup="dialog" aria-expanded={sheet} className={onMain(tab) ? "" : "is-on"} onClick={() => setSheet(true)}>
+              <Icon name="menu" className="h-[19px] w-[19px]" />{onMain(tab) ? "อื่น ๆ" : tab.length > 8 ? `${tab.slice(0, 7)}…` : tab}{hoN > 0 && <i className="pf-dot" aria-label="มีเรื่องใหม่" />}</button>
           </nav>
           {sheet && <div className="pf-sheet md:hidden" role="dialog" aria-modal="true" aria-label="หัวข้ออื่น" onClick={(e) => { if (e.target === e.currentTarget) setSheet(false); }}>
             <div className="pf-sheet-in">
               <span className="pf-grab" aria-hidden />
               {TAB_GROUPS.filter((g) => !("money" in g) || canMoney).map((g) => {
-                const rest = g.tabs.filter((t) => !MOBILE_MAIN.some(([m]) => m === t));
+                const rest = g.tabs.filter((t) => !onMain(t));
                 return rest.length ? <div key={g.label}><p className="pf-gh">{g.label}</p>{rest.map((t) => (
                   <button key={t} type="button" className={tab === t ? "is-on" : ""} onClick={() => { setTab(t); setSheet(false); }}>
                     <Icon name={TAB_ICON[t] ?? "doc"} className="h-[18px] w-[18px]" /><span>{t}</span>{t === "สมุดส่งเวร" && hoN > 0 && <i className="pf-dot" />}<small>{statusOf(t)}</small></button>))}</div> : null;
@@ -236,6 +243,8 @@ export default function ResidentProfile({ id, onClose, initialTab, startAdmissio
             </div>)}
           </div>
 
+          {NOTE_TABS.includes(tab) && <div className="pf-notesw print-hide md:hidden" role="group" aria-label="เลือกบันทึก">{NOTE_TABS.map((t) => (
+            <button key={t} type="button" aria-pressed={tab === t} className={tab === t ? "is-on" : ""} onClick={() => setTab(t)}>{t}</button>))}</div>}
           {tab === "แผล" && id && <WoundLog residentId={id} />}
           {tab === "ค่าใช้จ่าย" && canMoney && <ResidentBilling name={r.full_name} hn={r.hn as string | null | undefined} />}
           {tab === TABS[0] && (
@@ -341,7 +350,7 @@ export default function ResidentProfile({ id, onClose, initialTab, startAdmissio
             </div>
           )}
 
-          {CLINICAL[tab] && id && <ClinicalPanel id={id} tab={CLINICAL[tab]} c={c} reload={reload} name={r.full_name} autoEdit={autoAdm && tab === "แรกรับ/ประเมิน"} onAutoDone={() => setAutoAdm(false)} />}
+          {CLINICAL[tab] && id && <ClinicalPanel id={id} tab={CLINICAL[tab]} c={c} reload={reload} name={r.full_name} autoEdit={autoAdm && tab === "แรกรับ/ประเมิน"} onAutoDone={() => setAutoAdm(false)} onAide={() => setTab(NOTE_TABS[1])} />}
 
           {tab === "สมุดส่งเวร" && (
             <DataTable search={false} columns={["หัวข้อ", "รายละเอียด", "ผู้เขียน", "เวลา"]} empty="ไม่มีบันทึกส่งเวร"

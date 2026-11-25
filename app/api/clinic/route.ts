@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { sql } from "@/lib/db";
 import { currentUser, forbidden, unauthorized } from "@/lib/auth";
 import { audit } from "@/lib/audit";
-import { can } from "@/lib/perms";
+import { can, canNurseNote, NURSE_NOTE_KINDS } from "@/lib/perms";
 import { attention } from "@/lib/attention";
 import type { SessionUser } from "@/lib/roles";
 import { NOTE_KINDS, NOTE_LABEL, NoteKind } from "@/lib/clinic";
@@ -115,7 +115,7 @@ export async function GET(req: NextRequest) {
           sql(`SELECT s.id, s.full_name AS name, coalesce(s.branch_name, '') AS branch, s.access_level AS role,
                 (SELECT count(*)::int FROM physio_courses c WHERE (c.therapist_id = s.id OR ${slotHas("c.plan_slots", "s.id")}) AND c.used < c.total) AS cases_all
               FROM staff_users s
-              WHERE coalesce(s.status, 'ทำงาน') = 'ทำงาน' AND (s.access_level = 'Physio' OR (s.access_level IN ('Nurse', 'Head Nurse') AND 'physio.record' = ANY(coalesce(s.permissions, '{}'))))
+              WHERE coalesce(s.status, 'ทำงาน') = 'ทำงาน' AND (s.access_level = 'Physio' OR (s.access_level IN ('Nurse', 'Nurse Aide', 'Head Nurse') AND 'physio.record' = ANY(coalesce(s.permissions, '{}'))))
               ORDER BY s.full_name`),
           sql(`SELECT n.data->>'course_id' AS course_id, n.resident_name, n.author, to_char(n.created_at AT TIME ZONE 'Asia/Bangkok', 'HH24:MI') AS at, n.data->>'pain' AS pain
               FROM clinical_notes n WHERE n.kind = 'physio' AND (n.created_at AT TIME ZONE 'Asia/Bangkok')::date = ${BKK_TODAY} ${wOr("n.branch_name", "n.author")} ${br ? "" : "AND $1::text IS NOT NULL"} ORDER BY n.created_at`, pn),
@@ -212,7 +212,10 @@ export async function GET(req: NextRequest) {
           return NextResponse.json({ admission: null, notes, courses, supplies: [], visits, contractAllergy: null, physioOnly: true });
         }
         const [adm] = (await sql(`SELECT data, assessed_by, ${TH_AT("updated_at")} AS at FROM resident_admissions WHERE resident_id = $1`, [id])) as Record<string, unknown>[];
-        const notes = await sql(`SELECT id, kind, title, body, data, status, author, ${TH_AT("created_at")} AS at FROM clinical_notes WHERE resident_id = $1 ORDER BY created_at DESC LIMIT 300`, [id]);
+        // author_role = ตำแหน่งของผู้บันทึก (จับคู่ชื่อในทีม · คนที่ยังทำงานก่อน) ใช้ต่อท้ายชื่อ เช่น นภา (ผู้ช่วยพยาบาล)
+        const notes = await sql(`SELECT n.id, n.kind, n.title, n.body, n.data, n.status, n.author, ${TH_AT("n.created_at")} AS at,
+            (SELECT s.access_level FROM staff_users s WHERE s.full_name = n.author ORDER BY (coalesce(s.status, 'ทำงาน') = 'ทำงาน') DESC LIMIT 1) AS author_role
+            FROM clinical_notes n WHERE n.resident_id = $1 ORDER BY n.created_at DESC LIMIT 300`, [id]);
         const courses = await sql(`SELECT id, name, total, used, price::float, status, created_by, ${billedId} AS invoice_id, ${TH_AT("created_at")} AS at, therapist_id, therapist_name, plan_days, plan_time, plan_minutes, plan_dates, plan_slots, coalesce((SELECT v.status = 'ชำระแล้ว' FROM invoices v WHERE v.id = physio_courses.invoice_id), false) AS paid FROM physio_courses WHERE resident_id = $1 ORDER BY created_at DESC`, [id]);
         const supplies = await sql(`SELECT id, item_name, unit, qty, price::float, issued_by, ${billedId} AS invoice_id, ${TH_AT("created_at")} AS at FROM supply_issues WHERE resident_id = $1 ORDER BY created_at DESC LIMIT 200`, [id]);
         // เช็คอิน/รูปงานของบันทึกกายภาพ (ไม่ส่งรูป · เปิดดูทีละรูป)
@@ -297,6 +300,7 @@ export async function POST(req: NextRequest) {
         const kind = String(b.kind ?? "");
         if (!(NOTE_KINDS as readonly string[]).includes(kind)) return bad("ประเภทบันทึกไม่ถูกต้อง");
         if (kind === "physio" && !can(me, "physio.record")) return forbidden("บันทึกกายภาพได้เฉพาะนักกายภาพ (สิทธิ์ บันทึกกายภาพ)");
+        if (NURSE_NOTE_KINDS.includes(kind) && !canNurseNote(me)) return forbidden("บันทึกพยาบาลเขียนได้เฉพาะพยาบาล (สิทธิ์ เขียนบันทึกพยาบาล) · เขียนบันทึกผู้ช่วยพยาบาลแทนได้");
         const o = await residentOf(me, String(b.residentId ?? ""));
         if (!o.r) return o.res;
         const title = text(b.title, 200), body = text(b.body, 4000);
@@ -312,6 +316,7 @@ export async function POST(req: NextRequest) {
         const [n] = (await sql`SELECT id, resident_name, branch_name, author, kind FROM clinical_notes WHERE id = ${String(b.id ?? "")}`) as Record<string, string>[];
         if (!n) return bad("ไม่พบบันทึก", 404);
         if (scoped(me) && n.branch_name !== me.branch) return forbidden();
+        if (b.op === "note_status" && NURSE_NOTE_KINDS.includes(n.kind) && !canNurseNote(me)) return forbidden("เปลี่ยนสถานะปัญหาได้เฉพาะพยาบาล (สิทธิ์ เขียนบันทึกพยาบาล)");
         if (b.op === "note_delete") {
           if (n.author !== me.name && !canManage(me)) return forbidden("ลบได้เฉพาะบันทึกที่ตัวเองเขียน");
           await sql`DELETE FROM clinical_notes WHERE id = ${n.id}`;

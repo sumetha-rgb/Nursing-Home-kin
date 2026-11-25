@@ -12,7 +12,7 @@ import { Modal, Tabs } from "./ui";
 import { thDateText } from "@/lib/servicePeriod";
 import { usePwa } from "./Pwa";
 
-const ROLE_ICON: Record<Role, string> = { "Global Admin": "grid", "Branch Admin": "building", "Head Nurse": "pill", Cashier: "receipt", Finance: "chart", Physio: "pulse", Nurse: "heart" };
+const ROLE_ICON: Record<Role, string> = { "Global Admin": "grid", "Branch Admin": "building", "Head Nurse": "pill", Cashier: "receipt", Finance: "chart", Physio: "pulse", Nurse: "heart", "Nurse Aide": "user" };
 /** ขั้นตอนสมัครใช้งาน (ลำดับจริง) */
 const STEPS: [string, string][] = [["กรอกข้อมูลสมัคร", "ชื่อ อีเมล สาขา และตั้งรหัสผ่าน"], ["ผู้จัดการสาขาอนุมัติ", "ตรวจชื่อ และกำหนดตำแหน่งให้ตรงงาน"], ["เข้าสู่ระบบได้", "ใช้อีเมลและรหัสผ่านที่ตั้งไว้"]];
 /** "2026-11-12 14:20" → "12 พ.ย. 14:20" */

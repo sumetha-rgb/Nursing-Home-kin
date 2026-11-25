@@ -121,7 +121,7 @@ export function Roster() {
     toast(`ส่งออกสรุปรายคนแล้ว ${report.length} คน`);
   };
   // จัดเวรเฉพาะพยาบาล (พนักงานพยาบาลและหัวหน้าพยาบาล)
-  const team = (data?.team ?? []).filter((t) => t.role === "Nurse" || t.role === "Head Nurse");
+  const team = (data?.team ?? []).filter((t) => t.role === "Nurse" || t.role === "Nurse Aide" || t.role === "Head Nurse");
 
   // ---------- รายสัปดาห์ ----------
   const weekShifts: Shift[] = [...shifts, ...(nextData?.shifts ?? [])];
@@ -196,7 +196,7 @@ export function Roster() {
   const [folded, setFolded] = useState<string[]>([]);
   /** โทรศัพท์: วันที่เลือกในแถบวันที่ (ไม่อยู่ในสัปดาห์ที่ดู = วันนี้ หรือวันแรกของสัปดาห์) */
   const [mDay, setMDay] = useState("");
-  const ROLE_ORDER = ["Head Nurse", "Nurse"];
+  const ROLE_ORDER = ["Head Nurse", "Nurse", "Nurse Aide"];
   const shownTeam = team.filter((t) => (!who || t.name.toLowerCase().includes(who.trim().toLowerCase())) && (!onlyOn || weekDays.some((d) => cellOf(t.id, d).length)));
   const groups = ROLE_ORDER.map((r) => ({ role: r, label: ROLE_INFO[r as Role]?.th ?? r, list: shownTeam.filter((t) => t.role === r) })).filter((g) => g.list.length);
   const MENU_OPTS: { k: string[]; t: string; sub: string; c: string }[] = [

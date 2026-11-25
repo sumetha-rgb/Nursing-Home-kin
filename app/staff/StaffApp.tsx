@@ -9,7 +9,7 @@ import { useSession, SessionUser } from "@/lib/session";
 import { ROLE_INFO } from "@/lib/roles";
 import { apptIso, upcomingAppts } from "@/lib/appointments";
 import CashierOnly from "@/components/CashierOnly";
-import { can } from "@/lib/perms";
+import { can, canNurseNote } from "@/lib/perms";
 import Icon from "@/components/Icon";
 import { Avatar, AvatarEdit } from "@/components/Avatar";
 import { Field, Modal, Select } from "@/components/ui";
@@ -913,7 +913,8 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
               <button type="button" className="is-main" onClick={go(() => setVitalsFor(name))}><Icon name="pulse" /><span>วัดสัญญาณชีพ<small>{n.length ? `ถึงรอบ ${n.map((x) => VITAL_SHORT[x.k]).join(" ")} · กรอกเฉพาะที่วัด` : measured[name] ? `วัดแล้ว ${measured[name]} น. · วัดอีกครั้งได้` : "กรอกเฉพาะค่าที่วัด"}</small></span></button>
               {ik && id && <button type="button" className="is-main is-blue" onClick={go(() => { setAdmitP(true); setProfile(id); })}><Icon name="doc" /><span>บันทึกแรกรับ<small>รับเข้า{intakeAgo(ik.days) === "วันนี้" ? "วันนี้" : ` ${intakeAgo(ik.days)}แล้ว`} · ตั้งรอบวัดในฟอร์มเดียวกัน</small></span></button>}
               <button type="button" onClick={go(goMeds)}><Icon name="pill" /><span>ให้ยา<small>{m ? `มื้อ${nowMeal}ค้าง ${m} รายการ` : `มื้อ${nowMeal}ไม่มีค้าง`}</small></span></button>
-              <button type="button" disabled={!id} onClick={go(() => { setProfTab("บันทึกพยาบาล"); setProfile(id!); })}><Icon name="book" /><span>บันทึกพยาบาล<small>Nurse Note</small></span></button>
+              {canNurseNote(user) ? <button type="button" disabled={!id} onClick={go(() => { setProfTab("บันทึกพยาบาล"); setProfile(id!); })}><Icon name="book" /><span>บันทึกพยาบาล<small>Nurse Note</small></span></button>
+                : <button type="button" disabled={!id} onClick={go(() => { setProfTab("บันทึกผู้ช่วยพยาบาล"); setProfile(id!); })}><Icon name="book" /><span>บันทึกผู้ช่วยพยาบาล<small>สิ่งที่ทำและสังเกตเห็นในเวร</small></span></button>}
               <button type="button" disabled={!id} onClick={go(() => setFu({ id: id!, name, text: "", photo: "", busy: false }))}><Icon name="camera" /><span>ส่งข่าวญาติ<small>รูปและข้อความ</small></span></button>
               <button type="button" disabled={!id} onClick={go(() => setLinkFor(id!))}><Icon name="chat" /><span>ลิงก์ญาติ<small>ส่งทาง LINE</small></span></button>
               <button type="button" disabled={!id} onClick={go(() => setProfile(id!))}><Icon name="doc" /><span>ประวัติทั้งหมด<small>แรกรับ แผล ยา กายภาพ</small></span></button>
