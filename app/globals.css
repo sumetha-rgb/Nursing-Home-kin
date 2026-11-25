@@ -4254,3 +4254,23 @@ kbd { font-family:inherit; border:1px solid #EDE5D6; border-bottom-width:2px; bo
 .rv-nocode { min-height:36px; padding:4px 12px; border-radius:999px; border:1px solid #EBC79B; background:#fff; color:#9a5b00; font-size:13px; font-weight:600; }
 .rv-nocode.is-on { background:#9a5b00; border-color:#9a5b00; color:#fff; }
 @media (max-width:640px) { .rv-lf select { flex:1 1 45%; } .rv-tabs { display:grid; width:100%; } }
+/* ประวัติผู้รับบริการบนมือถือ: แถบ 4 หัวข้อหลัก + อื่น ๆ (ติดหัวจอในหน้าต่าง) · แผ่น อื่น ๆ เลื่อนขึ้นจากล่าง */
+.pf-tabs { position:sticky; top:-22px; z-index:5; display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); margin:0 -24px; padding:2px 20px 0; background:#fff; border-bottom:1px solid #EDE5D6; }
+.pf-tabs button { position:relative; display:grid; justify-items:center; gap:2px; padding:7px 0 8px; font-size:11px; line-height:1.2; color:#6f5c3e; border-bottom:2.5px solid transparent; text-align:center; }
+.pf-tabs button svg { color:#A58E65; }
+.pf-tabs button.is-on { color:#8B6E3E; font-weight:700; border-bottom-color:#8B6E3E; }
+.pf-tabs button.is-on svg { color:#8B6E3E; }
+.pf-n { position:absolute; top:2px; left:calc(50% + 4px); min-width:16px; height:16px; padding:0 4px; border-radius:8px; background:#c8372d; color:#fff; font-size:10px; font-weight:700; font-style:normal; line-height:16px; }
+.pf-dot { display:inline-block; width:7px; height:7px; border-radius:50%; background:#E39A3B; }
+.pf-tabs .pf-dot { position:absolute; top:6px; left:calc(50% + 8px); }
+.pf-sheet { position:fixed; inset:0; z-index:95; display:flex; align-items:flex-end; background:rgba(37,33,25,.4); }
+.pf-sheet-in { width:100%; max-height:80dvh; overflow-y:auto; padding:8px 16px calc(16px + env(safe-area-inset-bottom)); border-radius:20px 20px 0 0; background:#fff; animation:pf-up .18s ease-out; }
+@keyframes pf-up { from { transform:translateY(30px); opacity:.6; } to { transform:none; opacity:1; } }
+.pf-grab { display:block; width:38px; height:4px; margin:2px auto 8px; border-radius:2px; background:#DED3BF; }
+.pf-gh { margin:8px 2px 2px; font-size:11.5px; font-weight:700; color:#A58E65; }
+.pf-sheet-in button:not(.pf-close) { display:flex; align-items:center; gap:10px; width:100%; min-height:48px; padding:8px 4px; border-bottom:1px solid #F1EADC; text-align:left; font-size:14px; color:#302B24; }
+.pf-sheet-in button svg { flex:none; color:#8B6E3E; }
+.pf-sheet-in button small { margin-left:auto; padding-left:8px; font-size:12px; color:#A58E65; text-align:right; }
+.pf-sheet-in button.is-on { font-weight:700; color:#8B6E3E; }
+.pf-close { display:block; width:100%; margin-top:10px; min-height:44px; border-radius:12px; background:#F4EBD7; font-weight:600; color:#4A4032; }
+@media (prefers-reduced-motion:reduce) { .pf-sheet-in { animation:none; } }
