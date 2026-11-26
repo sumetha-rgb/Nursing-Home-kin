@@ -1,13 +1,16 @@
 "use client";
 import Icon from "@/components/Icon";
 import { Attendance, monthCells, monthTitle, Shift, shiftMonth, shortName, SHIFTS, WEEKDAYS } from "@/lib/roster";
+import { DEFAULT_SHIFT, shiftRange, type ShiftCfg } from "@/lib/shifts";
 
 /**
  * ปฏิทินเวรรายเดือน ใช้ทั้งระบบจัดการและ KinApp
  * แต่ละวันแสดงชื่อคนเข้าเวรเช้า/ดึก · mine = เน้นเวรของฉัน · ติ๊กถูกเมื่อเช็คชื่อเข้างานแล้ว
  */
 /** gaps (หน้าจัดเวรของผู้จัดการ): วันนี้และวันข้างหน้าที่ยังไม่มีคนเข้าเวร ขอบแดง · ขาดกะใดกะหนึ่ง ขอบส้ม */
-export default function RosterCalendar({ ym, onMonth, shifts, attendance = [], mineId, onlyMine = false, today, selected, onDay, compact = false, gaps = false }: {
+export default function RosterCalendar({ ym, onMonth, shifts, attendance = [], mineId, onlyMine = false, today, selected, onDay, compact = false, gaps = false, start = DEFAULT_SHIFT }: {
+  /** เวลากะของสาขา (lib/shifts · ไม่ส่ง = 07:00/19:00) */
+  start?: ShiftCfg;
   ym: string; onMonth: (ym: string) => void; shifts: Shift[]; attendance?: Attendance[]; mineId?: string; onlyMine?: boolean;
   today: string; selected?: string | null; onDay?: (date: string) => void; compact?: boolean; gaps?: boolean;
 }) {
@@ -47,7 +50,7 @@ export default function RosterCalendar({ ym, onMonth, shifts, attendance = [], m
           );
         })}
       </div>
-      <div className="roster-legend"><span className="is-day">เวรเช้า 07:00–19:00</span><span className="is-night">เวรดึก 19:00–07:00</span>{mineId && <span className="is-me">เวรของฉัน</span>}<span>✓ เช็คชื่อเข้างานแล้ว</span>
+      <div className="roster-legend"><span className="is-day">เวรเช้า {shiftRange(start, false)}</span><span className="is-night">เวรดึก {shiftRange(start, true)}</span>{mineId && <span className="is-me">เวรของฉัน</span>}<span>✓ เช็คชื่อเข้างานแล้ว</span>
         {gaps && <><span className="roster-key is-gap">ยังไม่จัดเวร</span><span className="roster-key is-half">ขาดบางกะ</span></>}</div>
     </div>
   );

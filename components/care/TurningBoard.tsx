@@ -2,13 +2,16 @@
 import { useCallback, useEffect, useState } from "react";
 import { Section } from "../ui";
 import { useApp } from "@/lib/app";
+import { DEFAULT_SHIFT, hourOf, shiftOfHour, type ShiftCfg } from "@/lib/shifts";
+import { useShiftCfgs } from "@/lib/shiftsClient";
 
 export type TurnRisk = { name: string; room: string | null; branch: string | null; braden: string | null; mobility: string | null };
 type Phase = "late" | "todo" | "review" | "done";
 /** รอบพลิกตัว 12 รอบต่อวัน (ทุก 2 ชั่วโมง) · ชื่องาน "พลิกตัว HH:00" ไม่ซ้ำกันต่อรอบ (งานประจำแยกด้วยชื่อ+กะ) */
 export const TURN_HOURS = Array.from({ length: 12 }, (_, i) => `${String(i * 2).padStart(2, "0")}:00`);
 export const turnTask = (hh: string) => `พลิกตัว ${hh}`;
-const shiftOf = (time: string) => { const h = Number(time.slice(0, 2)); return h >= 7 && h < 19 ? "กะเช้า" : "กะดึก"; };
+/** เวลานี้อยู่กะไหน ตามเวลาเริ่มกะเช้าของสาขาผู้ป่วย (lib/shifts) */
+const shiftOf = (time: string, c: ShiftCfg) => shiftOfHour(hourOf(time), c);
 
 /**
  * ตารางพลิกตัวทุก 2 ชั่วโมง: ผู้ที่ Braden ต่ำกว่า 13 หรือติดเตียง (จากประเมินแรกรับ)
@@ -19,6 +22,8 @@ export default function TurningBoard({ rows, phase, routineTasks, isToday, canSe
   isToday: boolean; canSetup: boolean; onChanged: () => void;
 }) {
   const { toast, confirm } = useApp();
+  /** เวลาเริ่มกะเช้าของแต่ละสาขา (งานพลิกตัวแต่ละเวลาอยู่กะไหน) */
+  const starts = useShiftCfgs();
   const [risk, setRisk] = useState<TurnRisk[] | null>(null);
   const [busy, setBusy] = useState("");
   const load = useCallback(() => { fetch("/api/care?op=turning_risk", { cache: "no-store" }).then((r) => (r.ok ? r.json() : { items: [] })).then((d) => setRisk(d.items ?? [])).catch(() => setRisk([])); }, []);
@@ -32,7 +37,7 @@ export default function TurningBoard({ rows, phase, routineTasks, isToday, canSe
     message: `${p.name}${p.braden ? ` · Braden ${p.braden}` : ""}${p.mobility ? ` · ${p.mobility}` : ""} · ระบบสร้างงาน "พลิกตัว" 00:00 ถึง 22:00 ทุก 2 ชั่วโมงใน KinApp ทุกวัน (หยุดได้ที่เมนู งานประจำ)`,
     onOk: async () => {
       setBusy(p.name);
-      const items = TURN_HOURS.map((hh) => ({ resident: p.name, task: turnTask(hh), ins: `พลิกตะแคงตัว ตรวจผิวหนังจุดกดทับ${p.braden ? ` (Braden ${p.braden})` : ""}`, shift: shiftOf(hh), time: hh }));
+      const items = TURN_HOURS.map((hh) => ({ resident: p.name, task: turnTask(hh), ins: `พลิกตะแคงตัว ตรวจผิวหนังจุดกดทับ${p.braden ? ` (Braden ${p.braden})` : ""}`, shift: shiftOf(hh, starts[p.branch ?? ""] ?? DEFAULT_SHIFT), time: hh }));
       const r = await fetch("/api/care", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "routines_add", items }) });
       const d = await r.json().catch(() => ({}));
       setBusy("");

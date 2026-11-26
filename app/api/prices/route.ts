@@ -3,7 +3,7 @@ import { sql } from "@/lib/db";
 import { currentUser, forbidden, unauthorized } from "@/lib/auth";
 import { audit } from "@/lib/audit";
 import { can } from "@/lib/perms";
-import type { SessionUser } from "@/lib/roles";
+import { seesAllBranches, type SessionUser } from "@/lib/roles";
 import { CAT_IDS, CatId, CATS, codeProblem, DEFAULT_ITEMS, isCat, PriceItem, Rate, RATE_UNITS, rateCode, RateUnit, sortItems } from "@/lib/priceList";
 
 export const dynamic = "force-dynamic";
@@ -21,6 +21,16 @@ export const fetchCache = "force-no-store";
  *  POST { op: "sub_add", cat, name }             เพิ่มหมวดย่อย · ระบบจองช่วงรหัสว่างถัดไป (ช่วงละ 10 เลข เช่น NS-5x)
  *  POST { op: "sub_edit", id, name?, active? }   เปลี่ยนชื่อ (รายการในหมวดย่อยเปลี่ยนตาม) · ปิด/เปิดใช้ (ยังมีรายการที่ใช้อยู่ = ปิดไม่ได้)
  *  GET ตอบ subs: หมวดย่อยทั้งหมด (รวมที่ปิดใช้) พร้อมจำนวนรายการ
+ *
+ * ราคาของสาขา (26 พ.ย. 2569 · ตาราง price_branch): ผู้จัดการสาขาตั้งราคาของสาขาตัวเองได้ ไม่กระทบสาขาอื่น
+ *  - ราคากลาง (price_items) = ราคาเริ่มต้นของทุกสาขา · สาขาที่ตั้งราคาเอง เก็บเฉพาะราคา (ตามลำดับราคา หน่วยต้องตรงกับราคากลาง)
+ *  - GET: บัญชีสาขา = ราคาของสาขาตัวเอง (ราคาที่ไม่ได้ตั้ง = ราคากลาง) · ผู้บริหาร/การเงิน = ราคากลาง หรือ ?branch=สาขา
+ *    รายการที่สาขาตั้งราคาเองมี central = ราคากลาง · ตอบ branch = สาขาที่ดูอยู่ (ว่าง = ราคากลาง)
+ *  - save / cancel_next / import ของบัญชีสาขา (หรือผู้บริหารส่ง branch) = แก้ราคาของสาขานั้นเท่านั้น
+ *    ชื่อ รหัส หมวดย่อย หน่วย จำนวนราคา ปิด/เปิดใช้ = ใช้ร่วมทุกสาขา แก้ได้เฉพาะผู้บริหาร (ราคากลาง)
+ *  - POST { op: "branch_reset", id, branch? } = เลิกใช้ราคาของสาขา กลับไปใช้ราคากลาง
+ *  - รายการเฉพาะสาขา (price_items.branch_name): ผู้จัดการสาขาเพิ่มรายการ = ใช้เฉพาะสาขาตัวเอง แก้ชื่อ รหัส ราคา ปิดใช้ได้เต็มที่ · สาขาอื่นไม่เห็น
+ *  - active (ปิด/เปิดใช้) ของบัญชีสาขา = เฉพาะสาขานั้น (price_branch.active · ว่าง = ตามราคากลาง) · ผู้บริหารที่ราคากลาง = ทุกสาขา
  */
 const bad = (msg: string, status = 400) => NextResponse.json({ error: msg }, { status });
 const NO_TABLE = "ยังไม่ได้สร้างตารางใบราคาในฐานข้อมูล · ให้ผู้ดูแลระบบรัน npm run db:setup ก่อน";
@@ -30,10 +40,13 @@ const money = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 
 const MON = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
 const thDate = (iso: string) => { const [y, m, d] = iso.split("-").map(Number); return `${d} ${MON[m - 1]} ${String(y + 543).slice(2)}`; };
 const canEdit = (me: SessionUser) => (me.role === "Global Admin" || me.role === "Branch Admin") && can(me, "prices");
+/** สาขาที่ดู/แก้ราคา: ผู้บริหาร/การเงิน = ที่ส่งมา (ว่าง = ราคากลาง) · บัญชีสาขา = สาขาตัวเองเสมอ */
+const scopeOf = (me: SessionUser, want?: unknown) => (seesAllBranches(me.role) ? (typeof want === "string" && want.trim() && want !== "ส่วนกลาง" ? want.trim() : "") : me.branch ?? "");
+const centralOnly = (me: SessionUser) => me.role === "Global Admin";
 const who = (me: SessionUser) => `${me.name} · ${me.role === "Global Admin" ? "ผู้บริหาร" : `ผู้จัดการสาขา ${me.branch ?? ""}`.trim()}`;
 
 type Row = Omit<PriceItem, "group">;
-const SELECT = `SELECT id, code, cat, sub, name, rates, old_codes AS old, active, coalesce(updated_by, '') AS "updatedBy",
+const SELECT = `SELECT id, code, cat, sub, name, rates, old_codes AS old, active, branch_name AS branch, coalesce(updated_by, '') AS "updatedBy",
   to_char(updated_at AT TIME ZONE 'Asia/Bangkok', 'YYYY-MM-DD HH24:MI') AS "updatedAt" FROM price_items`;
 const all = async () => (await sql(SELECT)) as Row[];
 const one = async (id: string) => ((await sql(`${SELECT} WHERE id = $1`, [id])) as Row[])[0];
@@ -125,6 +138,51 @@ async function applyDue(items: Row[]) {
   }
 }
 
+/* ---------- ราคาของสาขา ---------- */
+const sameRate = (a: { unit: string; label?: string }, b: { unit: string; label?: string }) => a.unit === b.unit && (a.label ?? "") === (b.label ?? "");
+/** ของสาขา: ราคา (ว่าง = ราคากลาง) และปิด/เปิดใช้เฉพาะสาขา (null = ตามราคากลาง) */
+type Ov = { rates: Rate[]; active: boolean | null };
+/** ราคาของสาขา (item_id → ของสาขา) · ราคาที่ตั้งล่วงหน้าถึงวันแล้วเปลี่ยนให้ตอนอ่าน */
+async function branchRates(branch: string) {
+  const rows = (await sql(`SELECT item_id, rates, active FROM price_branch WHERE branch_name = $1`, [branch])) as { item_id: string; rates: Rate[]; active: boolean | null }[];
+  const d = today(), out = new Map<string, Ov>();
+  for (const r of rows) {
+    if (r.rates.some((x) => x?.next && x.next.from <= d)) {
+      r.rates = r.rates.map((x) => (x?.next && x.next.from <= d ? { unit: x.unit, price: x.next.price, ...(x.label ? { label: x.label } : {}), ...(x.room !== undefined ? { room: x.room } : {}) } : x));
+      await sql(`UPDATE price_branch SET rates = $3::jsonb WHERE item_id = $1 AND branch_name = $2`, [r.item_id, branch, JSON.stringify(r.rates)]);
+    }
+    out.set(r.item_id, { rates: r.rates ?? [], active: r.active ?? null });
+  }
+  return out;
+}
+/** ราคากลาง + ราคาของสาขา (ราคาที่ i หน่วยไม่ตรงกับราคากลาง = ใช้ราคากลาง) · central = ราคากลาง (มีเมื่อสาขาตั้งราคาเอง) */
+function merge(x: Row, ovv?: Ov): Row & { central?: Rate[]; ownActive?: boolean } {
+  if (!ovv) return x;
+  const act = ovv.active === null ? {} : { active: ovv.active, ownActive: true };
+  const ov = ovv.rates;
+  if (!ov?.length) return { ...x, ...act };
+  const rates = x.rates.map((c, i) => {
+    const o = ov[i];
+    if (!o || !sameRate(o, c)) return c;
+    const room = o.room ?? c.room;
+    return { unit: c.unit, price: o.price, ...(c.label ? { label: c.label } : {}), ...(room !== undefined ? { room } : {}), ...(o.next ? { next: o.next } : {}) };
+  });
+  return { ...x, ...act, rates, central: x.rates };
+}
+/** บันทึกราคาของสาขา · ตรงกับราคากลางทุกราคาและไม่มีราคาตั้งล่วงหน้า = ลบ (กลับไปใช้ราคากลาง) */
+async function writeBranch(x: Row, branch: string, rates: Rate[], by: string) {
+  const plain = rates.every((r, i) => r.price === x.rates[i]?.price && !r.next && (r.room ?? null) === (x.rates[i]?.room ?? null));
+  // ตรงกับราคากลาง: ลบราคาของสาขา (ยังปิด/เปิดใช้เฉพาะสาขาอยู่ = เก็บแถวไว้ ราคาว่าง)
+  if (plain) await sql.transaction([
+    sql(`DELETE FROM price_branch WHERE item_id = $1 AND branch_name = $2 AND active IS NULL`, [x.id, branch]),
+    sql(`UPDATE price_branch SET rates = '[]'::jsonb, updated_by = $3, updated_at = now() WHERE item_id = $1 AND branch_name = $2`, [x.id, branch, by]),
+  ]);
+  else await sql(`INSERT INTO price_branch (item_id, branch_name, rates, updated_by) VALUES ($1, $2, $3::jsonb, $4)
+    ON CONFLICT (item_id, branch_name) DO UPDATE SET rates = EXCLUDED.rates, updated_by = EXCLUDED.updated_by, updated_at = now()`, [x.id, branch, JSON.stringify(rates), by]);
+  return plain;
+}
+const noBranchTable = (e: unknown) => /price_branch/.test(String((e as Error)?.message ?? "")) && /does not exist/.test(String((e as Error)?.message ?? ""));
+
 export async function GET(req: NextRequest) {
   const me = await currentUser(req);
   if (!me) return unauthorized();
@@ -139,7 +197,11 @@ export async function GET(req: NextRequest) {
     const items = await all();
     await applyDue(items);
     const subs = await loadSubs().catch((e) => { if (noTable(e)) return null; throw e; });
-    return NextResponse.json({ items: sortItems(items), canEdit: canEdit(me), ...(subs ? { subs } : {}) });
+    // ราคาของสาขา (ยังไม่มีตาราง = ราคากลาง)
+    const branch = scopeOf(me, req.nextUrl.searchParams.get("branch"));
+    const ov = branch ? await branchRates(branch).catch((e) => { if (noBranchTable(e)) return new Map<string, Ov>(); throw e; }) : new Map<string, Ov>();
+    const seen = branch ? items.filter((x) => !x.branch || x.branch === branch) : items;
+    return NextResponse.json({ items: sortItems(seen.map((x) => (x.branch ? x : merge(x, ov.get(x.id!))))), canEdit: canEdit(me), central: centralOnly(me), branch, ...(subs ? { subs } : {}) });
   } catch (e) {
     if (noTable(e)) return NextResponse.json({ items: DEFAULT_ITEMS, missing: NO_TABLE, canEdit: false });
     throw e;
@@ -165,7 +227,48 @@ function readRates(v: unknown): InRate[] | string {
 }
 const rateName = (r: Rate) => `${r.unit}${r.label ? ` (${r.label})` : ""}`;
 
+/** ผู้จัดการสาขาแก้ราคาของสาขา: แก้ได้เฉพาะราคา (และค่าห้อง) ของราคาเดิม · ตั้งวันที่มีผลล่วงหน้าได้ */
+async function saveBranch(me: SessionUser, b: Record<string, unknown>, branch: string) {
+  const id = String(b.id);
+  const x = await one(id);
+  if (!x) return bad("ไม่พบรายการ", 404);
+  const reason = typeof b.reason === "string" ? b.reason.trim().slice(0, 300) : "";
+  const when = typeof b.when === "string" && /^\d{4}-\d{2}-\d{2}$/.test(b.when) && b.when > today() ? b.when : "";
+  const name = typeof b.name === "string" ? b.name.trim().replace(/\s+/g, " ") : x.name;
+  const code = typeof b.code === "string" ? b.code.trim().toUpperCase() : x.code;
+  if (name !== x.name || code !== x.code || (typeof b.sub === "string" && b.sub !== x.sub)) return bad("ชื่อ รหัส และหมวดย่อยใช้ร่วมทุกสาขา แก้ได้เฉพาะผู้บริหาร · ผู้จัดการสาขาแก้ได้เฉพาะราคาของสาขา");
+  const rates = readRates(b.rates);
+  if (typeof rates === "string") return bad(rates);
+  if (rates.length !== x.rates.length || rates.some((r, i) => r.from !== i || !sameRate(r, x.rates[i]))) return bad("เพิ่ม ลบ หรือเปลี่ยนหน่วยราคาได้เฉพาะผู้บริหาร · ผู้จัดการสาขาแก้ได้เฉพาะราคา");
+  const cur = merge(x, (await branchRates(branch)).get(id)).rates;
+  const changes: string[] = [];
+  const next: Rate[] = rates.map((r, i) => {
+    const was = cur[i];
+    const room = x.cat === "RM" ? r.room : was.room;
+    if ((was.room ?? null) !== (room ?? null)) changes.push(`ค่าห้อง (มี VAT) ของราคา${rateName(r)} ${was.room !== undefined ? money(was.room) : "ค่าเริ่มต้น"} → ${room !== undefined ? money(room) : "ค่าเริ่มต้น"}`);
+    const base = { unit: was.unit, ...(was.label ? { label: was.label } : {}), ...(room !== undefined ? { room } : {}) };
+    if (r.price === was.price) return { ...base, price: was.price, ...(was.next ? { next: was.next } : {}) };
+    if (when) { changes.push(`ราคา${rateName(r)} ${money(was.price)} → ${money(r.price)} มีผล ${thDate(when)}`); return { ...base, price: was.price, next: { price: r.price, from: when } }; }
+    changes.push(`ราคา${rateName(r)} ${money(was.price)} → ${money(r.price)}`);
+    return { ...base, price: r.price };
+  });
+  if (!changes.length) return bad("ยังไม่ได้แก้อะไร");
+  if (!reason) return bad("กรุณาใส่เหตุผลที่แก้");
+  const by = who(me);
+  const plain = await writeBranch(x, branch, next, by);
+  await log([{ item: x, action: "แก้ราคาสาขา", detail: `สาขา ${branch}: ${changes.join(" · ")}${plain ? " (ตรงกับราคากลาง ใช้ราคากลาง)" : ""}`, reason, by }]);
+  return { item: merge(x, plain ? undefined : { rates: next, active: null }), summary: `สาขา ${branch} · ${x.code} ${x.name} · ${changes.join(" · ")}` };
+}
+
 async function save(me: SessionUser, b: Record<string, unknown>) {
+  // แก้รายการเดิมในขอบเขตสาขา = ราคาของสาขา · เพิ่มรายการใหม่ = รายการกลาง (ทุกสาขาเห็น)
+  const branch = scopeOf(me, b.branch);
+  if (branch && typeof b.id === "string" && b.id) {
+    const it = await one(b.id);
+    if (!it) return bad("ไม่พบรายการ", 404);
+    if (it.branch && it.branch !== branch) return bad("รายการนี้เป็นของสาขาอื่น");
+    if (!it.branch) return saveBranch(me, b, branch);
+  }
   const name = typeof b.name === "string" ? b.name.trim().replace(/\s+/g, " ") : "";
   const cat = b.cat, code = typeof b.code === "string" ? b.code.trim().toUpperCase() : "";
   const sub = typeof b.sub === "string" ? b.sub : "";
@@ -186,10 +289,12 @@ async function save(me: SessionUser, b: Record<string, unknown>) {
   const by = who(me);
 
   if (!id) {
-    const x: Row = { id: crypto.randomUUID(), code, cat, sub, name, rates: rates.map(({ from: _f, ...r }) => r), old: [], active: true };
-    await sql(`INSERT INTO price_items (id, code, cat, sub, name, rates, updated_by) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)`, [x.id, code, cat, sub, name, JSON.stringify(x.rates), by]);
-    await log([{ item: x, action: "เพิ่มรายการ", detail: x.rates.map((r, i) => `${rateCode(x, i)} ${money(r.price)}/${rateName(r)}`).join(" · "), reason, by }]);
-    return { item: x, summary: `เพิ่ม ${code} ${name}` };
+    // เพิ่มจากราคาของสาขา = รายการเฉพาะสาขานั้น · จากราคากลาง = ทุกสาขา
+    const own = scopeOf(me, b.branch) || null;
+    const x: Row = { id: crypto.randomUUID(), code, cat, sub, name, rates: rates.map(({ from: _f, ...r }) => r), old: [], active: true, branch: own };
+    await sql(`INSERT INTO price_items (id, code, cat, sub, name, rates, updated_by, branch_name) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8)`, [x.id, code, cat, sub, name, JSON.stringify(x.rates), by, own]);
+    await log([{ item: x, action: "เพิ่มรายการ", detail: `${own ? `เฉพาะสาขา ${own} · ` : ""}${x.rates.map((r, i) => `${rateCode(x, i)} ${money(r.price)}/${rateName(r)}`).join(" · ")}`, reason, by }]);
+    return { item: x, summary: `เพิ่ม ${code} ${name}${own ? ` (เฉพาะสาขา ${own})` : ""}` };
   }
 
   const old = items.find((x) => x.id === id);
@@ -227,7 +332,11 @@ async function importRows(me: SessionUser, b: Record<string, unknown>) {
   const rows = Array.isArray(b.rows) ? (b.rows as Record<string, unknown>[]).slice(0, 2000) : [];
   if (!rows.length) return bad("ไม่พบแถวข้อมูลในไฟล์");
   const reason = typeof b.reason === "string" ? b.reason.trim().slice(0, 300) : "";
-  const items = sortItems(await all());
+  // บัญชีสาขา: นำเข้าเฉพาะราคาของสาขา (สถานะปิด/เปิดใช้ไม่เปลี่ยน)
+  const branch = scopeOf(me, b.branch);
+  const base = await all();
+  const ov = branch ? await branchRates(branch) : null;
+  const items = sortItems(ov ? base.filter((x) => !x.branch || x.branch === branch).map((x) => (x.branch ? x : merge(x, ov.get(x.id!)))) : base);
   const flat = (s: string) => s.replace(/\s+/g, "").toLowerCase();
   type Plan = { row: number; code: string; name: string; change?: string; skip?: string };
   const plan: Plan[] = [];
@@ -253,7 +362,7 @@ async function importRows(me: SessionUser, b: Record<string, unknown>) {
       t.x.rates[i] = { unit: rate.unit, price, ...(rate.label ? { label: rate.label } : {}) };
     }
     const st = String(r.status ?? "").trim();
-    const want = st === "ปิดใช้" ? false : st === "ใช้อยู่" ? true : null;
+    const want = branch ? null : st === "ปิดใช้" ? false : st === "ใช้อยู่" ? true : null;
     if (want !== null && want !== (t.x.active !== false)) { out.push(want ? "เปิดใช้" : "ปิดใช้"); t.x.active = want; }
     if (!out.length) { p.change = "ไม่เปลี่ยน"; return; }
     p.change = out.join(" · ");
@@ -265,6 +374,11 @@ async function importRows(me: SessionUser, b: Record<string, unknown>) {
   if (!changed.length) return bad("ไม่มีรายการที่ต้องเปลี่ยน");
   if (!reason) return bad("กรุณาใส่เหตุผลที่นำเข้า");
   const by = who(me);
+  if (branch) {
+    for (const t of changed) { const c = base.find((x) => x.id === t.x.id)!; if (c.branch === branch) { await write(t.x, by); continue; } await writeBranch(c, branch, t.x.rates.map(({ unit, price, label, room, next }) => ({ unit, price, ...(label ? { label } : {}), ...(room !== undefined ? { room } : {}), ...(next ? { next } : {}) })), by); }
+    await log(changed.map((t) => ({ item: t.x, action: "นำเข้า CSV (ราคาสาขา)", detail: `สาขา ${branch}: ${t.changes.join(" · ")}`, reason, by })));
+    return { plan, count: changed.length, summary: `สาขา ${branch} · นำเข้า CSV · เปลี่ยน ${changed.length} รายการ` };
+  }
   for (const t of changed) await write(t.x, by);
   await log(changed.map((t) => ({ item: t.x, action: "นำเข้า CSV", detail: t.changes.join(" · "), reason, by })));
   return { plan, count: changed.length, summary: `นำเข้า CSV · เปลี่ยน ${changed.length} รายการ` };
@@ -278,11 +392,56 @@ export async function POST(req: NextRequest) {
   const by = who(me);
   try {
     let out: { summary?: string } & Record<string, unknown>;
+    // รายการเฉพาะสาขาของสาขาที่ทำอยู่ = แก้ได้เหมือนราคากลาง · รายการของสาขาอื่น = ห้าม
+    const target = typeof b.id === "string" && (b.op === "active" || b.op === "cancel_next" || b.op === "branch_reset") ? await one(b.id) : undefined;
+    const scope = scopeOf(me, b.branch);
+    if (target?.branch && target.branch !== scope && !centralOnly(me)) return bad("รายการนี้เป็นของสาขาอื่น");
+    const ownItem = !!target?.branch && (target.branch === scope || centralOnly(me));
     if (b.op === "save") {
       const r = await save(me, b);
       if (r instanceof NextResponse) return r;
       out = r;
+    } else if (!ownItem && (b.op === "branch_reset" || (b.op === "cancel_next" && scopeOf(me, b.branch)))) {
+      // ราคาของสาขา: ยกเลิกราคาที่ตั้งล่วงหน้า / กลับไปใช้ราคากลาง
+      const branch = scopeOf(me, b.branch);
+      if (!branch) return bad("เลือกสาขาก่อน");
+      const x = typeof b.id === "string" ? await one(b.id) : undefined;
+      if (!x) return bad("ไม่พบรายการ", 404);
+      const ov = (await branchRates(branch)).get(x.id!);
+      if (!ov?.rates.length) return bad("สาขานี้ใช้ราคากลางอยู่แล้ว");
+      if (b.op === "branch_reset") {
+        // กลับไปใช้ราคากลาง (ปิด/เปิดใช้เฉพาะสาขาคงไว้)
+        await writeBranch(x, branch, x.rates, by);
+        await log([{ item: x, action: "แก้ราคาสาขา", detail: `สาขา ${branch}: กลับไปใช้ราคากลาง`, by }]);
+        out = { item: x, summary: `สาขา ${branch} · ${x.code} กลับไปใช้ราคากลาง`, branch };
+      } else {
+        const cur = merge(x, ov).rates, r = cur[Number(b.i)];
+        if (!r?.next) return bad("ราคานี้ไม่มีราคาที่ตั้งล่วงหน้า");
+        const detail = `สาขา ${branch}: ยกเลิกราคาใหม่ ${rateName(r)} ${money(r.next.price)} ที่จะมีผล ${thDate(r.next.from)}`;
+        await writeBranch(x, branch, cur.map((y, j) => (j === Number(b.i) ? { unit: y.unit, price: y.price, ...(y.label ? { label: y.label } : {}), ...(y.room !== undefined ? { room: y.room } : {}) } : y)), by);
+        await log([{ item: x, action: "แก้ราคาสาขา", detail, by }]);
+        out = { item: x, summary: `${x.code} · ${detail}`, branch };
+      }
+    } else if (!ownItem && b.op === "active" && scopeOf(me, b.branch)) {
+      // ปิด/เปิดใช้เฉพาะสาขา (สาขาอื่นไม่เปลี่ยน) · ตรงกับราคากลาง = ตามราคากลาง
+      const branch = scopeOf(me, b.branch);
+      const x = typeof b.id === "string" ? await one(b.id) : undefined;
+      if (!x) return bad("ไม่พบรายการ", 404);
+      const want = b.active === true;
+      const cur = merge(x, (await branchRates(branch)).get(x.id!));
+      if ((cur.active !== false) === want) return bad(want ? "รายการนี้ใช้อยู่แล้ว" : "รายการนี้ปิดใช้อยู่แล้ว");
+      const own = want === (x.active !== false) ? null : want;
+      await sql.transaction([
+        sql(`INSERT INTO price_branch (item_id, branch_name, rates, active, updated_by) VALUES ($1, $2, '[]'::jsonb, $3, $4)
+          ON CONFLICT (item_id, branch_name) DO UPDATE SET active = EXCLUDED.active, updated_by = EXCLUDED.updated_by, updated_at = now()`, [x.id, branch, own, by]),
+        sql(`DELETE FROM price_branch WHERE item_id = $1 AND branch_name = $2 AND active IS NULL AND rates = '[]'::jsonb`, [x.id, branch]),
+      ]);
+      const reason = typeof b.reason === "string" ? b.reason.trim().slice(0, 300) : "";
+      await log([{ item: x, action: want ? "เปิดใช้ (สาขา)" : "ปิดใช้ (สาขา)", detail: `สาขา ${branch}`, reason, by }]);
+      out = { item: x, summary: `สาขา ${branch} · ${want ? "เปิดใช้" : "ปิดใช้"} ${x.code} ${x.name}`, branch };
     } else if (b.op === "cancel_next" || b.op === "active") {
+      // ราคากลาง และปิด/เปิดใช้ทุกสาขา: เฉพาะผู้บริหาร
+      if (!centralOnly(me) && !ownItem) return forbidden(b.op === "active" ? "ปิด/เปิดใช้ทุกสาขา ทำได้เฉพาะผู้บริหาร" : "ราคากลางแก้ได้เฉพาะผู้บริหาร");
       const x = typeof b.id === "string" ? await one(b.id) : undefined;
       if (!x) return bad("ไม่พบรายการ", 404);
       if (b.op === "cancel_next") {
@@ -311,10 +470,11 @@ export async function POST(req: NextRequest) {
       if (r instanceof NextResponse) return r;
       out = r;
     } else return bad("คำสั่งไม่ถูกต้อง");
-    if (out.summary) await audit(req, me, [{ area: "prices", action: "update", recordId: (out.item as Row | undefined)?.id ?? null, summary: out.summary, branch: "ส่วนกลาง" }]);
+    if (out.summary) await audit(req, me, [{ area: "prices", action: "update", recordId: (out.item as Row | undefined)?.id ?? null, summary: out.summary, branch: scopeOf(me, b.branch) || "ส่วนกลาง" }]);
     return NextResponse.json(out);
   } catch (e) {
     if (noTable(e)) return bad(NO_TABLE, 503);
+    if (noBranchTable(e)) return bad("ยังไม่ได้สร้างตารางราคาของสาขา · ให้ผู้ดูแลระบบรัน npm run db:setup ก่อน", 503);
     if (/duplicate key/.test(String((e as Error)?.message))) return bad("รหัสนี้ถูกใช้แล้ว · โหลดหน้าใหม่แล้วลองอีกครั้ง", 409);
     throw e;
   }

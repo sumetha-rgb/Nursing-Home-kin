@@ -67,8 +67,9 @@ const limitLines = (k: keyof Vitals) => {
 const TABS = ["ภาพรวม", "แรกรับ/ประเมิน", "บันทึกพยาบาล", "บันทึกผู้ช่วยพยาบาล", "แผล", "สัญญาณชีพ", "ยาและการให้ยา", "กายภาพ", "เวชภัณฑ์", "งานดูแลและนัดหมาย", "สมุดส่งเวร", "ค่าใช้จ่าย"];
 /** แท็บแบ่ง 2 แถวตามกลุ่ม ไม่ต้องเลื่อนซ้ายขวา */
 const TAB_GROUPS = [
-  { label: "ข้อมูลทั่วไป", tabs: ["ภาพรวม", "แรกรับ/ประเมิน", "งานดูแลและนัดหมาย", "สมุดส่งเวร"] },
-  { label: "การดูแลรายวัน", tabs: ["บันทึกพยาบาล", "บันทึกผู้ช่วยพยาบาล", "แผล", "สัญญาณชีพ", "ยาและการให้ยา", "กายภาพ", "เวชภัณฑ์"] },  { label: "การเงิน", tabs: ["ค่าใช้จ่าย"], money: true },
+  { label: "ข้อมูลทั่วไป", tabs: ["ภาพรวม", "งานดูแลและนัดหมาย", "สมุดส่งเวร"] },
+  // แรกรับ/ประเมิน = งานของพยาบาล ต้องบันทึกก่อนเขียนบันทึกอื่น (รับเข้าใหม่) จึงอยู่หน้าสุดของกลุ่มการพยาบาล
+  { label: "การพยาบาลและดูแลรายวัน", tabs: ["แรกรับ/ประเมิน", "บันทึกพยาบาล", "บันทึกผู้ช่วยพยาบาล", "แผล", "สัญญาณชีพ", "ยาและการให้ยา", "กายภาพ", "เวชภัณฑ์"] },  { label: "การเงิน", tabs: ["ค่าใช้จ่าย"], money: true },
 ];
 /** มือถือ: 4 หัวข้อหลักบนแถบ [แท็บ, ชื่อสั้น, ไอคอน] · ที่เหลืออยู่ในแผ่น "อื่น ๆ" */
 const MOBILE_MAIN: [string, string, string][] = [["ภาพรวม", "ภาพรวม", "heart"], ["สัญญาณชีพ", "สัญญาณชีพ", "pulse"], ["ยาและการให้ยา", "ยา", "pill"], ["บันทึกพยาบาล", "บันทึก", "doc"]];
@@ -350,7 +351,8 @@ export default function ResidentProfile({ id, onClose, initialTab, startAdmissio
             </div>
           )}
 
-          {CLINICAL[tab] && id && <ClinicalPanel id={id} tab={CLINICAL[tab]} c={c} reload={reload} name={r.full_name} autoEdit={autoAdm && tab === "แรกรับ/ประเมิน"} onAutoDone={() => setAutoAdm(false)} onAide={() => setTab(NOTE_TABS[1])} />}
+          {CLINICAL[tab] && id && <ClinicalPanel id={id} tab={CLINICAL[tab]} c={c} reload={reload} name={r.full_name} autoEdit={autoAdm && tab === "แรกรับ/ประเมิน"} onAutoDone={() => setAutoAdm(false)} onAide={() => setTab(NOTE_TABS[1])}
+            needIntake={!!c && !c.admission && created >= INTAKE_SINCE && String(r.status ?? "").startsWith("เข้าอยู่")} onIntake={startAdm} />}
 
           {tab === "สมุดส่งเวร" && (
             <DataTable search={false} columns={["หัวข้อ", "รายละเอียด", "ผู้เขียน", "เวลา"]} empty="ไม่มีบันทึกส่งเวร"

@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import CsvIcon from "@/components/CsvIcon";
 import { useBranchNames, withBranches } from "@/lib/branches";
 import Icon from "../Icon";
@@ -7,15 +7,24 @@ import { BRANCH_NAMES, FACILITY_TASKS, MASTER_TASKS } from "@/lib/mock";
 import { downloadCsv, useCrud } from "@/lib/store";
 import { useApp } from "@/lib/app";
 import { useSession } from "@/lib/session";
+import { seesAllBranches } from "@/lib/roles";
+import { effectiveTasks, parseRepeat, parseWindows, repeatText, windowsText } from "@/lib/taskPlan";
+import { hourOf, shiftOfHour } from "@/lib/shifts";
+import { useShiftCfg } from "@/lib/shiftsClient";
 import { fetchNurses } from "@/lib/care";
 import { DataTable, FieldDef, FormDialog, Modal, PageHeader, Section, SearchBox, Select, Tabs, Field } from "../ui";
-import { OptionSettings, useOptions } from "../OptionSettings";
+import FacilityDialog, { facFromRow, facSchedule } from "./FacilityDialog";
 
 /* หมวดหมู่งาน: แก้ได้ที่ ตั้งค่าตัวเลือก (lib/optionLists task_categories) */
 type Dlg = { mode: "add" | "edit"; i: number } | null;
+/** copy = สาขาแก้งานส่วนกลาง (บันทึกเป็นงานของสาขาตัวเอง แทนงานส่วนกลางนั้น) */
+type MtDlg = { mode: "add" | "edit"; i: number; copy?: boolean } | null;
 
 /* ---------- งานทั่วไปประจำสาขา ---------- */
 export const FAC_COLS = ["ชื่องาน", "หมวดหมู่", "เวลา / ความถี่", "วิธีจ่ายงาน"];
+/** CSV: เพิ่มคำแนะนำเพิ่มเติม (แถวที่ 5) */
+const FAC_CATS = ["ความสะอาด NA", "งานทั่วไป / ซ่อมบำรุง", "อื่น ๆ"];
+export const FAC_CSV_COLS = [...FAC_COLS, "คำแนะนำเพิ่มเติม"];
 /** วิธีจ่ายงานส่วนกลาง · ค่าเดิม "สร้างอัตโนมัติ (Routine)" / "จ่ายเอง (Manual)" ยังใช้ได้ */
 const AUTO = "ขึ้นให้ทุกคน · ใครทำก่อนส่ง (Routine)";
 const MANUAL = "มอบหมายคนรับผิดชอบ (Manual)";
@@ -39,20 +48,12 @@ function periodsOf(schedule: string, month: string, today: string) {
   for (let k = 1; k <= days; k++) { const s = `${month}-${String(k).padStart(2, "0")}`; if (s > today) break; out.push({ label: dm(s), start: s, end: s }); }
   return out;
 }
-const FAC_FIELDS: FieldDef[] = [
-  { label: "เลือกงานจากคลังมาตรฐาน (Task Dictionary)", options: Array.from(new Set([...MASTER_TASKS, ...FACILITY_TASKS].map((t) => t[1] === undefined ? "" : t[0].startsWith("T-") ? t[1] : t[0]))), required: true, wide: true },
-  { label: "หมวดหมู่ (ดึงจากคลังอัตโนมัติ)", options: [] },
-  { label: "วิธีจ่ายงาน", options: [AUTO, MANUAL], required: true },
-  { label: "ความถี่", options: ["ทุกวัน (Daily)", "ทุกสัปดาห์ (Weekly)", "ทุกเดือน (Monthly)"], required: true },
-  { label: "เวลาที่ต้องทำ (เช่น 07:00 หรือ กะเช้า)" },
-  { label: "คำแนะนำเพิ่มเติม (ถ้ามี)", area: true },
-];
-
 export function FacilityTasks() {
   // หมวดหมู่งานส่วนกลาง: ความสะอาด / ซ่อมบำรุง + หมวดหมู่งานที่ตั้งค่าไว้
-  const facCats = ["ความสะอาด NA", "งานทั่วไป / ซ่อมบำรุง", ...useOptions("task_categories").values];
+  // หมวดหมู่งานส่วนกลาง (งานสถานที่): ความสะอาด / ซ่อมบำรุง / อื่น ๆ · ไม่ปนหมวดงานดูแลผู้ป่วย (ค่าเดิมของแถวยังแสดงได้)
+  const facCats = FAC_CATS;
   const { rows, ids, add, update, remove } = useCrud("facility", FACILITY_TASKS);
-  const { toast, confirm, go } = useApp();
+  const { toast, confirm } = useApp();
   // สถานะรอบนี้และคนทำล่าสุด (พยาบาลกดทำแล้ว · ถ่ายรูปใน KinApp)
   type Fac = { id: string; assignee: string | null; done: boolean; late: boolean; last: { id: string; by: string; at: string; note: string | null } | null; monthCount: number };
   const [fac, setFac] = useState<Fac[]>([]);
@@ -108,17 +109,16 @@ export function FacilityTasks() {
     (!q || r[0].includes(q)) && (!cat || r[1] === cat) && (mode === "ทั้งหมด" || (mode === "มอบหมายคนรับผิดชอบ") === isManual(r[3])));
   const needAssign = (n: number) => isManual(shown[n].r[3]) && !facOf(shown[n].i)?.assignee;
   const startAssign = (n: number) => { setAssign({ i: shown[n].i, who: global ? "" : facOf(shown[n].i)?.assignee ?? "", branch: global ? "" : user?.branch ?? "" }); if (!nurses.length) fetchNurses().then(setNurses).catch(() => toast("โหลดรายชื่อทีมดูแลไม่สำเร็จ")); };
-  // ฟอร์มมี 6 ช่อง ส่วนตารางแสดง 4 คอลัมน์: ชื่องาน, หมวดหมู่, เวลา/ความถี่, ระบบจ่ายงาน
-  const toRow = (v: string[]) => [v[0], v[1], [v[4], v[3]].filter(Boolean).join(" / "), v[2], v[5]];
+  // ฟอร์ม (FacilityDialog) · ค่าเริ่มต้น: ทุกวัน · ขึ้นให้ทุกคน (useMemo: ฟอร์มล้างค่าเมื่อ value เปลี่ยน)
+  const dlgValue = useMemo(() => facFromRow(dlg?.mode === "edit" ? rows[dlg.i] : undefined, dlg?.mode === "edit" ? facOf(dlg.i)?.assignee ?? "" : ""), [dlg]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <>
       <PageHeader
         title="งานส่วนกลางของสาขา"
         sub="งานสถานที่และทำความสะอาด · ส่งรูปใน KinApp"
         actions={<>
-          <button className="btn-soft" onClick={() => go("master_tasks")}>จัดการแม่แบบงานมาตรฐาน</button>
-          <button className="btn-soft" onClick={() => downloadCsv("งานส่วนกลางของสาขา", FAC_COLS, rows)}><CsvIcon /> ส่งออก CSV</button>
-          <button className="btn-primary" onClick={() => setDlg({ mode: "add", i: -1 })}><Icon name="plus" className="h-4 w-4" /> เพิ่มงานทั่วไป</button>
+          <button className="btn-soft" onClick={() => downloadCsv("งานส่วนกลางของสาขา", FAC_CSV_COLS, rows)}><CsvIcon /> ส่งออก CSV</button>
+          <button className="btn-primary" onClick={() => setDlg({ mode: "add", i: -1 })}><Icon name="plus" className="h-4 w-4" /> เพิ่มงาน</button>
         </>}
       />
       <Section>
@@ -181,16 +181,13 @@ export function FacilityTasks() {
         {pic && <div className="space-y-3"><p className="text-sm text-gold-600">{pic.sub}</p>
           {pic.photo === null ? <p className="text-sm text-gold-500">กำลังโหลดรูป…</p> : pic.photo ? <img src={pic.photo} alt={`รูปหลักฐาน ${pic.title}`} className="w-full rounded-xl" /> : <p className="text-sm text-gold-500">ไม่มีรูป</p>}</div>}
       </Modal>
-      <FormDialog
-        open={!!dlg} mode={dlg?.mode ?? "add"} title={dlg?.mode === "edit" ? "แก้ไขงานการดูแล" : "เพิ่มงานทั่วไปประจำสาขา"}
-        fields={[...FAC_FIELDS.map((f) => (f.label.startsWith("หมวดหมู่") ? { ...f, options: facCats } : f)), { label: "ผู้รับผิดชอบ (พยาบาล / ผู้ช่วยพยาบาล)", options: nurses, pick: "search", placeholder: nurses.length ? "พิมพ์ชื่อเพื่อค้นหา" : "กำลังโหลดรายชื่อ…", showIf: (v) => isManual(v[2]), wide: true }]}
-        value={dlg?.mode === "edit" ? [rows[dlg.i][0], rows[dlg.i][1], modeText(rows[dlg.i][3]), "", rows[dlg.i][2], "", facOf(dlg.i)?.assignee ?? ""] : undefined}
-        onClose={() => setDlg(null)} saveLabel="บันทึกข้อมูล"
+      <FacilityDialog open={!!dlg} edit={dlg?.mode === "edit"} value={dlgValue} cats={facCats} names={rows.map((r) => r[0])} nurses={nurses} global={global}
+        onClose={() => setDlg(null)}
         onSave={(v) => {
-          const r = toRow(v).slice(0, 4);
+          const r = [v.name, v.cat, facSchedule(v), v.manual ? MANUAL : AUTO, v.note];
           const taskId = dlg?.mode === "edit" ? (update(dlg.i, r), ids[dlg.i]) : add(r);
           // มอบหมายคนรับผิดชอบของสาขา (งานใหม่อาจยังบันทึกไม่เสร็จ ลองซ้ำ) · เปลี่ยนเป็นขึ้นให้ทุกคน = ยกเลิกการมอบหมาย
-          const who = isManual(v[2]) ? (v[6] ?? "").trim() : "";
+          const who = v.manual ? v.who.trim() : "";
           const prev = dlg?.mode === "edit" ? facOf(dlg.i)?.assignee ?? "" : "";
           if (!global && taskId && who !== prev) {
             const send = (n: number): void => { fetch("/api/care", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "facility_assign", taskId, assignee: who }) })
@@ -198,91 +195,110 @@ export function FacilityTasks() {
               .catch((e) => toast((e as Error).message)); };
             send(0);
           }
-          if (global && isManual(v[2]) && who) toast("ผู้บริหาร: เลือกสาขาแล้วมอบหมายที่ปุ่ม มอบหมาย ในตาราง");
-          const edit = dlg?.mode === "edit"; setDlg(null); toast({ type: edit ? "edit" : "ok", title: edit ? "แก้ไขงานทั่วไปแล้ว" : "เพิ่มงานทั่วไปแล้ว", detail: r[0] });
-        }}
-      />
+          const edit = dlg?.mode === "edit"; setDlg(null); toast({ type: edit ? "edit" : "ok", title: edit ? "แก้ไขงานส่วนกลางแล้ว" : "เพิ่มงานส่วนกลางแล้ว", detail: v.name });
+        }} />
     </>
   );
 }
 
-/* ---------- คลังงานมาตรฐาน ---------- */
-/** วิชาชีพที่งานมาตรฐานนี้เหมาะสม (ข้อความกำกับในรายการเลือกงาน ไม่ผูกกับตำแหน่งสิทธิ์) · ค่าอื่นที่เคยบันทึกไว้ยังแสดงและเลือกได้ */
-const PROFESSIONS = ["พยาบาล", "ผู้ช่วยพยาบาล", "ผู้ดูแล / ผู้ช่วยเหลือคนไข้", "นักกายภาพบำบัด", "นักกิจกรรมบำบัด", "นักโภชนาการ", "แพทย์"];
-export const MT_COLS = ["รหัส", "ชื่องาน", "คำสั่งงาน (Instruction)", "หมวด", "กะ", "สาขา"];
+/* ---------- ตั้งค่ารายการงาน (เดิมชื่อ แม่แบบงานมาตรฐาน · ข้อมูล key "master") ---------- */
+/**
+ * แถวข้อมูล (lib/schema master): [รหัส, ชื่องาน, คำสั่งงาน, หมวด, กะ, สาขา, วิชาชีพ, เวลาแนะนำ, ทำเมื่อไร]
+ *  26 พ.ย. 2569 เพิ่ม เวลาแนะนำ ("07:00–08:00, 12:00–13:00") และ ทำเมื่อไร ("ทุกวัน" / "ครั้งเดียว" / "จ. พ. ศ.") · หน้ามอบหมายงานเติมให้เมื่อเลือกงานนี้ (lib/taskPlan)
+ *  กะ คิดจากเวลาแนะนำให้เอง (ไม่มีเวลา = ทั้งสองกะ) จึงไม่ต้องเลือก
+ *  25 พ.ย. 2569 เอาหมวดและวิชาชีพออกจากหน้าจอ (ไม่ได้ใช้ต่อ: หมวดใช้แค่ตัวกรอง วิชาชีพเป็นแค่ข้อความกำกับ) · ค่าเดิมยังเก็บในฐานข้อมูล
+ *  กะ = สิ่งที่ใช้จริงตอนมอบหมาย (ทั้งสองกะ = สร้างทั้งกะเช้าและกะดึก) จึงบังคับเลือก
+ */
+export const MT_COLS = ["รหัส", "ชื่องาน", "คำสั่งงาน (Instruction)", "เวลาแนะนำ", "ทำเมื่อไร", "สาขา"];
+export const mtRow = (r: string[]) => [r[0], r[1], r[2], r[7] && r[7] !== "-" ? r[7] : r[4] || "-", r[8] && r[8] !== "-" ? r[8] : "ทุกวัน", r[5]];
+const REPEAT_SUGGEST = ["ทุกวัน", "ครั้งเดียว", "จ. พ. ศ.", "อ. พฤ.", "จ.–ศ.", "ส. อา.", "จ.", "อา."];
 const MT_FIELDS: FieldDef[] = [
   { label: "รหัสงาน" },
   { label: "ชื่องาน", required: true },
   { label: "คำสั่งงาน (Instruction)", area: true, required: true },
-  { label: "หมวดหมู่", options: [] },
-  { label: "กะที่ต้องทำ", options: ["ทั้งสองกะ", "กะเช้า", "กะดึก"] },
+  { label: "หมวดหมู่", hidden: true },
+  { label: "กะที่ต้องทำ", hidden: true },
   { label: "สาขา", options: ["ส่วนกลาง", ...BRANCH_NAMES] },
-  { label: "วิชาชีพ", options: PROFESSIONS },
+  { label: "วิชาชีพ", hidden: true },
+  { label: "เวลาแนะนำ (ไม่บังคับ)", placeholder: "พิมพ์ได้หลายช่วง เช่น 7-8, 12-13, 17-18" },
+  { label: "ทำเมื่อไร", suggest: REPEAT_SUGGEST, placeholder: "ทุกวัน · ครั้งเดียว · จ. พ. ศ." },
 ];
+
+/** รหัสงานถัดไป (T-007) จากงานที่เห็น · server ตรวจซ้ำกับทุกสาขาอีกครั้งแล้วออกรหัสใหม่ถ้าชน (numberMasterTasks) */
+const nextTaskCode = (rows: string[][]) => `T-${String(rows.reduce((n, r) => Math.max(n, Number(/^T-(\d+)$/.exec(r[0] ?? "")?.[1] ?? 0)), 0) + 1).padStart(3, "0")}`;
 
 export function MasterTasks() {
   const branchNames = useBranchNames();
   const { rows, add, update, remove } = useCrud("master", MASTER_TASKS);
-  const cats = useOptions("task_categories").values;
   const { toast, confirm } = useApp();
+  const { user } = useSession();
+  /** เวลากะของสาขา (คิดกะของงานจากเวลาแนะนำ) */
+  const shCfg = useShiftCfg(user?.branch);
+  // ผู้บริหาร (เห็นทุกสาขา) เลือกสาขา/ส่วนกลางได้ · คนอื่นล็อกเป็นสาขาตัวเอง ไม่มีตัวเลือกส่วนกลาง
+  const allBranches = seesAllBranches(user?.role);
+  const myBranch = user?.branch ?? "";
   const [q, setQ] = useState("");
-  const [cat, setCat] = useState("");
   const [shift, setShift] = useState("");
-  const [dlg, setDlg] = useState<Dlg>(null);
-  const [group, setGroup] = useState(false);
-  const [gname, setGname] = useState("");
-  const shown = rows.map((r, i) => ({ r, i })).filter(({ r }) =>
-    (!q || r[1].includes(q) || r[2].includes(q)) && (!cat || r[3] === cat) && (!shift || r[4] === shift));
+  const [dlg, setDlg] = useState<MtDlg>(null);
+  // สาขาเห็นงานของสาขาที่แก้แล้ว แทนงานส่วนกลางตัวเดิม
+  const shown = effectiveTasks(rows.map((r, i) => ({ r, i })), allBranches ? undefined : myBranch).filter(({ r }) =>
+    (!q || r[1].includes(q) || r[2].includes(q)) && (!shift || r[4] === shift));
+  /** แถวที่บัญชีนี้แก้/ลบได้: ผู้บริหารได้ทุกแถว · สาขาแก้/ลบได้เฉพาะงานของสาขาตัวเอง
+   *  งานส่วนกลาง: สาขากดแก้ไข = บันทึกเป็นงานของสาขาตัวเอง แทนงานส่วนกลางนั้น (ฉบับส่วนกลางและสาขาอื่นไม่เปลี่ยน) */
+  const mine = (b?: string) => allBranches || b === myBranch;
+  const guard = (b: string | undefined, run: () => void) => (mine(b) ? run() : toast(`งานของ${b === "ส่วนกลาง" ? "ส่วนกลาง" : `สาขา ${b}`} ลบได้เฉพาะผู้บริหาร`));
+  const editRow = (i: number) => (mine(rows[i][5]) ? setDlg({ mode: "edit", i }) : rows[i][5] === "ส่วนกลาง" && myBranch ? setDlg({ mode: "add", i, copy: true }) : guard(rows[i][5], () => {}));
+  const fields = useMemo(() => MT_FIELDS.map((f) => {
+    if (f.label === "รหัสงาน") return { ...f, readOnly: true };
+    if (f.label === "สาขา") return allBranches ? withBranches([f], branchNames)[0] : { ...f, readOnly: true };
+    return f;
+  }), [allBranches, branchNames]);
+  // ค่าเริ่มต้นของฟอร์มเพิ่ม: รหัสถัดไป · ทั้งสองกะ · สาขาของตัวเอง (useMemo: FormDialog ล้างฟอร์มทุกครั้งที่ value เปลี่ยน)
+  const dlgValue = useMemo(() => !dlg ? undefined : dlg.mode === "edit" ? rows[dlg.i] : dlg.copy ? Object.assign([...rows[dlg.i]], { 0: nextTaskCode(rows), 5: myBranch }) : [nextTaskCode(rows), "", "", "", "ทั้งสองกะ", allBranches ? "" : myBranch, "", "", "ทุกวัน"], [dlg]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <>
       <PageHeader
-        title="แม่แบบงานมาตรฐาน"
-        sub="ชื่องานและคำสั่งงานมาตรฐาน"
+        title="ตั้งค่ารายการงาน"
+        sub="เพิ่มงานที่ทีมต้องทำไว้ที่นี่ แล้วไปมอบหมายให้ผู้รับบริการได้ที่หน้า มอบหมายและตรวจงาน"
         actions={<>
-          <button className="btn-soft" onClick={() => downloadCsv("แม่แบบงานมาตรฐาน", MT_COLS, rows.map((r) => r.slice(0, 6)))}><CsvIcon /> ส่งออก CSV</button>
-          <button className="btn-soft" onClick={() => setGroup(true)}>สร้างกลุ่มงานใหม่</button>
-          <OptionSettings group="tasks" lists={["task_categories"]} label="ตั้งค่าหมวดหมู่งาน" />
-          <button className="btn-primary" onClick={() => setDlg({ mode: "add", i: -1 })}><Icon name="plus" className="h-4 w-4" /> เพิ่มงานมาตรฐาน</button>
+          <button className="btn-soft" onClick={() => downloadCsv("รายการงาน", MT_COLS, rows.map(mtRow))}><CsvIcon /> ส่งออก CSV</button>
+          <button className="btn-primary" onClick={() => setDlg({ mode: "add", i: -1 })}><Icon name="plus" className="h-4 w-4" /> เพิ่มงาน</button>
         </>}
       />
       <Section>
-        <div className="mb-4 grid gap-3 md:grid-cols-[1fr_16rem_12rem]">
+        <div className="mb-4 grid gap-3 md:grid-cols-[1fr_12rem]">
           <div onChange={(e) => setQ((e.target as HTMLInputElement).value)}><SearchBox placeholder="ค้นหาชื่อ/คำสั่งงาน" /></div>
-          <Select options={cats} placeholder="หมวดหมู่: ทั้งหมด" value={cat} onChange={setCat} />
           <Select options={["กะเช้า", "กะดึก", "ทั้งสองกะ"]} placeholder="กะ: ทั้งหมด" value={shift} onChange={setShift} />
         </div>
         <DataTable
           columns={MT_COLS}
-          rows={shown.map((x) => x.r.slice(0, 6))}
+          rows={shown.map((x) => { const v = mtRow(x.r); if (x.r[9] && x.r[9] !== "-") v[5] = `${x.r[5]} · แก้จาก ${x.r[9]}`; return v; })}
           actions={[
-            { label: "แก้ไข", onClick: (n) => setDlg({ mode: "edit", i: shown[n].i }) },
-            { label: "ลบ", danger: true, onClick: (n) => confirm({ title: "ลบงานมาตรฐาน", message: `ต้องการลบ "${shown[n].r[1]}" ใช่หรือไม่`, danger: true, okLabel: "ลบ", onOk: () => { const r = shown[n].r; const undo = remove(shown[n].i); toast({ type: "del", title: "ลบงานมาตรฐานแล้ว", detail: `${r[0]} ${r[1]}`, action: { label: "เลิกทำ", run: () => { undo(); toast(`กู้คืนงานแล้ว · ${r[1]}`); } } }); } }) },
+            { label: "แก้ไข", onClick: (n) => editRow(shown[n].i) },
+            { label: "ลบ", danger: true, onClick: (n) => guard(shown[n].r[5], () => confirm({ title: "ลบงาน", message: `ต้องการลบ "${shown[n].r[1]}" ใช่หรือไม่`, danger: true, okLabel: "ลบ", onOk: () => { const r = shown[n].r; const undo = remove(shown[n].i); toast({ type: "del", title: r[9] && r[9] !== "-" ? `ลบงานแล้ว · กลับไปใช้งานส่วนกลาง ${r[9]}` : "ลบงานแล้ว", detail: `${r[0]} ${r[1]}`, action: { label: "เลิกทำ", run: () => { undo(); toast(`กู้คืนงานแล้ว · ${r[1]}`); } } }); } })) },
           ]}
         />
       </Section>
       <FormDialog
-        open={!!dlg} mode={dlg?.mode ?? "add"} title={dlg?.mode === "edit" ? "แก้ไขงานมาตรฐาน" : "เพิ่มงานมาตรฐาน"}
-        fields={withBranches(MT_FIELDS, branchNames).map((f) => f.label === "หมวดหมู่" ? { ...f, options: cats } : f).map((f) => f.label === "วิชาชีพ" ? { ...f, options: [...new Set([...PROFESSIONS, ...rows.map((r) => r[6]).filter((v) => v && v !== "-")])] } : f)} value={dlg?.mode === "edit" ? rows[dlg.i] : undefined}
+        open={!!dlg} mode={dlg?.mode ?? "add"} title={dlg?.copy ? `แก้ไขงาน · บันทึกเป็นงานของสาขา ${myBranch}` : dlg?.mode === "edit" ? "แก้ไขงาน" : "เพิ่มงาน"}
+        fields={fields} value={dlgValue}
         onClose={() => setDlg(null)} saveLabel="บันทึกข้อมูล"
-        onSave={(v) => { const edit = dlg?.mode === "edit"; if (edit) update(dlg!.i, v); else add(v); setDlg(null); toast({ type: edit ? "edit" : "ok", title: edit ? "แก้ไขงานมาตรฐานแล้ว" : "เพิ่มงานมาตรฐานแล้ว", detail: [v[0], v[1]].filter(Boolean).join(" ") }); }}
+        onSave={(v) => {
+          const edit = dlg?.mode === "edit";
+          const r = [...v]; if (!allBranches) r[5] = edit ? rows[dlg!.i][5] : myBranch;
+          // สาขาแก้งานส่วนกลาง = งานใหม่ของสาขา จำรหัสงานส่วนกลางที่แทนไว้ · แก้แถวเดิมคงค่าเดิม
+          r[9] = dlg?.copy ? rows[dlg.i][0] : edit ? rows[dlg!.i][9] ?? "" : "";
+          // เวลาแนะนำ: จัดรูปให้ (อ่านไม่ออก = เตือน) · กะคิดจากเวลา · ทำเมื่อไร: จัดเป็นข้อความมาตรฐาน
+          const raw = String(r[7] ?? "").trim(), wins = parseWindows(raw);
+          if (raw && raw !== "-" && wins.length !== raw.split(/[,·;\n]+/).filter((x) => x.trim()).length) return toast("เวลาแนะนำอ่านไม่ออกบางช่วง · พิมพ์เช่น 7-8, 12-13");
+          r[7] = wins.length ? windowsText(wins) : "";
+          const sh = [...new Set(wins.map((w) => shiftOfHour(hourOf(w.s), shCfg)))];
+          r[4] = sh.length === 1 ? sh[0] : sh.length ? "ทั้งสองกะ" : (r[4] || "ทั้งสองกะ");
+          r[8] = repeatText(parseRepeat(r[8]), false);
+          if (edit) update(dlg!.i, r); else add(r);
+          setDlg(null); toast({ type: edit || dlg?.copy ? "edit" : "ok", title: dlg?.copy ? `บันทึกเป็นงานของสาขา ${myBranch} แล้ว · ส่วนกลางไม่เปลี่ยน` : edit ? "แก้ไขงานแล้ว" : "เพิ่มงานแล้ว", detail: [r[0], r[1]].filter(Boolean).join(" ") });
+        }}
       />
-      <Modal
-        open={group} title="สร้างกลุ่มงานใหม่" onClose={() => setGroup(false)}
-        footer={<><button className="btn-soft" onClick={() => setGroup(false)}>ยกเลิก</button>
-          <button className="btn-primary" onClick={() => { if (!gname.trim()) return toast("กรุณากรอกชื่อกลุ่มงาน"); setGroup(false); setGname(""); toast("บันทึกกลุ่มงานแล้ว"); }}>บันทึกกลุ่มงาน</button></>}
-      >
-        <div className="space-y-4">
-          <Field label="ชื่อกลุ่มงาน" required><input value={gname} onChange={(e) => setGname(e.target.value)} /></Field>
-          <Field label="คำอธิบาย"><textarea rows={2} /></Field>
-          <Field label="รายการงานในกลุ่ม (ดึงงานจากคลัง)">
-            <div className="space-y-1 rounded-xl border border-cream-300 bg-cream-50/60 p-2">
-              {rows.map((r) => (
-                <label key={r[0]} className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm hover:bg-white"><input type="checkbox" /> {r[1]}</label>
-              ))}
-            </div>
-          </Field>
-        </div>
-      </Modal>
     </>
   );
 }

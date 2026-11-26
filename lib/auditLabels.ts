@@ -19,7 +19,7 @@ export const ACTION_GROUPS: Record<string, string[]> = {
 
 export const AREA_LABEL: Record<string, string> = {
   residents: "ผู้รับบริการ", contracts: "สัญญาบริการ", assessments: "ใบเสนอราคา / แผนดูแล", tasks_table: "งานดูแลย้อนหลัง",
-  facility: "งานส่วนกลางของสาขา", master: "แม่แบบงานมาตรฐาน", appointments: "ตารางนัดหมาย", health: "บันทึกสุขภาพ",
+  facility: "งานส่วนกลางของสาขา", master: "ตั้งค่ารายการงาน", appointments: "ตารางนัดหมาย", health: "บันทึกสุขภาพ",
   complaints: "เสียงจากครอบครัว", docs: "เอกสารและระเบียบ", branches: "ข้อมูลสาขา", users: "ทีมและสิทธิ์การใช้งาน",
   auth: "การเข้าสู่ระบบ", "pharmacy-master": "ห้องยา · ฐานข้อมูลยา", "pharmacy-drugs": "ห้องยา · คลังยา",
   "pharmacy-packs": "ห้องยา · ซองยา", "staff-tasks": "KinApp · งานวันนี้", "staff-meds": "KinApp · คิวจ่ายยา",

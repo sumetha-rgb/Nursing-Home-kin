@@ -51,7 +51,8 @@ export default function PhotoPicker({ value, onChange, label = "แนบรู�
         stop(); stream.current = s;
         if (video.current) { video.current.srcObject = s; video.current.play().catch(() => {}); }
       })
-      .catch((e: Error) => setErr(e.name === "NotAllowedError" ? "เบราว์เซอร์ไม่ได้รับอนุญาตให้ใช้กล้อง กรุณากดอนุญาตที่แถบที่อยู่ด้านบน หรือเลือกรูปจากไฟล์แทน" : e.name === "NotFoundError" ? "ไม่พบกล้องในเครื่องนี้ กรุณาเลือกรูปจากไฟล์แทน" : "เปิดกล้องไม่สำเร็จ กรุณาลองใหม่หรือเลือกรูปจากไฟล์แทน"));
+      // ช่องที่ต้องเป็นรูปสดเท่านั้น (allowFile = false เช่น เช็คชื่อเข้างาน) ไม่ชวนให้เลือกไฟล์
+      .catch((e: Error) => { const alt = allowFile ? "หรือเลือกรูปจากไฟล์แทน" : "หรือใช้มือถือ/แท็บเล็ตที่มีกล้อง"; setErr(e.name === "NotAllowedError" ? `เบราว์เซอร์ไม่ได้รับอนุญาตให้ใช้กล้อง กรุณากดอนุญาตที่แถบที่อยู่ด้านบน ${alt}` : e.name === "NotFoundError" ? `ไม่พบกล้องในเครื่องนี้ · ${alt}` : `เปิดกล้องไม่สำเร็จ กรุณาลองใหม่ ${alt}`); });
     return () => { cancelled = true; };
   }, [cam, facing]); // eslint-disable-line react-hooks/exhaustive-deps
 

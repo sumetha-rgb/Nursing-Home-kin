@@ -251,6 +251,9 @@ export function FormDialog({ open, mode, title, fields, value, onClose, onSave, 
   useEffect(() => { if (open) setV(value ? [...value] : blank()); /* eslint-disable-next-line */ }, [open, value]);
   const view = mode === "view";
   const set = (i: number, x: string) => setV(v.map((o, j) => (j === i ? x : o)));
+  // ฟอร์มยาว: กระจายเป็นหลายคอลัมน์ ช่องเล็กลง ให้เห็นครบโดยไม่ต้องเลื่อน (จอคอม) · 7–12 ช่อง = 3 คอลัมน์ · มากกว่า 12 = 4 คอลัมน์ · มือถือ 1 คอลัมน์เหมือนเดิม
+  const shown = fields.filter((f) => !f.hidden && !(f.showIf && !f.showIf(v))).length;
+  const dense = shown > 12 ? "is-cols4" : shown > 6 ? "is-cols3" : "";
   return (
     <Modal
       open={open} wide={fields.length > 6} title={title} onClose={onClose}
@@ -258,10 +261,10 @@ export function FormDialog({ open, mode, title, fields, value, onClose, onSave, 
         <><button type="button" className="btn-soft" onClick={onClose}>ยกเลิก</button><button form="form-dialog" className="btn-primary">{saveLabel}</button></>
       )}
     >
-      <div className="form-intro">{view ? "รายละเอียดข้อมูลที่บันทึกไว้ในระบบ" : "กรอกข้อมูลให้ครบถ้วน ช่องที่มีเครื่องหมาย * เป็นข้อมูลที่จำเป็น"}</div>
-      <form id="form-dialog" onSubmit={(e) => { e.preventDefault(); onSave(v); }} className="form-grid">
+      <div className={`form-intro ${dense ? "is-dense" : ""} ${dense === "is-cols4" ? "md:hidden" : ""}`}>{view ? "รายละเอียดข้อมูลที่บันทึกไว้ในระบบ" : "กรอกข้อมูลให้ครบถ้วน ช่องที่มีเครื่องหมาย * เป็นข้อมูลที่จำเป็น"}</div>
+      <form id="form-dialog" onSubmit={(e) => { e.preventDefault(); onSave(v); }} className={`form-grid ${dense}`}>
         {fields.map((f, i) => f.hidden || (f.showIf && !f.showIf(v)) ? null : (
-          <Field key={f.label} label={f.label} required={f.required && !view} className={f.wide || f.area ? "md:col-span-2" : ""}>
+          <Field key={f.label} label={f.label} required={f.required && !view} className={f.wide || (f.area && dense !== "is-cols4") ? "md:col-span-2" : ""}>
             {view || f.readOnly ? (
               <p className="field-view">{v[i] || "-"}</p>
             ) : f.pick === "search" ? (

@@ -8,6 +8,7 @@ import type { Invoice } from "@/lib/billing";
 import { bkkToday, cycleDue, nextCycle } from "@/lib/servicePeriod";
 import { vitalDueSummary } from "@/lib/vitalDue";
 import { INTAKE_SINCE } from "@/lib/vitalPlan";
+import { SHIFT_DAY_MIN_SQL, SHIFT_NIGHT_MIN_SQL } from "@/lib/shiftsServer";
 
 /**
  * สัญญารายเดือนที่ครบรอบบิลแล้วหรือจะครบภายใน 7 วัน แต่ยังไม่มีใบของรอบนั้น
@@ -57,10 +58,12 @@ async function compute([tasks, health, billing, contracts, stock, rooms, roster,
   const n = (rows: Record<string, unknown>[]) => (rows[0]?.n as number) ?? 0;
   if (tasks) {
     job(() => q(`SELECT shift, count(*)::int AS n FROM daily_tasks WHERE work_date = ${TODAY} AND status = 'เสร็จแล้ว' ${w("branch_name")} GROUP BY shift`), (v) => { out.review = v; });
-    // งานวันนี้ที่เลยเวลาเกิน 30 นาทีแล้วยังไม่ส่ง (งานกะดึกก่อน 07:00 เป็นเวลาของเช้าวันถัดไป) · เกณฑ์เดียวกับหน้ามอบหมายงาน
+    // งานวันนี้ที่เลยเวลาเกิน 30 นาทีแล้วยังไม่ส่ง (งานกะดึกก่อนเวลาเริ่มกะเช้าของสาขา เช่น 07:00 เป็นเวลาของเช้าวันถัดไป · lib/shifts) · เกณฑ์เดียวกับหน้ามอบหมายงาน
     job(() => q(`SELECT task_name AS task, resident_name AS name FROM daily_tasks
         WHERE work_date = ${TODAY} AND status = 'รอทำ' AND scheduled_time IS NOT NULL ${w("branch_name")}
-          AND work_date + scheduled_time + (CASE WHEN shift = 'กะดึก' AND scheduled_time < time '07:00' THEN interval '1 day' ELSE interval '0' END) + interval '30 minutes'
+          -- มีเวลาสิ้นสุด (ช่วงเวลาทำ เช่น 07:00–08:00) = เลยเวลาเมื่อเลยเวลาสิ้นสุด · ไม่มี = เวลาเริ่ม + 30 นาที
+          AND work_date + coalesce(end_time, scheduled_time) + (CASE WHEN end_time IS NULL THEN interval '30 minutes' ELSE interval '0' END)
+              + (CASE WHEN shift = 'กะดึก' AND coalesce(end_time, scheduled_time) < (time '00:00' + make_interval(mins => ${SHIFT_DAY_MIN_SQL("branch_name")})) THEN interval '1 day' ELSE interval '0' END)
             < (now() AT TIME ZONE 'Asia/Bangkok')
         ORDER BY scheduled_time LIMIT 100`), (v) => { out.late = v; });
   }
@@ -130,7 +133,7 @@ async function compute([tasks, health, billing, contracts, stock, rooms, roster,
   if (roster) {
     // เวรวันนี้ที่เลยเวลาเข้างาน + ผ่อนผัน 15 นาทีแล้วยังไม่เช็คชื่อ (เกณฑ์เดียวกับ KPI)
     job(() => q(`SELECT s.staff_name AS name, s.shift FROM staff_shifts s WHERE s.shift_date = ${TODAY} ${w("s.branch_name")}
-        AND (now() AT TIME ZONE 'Asia/Bangkok')::time >= (CASE WHEN s.shift = 'ดึก' THEN time '19:15' ELSE time '07:15' END)
+        AND (now() AT TIME ZONE 'Asia/Bangkok')::time >= (time '00:00' + make_interval(mins => (CASE WHEN s.shift = 'ดึก' THEN ${SHIFT_NIGHT_MIN_SQL("s.branch_name")} ELSE ${SHIFT_DAY_MIN_SQL("s.branch_name")} END) + 15))
         AND NOT EXISTS (SELECT 1 FROM attendance a WHERE a.staff_id = s.staff_id AND a.work_date = s.shift_date AND a.shift = s.shift AND a.kind = 'in')
       ORDER BY s.shift, s.staff_name`), (v) => { out.checkin = v; });
     // วันนี้ถึงสิ้นเดือนที่ยังไม่มีคนเข้าเวรครบทั้งเช้าและดึก (นับเฉพาะสาขาที่มีผู้รับบริการพักอยู่) · เกณฑ์เดียวกับหน้าตารางเวร

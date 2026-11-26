@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { Modal } from "../ui";
 import { useApp } from "@/lib/app";
-import { clashes, dayLabel, dowOf, DAY_FULL, DAY_TH, PhysioCase, projectDates, Therapist, whoOn } from "@/lib/physio";
+import { clashes, dayLabel, dowOf, DAY_FULL, DAY_TH, PhysioCase, projectDates, Therapist, timeOn, whoOn } from "@/lib/physio";
 
 const TH_MON = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
 
@@ -10,9 +10,10 @@ const TH_MON = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค."
  * นัดเดียว: ให้คนอื่นทำแทนเฉพาะวันนั้น (ลา / สลับเวร) · วันอื่นของคอร์สไม่เปลี่ยน
  *  เปิดจากการกดนัดที่ยังไม่ได้ทำในตารางสัปดาห์ · แก้วัน เวลา หรือทีมทั้งคอร์ส → ปุ่ม "แก้แผนทั้งคอร์ส"
  */
-export default function PhysioSlot({ target, cases, therapists, today, doneToday = false, onClose, onSaved, onEditPlan }: {
+export default function PhysioSlot({ target, cases, therapists, today, doneToday = false, onClose, onSaved, onEditPlan, onMove }: {
   target: { c: PhysioCase; date: string } | null; cases: PhysioCase[]; therapists: Therapist[]; today: string; doneToday?: boolean;
   onClose: () => void; onSaved: () => void; onEditPlan: (c: PhysioCase) => void;
+  /** ย้ายนัดนี้ไปวัน/เวลาอื่น (ปฏิทิน · PhysioBook) */ onMove?: (c: PhysioCase, date: string) => void;
 }) {
   const { toast } = useApp();
   const [pick, setPick] = useState("");
@@ -60,20 +61,24 @@ export default function PhysioSlot({ target, cases, therapists, today, doneToday
     <Modal open title={`นัดกายภาพ · ${c.resident_name}`} onClose={onClose}
       footer={<>
         <button type="button" className="btn-danger sm:mr-auto" disabled={busy} onClick={() => setAsk(true)}>ยกเลิกนัดนี้</button>
-        <button type="button" className="btn-soft" onClick={() => { onClose(); onEditPlan(c); }}>แก้แผนทั้งคอร์ส</button>
         <button type="button" className="btn-soft" onClick={onClose}>ปิด</button>
         <button type="button" className="btn-primary" disabled={busy || !pick || pick === now?.id} onClick={() => save(pick === base?.id ? "" : pick)}>{busy ? "กำลังบันทึก…" : "บันทึก"}</button>
       </>}>
       <div className="space-y-3">
         <div className="pa-slothead">
-          <b>{DAY_FULL[dowOf(date)]} {dayLabel(date).replace(/^\S+ /, "")} · {c.plan_time ?? "-"} น.</b>
+          <b>{DAY_FULL[dowOf(date)]} {dayLabel(date).replace(/^\S+ /, "")} · {timeOn(c, date) || "-"} น.</b>
           <span>{c.name}{/นาที/.test(c.name) ? "" : ` · ครั้งละ ${c.plan_minutes ?? 45} นาที`}</span>
           <span>คนทำนัดนี้: <b>{now?.name ?? "-"}</b>{covered ? ` (ทำแทน ${base?.name ?? ""})` : " (คนประจำ)"}</span>
+          {/* ย้าย / แก้แผน อยู่ในกล่องหัว (ปุ่มล่างเหลือ ยกเลิกนัด · ปิด · บันทึก ไม่ตกบรรทัด) */}
+          <span className="ps-acts">
+            {onMove && <button type="button" className="btn-soft" onClick={() => { onClose(); onMove(c, date); }}>ย้ายวัน / เวลา</button>}
+            <button type="button" className="btn-soft" onClick={() => { onClose(); onEditPlan(c); }}>แก้แผนทั้งคอร์ส</button>
+          </span>
         </div>
         {c.plan_slots?.req?.[date] && <p className="pk-vwarn"><b>{c.plan_slots.req[date].by.name} ขอคนแทน</b> · {c.plan_slots.req[date].reason} · ส่งเมื่อ {c.plan_slots.req[date].at} · เลือกคนทำแทนด้านล่าง หรือยกเลิกนัดนี้</p>}
         <ul className="pa-rule">
           <li>เปลี่ยนคนทำ หรือ <b>ยกเลิกนัดนี้</b> (เลือกวันผิด) ได้<b>เฉพาะนัดนี้</b> · นัดวันอื่นไม่เปลี่ยน</li>
-          <li>เปลี่ยนเวลา นาทีต่อครั้ง หรือวันทั้งคอร์ส → ปุ่ม <b>แก้แผนทั้งคอร์ส</b></li>
+          <li>ย้ายนัดนี้ไปวันหรือเวลาอื่น → ปุ่ม <b>ย้ายวัน / เวลา</b> (หรือลากนัดในปฏิทิน) · เปลี่ยนทั้งคอร์ส → <b>แก้แผนทั้งคอร์ส</b></li>
           <li>คนทำแทนเห็นนัดนี้ในคิวกายภาพของ KinApp และได้แจ้งเตือนบนมือถือ</li>
           <li>ทำแล้วนับเป็นผลงานของคนทำแทน · ถ้าไม่ได้ทำ ติดตามการส่งงานจะขึ้นชื่อคนทำแทน</li>
         </ul>
@@ -106,7 +111,7 @@ export default function PhysioSlot({ target, cases, therapists, today, doneToday
           <div className="pc-date"><small>{DAY_TH[dowOf(date)]}</small><b>{Number(date.slice(8, 10))}</b><span>{TH_MON[Number(date.slice(5, 7)) - 1]}</span></div>
           <div className="pc-info">
             <b>{c.resident_name}</b>
-            <span>{c.plan_time ?? "-"} น. · {c.plan_minutes ?? 45} นาที</span>
+            <span>{timeOn(c, date) || "-"} น. · {c.plan_minutes ?? 45} นาที</span>
             <span>นักกายภาพ: {now?.name ?? "-"}</span>
           </div>
           <em className="pc-tag">จะถูกยกเลิก</em>

@@ -21,7 +21,8 @@ export const ROLE_INFO: Record<Role, { th: string; sees: string; app: string }> 
 
 /** บัญชีทดลอง สร้างโดย npm run db:setup (ลบออกก่อนใช้งานจริง ดู db/README.md) */
 export const DEMO_PASSWORD = "demo1234";
-export const DEMO_ACCOUNTS: { email: string; name: string; role: Role; branch: string }[] = [
+/** label = ปุ่มแยกในหน้าเข้าสู่ระบบ (บัญชีเพิ่มของตำแหน่งเดิม เช่น ผู้จัดการอีกสาขา) · ไม่มี = ปุ่มตามตำแหน่ง */
+export const DEMO_ACCOUNTS: { email: string; name: string; role: Role; branch: string; label?: string }[] = [
   { email: "global@kin.test", name: "ผู้บริหาร (ทดลอง)", role: "Global Admin", branch: "ทุกสาขา" },
   { email: "branch@kin.test", name: "ผู้จัดการสาขา (ทดลอง)", role: "Branch Admin", branch: "สุขุมวิท 107" },
   { email: "nurse@kin.test", name: "หัวหน้าพยาบาล (ทดลอง)", role: "Head Nurse", branch: "สุขุมวิท 107" },
@@ -31,6 +32,7 @@ export const DEMO_ACCOUNTS: { email: string; name: string; role: Role; branch: s
   { email: "aide@kin.test", name: "ผู้ช่วยพยาบาล (ทดลอง)", role: "Nurse Aide", branch: "สุขุมวิท 107" },
   { email: "physio@kin.test", name: "นักกายภาพ (ทดลอง)", role: "Physio", branch: "สุขุมวิท 107" },
   { email: "physio2@kin.test", name: "ปวีณา สุขเจริญ", role: "Physio", branch: "สุขุมวิท 107" },
+  { email: "omkod@kin.test", name: "ผู้จัดการสาขาอ้อมกอด (ทดลอง)", role: "Branch Admin", branch: "อ้อมกอด พระราม 3", label: "ผู้จัดการอ้อมกอด" },
 ];
 export const SHOW_DEMO = process.env.NEXT_PUBLIC_SHOW_DEMO_ACCOUNTS !== "false";
 

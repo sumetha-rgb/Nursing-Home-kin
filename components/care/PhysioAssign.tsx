@@ -2,8 +2,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { Modal } from "../ui";
 import { useApp } from "@/lib/app";
-import { addMonth, clashes, DAY_FULL, DAY_TH, dayLabel, dowOf, leftOf, loadOf, monthCells, monthLabel, PhysioCase, projectDates, Sched, Therapist, WEEK } from "@/lib/physio";
+import { addMonth, clashes, courseMinutes, DAY_FULL, DAY_TH, dayLabel, dowOf, leftOf, loadOf, monthCells, monthLabel, PhysioCase, projectDates, Sched, Therapist, WEEK } from "@/lib/physio";
 import { useOptions } from "../OptionSettings";
+import { useSession } from "@/lib/session";
 
 /** ปุ่มลัดเลือกวัน */
 const PRESETS: { label: string; days: number[] }[] = [
@@ -25,6 +26,10 @@ export default function PhysioAssign({ c, cases, therapists, today, doneToday, o
   // ช่วงเวลานัดและความยาวต่อครั้ง แก้ได้ที่ ตั้งค่าตัวเลือก (เลือกเวลาอื่นเองได้เหมือนเดิม)
   const TIME_SLOTS = useOptions("physio_slots").values, MINUTES = useOptions("physio_minutes").values.map(Number).filter((n) => n > 0);
   const { toast } = useApp();
+  const { user } = useSession();
+  /** ผู้จัดการสาขา/ผู้บริหาร: เปลี่ยนความยาวต่อครั้งจากที่ซื้อได้ (ต้องใส่เหตุผล) · คนอื่นล็อกตามที่ซื้อ */
+  const boss = user?.role === "Branch Admin" || user?.role === "Global Admin" || user?.role === "Cashier";
+  const [why, setWhy] = useState("");
   const [tid, setTid] = useState("");
   const [days, setDays] = useState<number[]>([]);
   /** เลือกวันเอง (YYYY-MM-DD) · มีค่า = ใช้แทนวันในสัปดาห์ */
@@ -42,7 +47,7 @@ export default function PhysioAssign({ c, cases, therapists, today, doneToday, o
     const team = therapists.filter((t) => t.branch === c.branch_name); // ค่าเริ่มต้น: สาขานี้มีคนเดียว = เลือกให้
     // เคสใหม่ที่สาขามีนักกายภาพคนเดียว = เลือกให้เลย
     setTid(c.therapist_id ?? (team.length === 1 ? team[0].id : "")); setDays(c.plan_days ?? []); setDates(c.plan_dates ?? []); setTime(c.plan_time ?? "");
-    setMinutes(c.plan_minutes ?? (Number(c.name.match(/(\d+)\s*นาที/)?.[1]) || 45)); setYm(today.slice(0, 7));
+    setMinutes(c.plan_minutes ?? courseMinutes(c) ?? 45); setWhy(""); setYm(today.slice(0, 7));
     setDowT(Object.fromEntries(Object.entries(c.plan_slots?.dow ?? {}).map(([k, v]) => [k, v.id])));
     setCrew((c.plan_slots?.team ?? []).map((x) => x.id).filter((x) => x !== c.therapist_id));
   }, [c]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -77,12 +82,18 @@ export default function PhysioAssign({ c, cases, therapists, today, doneToday, o
     if (cur.length >= leftOf(c)) return toast(`นัดครบ ${leftOf(c)} ครั้งที่เหลือแล้ว · กดวันที่มีนัดเพื่อยกเลิกก่อน`);
     setDates([...cur, d].sort()); setDays([]);
   };
-  const need = tid ? [!days.length && !dates.length && "วัน", !time && "เวลา"].filter(Boolean) as string[] : [];
+  /** ความยาวต่อครั้งตามที่ซื้อ (null = ไม่ได้ระบุ เลือกอิสระ) · ไม่ตรงที่ซื้อ = ผู้จัดการต้องใส่เหตุผล (ค่าที่ผู้จัดการตั้งไว้เดิม บันทึกซ้ำได้) */
+  const bought = courseMinutes(c);
+  const offPlan = !!tid && bought != null && minutes !== bought;
+  const needWhy = offPlan && minutes !== c.plan_minutes && !why.trim();
+  const lockedMin = bought != null && !boss;
+  const minuteOpts = [...new Set([...(bought != null ? [bought] : []), ...(c.plan_minutes ? [c.plan_minutes] : []), ...MINUTES])].sort((a, b) => a - b);
+  const need = tid ? [!days.length && !dates.length && "วัน", !time && "เวลา", needWhy && "เหตุผลที่เปลี่ยนความยาวต่อครั้ง"].filter(Boolean) as string[] : [];
   const onDay = new Map(plan.map((p) => [p.date, p.n]));
   const save = async () => {
     if (need.length) return toast(`กรุณาเลือก${need.join("และ")}`);
     setBusy(true);
-    const r = await fetch("/api/clinic", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "course_plan", courseId: c.id, therapistId: tid, days: dates.length ? [] : days, dates, time, minutes, slots: { dow: Object.fromEntries(planDow.filter((x) => doerOf(x) !== tid).map((x) => [String(x), doerOf(x)])), team: crewIds } }) });
+    const r = await fetch("/api/clinic", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "course_plan", courseId: c.id, therapistId: tid, days: dates.length ? [] : days, dates, time, minutes, minutesWhy: offPlan ? why.trim() : "", slots: { dow: Object.fromEntries(planDow.filter((x) => doerOf(x) !== tid).map((x) => [String(x), doerOf(x)])), team: crewIds } }) });
     const d = await r.json().catch(() => ({}));
     setBusy(false);
     if (!r.ok) return toast(d.error || "บันทึกไม่สำเร็จ");
@@ -149,8 +160,12 @@ export default function PhysioAssign({ c, cases, therapists, today, doneToday, o
             </section>
 
             <section className="pa2-step">
-              <h4><i>4</i>ครั้งละ</h4>
-              <div className="pa-days">{MINUTES.map((m) => <button key={m} type="button" aria-pressed={minutes === m} className={minutes === m ? "is-on" : ""} onClick={() => setMinutes(m)}>{m} นาที</button>)}</div>
+              <h4><i>4</i>ครั้งละ{bought != null && <small>{lockedMin ? `ล็อกตามที่ซื้อ ${bought} นาที · เปลี่ยนได้เฉพาะผู้จัดการสาขา` : `ตามที่ซื้อ ${bought} นาที`}</small>}</h4>
+              <div className="pa-days">{minuteOpts.map((m) => <button key={m} type="button" aria-pressed={minutes === m} className={minutes === m ? "is-on" : ""} disabled={lockedMin && m !== minutes} onClick={() => setMinutes(m)}>{m} นาที{m === bought ? " · ที่ซื้อ" : ""}</button>)}</div>
+              {offPlan && (boss ? (minutes !== c.plan_minutes
+                ? <label className="pa-warn mt-2 block">ไม่ตรงกับที่ซื้อ ({bought} นาที) · ใส่เหตุผล (บันทึกในประวัติการใช้งาน)<input className="mt-1.5 w-full" value={why} onChange={(e) => setWhy(e.target.value)} placeholder="เช่น ผู้ป่วยเหนื่อยง่าย แพทย์ให้ลดเวลา" maxLength={200} /></label>
+                : <p className="pa-warn mt-2">ตั้งไว้ {minutes} นาที ไม่ตรงกับที่ซื้อ ({bought} นาที)</p>)
+                : <p className="pa-warn mt-2">ผู้จัดการตั้งไว้ {minutes} นาที (ซื้อ {bought} นาที)</p>)}
             </section>
 
             {team.length > 1 && <section className="pa2-step">

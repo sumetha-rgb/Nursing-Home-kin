@@ -1,9 +1,10 @@
 "use client";
 
 /** ตารางเวร: ตัวช่วยฝั่งหน้าเว็บสำหรับ /api/roster */
+/** กะของตารางเวร · เวลาของแต่ละกะตั้งได้รายสาขา ใช้ shiftRange(เวลาเริ่มกะ, ดึก?) จาก lib/shifts (ไม่มีเวลาในนี้แล้ว) */
 export const SHIFTS = [
-  { key: "เช้า", label: "เวรเช้า", time: "07:00–19:00" },
-  { key: "ดึก", label: "เวรดึก", time: "19:00–07:00" },
+  { key: "เช้า", label: "เวรเช้า" },
+  { key: "ดึก", label: "เวรดึก" },
 ] as const;
 export type Shift = { id: string; branch_name: string; staff_id: string; staff_name: string; date: string; shift: string };
 export type Attendance = { id: string; staff_id: string; staff_name: string; date: string; shift: string | null; kind: "in" | "out"; time: string; late_min: number | null; photo?: string };

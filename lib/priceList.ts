@@ -20,6 +20,7 @@ export type PriceItem = {
   id?: string; code: string; cat: CatId; sub: string; name: string; rates: Rate[];
   /** รหัสที่เคยใช้ (ค้นหาเจอ) */ old?: string[];
   active?: boolean; updatedBy?: string; updatedAt?: string;
+  /** รายการเฉพาะสาขา (ว่าง = ทุกสาขา) · สาขาอื่นไม่เห็น */ branch?: string | null;
   /** ชื่อหมวด (ใช้จัดกลุ่มในช่องเลือกค่าบริการ) */ group: string;
 };
 

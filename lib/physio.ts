@@ -16,16 +16,49 @@ export type PhysioCase = {
   plan_slots?: PlanSlots | null;
   /** บันทึกล่าสุด 3 ครั้ง (ใหม่ก่อน) */
   recent: PhysioNote[];
+  /** รหัสในใบราคาตอนซื้อ (PT-22-P) · ใช้หาความยาวต่อครั้งที่ซื้อ (courseMinutes) */
+  price_code?: string | null;
 };
+
+/**
+ * ความยาวต่อครั้งตามที่ซื้อ (นาที) · null = ไม่ได้ระบุ เลือกได้อิสระ
+ *  ตามใบราคา: PT-01 กายภาพพื้นฐานรายครั้ง 30 · PT-02 ทีมฟื้นฟูวิชาชีพรายครั้ง 60 · PT-11–19 แพ็กเกจเสริมความแข็งแรง 25 · PT-21–29 Package Extra 60
+ *  ไม่มีรหัส (คอร์สพิมพ์ชื่อเอง) = ตัวเลขในชื่อ เช่น "กายภาพบำบัด (ครั้งละ 45 นาที)" = 45
+ *  ใช้ทั้งหน้าจ่ายเคส (ล็อกปุ่ม) และ server (/api/clinic course_plan: เปลี่ยนจากที่ซื้อได้เฉพาะผู้จัดการ พร้อมเหตุผล)
+ */
+export function courseMinutes(c: { price_code?: string | null; name?: string | null }): number | null {
+  const m = /^PT-(\d+)/.exec(String(c.price_code ?? ""));
+  if (m) {
+    const n = Number(m[1]);
+    if (n === 1) return 30;
+    if (n === 2) return 60;
+    if (n >= 11 && n <= 19) return 25;
+    if (n >= 21 && n <= 29) return 60;
+  }
+  const t = Number(/(\d+)\s*นาที/.exec(String(c.name ?? ""))?.[1]);
+  return t >= 10 && t <= 180 ? t : null;
+}
 /** คนทำนัด (รหัส + ชื่อ) */
 export type Slot = { id: string; name: string };
 /** dow: "0"–"6" (0 = อาทิตย์) → คนทำทุกวันนั้น · date: YYYY-MM-DD → คนทำแทนเฉพาะวันนั้น */
 export type PlanSlots = { dow?: Record<string, Slot>; date?: Record<string, Slot>; /** วันที่ยกเลิกนัด (แผนทุกสัปดาห์ · ข้ามเฉพาะวันนั้น) */ skip?: string[];
   /** นักกายภาพขอคนแทน (วันที่ → ผู้ขอ เหตุผล เวลาไทย) · ล้างเมื่อจัดคนแทน/ยกเลิกนัดวันนั้น */
   req?: Record<string, { by: Slot; reason: string; at: string }>;
+  /** นัดเพิ่มเฉพาะวัน (แผนทุกสัปดาห์ · ย้ายนัด/เพิ่มนัดจากปฏิทิน) · เลือกวันเองใช้ plan_dates แทน */
+  add?: string[];
+  /** เวลานัดเฉพาะวัน (HH:MM) · ไม่มี = plan_time */
+  at?: Record<string, string>;
   /** ทีมประจำเคส (รวมผู้รับผิดชอบหลัก) · ผู้จัดการ/ฝ่ายขายส่งใครในทีมไปแต่ละนัดก็ได้ · คนในทีมเห็นเคสและประวัติ */
   team?: Slot[] };
 type SlotCase = { therapist_id: string | null; therapist_name: string | null; plan_slots?: PlanSlots | null };
+/** เวลานัดของวันที่ date (ย้ายเวลาเฉพาะวัน > เวลาตามแผน) */
+export const timeOn = (c: { plan_time: string | null; plan_slots?: PlanSlots | null }, date: string) => c.plan_slots?.at?.[date] ?? c.plan_time ?? "";
+/** plan_slots ที่เอาช่องว่างออก (เก็บทุกช่องที่มี · ใช้ตอนแก้ทีละส่วน) */
+export function packSlots(s: PlanSlots): PlanSlots | null {
+  const o: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(s)) if (v && (Array.isArray(v) ? v.length : typeof v === "object" ? Object.keys(v).length : true)) o[k] = v;
+  return Object.keys(o).length ? (o as PlanSlots) : null;
+}
 /** คนทำนัดวันที่ date: ทำแทนเฉพาะวัน > คนประจำวันนั้นของสัปดาห์ > ผู้รับผิดชอบหลัก */
 export function whoOn(c: SlotCase, date: string): Slot | null {
   const s = c.plan_slots;
@@ -58,7 +91,24 @@ export type PhysioLog = { course_id: string | null; date: string; at: string; ti
 export type PhysioRecord = { id: string; course_id: string | null; resident_name: string; author: string | null; date: string; at: string; title: string | null; by_id?: string | null };
 /** นักกายภาพที่ทำบันทึกนั้นจริง (รหัสจากเช็คอิน · ไม่มี = เทียบชื่อผู้บันทึก) · ไม่ผูกกับผู้รับผิดชอบเคสปัจจุบัน */
 export const recBy = (d: Pick<PhysioBoard, "therapists">, r: Pick<PhysioRecord, "by_id" | "author">) => r.by_id ?? d.therapists.find((t) => t.name === r.author)?.id ?? null;
-export type PhysioBoard = { cases: PhysioCase[]; therapists: Therapist[]; today: PhysioDone[]; month: { author: string; n: number; hours?: number; cases?: number; sub?: number }[]; visits?: PhysioVisit[]; mylog?: PhysioLog[];
+/** นักกายภาพไม่ว่าง (ลา ป่วย ประชุม) · s/e = นาทีของวัน · ว่าง = ทั้งวัน */
+export type PhysioBlock = { id: string; therapist_id: string; therapist_name: string | null; date: string; s: number | null; e: number | null; reason: string | null; by?: string | null };
+/** ช่วงไม่ว่างของนักกายภาพที่ทับเวลา a–e (นาที) ของวันนั้น · ทั้งวัน = ทับเสมอ */
+export const blockHit = (blocks: PhysioBlock[] | undefined, tid: string, date: string, a?: number, e?: number) =>
+  (blocks ?? []).filter((b) => b.therapist_id === tid && b.date === date && (b.s == null || b.e == null || a == null || e == null || (b.s < e && a < b.e)));
+/** ข้อความช่วงไม่ว่าง เช่น "ลา · ทั้งวัน" "ประชุม · 13:00–15:00" */
+export const blockText = (b: PhysioBlock) => `${b.reason || "ไม่ว่าง"} · ${b.s == null || b.e == null ? "ทั้งวัน" : `${String(Math.floor(b.s / 60)).padStart(2, "0")}:${String(b.s % 60).padStart(2, "0")}–${String(Math.floor(b.e / 60)).padStart(2, "0")}:${String(b.e % 60).padStart(2, "0")}`}`;
+/** เวลางานนักกายภาพ (นาทีของวัน) · days = วันที่เข้างาน (0 = อา. … 6 = ส.) · ไม่มี = ทุกวัน */
+export type PhysioHours = { therapist_id: string; s: number; e: number; days: number[] | null };
+/** เวลางานเริ่มต้น (ยังไม่ได้ตั้ง) */
+export const DEFAULT_HOURS = { s: 8 * 60, e: 19 * 60 };
+/** เวลางานของนักกายภาพวันนั้น · null = ไม่เข้างานวันนั้น */
+export const hoursOn = (hours: PhysioHours[] | undefined, tid: string, date: string) => {
+  const h = hours?.find((x) => x.therapist_id === tid);
+  if (!h) return DEFAULT_HOURS;
+  return h.days?.length && !h.days.includes(dowOf(date)) ? null : { s: h.s, e: h.e };
+};
+export type PhysioBoard = { hours?: PhysioHours[]; blocks?: PhysioBlock[]; cases: PhysioCase[]; therapists: Therapist[]; today: PhysioDone[]; month: { author: string; n: number; hours?: number; cases?: number; sub?: number }[]; visits?: PhysioVisit[]; mylog?: PhysioLog[];
   log?: PhysioRecord[];
   /** เช็คอินวันก่อน ๆ ที่ไม่ได้บันทึก */
   stale?: { course_id: string; resident_name: string; therapist_name: string | null; date: string; at: string }[];
@@ -100,7 +150,7 @@ export function trackRows(d: PhysioBoard, from: string, to: string): TrackRow[] 
       const stale = (d.stale ?? []).find((v) => v.course_id === c.id && v.date === date);
       const status: TrackStatus = rec ? "done" : date < today ? (stale ? "noRecord" : "missed") : date === today ? (live.has(c.id) ? "live" : "todo") : "planned";
       const w = whoOn(c, date);
-      rows.push({ date, time: rec?.at ?? c.plan_time ?? "", resident: c.resident_name, therapist: rec ? rec.author ?? "-" : w?.name ?? "-", therapistId: rec ? recBy(d, rec) : w?.id ?? null, status, cover: !rec && !!c.plan_slots?.date?.[date], req: rec ? undefined : c.plan_slots?.req?.[date]?.reason, at: rec?.at ?? stale?.at, author: rec?.author ?? undefined, caseId: c.id });
+      rows.push({ date, time: rec?.at ?? timeOn(c, date), resident: c.resident_name, therapist: rec ? rec.author ?? "-" : w?.name ?? "-", therapistId: rec ? recBy(d, rec) : w?.id ?? null, status, cover: !rec && !!c.plan_slots?.date?.[date], req: rec ? undefined : c.plan_slots?.req?.[date]?.reason, at: rec?.at ?? stale?.at, author: rec?.author ?? undefined, caseId: c.id });
     }
   }
   for (const r of recs) if (!used.has(r.id)) {
@@ -170,13 +220,15 @@ export const ACTIVITIES = ["ฝึกเดิน", "ฝึกยืน/ทร�
 
 const mins = (t: string) => { const [h, m] = t.split(":").map(Number); return h * 60 + m; };
 /** แผนนัดของคอร์ส: ทุกสัปดาห์ (days) หรือเลือกวันเอง (dates) */
-export type Sched = { days?: number[] | null; dates?: string[] | null; skip?: string[] | null };
-export const schedOf = (c: { plan_days: number[] | null; plan_dates?: string[] | null; plan_slots?: PlanSlots | null }): Sched => ({ days: c.plan_days, dates: c.plan_dates, skip: c.plan_slots?.skip });
+export type Sched = { days?: number[] | null; dates?: string[] | null; skip?: string[] | null; /** นัดเพิ่มเฉพาะวัน (แผนทุกสัปดาห์) */ add?: string[] | null };
+export const schedOf = (c: { plan_days: number[] | null; plan_dates?: string[] | null; plan_slots?: PlanSlots | null }): Sched => ({ days: c.plan_days, dates: c.plan_dates, skip: c.plan_slots?.skip, add: c.plan_slots?.add });
 const explicit = (s: Sched) => !!s.dates?.length;
 /** มีนัดวันที่ date ไหม (เลือกวันเอง = ตรงวันที่ · ทุกสัปดาห์ = ตรงวันในสัปดาห์) */
-export const onDate = (s: Sched, date: string) => !s.skip?.includes(date) && (explicit(s) ? s.dates!.includes(date) : !!s.days?.includes(dowOf(date)));
+export const onDate = (s: Sched, date: string) => !s.skip?.includes(date) && (explicit(s) ? s.dates!.includes(date) : !!s.days?.includes(dowOf(date)) || !!s.add?.includes(date));
 /** สองแผนมีวันที่อาจตรงกันไหม (ใช้หาเวลาชน) */
 function sharesDay(a: Sched, b: Sched) {
+  // นัดเพิ่มเฉพาะวัน: เทียบวันที่นั้นกับอีกแผน
+  if ((a.add ?? []).some((d) => onDate(b, d)) || (b.add ?? []).some((d) => onDate(a, d))) return true;
   if (explicit(a) && explicit(b)) return a.dates!.some((d) => b.dates!.includes(d));
   if (explicit(a)) return a.dates!.some((d) => !!b.days?.includes(dowOf(d)));
   if (explicit(b)) return b.dates!.some((d) => !!a.days?.includes(dowOf(d)));
@@ -204,7 +256,8 @@ function perWeek(c: { plan_days: number[] | null; plan_dates?: string[] | null }
 export function schedFor(c: SlotCase & { plan_days: number[] | null; plan_dates?: string[] | null }, tid: string): Sched | null {
   if (c.plan_dates?.length) { const dates = c.plan_dates.filter((d) => whoOn(c, d)?.id === tid); return dates.length ? { dates } : null; }
   const days = (c.plan_days ?? []).filter((x) => (c.plan_slots?.dow?.[String(x)]?.id ?? c.therapist_id) === tid);
-  return days.length ? { days } : null;
+  const add = (c.plan_slots?.add ?? []).filter((d) => whoOn(c, d)?.id === tid);
+  return days.length || add.length ? { days, add, skip: c.plan_slots?.skip } : null;
 }
 /** ภาระงานต่อสัปดาห์ของนักกายภาพ: จำนวนเคส (ที่อยู่ในทีม) และชั่วโมง (เฉพาะนัดของคนนี้) */
 export function loadOf(cases: PhysioCase[], therapistId: string) {
@@ -233,10 +286,12 @@ export function projectDates(c: { used: number; total: number; plan_days: number
     const start = skipFrom ? addDays(from, 1) : from;
     return [...new Set(c.plan_dates)].filter((d) => d >= start).sort().slice(0, Math.max(0, c.total - c.used)).map((date, k) => ({ date, n: c.used + 1 + k }));
   }
-  if (!c.plan_days?.length) return out;
+  const add = c.plan_slots?.add ?? [];
+  if (!c.plan_days?.length && !add.length) return out;
+  const last = add.reduce((m, x) => (x > m ? x : m), "");
   let d = skipFrom ? addDays(from, 1) : from, n = c.used + 1;
-  for (let guard = 0; n <= c.total && guard < 400; guard++, d = addDays(d, 1)) {
-    if (c.plan_days.includes(dowOf(d)) && !skip.includes(d)) out.push({ date: d, n: n++ });
+  for (let guard = 0; n <= c.total && guard < 400 && (c.plan_days?.length || d <= last); guard++, d = addDays(d, 1)) {
+    if (((c.plan_days ?? []).includes(dowOf(d)) || add.includes(d)) && !skip.includes(d)) out.push({ date: d, n: n++ });
   }
   return out;
 }

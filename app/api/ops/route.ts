@@ -10,6 +10,7 @@ import { compareBranches, insights } from "@/lib/insights";
 import { drill } from "@/lib/drill";
 import { dimsOf, isDrillKpi, type DrillDim } from "@/lib/drillDims";
 import { attention } from "@/lib/attention";
+import { SHIFT_DAY_MIN_SQL } from "@/lib/shiftsServer";
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
@@ -63,8 +64,8 @@ export async function GET(req: NextRequest) {
             to_char(d.scheduled_time, 'HH24:MI') AS time
           FROM task_nudges n JOIN daily_tasks d ON d.id = n.task_id
           WHERE n.branch_name = $1 AND d.status NOT IN ('เสร็จแล้ว', 'ตรวจแล้ว')
-            -- วันทำงานเดียวกับ KinApp (เปลี่ยนตอน 07:00): เวรดึกยังเห็นจนจบเวร · หลัง 07:00 ไม่ค้างของเมื่อวาน
-            AND n.work_date >= (now() AT TIME ZONE 'Asia/Bangkok' - interval '7 hours')::date
+            -- วันทำงานเดียวกับ KinApp (เปลี่ยนตอนเริ่มกะเช้าของสาขา · lib/shifts): เวรดึกยังเห็นจนจบเวร · หลัง 07:00 ไม่ค้างของเมื่อวาน
+            AND n.work_date >= (now() AT TIME ZONE 'Asia/Bangkok' - make_interval(mins => ${SHIFT_DAY_MIN_SQL("n.branch_name")}))::date
             AND (
               -- ถึงฉันโดยตรง และยังไม่ตอบ
               (n.target = $2 AND n.reply IS NULL)

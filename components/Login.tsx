@@ -57,9 +57,13 @@ export default function Login({ onLogin, staff = false }: { onLogin: (u: Session
   const [waiting, setWaiting] = useState<{ name: string; branch: string; since: string } | null>(null);
   const [sent, setSent] = useState<{ name: string; email: string; branch: string; at: string } | null>(null);
   const [picker, setPicker] = useState<SessionUser | null>(null);
-  const [demo, setDemo] = useState<Role | null>(null);
+  /** บัญชีทดลองที่เปิดดู (อีเมล) · ปุ่มตามตำแหน่ง = บัญชีแรกของตำแหน่งนั้น */
+  const [demoEmail, setDemoEmail] = useState<string | null>(null);
   const [copied, setCopied] = useState("");
-  const demoAcc = SHOW_DEMO && demo ? DEMO_ACCOUNTS.find((d) => d.role === demo) : undefined;
+  const demoAcc = SHOW_DEMO && demoEmail ? DEMO_ACCOUNTS.find((d) => d.email === demoEmail) : undefined;
+  const demo: Role | null = demoAcc?.role ?? null;
+  const setDemo = (v: null) => setDemoEmail(v);
+  const demoOf = (role: Role) => DEMO_ACCOUNTS.find((d) => d.role === role && !d.label);
   const [f, setF] = useState({ name: "", email: "", password: "", confirm: "", branch: "" });
   // จดจำฉันไว้: อยู่ในระบบ 30 วัน + จำอีเมลไว้ให้ · รหัสผ่านให้เบราว์เซอร์เป็นคนจำ (ระบบไม่เก็บรหัสผ่านในเครื่อง)
   const [remember, setRemember] = useState(true);
@@ -216,10 +220,17 @@ export default function Login({ onLogin, staff = false }: { onLogin: (u: Session
       {SHOW_DEMO && <details className="auth-demo">
         <summary>บัญชีทดลองตามตำแหน่ง (สำหรับทดสอบ)</summary>
         <div className="mt-2.5 grid grid-cols-3 gap-1.5 sm:grid-cols-6">
-          {ROLES.slice().reverse().map((role) => (
-            <button key={role} type="button" onClick={() => { setCopied(""); setDemo(role); }} className="flex min-w-0 flex-col items-center gap-1 rounded-xl border border-cream-200 bg-white px-2 py-2 text-center transition hover:border-gold-300 hover:bg-cream-50">
+          {ROLES.slice().reverse().filter((role) => demoOf(role)).map((role) => (
+            <button key={role} type="button" onClick={() => { setCopied(""); setDemoEmail(demoOf(role)!.email); }} className="flex min-w-0 flex-col items-center gap-1 rounded-xl border border-cream-200 bg-white px-2 py-2 text-center transition hover:border-gold-300 hover:bg-cream-50">
               <span className="grid h-8 w-8 place-items-center rounded-full bg-cream-100 text-gold-600"><Icon name={ROLE_ICON[role]} className="h-[18px] w-[18px]" /></span>
               <span className="text-[11px] font-medium leading-4 text-gold-800">{ROLE_INFO[role].th}</span>
+            </button>
+          ))}
+          {/* บัญชีเพิ่มของตำแหน่งเดิม เช่น ผู้จัดการสาขาอ้อมกอด */}
+          {DEMO_ACCOUNTS.filter((d) => d.label).map((d) => (
+            <button key={d.email} type="button" onClick={() => { setCopied(""); setDemoEmail(d.email); }} className="flex min-w-0 flex-col items-center gap-1 rounded-xl border border-cream-200 bg-white px-2 py-2 text-center transition hover:border-gold-300 hover:bg-cream-50">
+              <span className="grid h-8 w-8 place-items-center rounded-full bg-cream-100 text-gold-600"><Icon name={ROLE_ICON[d.role]} className="h-[18px] w-[18px]" /></span>
+              <span className="text-[11px] font-medium leading-4 text-gold-800">{d.label}</span>
             </button>
           ))}
         </div>
@@ -244,7 +255,7 @@ export default function Login({ onLogin, staff = false }: { onLogin: (u: Session
       <section className="auth-form-panel">
         <div className="auth-form">
           {panel}
-          <Modal open={!!demo} title={demo ? ROLE_INFO[demo].th : ""} onClose={() => setDemo(null)}
+          <Modal open={!!demo} title={demoAcc?.label ?? (demo ? ROLE_INFO[demo].th : "")} onClose={() => setDemo(null)}
             footer={demoAcc ? <><button className="btn-soft" onClick={() => { switchView("login"); setF({ ...f, email: demoAcc.email, password: DEMO_PASSWORD }); setDemo(null); }}>กรอกให้ในฟอร์ม</button><button className="btn-primary" disabled={busy} onClick={() => { setDemo(null); switchView("login"); setF({ ...f, email: demoAcc.email, password: DEMO_PASSWORD }); login(demoAcc.email, DEMO_PASSWORD); }}>เข้าด้วยบัญชีนี้ <Icon name="arrow" className="h-4 w-4" /></button></> : <button className="btn-primary" onClick={() => setDemo(null)}>ปิด</button>}>
             {demo && <div className="space-y-5">
               <div className="flex items-start gap-4">

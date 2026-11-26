@@ -9,7 +9,7 @@ import type { SessionUser } from "@/lib/roles";
 import PhotoPicker from "../PhotoPicker";
 import PhysioRecordModal, { RecordTarget, stampFor, testPhoto } from "./PhysioRecord";
 import PhysioSessions from "./PhysioSessions";
-import { addDays, inCase, whoOn } from "@/lib/physio";
+import { addDays, inCase, timeOn, whoOn } from "@/lib/physio";
 import { addMonth, DAY_FULL, DAY_TH, dayLabel, dowOf, monthCells, monthLabel, projectDates, WEEK, leftOf, loadOf, onDate, PAY_TEXT, payOf, PhysioBoard, PhysioCase, PhysioHistory, PhysioVisit, photoUrl, schedOf, vitalsText, weekDates } from "@/lib/physio";
 
 export type PhysioView = "ptoday" | "pweek" | "pcases";
@@ -57,7 +57,7 @@ export default function PhysioKin({ view, user, onCount }: { view: PhysioView; u
   const done = new Map((d?.today ?? []).filter((x) => x.course_id).map((x) => [x.course_id!, x]));
   const tIso = d?.date ?? new Date(Date.now() + 7 * 36e5).toISOString().slice(0, 10);
   // นัดวันนี้ (ทุกสัปดาห์ หรือเลือกวันเอง)
-  const queue = mine.filter((c) => onDate(schedOf(c), tIso) && myDay(c, tIso)).sort((a, b) => (a.plan_time ?? "").localeCompare(b.plan_time ?? ""));
+  const queue = mine.filter((c) => onDate(schedOf(c), tIso) && myDay(c, tIso)).sort((a, b) => timeOn(a, tIso).localeCompare(timeOn(b, tIso)));
   const pending = queue.filter((c) => !done.has(c.id)).length;
   useEffect(() => { onCount(pending); }, [pending, onCount]);
   const monthN = d?.month.find((m) => m.author === user.name)?.n ?? 0;
@@ -151,7 +151,7 @@ export default function PhysioKin({ view, user, onCount }: { view: PhysioView; u
     return (
       <li key={c.id} className={`pk-card ${dn && !v ? "is-done" : ""} ${v ? "is-live" : ""}`}>
         <div className="pk-top">
-          {opts.time && <span className="pk-time">{c.plan_time ?? "--:--"}</span>}
+          {opts.time && <span className="pk-time">{timeOn(c, tIso) || "--:--"}</span>}
           <div className="pk-who"><b>{c.resident_name}{cover && <em className="pk-cover">ทำแทน</em>}</b><small>{c.branch_name !== user.branch && <em className="pk-away">📍 {c.branch_name}</em>}{c.room ? `ห้อง ${c.room}${c.bed ? ` · เตียง ${c.bed}` : ""}` : "ยังไม่มีห้อง"}{opts.who ? ` · ${c.therapist_name ?? "ยังไม่มีผู้รับผิดชอบ"}` : ""}</small></div>
           {dn ? <span className="pk-st is-done">✓ {dn.at}</span> : left <= 2 ? <span className="pk-st is-warn">เหลือ {left}</span> : null}
         </div>
@@ -198,11 +198,11 @@ export default function PhysioKin({ view, user, onCount }: { view: PhysioView; u
           if (t && myDay(c, tIso) && !(d.mylog ?? []).some((l) => l.course_id === c.id && l.date === tIso)) put(tIso, { c, n: c.used, doneAt: t.at });
         }
         for (const c of mine) for (const p of projectDates(c, tIso, done.has(c.id))) if (myDay(c, p.date)) put(p.date, { c, n: p.n });
-        byDay.forEach((l) => l.sort((x, y) => (x.c.plan_time ?? "").localeCompare(y.c.plan_time ?? "")));
+        byDay.forEach((l, dt) => l.sort((x, y) => timeOn(x.c, dt).localeCompare(timeOn(y.c, dt))));
         const sel = pick || tIso;
         const row = (x: { c: PhysioCase; n: number; doneAt?: string }, date: string) => (
           <li key={`${x.c.id}${date}${x.n}`}><button type="button" className={`pk-appt ${x.doneAt ? "is-done" : ""}`} onClick={() => setAppt({ c: x.c, date, n: x.n, doneAt: x.doneAt })}>
-            <b>{x.doneAt ?? x.c.plan_time ?? "--:--"}</b>
+            <b>{x.doneAt ?? (timeOn(x.c, date) || "--:--")}</b>
             <span><strong>{x.c.resident_name}{!x.doneAt && x.c.plan_slots?.date?.[date]?.id === user.id && <em className="pk-cover">ทำแทน</em>}{!x.doneAt && x.c.plan_slots?.req?.[date]?.by.id === user.id && <em className="pk-req">ขอคนแทนแล้ว</em>}</strong><small>{x.c.room ? `ห้อง ${x.c.room} · ` : ""}ครั้งที่ {x.n}/{x.c.total}{x.doneAt ? " · บันทึกแล้ว" : ` · ${x.c.plan_minutes ?? 45} นาที`}</small></span>
             <i aria-hidden>{x.doneAt ? "✓" : "›"}</i>
           </button></li>
@@ -285,7 +285,7 @@ export default function PhysioKin({ view, user, onCount }: { view: PhysioView; u
       <Modal open={!!ask} title="ขอคนแทน" onClose={() => setAsk(null)}
         footer={<><button className="btn-soft" onClick={() => setAsk(null)}>ยกเลิก</button><button className="btn-primary" disabled={busy || !ask?.reason.trim()} onClick={sendAsk}>{busy ? "กำลังส่ง…" : "ส่งคำขอ"}</button></>}>
         {ask && <div className="pk-form">
-          <p className="pk-who-line"><b>{ask.c.resident_name}</b> · {dayLabel(ask.date)}{ask.date === tIso ? " (วันนี้)" : ""} · {ask.c.plan_time ?? "-"} น.</p>
+          <p className="pk-who-line"><b>{ask.c.resident_name}</b> · {dayLabel(ask.date)}{ask.date === tIso ? " (วันนี้)" : ""} · {timeOn(ask.c, ask.date) || "-"} น.</p>
           <p className="pk-meta">ระบบแจ้งผู้จัดการสาขาและฝ่ายขายให้หาคนทำแทน · นัดยังเป็นของคุณจนกว่าจะมีคนรับ</p>
           <p className="pk-sub">เหตุผล</p>
           <div className="pk-chips">{["ป่วย / ลา", "ติดงานอื่น", "เหตุฉุกเฉิน"].map((x) => <button key={x} type="button" aria-pressed={ask.reason === x} className={ask.reason === x ? "is-on" : ""} onClick={() => setAsk({ ...ask, reason: x })}>{x}</button>)}</div>
@@ -319,7 +319,7 @@ export default function PhysioKin({ view, user, onCount }: { view: PhysioView; u
         {appt && <div className="pk-form">
           <dl className="pk-kv">
             <dt>วันที่</dt><dd>{dayLabel(appt.date)}{appt.date === tIso ? " (วันนี้)" : ""}</dd>
-            <dt>{appt.doneAt ? "บันทึกเมื่อ" : "เวลานัด"}</dt><dd>{appt.doneAt ?? appt.c.plan_time ?? "-"} น.{!appt.doneAt && appt.c.plan_minutes ? ` · ${appt.c.plan_minutes} นาที` : ""}</dd>
+            <dt>{appt.doneAt ? "บันทึกเมื่อ" : "เวลานัด"}</dt><dd>{appt.doneAt ?? (timeOn(appt.c, appt.date) || "-")} น.{!appt.doneAt && appt.c.plan_minutes ? ` · ${appt.c.plan_minutes} นาที` : ""}</dd>
             <dt>ห้อง</dt><dd>{appt.c.room ? `${appt.c.room}${appt.c.bed ? ` · เตียง ${appt.c.bed}` : ""}` : "ยังไม่มีห้อง"}</dd>
             <dt>คอร์ส</dt><dd>{appt.c.name}</dd>
             <dt>ครั้งที่</dt><dd>{appt.n} จาก {appt.c.total}{appt.doneAt ? " · บันทึกแล้ว ✓" : appt.date > tIso ? " (ตามแผน)" : ""}</dd>

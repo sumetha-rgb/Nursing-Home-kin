@@ -37,16 +37,26 @@ export function useClinic(id: string | null) {
 }
 
 /** autoEdit = เปิดฟอร์มบันทึกแรกรับทันที (จากป้ายรอแรกรับ / การ์ดรับเข้าใหม่) · onAutoDone = เปิดแล้ว */
-export default function ClinicalPanel({ id, tab, c, reload, name = "", autoEdit, onAutoDone, onAide }: { id: string; tab: ClinicalTab; c: Clinic | null; reload: () => void; name?: string; autoEdit?: boolean; onAutoDone?: () => void; onAide?: () => void }) {
+/** needIntake = รับเข้าใหม่ที่ยังไม่บันทึกแรกรับ: บันทึกพยาบาล / Problem list / บันทึกผู้ช่วยพยาบาล เขียนไม่ได้จนพยาบาลบันทึกแรกรับ · onIntake = ไปบันทึกแรกรับ */
+export default function ClinicalPanel({ id, tab, c, reload, name = "", autoEdit, onAutoDone, onAide, needIntake = false, onIntake }: { id: string; tab: ClinicalTab; c: Clinic | null; reload: () => void; name?: string; autoEdit?: boolean; onAutoDone?: () => void; onAide?: () => void; needIntake?: boolean; onIntake?: () => void }) {
   if (!c) return <p className="py-8 text-center text-sm text-gold-500">กำลังโหลด…</p>;
   if (tab === "admission") return <Admission id={id} c={c} reload={reload} autoEdit={autoEdit} onAutoDone={onAutoDone} />;
-  if (tab === "nursing") return <Nursing id={id} c={c} reload={reload} onAide={onAide} />;
-  if (tab === "aide") return <Aide id={id} c={c} reload={reload} />;
+  if (tab === "nursing") return <Nursing id={id} c={c} reload={reload} onAide={onAide} needIntake={needIntake} onIntake={onIntake} />;
+  if (tab === "aide") return <Aide id={id} c={c} reload={reload} needIntake={needIntake} onIntake={onIntake} />;
   if (tab === "physio") return <Physio id={id} c={c} reload={reload} name={name} />;
   return <Supplies id={id} c={c} reload={reload} />;
 }
 
 type P = { id: string; c: Clinic; reload: () => void };
+/** รับเข้าใหม่ยังไม่บันทึกแรกรับ: แจ้งให้พยาบาลบันทึกแรกรับก่อน (ผู้ช่วยพยาบาล/ตำแหน่งอื่นเห็นว่ารอพยาบาล) */
+function IntakeFirst({ onIntake, what }: { onIntake?: () => void; what: string }) {
+  const { user } = useSession();
+  const nurse = canNurseNote(user);
+  return <p className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900">
+    ต้องบันทึกแรกรับก่อน · {what}เขียนได้หลังพยาบาลบันทึกประวัติและประเมินแรกรับแล้ว
+    {nurse && onIntake ? <> · <button type="button" className="font-semibold text-gold-800 underline underline-offset-2" onClick={onIntake}>บันทึกแรกรับตอนนี้ ›</button></> : <> · แจ้งพยาบาลประจำเวร</>}
+  </p>;
+}
 /** ชื่อผู้บันทึก + ตำแหน่ง เช่น "นภา (ผู้ช่วยพยาบาล)" */
 const byWho = (n: Note) => !n.author ? "-" : n.author_role && ROLE_INFO[n.author_role as Role] ? `${n.author} (${ROLE_INFO[n.author_role as Role].th})` : n.author;
 const run = async (toast: (m: string) => void, body: object, ok: string, after: () => void) => {
@@ -58,6 +68,8 @@ const run = async (toast: (m: string) => void, body: object, ok: string, after: 
 type PlanNow = { can: boolean; custom: boolean; by: string | null; plan: VitalPlan };
 function Admission({ id, c, reload, autoEdit, onAutoDone }: P & { autoEdit?: boolean; onAutoDone?: () => void }) {
   const { toast } = useApp();
+  // บันทึกแรกรับเป็นงานของพยาบาล (สิทธิ์ เขียนบันทึกพยาบาล · หัวหน้าพยาบาล ผู้จัดการ) · ตำแหน่งอื่นดูได้อย่างเดียว
+  const nurseAdm = canNurseNote(useSession().user);
   const [edit, setEdit] = useState<Record<string, string> | null>(null);
   // รอบการวัด (ท้ายแบบประเมิน): ค่าที่กดเลือกเอง > รอบที่ตั้งไว้แล้ว > รอบแนะนำจากข้อมูลในฟอร์ม (lib/vitalPlan suggestPlan)
   const [vp, setVp] = useState<PlanNow | null>(null);
@@ -119,7 +131,8 @@ function Admission({ id, c, reload, autoEdit, onAutoDone }: P & { autoEdit?: boo
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-gold-600">{c.admission ? `บันทึกล่าสุดโดย ${c.admission.assessed_by ?? "-"} · ${c.admission.at}` : "ยังไม่ได้บันทึกประวัติและประเมินแรกรับ"}</p>
-        <button className="btn-primary !py-2" onClick={open}><Icon name={c.admission ? "doc" : "plus"} className="h-4 w-4" /> {c.admission ? "แก้ไขแบบประเมิน" : "บันทึกแรกรับ"}</button>
+        {nurseAdm ? <button className="btn-primary !py-2" onClick={open}><Icon name={c.admission ? "doc" : "plus"} className="h-4 w-4" /> {c.admission ? "แก้ไขแบบประเมิน" : "บันทึกแรกรับ"}</button>
+          : <span className="rounded-full bg-cream-100 px-3 py-1 text-xs font-semibold text-gold-700">บันทึกและแก้ไขได้เฉพาะพยาบาล</span>}
       </div>
       {filled > 0 && ADMISSION.map((s) => {
         const items = s.fields.filter((f) => data[f.key]);
@@ -148,7 +161,7 @@ function Admission({ id, c, reload, autoEdit, onAutoDone }: P & { autoEdit?: boo
 }
 
 /* ---------- บันทึกผู้ช่วยพยาบาล (โน้ตรายเวร แบบเดียวกับ Nurse Note) ---------- */
-function Aide({ id, c, reload }: P) {
+function Aide({ id, c, reload, needIntake, onIntake }: P & { needIntake?: boolean; onIntake?: () => void }) {
   const { toast, confirm } = useApp();
   const { user } = useSession();
   const [an, setAn] = useState({ shift: SHIFTS[0], body: "" });
@@ -159,11 +172,11 @@ function Aide({ id, c, reload }: P) {
   return (
     <section className="space-y-3">
       <h4 className="profile-sub">บันทึกผู้ช่วยพยาบาล</h4>
-      <div className="grid gap-2 sm:grid-cols-[140px_1fr_auto]">
+      {needIntake ? <IntakeFirst onIntake={onIntake} what="บันทึกผู้ช่วยพยาบาล" /> : <div className="grid gap-2 sm:grid-cols-[140px_1fr_auto]">
         <select value={an.shift} onChange={(e) => setAn({ ...an, shift: e.target.value })} aria-label="เวร">{SHIFTS.map((x) => <option key={x}>{x}</option>)}</select>
         <textarea rows={2} value={an.body} onChange={(e) => setAn({ ...an, body: e.target.value })} placeholder="สิ่งที่ทำและสังเกตเห็น เช่น อาบน้ำ เปลี่ยนผ้าอ้อม พลิกตัว ทานอาหารได้หมด ปัสสาวะ/อุจจาระ" aria-label="บันทึกผู้ช่วยพยาบาล" />
         <button className="btn-primary !py-2" onClick={() => an.body.trim() ? run(toast, { op: "note", residentId: id, kind: "aide", title: an.shift, body: an.body }, `บันทึกผู้ช่วยพยาบาลแล้ว · ${an.shift}`, () => { setAn({ ...an, body: "" }); reload(); }) : toast("กรุณาพิมพ์บันทึก")}>บันทึก</button>
-      </div>
+      </div>}
       <DataTable search={false} columns={["วันเวลา", "เวร", "บันทึก", "ผู้บันทึก"]} empty="ยังไม่มีบันทึกผู้ช่วยพยาบาล"
         rows={aide.map((n) => [n.at, n.title ?? "-", n.body ?? "-", byWho(n)])}
         actions={[{ label: "ลบ", danger: true, hidden: (i) => !mine(aide[i]), onClick: (i) => del(aide[i]) }]} />
@@ -173,11 +186,12 @@ function Aide({ id, c, reload }: P) {
 
 /* ---------- Nurse Note · Problem list · ฉีดอินซูลิน ---------- */
 /** onAide = ไปหน้าบันทึกผู้ช่วยพยาบาล (คนที่ไม่มีสิทธิ์เขียนบันทึกพยาบาล) */
-function Nursing({ id, c, reload, onAide }: P & { onAide?: () => void }) {
+function Nursing({ id, c, reload, onAide, needIntake, onIntake }: P & { onAide?: () => void; needIntake?: boolean; onIntake?: () => void }) {
   const { toast, confirm } = useApp();
   const { user } = useSession();
   // ผู้ช่วยพยาบาล (ไม่มีสิทธิ์ เขียนบันทึกพยาบาล): Nurse Note และ Problem list ดูได้อย่างเดียว · ฉีดอินซูลินบันทึกได้ (เป็นการให้ยา)
-  const write = canNurseNote(user);
+  // รับเข้าใหม่ยังไม่บันทึกแรกรับ = เขียน Nurse Note / Problem list ไม่ได้ (บันทึกแรกรับก่อน)
+  const write = canNurseNote(user) && !needIntake;
   const [nn, setNn] = useState({ shift: SHIFTS[0], body: "" });
   const [pb, setPb] = useState({ title: "", body: "" });
   const [ins, setIns] = useState({ drug: "", dose: "", site: SITES[0], dtx: "", body: "" });
@@ -191,7 +205,8 @@ function Nursing({ id, c, reload, onAide }: P & { onAide?: () => void }) {
     <div className="space-y-6">
       <section className="space-y-3">
         <h4 className="profile-sub">Nurse Note</h4>
-        {!write && <p className="rounded-xl border border-dashed border-amber-300 bg-amber-50 px-4 py-2.5 text-sm font-medium text-amber-900">
+        {needIntake && <IntakeFirst onIntake={onIntake} what="Nurse Note และ Problem list " />}
+        {!write && !needIntake && <p className="rounded-xl border border-dashed border-amber-300 bg-amber-50 px-4 py-2.5 text-sm font-medium text-amber-900">
           ดูได้อย่างเดียว · บันทึกพยาบาลเขียนได้เฉพาะพยาบาล{onAide && <> · <button type="button" className="font-semibold text-gold-800 underline underline-offset-2" onClick={onAide}>เขียนบันทึกผู้ช่วยพยาบาล ›</button></>}</p>}
         {write && <div className="grid gap-2 sm:grid-cols-[140px_1fr_auto]">
           <select value={nn.shift} onChange={(e) => setNn({ ...nn, shift: e.target.value })} aria-label="เวร">{SHIFTS.map((x) => <option key={x}>{x}</option>)}</select>
@@ -272,13 +287,22 @@ function Physio({ id, c, reload, name }: P & { name: string }) {
   const [buy, setBuy] = useState<{ name: string; total: string; price: string; free: boolean; why: string; code?: string } | null>(null);
   usePriceList();
   const ptCourses = physioCourses();
-  const boss = user?.role === "Branch Admin" || user?.role === "Global Admin";
+  // คอร์สฟรี: ผู้จัดการสาขา ผู้บริหาร และแคชเชียร์ (ฝ่ายขายกายภาพ)
+  const boss = user?.role === "Branch Admin" || user?.role === "Global Admin" || user?.role === "Cashier";
   const { confirm } = useApp();
   /** ใช้คอร์สได้: คอร์สฟรี หรือออกใบแจ้งหนี้แล้ว */
   /** สถานะเงินของคอร์ส (บันทึกกายภาพได้ทันทีหลังซื้อ ไม่ต้องรอใบแจ้งหนี้) */
   const payText = (k: { price: number; invoice_id: string | null; paid?: boolean }) => (!k.price ? "" : !k.invoice_id ? "แคชเชียร์ยังไม่ได้ออกใบแจ้งหนี้" : k.paid ? "ชำระแล้ว" : "ออกใบแจ้งหนี้แล้ว · รอชำระ");
   /** ฟอร์มบันทึกเดียวกับ KinApp (สัญญาณชีพ · บันทึกการตรวจรักษา · ผลการทำ) · บันทึกจากระบบจัดการไม่บังคับรูป */
   const [recT, setRecT] = useState<RecordTarget | null>(null);
+  /** คัดลอกบันทึกเดิมเป็นครั้งใหม่ (ยังไม่บันทึก): คอร์สเดิมถ้ายังเหลือครั้ง · หมดแล้ว = คอร์สอื่นที่ยังเหลือ */
+  const copyRec = (h: PhysioHistory) => {
+    const n = c.notes.find((x) => x.id === h.id);
+    const left = (k: { used: number; total: number }) => k.total - k.used > 0;
+    const k = c.courses.find((x) => x.id === n?.data.course_id && left(x)) ?? c.courses.find((x) => left(x));
+    if (!k) return toast("ไม่มีคอร์สกายภาพที่ยังเหลือครั้ง · ซื้อคอร์สก่อนจึงบันทึกครั้งใหม่ได้");
+    setRecT({ courseId: k.id, courseName: k.name, used: k.used, total: k.total, residentName: name, copy: h });
+  };
   const openRec = (k: { id: string; name: string; used: number; total: number }) => {
     const last = c.notes.find((n) => n.kind === "physio" && n.data.course_id === k.id)?.data ?? {};
     const s = (v: unknown) => (typeof v === "string" ? v : null);
@@ -341,7 +365,7 @@ function Physio({ id, c, reload, name }: P & { name: string }) {
         );
       })}</div>
       <div><h4 className="profile-sub">ประเมินและ Progress note</h4>
-        <PhysioSessions items={sessions.map(toHist)} onEdit={(h) => { const n = sessions.find((x) => x.id === h.id); const k = c.courses.find((x) => x.id === n?.data.course_id);
+        <PhysioSessions items={sessions.map(toHist)} onCopy={canRecord ? (h) => copyRec(h) : undefined} onEdit={(h) => { const n = sessions.find((x) => x.id === h.id); const k = c.courses.find((x) => x.id === n?.data.course_id);
           setRecT({ courseId: k?.id ?? "", courseName: k?.name ?? h.title ?? "", used: k?.used ?? 0, total: k?.total ?? 0, residentName: name, edit: h }); }} /></div>
       <PhysioAssign c={assign} cases={board?.cases ?? []} therapists={board?.therapists ?? []} today={board?.date ?? new Date(Date.now() + 7 * 36e5).toISOString().slice(0, 10)}
         doneToday={!!assign && !!board?.today.some((t) => t.course_id === assign.id)} onClose={() => setAssign(null)} onSaved={() => { setBoard(null); reload(); }} />
@@ -362,7 +386,7 @@ function Physio({ id, c, reload, name }: P & { name: string }) {
           <Field label="จำนวนครั้ง"><input type="number" min={1} value={buy.total} onChange={(e) => setBuy({ ...buy, total: e.target.value })} /></Field>
           <Field label="ราคาคอร์ส (บาท)" required={!buy.free}><input type="number" min={0} value={buy.free ? "" : buy.price} disabled={buy.free} onChange={(e) => setBuy({ ...buy, price: e.target.value })} placeholder="เช่น 8000" />
             <p className="field-hint">ซื้อแล้วนักกายภาพเริ่มทำได้ทันที · กด &quot;บันทึกคอร์สและออกใบแจ้งหนี้&quot; เพื่อออกใบต่อเลย (ผู้ชำระ ส่วนลด เลขผู้เสียภาษี และรวมรายการอื่นได้)</p></Field>
-          {boss && <label className="md:col-span-2 flex items-center gap-2 text-sm text-gold-700"><input type="checkbox" className="!h-4 !w-4 !min-h-0" checked={buy.free} onChange={(e) => setBuy({ ...buy, free: e.target.checked })} /> ให้คอร์สนี้ฟรี (ผู้จัดการอนุมัติ)</label>}
+          {boss && <label className="md:col-span-2 flex items-center gap-2 text-sm text-gold-700"><input type="checkbox" className="!h-4 !w-4 !min-h-0" checked={buy.free} onChange={(e) => setBuy({ ...buy, free: e.target.checked })} /> ให้คอร์สนี้ฟรี (ระบุเหตุผล)</label>}
           {buy.free && <Field label="เหตุผลที่ให้ฟรี" required className="md:col-span-2"><input value={buy.why} onChange={(e) => setBuy({ ...buy, why: e.target.value })} placeholder="เช่น โปรโมชันเปิดสาขา, ทดลองครั้งแรก" /></Field>}
         </div>}
       </Modal>

@@ -27,7 +27,7 @@ export const NAV:NavItem[]=[
 {kind:"view",id:"reviews",label:"รีวิวพนักงาน",icon:"star",group:3},
 {kind:"view",id:"tasks_table",label:"งานดูแลย้อนหลัง",icon:"table",group:2},
 {kind:"view",id:"facility_tasks",label:"งานส่วนกลางของสาขา",icon:"wrench",group:2},
-{kind:"view",id:"master_tasks",label:"แม่แบบงานมาตรฐาน",icon:"book",group:2},
+{kind:"view",id:"master_tasks",label:"ตั้งค่ารายการงาน",icon:"book",group:2},
 {kind:"view",id:"official-docs",label:"เอกสารและระเบียบ",icon:"files",group:2},
 {kind:"view",id:"tutorials",label:"วิดีโอสอนใช้งาน",icon:"play",group:2},
 {kind:"view",id:"audit",label:"บันทึกการใช้งานระบบ",icon:"history",group:2},

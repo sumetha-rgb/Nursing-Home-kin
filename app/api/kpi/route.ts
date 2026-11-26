@@ -4,6 +4,7 @@ import { currentUser, forbidden, unauthorized } from "@/lib/auth";
 import { audit } from "@/lib/audit";
 import { can } from "@/lib/perms";
 import { DEFAULT_WEIGHTS, KPI_PARTS, KpiRow, totalOf, Weights } from "@/lib/kpi";
+import { SHIFT_DAY_MIN_SQL, SHIFT_NIGHT_MIN_SQL } from "@/lib/shiftsServer";
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
@@ -52,7 +53,7 @@ export async function GET(req: NextRequest) {
       WHERE s.shift_date >= $1::date AND s.shift_date < $1::date + interval '1 month' AND s.shift_date <= (now() AT TIME ZONE 'Asia/Bangkok')::date
         -- เวรวันนี้ที่ยังไม่ถึงเวลาเข้างาน (+ผ่อนผัน 15 นาที) และยังไม่ได้เช็คชื่อ: ยังไม่นับว่าขาด
         AND (s.shift_date < (now() AT TIME ZONE 'Asia/Bangkok')::date OR a.id IS NOT NULL
-             OR (now() AT TIME ZONE 'Asia/Bangkok')::time >= (CASE WHEN s.shift = 'ดึก' THEN time '19:15' ELSE time '07:15' END)) ${bw("s.branch_name", 2)}
+             OR (now() AT TIME ZONE 'Asia/Bangkok')::time >= (time '00:00' + make_interval(mins => (CASE WHEN s.shift = 'ดึก' THEN ${SHIFT_NIGHT_MIN_SQL("s.branch_name")} ELSE ${SHIFT_DAY_MIN_SQL("s.branch_name")} END) + 15))) ${bw("s.branch_name", 2)}
       GROUP BY s.staff_id`, [from, ...bp])) as { staff_id: string; scheduled: number; ontime: number; late: number }[];
 
     const taskOf = (s: { name: string; branch: string }) => tasks.find((t) => t.name === s.name && t.branch === s.branch);

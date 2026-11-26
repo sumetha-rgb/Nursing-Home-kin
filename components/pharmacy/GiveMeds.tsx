@@ -5,6 +5,9 @@ import { useApp } from "@/lib/app";
 import { Drug, drugsFor, isLiquid, MEALS, stockText } from "@/lib/pharmacy";
 import { refreshData } from "@/lib/store";
 import { useAutoRefresh } from "@/lib/autoRefresh";
+import PhotoPicker from "../PhotoPicker";
+import { Modal } from "../ui";
+import { stampPhoto } from "@/lib/roster";
 
 /**
  * ให้ยามื้อนี้ (KinApp แท็บให้ยา) · ไม่มีจัดซอง/QA แล้ว
@@ -23,7 +26,10 @@ export const fetchDaySlots = (date: string) => fetch(`/api/pharmstock?op=withdra
 /** แถวการให้ยาของยานี้ในมื้อนี้ (ให้แล้ว หรือไม่ได้ให้พร้อมเหตุผล) */
 export const slotOf = (slots: DaySlot[], medId: number | string, meal: string) => slots.filter((s) => s.med_id === String(medId) && String(s.meal ?? "").split(", ").includes(meal));
 
-type Form = { on: number[]; why: Record<number, string>; ok: boolean };
+/** photo = รูปตอนให้ยา (ประทับชื่อ มื้อ เวลาแล้ว) · ต้องมีเมื่อให้ยาอย่างน้อย 1 รายการ */
+type Form = { on: number[]; why: Record<number, string>; ok: boolean; photo: string };
+/** รหัสรูปการให้ยาของคนนี้ มื้อนี้ วันนี้ (ยาตัวแรกของคนนั้นเป็นตัวแทนผู้ป่วย) */
+const giveRef = (date: string, meal: string, medId: string | number) => `${date}:${meal}:${medId}`;
 
 export default function GiveMeds({ drugs, people }: { drugs: Drug[]; people: { name: string; room: string }[] }) {
   const { toast } = useApp();
@@ -31,7 +37,8 @@ export default function GiveMeds({ drugs, people }: { drugs: Drug[]; people: { n
   const [meal, setMeal] = useState(mealByClock);
   const [slots, setSlots] = useState<DaySlot[] | null>(null);
   const [open, setOpen] = useState<string | null>(null);
-  const [form, setForm] = useState<Form>({ on: [], why: {}, ok: false });
+  const [form, setForm] = useState<Form>({ on: [], why: {}, ok: false, photo: "" });
+  const [pic, setPic] = useState<{ who: string; photo: string | null } | null>(null);
   const [busy, setBusy] = useState(false);
   const [showDone, setShowDone] = useState(false);
   const [allergy, setAllergy] = useState<Record<string, string>>({});
@@ -60,7 +67,19 @@ export default function GiveMeds({ drugs, people }: { drugs: Drug[]; people: { n
   const shown = showDone ? [...pending, ...who.filter((w) => !pending.includes(w))] : pending;
 
   /** all = เริ่มแบบให้ครบทุกรายการ · false = เริ่มแบบไม่ได้ให้ (เลือกเหตุผลทีละรายการ) */
-  const start = (w: string, all = true) => { setOpen(w); setForm({ on: all ? listOf(w, meal).map((_, i) => i) : [], why: {}, ok: false }); };
+  const start = (w: string, all = true) => { setOpen(w); setForm({ on: all ? listOf(w, meal).map((_, i) => i) : [], why: {}, ok: false, photo: "" }); };
+  const takePhoto = async (w: string, raw: string) => {
+    if (!raw) return setForm((f) => ({ ...f, photo: "" }));
+    const at = new Date().toLocaleString("th-TH", { dateStyle: "medium", timeStyle: "short" });
+    try { const photo = await stampPhoto(raw, [`ให้ยามื้อ${meal} · ${w}`, at]); setForm((f) => ({ ...f, photo })); } catch { setForm((f) => ({ ...f, photo: raw })); }
+  };
+  /** ดูรูปตอนให้ยา (คนที่บันทึกแล้ว) */
+  const showPhoto = (w: string) => {
+    const first = listOf(w, meal)[0]; if (!first) return;
+    const ref = giveRef(date, meal, first.id);
+    setPic({ who: w, photo: null });
+    fetch(`/api/medphoto?kind=give&ids=${encodeURIComponent(ref)}`, { cache: "no-store" }).then((r) => (r.ok ? r.json() : { photos: {} })).then((d: { photos: Record<string, string> }) => setPic({ who: w, photo: d.photos[ref] ?? "" })).catch(() => setPic({ who: w, photo: "" }));
+  };
   const nowMeal = mealByClock();
   const doneN = who.length - pending.length;
   const save = async (w: string) => {
@@ -68,6 +87,7 @@ export default function GiveMeds({ drugs, people }: { drugs: Drug[]; people: { n
     const skips = list.map((_, i) => i).filter((i) => !form.on.includes(i));
     if (!form.ok) return toast("กรุณาติ๊ก ตรวจชื่อผู้ป่วยและยาแล้ว");
     if (skips.some((i) => !form.why[i])) return toast("เลือกเหตุผลของยาที่ไม่ได้ให้ก่อนบันทึก");
+    if (form.on.length && !form.photo) return toast("กรุณาถ่ายรูปตอนให้ยาก่อนบันทึก");
     setBusy(true);
     try {
       const r = await fetch("/api/pharmstock", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
@@ -77,6 +97,11 @@ export default function GiveMeds({ drugs, people }: { drugs: Drug[]; people: { n
       }) });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d.error || "บันทึกการให้ยาไม่สำเร็จ");
+      // รูปตอนให้ยา: ส่งหลังบันทึกการให้ยาแล้ว (ส่งรูปไม่ผ่าน = การให้ยายังบันทึกอยู่ แจ้งให้ทราบ)
+      if (form.photo && list[0]) {
+        const pr = await fetch("/api/medphoto", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "give", id: giveRef(date, meal, list[0].id), photo: form.photo }) }).catch(() => null);
+        if (!pr?.ok) toast("บันทึกการให้ยาแล้ว แต่ส่งรูปไม่สำเร็จ");
+      }
       toast(`บันทึกแล้ว · ${w} มื้อ${meal} · ให้ ${form.on.length}${skips.length ? ` · ไม่ได้ให้ ${skips.length}` : ""} รายการ`);
       setOpen(null); refreshData("pharmacy-drugs"); load(); window.dispatchEvent(new Event(MEDS_EVENT));
     } catch (e) { toast((e as Error).message); } finally { setBusy(false); }
@@ -107,7 +132,7 @@ export default function GiveMeds({ drugs, people }: { drugs: Drug[]; people: { n
                 {roomOf(w) && <span className="shrink-0 rounded-lg bg-gold-100 px-2 py-0.5 text-sm font-bold tabular-nums text-gold-800">{roomOf(w)}</span>}
                 <span className="min-w-0 flex-1"><b className="block truncate text-[15px] text-gold-900">{w}</b>
                   {allergy[w] && <span className="inline-block rounded bg-red-50 px-1.5 text-[11px] font-semibold text-red-700">⚠ แพ้ยา: {allergy[w]}</span>}</span>
-                {st.done && <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-800">✓ บันทึกแล้ว</span>}
+                {st.done && <button type="button" className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-800" onClick={() => showPhoto(w)} title="ดูรูปตอนให้ยา">✓ บันทึกแล้ว · รูป</button>}
               </div>
 
               {/* ยังไม่เปิด / บันทึกแล้ว: รายการยา */}
@@ -146,13 +171,14 @@ export default function GiveMeds({ drugs, people }: { drugs: Drug[]; people: { n
                   })}</ul>
                   <label className="flex cursor-pointer items-center gap-3 rounded-xl bg-cream-50 px-3 py-2 text-sm text-gold-800">
                     <input type="checkbox" className="!h-5 !w-5 !min-h-0 accent-emerald-700" checked={form.ok} onChange={(e) => setForm({ ...form, ok: e.target.checked })} /> ตรวจชื่อผู้ป่วยและยาแล้ว</label>
+                  {form.on.length > 0 && <PhotoPicker value={form.photo} onChange={(raw) => takePhoto(w, raw)} label="ถ่ายรูปตอนให้ยา" hint="ให้เห็นหน้าผู้ป่วยและยา/ซองยามื้อนี้ · ระบบประทับชื่อ มื้อ และเวลาให้" />}
                 </div>
               )}
 
               <div className="flex gap-2 p-3.5">
                 {st.done ? null : isOpen ? <>
                   <button type="button" className="btn-soft !py-2" onClick={() => setOpen(null)}>ยกเลิก</button>
-                  <button type="button" className="btn-primary flex-1 !py-2" disabled={busy || !form.ok || st.list.some((_, i) => !form.on.includes(i) && !form.why[i])} onClick={() => save(w)}>
+                  <button type="button" className="btn-primary flex-1 !py-2" disabled={busy || !form.ok || (form.on.length > 0 && !form.photo) || st.list.some((_, i) => !form.on.includes(i) && !form.why[i])} onClick={() => save(w)}>
                     {busy ? "กำลังบันทึก…" : allOn ? `บันทึกการให้ยา ${n} รายการ` : `บันทึก · ให้ยา ${form.on.length} · ไม่ได้ให้ ${n - form.on.length}`}</button>
                 </> : <>
                   <button type="button" className="btn-primary flex-1 !py-2.5" onClick={() => start(w)}><Icon name="pill" className="h-4 w-4" /> ให้ครบ {n} รายการ</button>
@@ -167,6 +193,9 @@ export default function GiveMeds({ drugs, people }: { drugs: Drug[]; people: { n
           <span><b>ให้แล้ว {doneN} คน</b><small>{showDone ? "แตะเพื่อพับ" : "แตะเพื่อดูว่าใครให้ยาไปแล้ว"}</small></span><Icon name="chevron" className={`h-4 w-4 transition ${showDone ? "rotate-180" : ""}`} />
         </button>}
         </>}
+      <Modal open={!!pic} title={pic ? `รูปตอนให้ยา · ${pic.who} · มื้อ${meal}` : ""} onClose={() => setPic(null)} footer={<button type="button" className="btn-primary" onClick={() => setPic(null)}>ปิด</button>}>
+        {pic?.photo === null ? <p className="text-sm text-gold-500">กำลังโหลดรูป…</p> : pic?.photo ? <img src={pic.photo} alt={`รูปตอนให้ยา ${pic.who}`} className="w-full rounded-xl" /> : <p className="text-sm text-gold-500">ไม่มีรูป (ไม่ได้ให้ยามื้อนี้ หรือบันทึกก่อนเริ่มถ่ายรูป)</p>}
+      </Modal>
       <p className="text-center text-xs text-gold-500">ให้ยาผิด แจ้งห้องยายกเลิกได้ที่ KINmed › เบิกยา · ยาขวด ยาทา ยาตามอาการ เบิกที่ KINmed › เบิกยา</p>
     </div>
   );

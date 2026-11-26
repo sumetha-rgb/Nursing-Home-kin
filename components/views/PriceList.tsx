@@ -7,12 +7,15 @@ import { useApp } from "@/lib/app";
 import { downloadCsv } from "@/lib/store";
 import { CAT_IDS, CATS, CatId, CODE_RE, codeProblem, PriceItem, PriceSub, Rate, RATE_UNITS, rateCode, RateUnit, roomPartOf, roomShareOf, setPrices, setSubs, subRange, subsOf, suggestCode } from "@/lib/priceList";
 import { baseOfIncl, DEFAULT_VAT } from "@/lib/billing";
+import { useBranchNames } from "@/lib/branches";
 
 /**
  * ใบราคาและรหัส: ราคากลางทุกสาขา · ผู้จัดการสาขาและผู้บริหารเพิ่ม แก้ราคา แก้รหัส ปิดใช้ และนำเข้า/ส่งออก CSV
  * ราคาใหม่มีผลทันทีหรือตั้งวันที่ล่วงหน้าได้ · ทุกการแก้เก็บประวัติพร้อมเหตุผล · เอกสารที่ออกไปแล้วไม่เปลี่ยนตาม
+ * ราคาของสาขา (26 พ.ย. 2569): ผู้จัดการสาขาแก้ = ราคาของสาขาตัวเองเท่านั้น (ชื่อ รหัส หน่วย ใช้ร่วมทุกสาขา) · ปุ่ม ใช้ราคากลาง = เลิกตั้งราคาเอง
+ *  ผู้บริหารเลือกดู/แก้ ราคากลาง หรือราคาของสาขาใดก็ได้ · ปิด/เปิดใช้รายการ = ผู้บริหารเท่านั้น (มีผลทุกสาขา)
  */
-type Item = PriceItem & { id: string };
+type Item = PriceItem & { id: string; central?: Rate[]; ownActive?: boolean };
 type Hist = { at: string; action: string; detail: string; reason: string; by: string; code: string };
 type FRate = { unit: RateUnit; price: string; label: string; from?: number; room?: string };
 /** ห้องพัก: ราคา 4 แบบที่ใช้ในระบบ (หาในรายการราคาตามหน่วยและคำว่าโปรโมชัน) */
@@ -36,8 +39,10 @@ const tomorrowIso = () => new Date(Date.now() + 31 * 3600e3).toISOString().slice
 const rateName = (r: { unit: string; label?: string }) => `${r.unit}${r.label ? ` (${r.label})` : ""}`;
 const flat = (s: string) => s.replace(/\s+/g, "").toLowerCase();
 const hasNext = (x: PriceItem) => x.rates.some((r) => r.next);
+/** สาขาที่ผู้บริหารเลือกดูอยู่ (ส่งไปกับทุกคำสั่ง · บัญชีสาขา server ใช้สาขาของบัญชีเอง) */
+let VIEW_BRANCH = "";
 const post = async (body: Record<string, unknown>) => {
-  const r = await fetch("/api/prices", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const r = await fetch("/api/prices", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...(VIEW_BRANCH ? { branch: VIEW_BRANCH } : {}), ...body }) });
   const d = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(d.error || "บันทึกไม่สำเร็จ");
   return d;
@@ -88,27 +93,42 @@ export function PriceList() {
   const [loaded, setLoaded] = useState(false);
   const [q, setQ] = useState("");
   const [cat, setCat] = useState<CatId | "">("");
-  const [status, setStatus] = useState<Status>("all");
+  // เริ่มที่ ใช้อยู่ (รายการที่ปิดไม่แสดง · ดูได้ที่ตัวกรอง ปิดใช้ เพื่อเปิดกลับ)
+  const [status, setStatus] = useState<Status>("on");
   const [edit, setEdit] = useState<{ item?: Item; tab: string } | null>(null);
   const [importing, setImporting] = useState(false);
   const [subs, setSubRows] = useState<PriceSub[]>([]);
   const [subsOpen, setSubsOpen] = useState(false);
+  /** สาขาที่ดูราคาอยู่ (ว่าง = ราคากลาง) · central = ผู้บริหาร (เลือกสาขาได้ แก้ราคากลางได้) */
+  const [branch, setBranch] = useState("");
+  const [central, setCentral] = useState(false);
+  const [view, setView] = useState("");
+  const branchNames = useBranchNames();
 
-  const load = async () => {
-    const r = await fetch("/api/prices", { cache: "no-store" });
+  const load = async (v = view) => {
+    VIEW_BRANCH = v;
+    const r = await fetch(`/api/prices${v ? `?branch=${encodeURIComponent(v)}` : ""}`, { cache: "no-store" });
     const d = await r.json().catch(() => ({}));
     if (!r.ok) { toast(d.error || "โหลดใบราคาไม่สำเร็จ"); return; }
     // หมวดย่อยก่อนใบราคา (setPrices แจ้งให้ช่องเลือกที่ใช้ subsOf แสดงใหม่)
     if (d.subs) { setSubs(d.subs); setSubRows(d.subs); }
     setItems(d.items); setCanEdit(!!d.canEdit); setMissing(d.missing || ""); setLoaded(true);
-    if (!d.missing) setPrices(d.items);
+    setBranch(d.branch || ""); setCentral(!!d.central);
+    // ช่องเลือกค่าบริการในเอกสารใช้ราคาของสาขาตัวเอง (ผู้บริหารดูสาขาอื่นอยู่ = ไม่เปลี่ยนใบราคาที่ใช้ในเอกสาร)
+    if (!d.missing && !v) setPrices(d.items);
   };
-  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); return () => { VIEW_BRANCH = ""; }; }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  /** ราคาที่สาขาตั้งเอง (ต่างจากราคากลาง) */
+  const own = (x: Item) => !!x.central;
+  // ปิด/เปิดใช้: ที่ราคากลาง (ผู้บริหาร) = ทุกสาขา · ราคาของสาขา = เฉพาะสาขานั้น
+  const toggleOk = canEdit && (central || !!branch);
 
   const counts = useMemo(() => ({
     off: items.filter((x) => x.active === false).length,
     next: items.filter(hasNext).length,
   }), [items]);
+  /** ตามสถานะที่เลือก (นับในปุ่มหมวด) */
+  const byStatus = items.filter((x) => status === "all" || (status === "on" ? x.active !== false : status === "off" ? x.active === false : hasNext(x)));
   const k = flat(q);
   const shown = items.filter((x) => (!cat || x.cat === cat)
     && (status === "all" || (status === "on" ? x.active !== false : status === "off" ? x.active === false : hasNext(x)))
@@ -136,7 +156,7 @@ export function PriceList() {
     if (on) { setActive(x, true); return; }
     confirm({
       title: on ? `เปิดใช้ ${x.code} อีกครั้ง` : `ปิดใช้ ${x.code}`,
-      message: on ? `"${x.name}" จะกลับมาให้เลือกในใบเสนอราคา สัญญา และใบแจ้งหนี้` : `"${x.name}" จะไม่ขึ้นให้เลือกในเอกสารใหม่ · เอกสารเดิมไม่เปลี่ยน · เปิดใช้อีกครั้งได้ภายหลัง`,
+      message: on ? `"${x.name}" จะกลับมาให้เลือกในใบเสนอราคา สัญญา และใบแจ้งหนี้` : `"${x.name}" จะไม่ขึ้นให้เลือกในเอกสารใหม่${branch ? ` ของสาขา ${branch} (สาขาอื่นไม่เปลี่ยน)` : " ของทุกสาขา"} · เอกสารเดิมไม่เปลี่ยน · เปิดใช้อีกครั้งได้ภายหลัง`,
       okLabel: on ? "เปิดใช้" : "ปิดใช้", danger: !on,
       onOk: () => setActive(x, false),
     });
@@ -144,13 +164,22 @@ export function PriceList() {
 
   return (
     <div className="space-y-5">
-      <PageHeader title="ราคาสินค้าและบริการ" sub="ราคากลาง ใช้ทุกสาขา"
+      <PageHeader title="ราคาสินค้าและบริการ" sub={branch ? `ราคาของสาขา ${branch} · รายการที่สาขาไม่ได้ตั้งราคาเอง ใช้ราคากลาง` : "ราคากลาง · ใช้กับทุกสาขาที่ไม่ได้ตั้งราคาเอง"}
         actions={<>
           <button className="btn-soft" onClick={exportCsv} disabled={!items.length}><CsvIcon /> ส่งออก CSV</button>
           {canEdit && <button className="btn-soft" onClick={() => setImporting(true)}><CsvIcon /> นำเข้า CSV</button>}
           {canEdit && subs.length > 0 && <button className="btn-soft" onClick={() => setSubsOpen(true)}><Icon name="wrench" className="h-4 w-4" /> ตั้งค่าหมวดย่อย</button>}
           {canEdit && <button className="btn-primary" onClick={() => setEdit({ tab: "แก้ไข" })}><Icon name="plus" className="h-4 w-4" /> เพิ่มรายการ</button>}
         </>} />
+      {central && <div className="pl-scope">
+        <span>ดูราคาของ</span>
+        <select value={view} onChange={(e) => { setView(e.target.value); load(e.target.value); }} aria-label="ดูราคาของสาขา">
+          <option value="">ราคากลาง (ทุกสาขา)</option>
+          {branchNames.map((b) => <option key={b} value={b}>สาขา {b}</option>)}
+        </select>
+        <small>{branch ? `แก้ราคาตรงนี้ = เฉพาะสาขา ${branch} · ${items.filter(own).length} รายการตั้งราคาเอง` : "แก้ราคาตรงนี้ = ราคากลาง (สาขาที่ตั้งราคาเองไม่เปลี่ยน)"}</small>
+      </div>}
+      {!central && branch && <p className="pl-scope"><b>ราคาของสาขา {branch}</b><small>แก้ราคาได้เฉพาะของสาขานี้ ไม่กระทบสาขาอื่น · ตั้งราคาเองแล้ว {items.filter(own).length} รายการ</small></p>}
       {missing && <p role="alert" className="form-error"><Icon name="alert" className="h-4 w-4 shrink-0" />{missing}</p>}
 
       <section className="card pl-panel">
@@ -160,16 +189,16 @@ export function PriceList() {
             <input type="search" value={q} onChange={(e) => setQ(e.target.value)} className="!pl-10" placeholder="ค้นหารหัสหรือชื่อ เช่น NS-21 หรือ พ่นยา" aria-label="ค้นหารหัสหรือชื่อ" />
           </div>
           <select value={status} onChange={(e) => setStatus(e.target.value as Status)} aria-label="สถานะ" className="pl-status">
-            <option value="all">ทุกสถานะ</option>
-            <option value="on">ใช้อยู่</option>
+            <option value="on">ใช้อยู่ ({items.length - counts.off})</option>
             <option value="off">ปิดใช้ ({counts.off})</option>
             <option value="next">มีราคาใหม่รอมีผล ({counts.next})</option>
+            <option value="all">ทั้งหมด ({items.length})</option>
           </select>
         </div>
         <div className="pl-chips" role="group" aria-label="หมวด">
-          <button type="button" aria-pressed={!cat} onClick={() => setCat("")}>ทั้งหมด <span>{items.length}</span></button>
+          <button type="button" aria-pressed={!cat} onClick={() => setCat("")}>ทั้งหมด <span>{byStatus.length}</span></button>
           {CAT_IDS.map((c) => {
-            const n = items.filter((x) => x.cat === c).length;
+            const n = byStatus.filter((x) => x.cat === c).length;
             return n ? <button key={c} type="button" aria-pressed={cat === c} onClick={() => setCat(cat === c ? "" : c)}>{CATS[c].name} <span>{n}</span></button> : null;
           })}
         </div>
@@ -187,7 +216,7 @@ export function PriceList() {
                       <li key={x.id} className={x.active === false ? "is-off" : ""}>
                         <span className="pl-code">{x.code}</span>
                         <div className="pl-name">
-                          <b>{x.name}</b>
+                          <b>{x.name}{x.branch && !branch && <em className="pl-own is-only">เฉพาะ {x.branch}</em>}{own(x) && <em className="pl-own">ราคาสาขา</em>}{x.ownActive && <em className="pl-own">{x.active === false ? "ปิดเฉพาะสาขา" : "เปิดเฉพาะสาขา"}</em>}</b>
                           <small>
                             {/* รหัสจากใบราคาเดิม (R1, X01, P01) ไม่เคยขึ้นในเอกสาร · แสดงเฉพาะรหัสที่เคยใช้ในระบบนี้แล้วเปลี่ยน · ทุกแบบยังค้นหาเจอ */}
                             {x.old?.some((c) => CODE_RE.test(c)) ? <span>รหัสเดิม {x.old.filter((c) => CODE_RE.test(c)).join(", ")}</span> : null}
@@ -198,11 +227,12 @@ export function PriceList() {
                             <span key={i} title={rateCode(x, i)}>
                               {money(r.price)}<i>/{rateName(r)}</i>{x.cat === "RM" && <i className="pl-part"> · ห้อง {money(roomPartOf(r))}</i>}
                               {r.next && <em>→ {money(r.next.price)} · {thDate(r.next.from)}</em>}
+                              {x.central?.[i] && x.central[i].price !== r.price && <i className="pl-central"> · กลาง {money(x.central[i].price)}</i>}
                             </span>
                           ))}
                         </div>
                         <button type="button" role="switch" aria-checked={x.active !== false} aria-label={`${x.code} ${x.active !== false ? "ใช้อยู่" : "ปิดใช้"}`} className="pl-switch"
-                          disabled={!canEdit || busy === x.id} title={canEdit ? (x.active !== false ? "กดเพื่อปิดใช้" : "กดเพื่อเปิดใช้") : "แก้ได้เฉพาะผู้จัดการสาขาและผู้บริหาร"} onClick={() => toggle(x)}>
+                          disabled={!toggleOk || busy === x.id} title={toggleOk ? `${x.active !== false ? "กดเพื่อปิดใช้" : "กดเพื่อเปิดใช้"}${branch ? ` เฉพาะสาขา ${branch}` : " ทุกสาขา"}` : "แก้ได้เฉพาะผู้จัดการสาขาและผู้บริหาร"} onClick={() => toggle(x)}>
                           <i aria-hidden="true" /><span>{x.active !== false ? "ใช้อยู่" : "ปิดใช้"}</span>
                         </button>
                         <button type="button" className="row-action" onClick={() => setEdit({ item: x, tab: canEdit ? "แก้ไข" : "ประวัติ" })}>{canEdit ? "แก้ไข" : "ประวัติ"}</button>
@@ -214,9 +244,9 @@ export function PriceList() {
             </div>
           ))}
       </section>
-      <p className="field-hint">กดราคาในใบเสนอราคา สัญญา หรือใบแจ้งหนี้ จะได้ราคาจากหน้านี้ · เอกสารที่ออกไปแล้วไม่เปลี่ยนตาม · ส้ม = ราคาใหม่ที่ตั้งล่วงหน้า</p>
+      <p className="field-hint">กดราคาในใบเสนอราคา สัญญา หรือใบแจ้งหนี้ จะได้ราคาของสาขาจากหน้านี้ · เอกสารที่ออกไปแล้วไม่เปลี่ยนตาม · ส้ม = ราคาใหม่ที่ตั้งล่วงหน้า · ราคาสาขา = สาขาตั้งราคาเอง (กลาง = ราคากลาง)</p>
 
-      {edit && <EditDialog key={edit.item?.id ?? "new"} item={edit.item} tab={edit.tab} items={items} canEdit={canEdit}
+      {edit && <EditDialog key={edit.item?.id ?? "new"} item={edit.item} tab={edit.tab} items={items} canEdit={canEdit} branch={branch} toggleOk={toggleOk}
         onClose={() => setEdit(null)} onToggle={toggle} onSaved={(m) => { toast(m); setEdit(null); load(); }} onReload={load} />}
       {subsOpen && <SubsDialog subs={subs} onClose={() => setSubsOpen(false)} onReload={load} />}
       {importing && <ImportDialog onClose={() => setImporting(false)} onDone={(m) => { toast(m); setImporting(false); load(); }} />}
@@ -309,8 +339,9 @@ function SubsBody({ subs, onReload }: { subs: PriceSub[]; onReload: () => Promis
   );
 }
 
-function EditDialog({ item, tab: tab0, items, canEdit, onClose, onToggle, onSaved, onReload }: {
+function EditDialog({ item, tab: tab0, items, canEdit, branch, toggleOk, onClose, onToggle, onSaved, onReload }: {
   item?: Item; tab: string; items: Item[]; canEdit: boolean;
+  /** แก้ราคาของสาขา (ว่าง = ราคากลาง): ล็อกชื่อ รหัส หมวดย่อย หน่วย แก้ได้เฉพาะราคา */ branch: string; toggleOk: boolean;
   onClose: () => void; onToggle: (x: Item) => void; onSaved: (msg: string) => void; onReload: () => Promise<void> | void;
 }) {
   const { toast } = useApp();
@@ -374,22 +405,34 @@ function EditDialog({ item, tab: tab0, items, canEdit, onClose, onToggle, onSave
     } catch (e) { toast((e as Error).message); }
     finally { setBusy(false); }
   };
+  /** ราคาของสาขา: ล็อกทุกอย่างยกเว้นราคา */
+  const lock = !!branch && !isNew && item?.branch !== branch;
+  const resetBranch = async () => {
+    if (busy || !item) return;
+    setBusy(true);
+    try { await post({ op: "branch_reset", id: item.id }); onSaved(`${item.code} กลับไปใช้ราคากลางแล้ว`); }
+    catch (e) { toast((e as Error).message); }
+    finally { setBusy(false); }
+  };
   const cancelNext = async (i: number) => {
     try { await post({ op: "cancel_next", id: item!.id, i }); toast("ยกเลิกราคาที่ตั้งล่วงหน้าแล้ว"); onReload(); onClose(); }
     catch (e) { toast((e as Error).message); }
   };
 
-  const title = isNew ? "เพิ่มรายการในใบราคา" : `${item.code} · ${item.name}`;
+  const title = isNew ? "เพิ่มรายการในใบราคา" : `${item.code} · ${item.name}${lock ? ` · ราคาสาขา ${branch}` : ""}`;
   const editing = canEdit && tab === "แก้ไข";
   return (
     <Modal open wide title={title} onClose={onClose}
       footer={editing ? <>
-        {!isNew && <button className={`${item.active === false ? "btn-soft" : "btn-danger"} mr-auto`} onClick={() => onToggle(item)}>{item.active === false ? "เปิดใช้อีกครั้ง" : "ปิดใช้รายการนี้"}</button>}
+        {!isNew && toggleOk && <button className={`${item.active === false ? "btn-soft" : "btn-danger"} mr-auto`} onClick={() => onToggle(item)}>{item.active === false ? "เปิดใช้อีกครั้ง" : "ปิดใช้รายการนี้"}</button>}
+        {lock && item.central && <button className="btn-soft mr-auto" disabled={busy} onClick={resetBranch} title="เลิกตั้งราคาเอง ใช้ราคากลางแทน">ใช้ราคากลาง</button>}
         <button className="btn-soft" onClick={onClose}>ยกเลิก</button>
         <button className="btn-primary" disabled={busy || !!problem} title={problem} onClick={save}>{busy ? "กำลังบันทึก…" : isNew ? "เพิ่มรายการ" : dated ? `ตั้งราคาใหม่ มีผล ${thDate(dated)}` : "บันทึก"}</button>
       </> : <button className="btn-soft" onClick={onClose}>ปิดหน้าต่าง</button>}>
       <div className="space-y-5">
         {!isNew && canEdit && <Tabs tabs={["แก้ไข", "ประวัติ"]} value={tab} onChange={setTab} />}
+        {isNew && branch && <p className="pl-scope is-in"><b>รายการใหม่นี้ใช้เฉพาะสาขา {branch}</b><small>สาขาอื่นไม่เห็น · แก้ชื่อ รหัส ราคา และปิดใช้ได้เอง</small></p>}
+        {lock && tab === "แก้ไข" && <p className="pl-scope is-in"><b>แก้เฉพาะราคาของสาขา {branch}</b><small>สาขาอื่นไม่เปลี่ยน · ชื่อ รหัส และหน่วยใช้ร่วมทุกสาขา แก้ได้เฉพาะผู้บริหาร{item?.central ? "" : " · ตอนนี้สาขานี้ใช้ราคากลาง"}</small></p>}
 
         {tab === "ประวัติ" && item ? (
           !hist ? <p className="py-8 text-center text-sm text-gold-500">กำลังโหลด…</p>
@@ -412,9 +455,9 @@ function EditDialog({ item, tab: tab0, items, canEdit, onClose, onToggle, onSave
             <div className="grid gap-3 sm:grid-cols-[1fr_150px]">
               <Field label="หมวดย่อย">
                 {newSub === null
-                  ? <select value={f.sub} onChange={(e) => pickSub(e.target.value)}>
+                  ? <select value={f.sub} disabled={lock} onChange={(e) => pickSub(e.target.value)}>
                       {subsOf(f.cat, item?.sub).map(([s, n]) => <option key={s} value={s}>{f.cat === "RM" ? s : `${s} · ${subRange(f.cat, n)}`}</option>)}
-                      {canEdit && <option value={NEW_SUB}>+ เพิ่มหมวดย่อยใหม่…</option>}
+                      {canEdit && !lock && <option value={NEW_SUB}>+ เพิ่มหมวดย่อยใหม่…</option>}
                     </select>
                   : <div className="flex gap-2">
                       <input autoFocus value={newSub} maxLength={60} placeholder={`ชื่อหมวดย่อยใหม่ใน${CATS[f.cat].name}`} aria-label="ชื่อหมวดย่อยใหม่"
@@ -424,13 +467,13 @@ function EditDialog({ item, tab: tab0, items, canEdit, onClose, onToggle, onSave
                     </div>}
               </Field>
               <Field label="รหัส" required>
-                <input value={f.code} onChange={(e) => { codeTouched.current = true; set({ code: e.target.value.toUpperCase() }); }} className={`font-mono ${codeErr ? "!border-red-400" : ""}`} maxLength={5} placeholder={`${f.cat}-00`} />
+                <input value={f.code} disabled={lock} onChange={(e) => { codeTouched.current = true; set({ code: e.target.value.toUpperCase() }); }} className={`font-mono ${codeErr ? "!border-red-400" : ""}`} maxLength={5} placeholder={`${f.cat}-00`} />
               </Field>
             </div>
             {codeErr ? <p className="pl-err">{codeErr}</p>
-              : <p className="field-hint">{isNew ? `ระบบเสนอรหัสว่างถัดไปในหมวดย่อยนี้ · แก้เองได้` : code !== item!.code ? `รหัสเดิม ${item!.code} ยังค้นหาเจอ และจะไม่ถูกนำไปใช้ซ้ำ` : "เปลี่ยนรหัสได้ รหัสเดิมยังค้นหาเจอ"}</p>}
+              : lock ? null : <p className="field-hint">{isNew ? `ระบบเสนอรหัสว่างถัดไปในหมวดย่อยนี้ · แก้เองได้` : code !== item!.code ? `รหัสเดิม ${item!.code} ยังค้นหาเจอ และจะไม่ถูกนำไปใช้ซ้ำ` : "เปลี่ยนรหัสได้ รหัสเดิมยังค้นหาเจอ"}</p>}
             <Field label="ชื่อรายการ (ที่ขึ้นในเอกสาร)" required>
-              <input value={f.name} onChange={(e) => set({ name: e.target.value })} placeholder="เช่น ค่าบริการพ่นยา พร้อมอุปกรณ์" maxLength={200} />
+              <input value={f.name} disabled={lock} onChange={(e) => set({ name: e.target.value })} placeholder="เช่น ค่าบริการพ่นยา พร้อมอุปกรณ์" maxLength={200} />
             </Field>
           </div>
 
@@ -460,7 +503,7 @@ function EditDialog({ item, tab: tab0, items, canEdit, onClose, onToggle, onSave
                   <div key={row.k} className="rm-row is-empty">
                     <span className="rm-k"><b>{row.t}</b>{row.sub && <small>{row.sub}</small>}</span>
                     <span className="rm-none">{row.k === "week" && day ? `ยังไม่ได้ตั้ง · ตอนนี้ระบบใช้รายวัน × 7 = ${money(day * 7)} (ค่าห้อง ${money(roomShareOf(day * 7))})` : "ยังไม่ได้ตั้ง"}</span>
-                    <button type="button" className="row-action is-primary" onClick={() => set({ rates: [...f.rates, { unit: row.unit, price: row.k === "week" && day ? String(day * 7) : "", label: row.label, room: "" }] })}>+ ตั้งราคา{row.t.replace(/ ·.*/, "")}</button>
+                    {!lock && <button type="button" className="row-action is-primary" onClick={() => set({ rates: [...f.rates, { unit: row.unit, price: row.k === "week" && day ? String(day * 7) : "", label: row.label, room: "" }] })}>+ ตั้งราคา{row.t.replace(/ ·.*/, "")}</button>}
                   </div>
                 );
                 const r = f.rates[i], price = Number(r.price) || 0, own = r.room !== undefined && r.room !== "";
@@ -471,6 +514,7 @@ function EditDialog({ item, tab: tab0, items, canEdit, onClose, onToggle, onSave
                     <span className="rm-k"><b>{row.t}</b><small>{rateCode(preview, i)}{row.sub ? ` · ${row.sub}` : ""}</small></span>
                     <label className="rm-f"><span className="rm-lab">ราคาห้องทั้งหมด</span>
                       <input type="number" min={0} inputMode="decimal" value={r.price} onChange={(e) => setRate(i, { price: e.target.value })} className={`text-right tabular-nums ${diff ? "pl-changed" : ""}`} aria-label={`ราคาห้องทั้งหมด ${row.t}`} />
+                      {lock && item?.central?.[r.from!] && <small className="pl-was">ราคากลาง {money(item.central[r.from!].price)}</small>}
                       {diff ? <small className="pl-was">เดิม {money(was!.price)}</small> : was?.next ? <small className="pl-was is-next">ราคาใหม่ {money(was.next.price)} มีผล {thDate(was.next.from)} · <button type="button" onClick={() => cancelNext(r.from!)}>ยกเลิก</button></small> : null}
                     </label>
                     <label className="rm-f"><span className="rm-lab">ค่าบริการห้องพัก</span>
@@ -478,7 +522,7 @@ function EditDialog({ item, tab: tab0, items, canEdit, onClose, onToggle, onSave
                       <small>{own ? "" : "40% (ค่าเริ่มต้น) · "}ก่อน VAT {money(base)} + VAT {money(Math.round((part - base) * 100) / 100)}</small>
                     </label>
                     <span className="rm-med"><span className="rm-lab">ค่าบริการทางการแพทย์</span><b>{money(med)}</b></span>
-                    {row.k === "week" ? <button type="button" className="row-action danger" onClick={() => set({ rates: f.rates.filter((_, j) => j !== i) })}>ลบ</button> : <span />}
+                    {row.k === "week" && !lock ? <button type="button" className="row-action danger" onClick={() => set({ rates: f.rates.filter((_, j) => j !== i) })}>ลบ</button> : <span />}
                   </div>
                 );
               })}
@@ -495,11 +539,12 @@ function EditDialog({ item, tab: tab0, items, canEdit, onClose, onToggle, onSave
               return (
                 <div key={i} className="pl-rate">
                   <span className="pl-code">{rateCode(preview, i)}</span>
-                  <select value={r.unit} onChange={(e) => setRate(i, { unit: e.target.value as RateUnit })} aria-label="หน่วย">{RATE_UNITS.map((u) => <option key={u}>{u}</option>)}</select>
-                  <input value={r.label} onChange={(e) => setRate(i, { label: e.target.value })} placeholder={i === 0 ? "เช่น โปรโมชัน, ราคาที่ 2" : "-"} maxLength={40} aria-label="คำอธิบายราคา" />
+                  <select value={r.unit} disabled={lock} onChange={(e) => setRate(i, { unit: e.target.value as RateUnit })} aria-label="หน่วย">{RATE_UNITS.map((u) => <option key={u}>{u}</option>)}</select>
+                  <input value={r.label} disabled={lock} onChange={(e) => setRate(i, { label: e.target.value })} placeholder={i === 0 ? "เช่น โปรโมชัน, ราคาที่ 2" : "-"} maxLength={40} aria-label="คำอธิบายราคา" />
                   <div>
                     <input type="number" min={0} inputMode="decimal" value={r.price} onChange={(e) => setRate(i, { price: e.target.value })} className={`text-right tabular-nums ${diff ? "pl-changed" : ""}`} aria-label="ราคา" />
                     {diff && <small className="pl-was">เดิม {money(was!.price)}</small>}
+                    {lock && item?.central?.[r.from!] && <small className="pl-was">ราคากลาง {money(item.central[r.from!].price)}</small>}
                     {/* ห้องพัก: แยกส่วนค่าห้อง (มี VAT) ที่เหลือเป็นค่าบริการทางการแพทย์ (ไม่มี VAT) */}
                     {f.cat === "RM" && <label className="pl-room">ในนี้เป็นค่าห้อง (รวม VAT){(r.room === undefined || r.room === "") && <i className="not-italic text-gold-500"> · ค่าเริ่มต้น</i>}
                       <input type="number" min={0} inputMode="decimal" value={r.room ?? ""} placeholder={String(roomShareOf(Number(r.price) || 0))} onChange={(e) => setRate(i, { room: e.target.value })} aria-label={`ค่าห้อง (มี VAT) ของราคา${r.unit}`} />
@@ -507,11 +552,11 @@ function EditDialog({ item, tab: tab0, items, canEdit, onClose, onToggle, onSave
                     </label>}
                     {was?.next && !diff && <small className="pl-was is-next">ราคาใหม่ {money(was.next.price)} มีผล {thDate(was.next.from)} · <button type="button" onClick={() => cancelNext(r.from!)}>ยกเลิก</button></small>}
                   </div>
-                  <button type="button" className="row-action danger" disabled={f.rates.length < 2} onClick={() => set({ rates: f.rates.filter((_, j) => j !== i) })}>ลบ</button>
+                  {lock ? <span /> : <button type="button" className="row-action danger" disabled={f.rates.length < 2} onClick={() => set({ rates: f.rates.filter((_, j) => j !== i) })}>ลบ</button>}
                 </div>
               );
             })}
-            {f.rates.length < 8 && f.cat !== "RM" && <button type="button" className="pl-add" onClick={() => set({ rates: [...f.rates, { unit: f.rates[f.rates.length - 1]?.unit ?? "ครั้ง", price: "", label: "" }] })}><Icon name="plus" className="h-4 w-4" /> เพิ่มราคา</button>}
+            {f.rates.length < 8 && f.cat !== "RM" && !lock && <button type="button" className="pl-add" onClick={() => set({ rates: [...f.rates, { unit: f.rates[f.rates.length - 1]?.unit ?? "ครั้ง", price: "", label: "" }] })}><Icon name="plus" className="h-4 w-4" /> เพิ่มราคา</button>}
             <p className="field-hint">ท้ายรหัสราคา: S ครั้ง · D วัน · W สัปดาห์ · M เดือน · P แพ็กเกจ · MP โปรโมชัน · M2 ราคาที่ 2</p>
           </div>}
 

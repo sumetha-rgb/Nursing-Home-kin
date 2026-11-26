@@ -17,7 +17,7 @@ const painTone = (p: string) => (Number(p) >= 7 ? "is-hi" : Number(p) >= 4 ? "is
  * บันทึกกายภาพทีละครั้งแบบการ์ด (อ่านง่ายทั้งคอมและมือถือ) · ใช้ร่วมกัน: โปรไฟล์ผู้รับบริการ · หน้าต่างประวัติ · KinApp
  *  หัวการ์ด = ครั้งที่ + วันเวลา + ผู้บันทึก · แถบสรุป = เวลาทำ ปวด การเคลื่อนไหว กิจกรรม · สัญญาณชีพ · บันทึกการตรวจรักษา · รูป · แก้ไขได้ภายใน 7 วัน
  */
-export default function PhysioSessions({ items, onEdit, empty = "ยังไม่มีบันทึกกายภาพ" }: { items: PhysioHistory[] | null; onEdit?: (h: PhysioHistory) => void; empty?: string }) {
+export default function PhysioSessions({ items, onEdit, onCopy, empty = "ยังไม่มีบันทึกกายภาพ" }: { items: PhysioHistory[] | null; onEdit?: (h: PhysioHistory) => void; onCopy?: (h: PhysioHistory) => void; empty?: string }) {
   const [zoom, setZoom] = useState<string | null>(null);
   if (!items) return <p className="pk-empty">กำลังโหลด…</p>;
   if (!items.length) return <p className="pk-empty">{empty}</p>;
@@ -57,7 +57,7 @@ export default function PhysioSessions({ items, onEdit, empty = "ยังไม
               {Array.from({ length: h.work_n ?? 0 }, (_, i) => <button key={i} type="button" onClick={() => setZoom(photoUrl(h.visit_id!, "work", i))}><img src={photoUrl(h.visit_id!, "work", i)} alt={`รูปงาน ${i + 1} ${h.title ?? ""}`} loading="lazy" /><span>รูปงาน{(h.work_n ?? 0) > 1 ? ` ${i + 1}` : ""}</span></button>)}
             </div>}
 
-            {onEdit && <EditNote h={h} onEdit={() => onEdit(h)} />}
+            {onEdit && <EditNote h={h} onEdit={() => onEdit(h)} onCopy={onCopy ? () => onCopy(h) : undefined} />}
           </li>
         );
       })}</ol>

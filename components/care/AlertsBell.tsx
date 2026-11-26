@@ -1,7 +1,7 @@
 "use client";
 import { usePushRefresh } from "@/lib/pushRefresh";
 import { useEffect, useState } from "react";
-import { inCase, leftOf, onDate, PhysioBoard, schedOf, whoOn } from "@/lib/physio";
+import { inCase, leftOf, onDate, PhysioBoard, schedOf, timeOn, whoOn } from "@/lib/physio";
 import Icon from "@/components/Icon";
 import { Modal } from "@/components/ui";
 import { useApp } from "@/lib/app";
@@ -33,7 +33,7 @@ function PhysioBell({ compact, userId }: { compact: boolean; userId: string }) {
   const mine = (d?.cases ?? []).filter((c) => inCase(c, userId));
   const done = new Set((d?.today ?? []).map((x) => x.course_id));
   const today = d?.date ?? "";
-  const pending = mine.filter((c) => today && onDate(schedOf(c), today) && whoOn(c, today)?.id === userId && !done.has(c.id)).sort((a, b) => (a.plan_time ?? "").localeCompare(b.plan_time ?? ""));
+  const pending = mine.filter((c) => today && onDate(schedOf(c), today) && whoOn(c, today)?.id === userId && !done.has(c.id)).sort((a, b) => timeOn(a, today).localeCompare(timeOn(b, today)));
   const low = mine.filter((c) => leftOf(c) <= 2);
   const total = pending.length + low.length;
   return (
@@ -48,7 +48,7 @@ function PhysioBell({ compact, userId }: { compact: boolean; userId: string }) {
         <h4 className="mb-2 font-semibold text-gold-900">นัดวันนี้ที่ยังไม่บันทึก ({pending.length})</h4>
         {pending.length === 0 ? <p className="mb-5 rounded-xl bg-emerald-50 px-4 py-4 text-center text-sm text-emerald-800">บันทึกครบทุกนัดวันนี้แล้ว</p> : (
           <ul className="mb-5 space-y-2">{pending.map((c) => (
-            <li key={c.id} className="alert-item is-watch"><p className="font-semibold text-gold-900">{c.plan_time} · {c.resident_name}</p>
+            <li key={c.id} className="alert-item is-watch"><p className="font-semibold text-gold-900">{timeOn(c, today)} · {c.resident_name}</p>
               <p className="text-xs text-gold-600">{c.room ? `ห้อง ${c.room} · ` : ""}{c.name} · ครั้งที่ {c.used + 1}/{c.total}</p></li>
           ))}</ul>
         )}

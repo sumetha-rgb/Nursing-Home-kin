@@ -8,6 +8,9 @@ import { normValue } from "@/lib/auditLabels";
 import { accessOf, fromDb, RESIDENT_TABLES, selectExpr, SHARED_BRANCHES, specFor, Spec, toDb } from "@/lib/schema";
 import { evaluateVitals, flagText, levelOf, parseVitals } from "@/lib/vitals";
 import { RESIDENTS } from "@/lib/mock";
+import { syncPackageCourses, voidQuery } from "@/lib/physioPackages";
+import { DEFAULT_SHIFT } from "@/lib/shifts";
+import { shiftCfgs } from "@/lib/shiftsServer";
 import { seesAllBranches, type SessionUser } from "@/lib/roles";
 
 export const dynamic = "force-dynamic";
@@ -202,20 +205,25 @@ const dayTh = (offset = 0) => new Date(Date.now() + 7 * 3600e3 + offset * 864e5)
 async function generateDaily(key: string, s: Spec) {
   if (!key.startsWith("daily-") || !s.scope) return;
   const d = s.scope.value;
-  // ก่อน 07:00 ยังเป็นวันทำงานของเมื่อวาน (เวรดึก) ให้สร้างงานของเมื่อวานได้ถ้ายังไม่มีใครเปิด
-  const first = new Date(Date.now() + 7 * 3600e3).getUTCHours() < 7 ? dayTh(-1) : dayTh();
+  // ก่อนเวลาเริ่มกะเช้า ยังเป็นวันทำงานของเมื่อวาน (เวรดึก) ให้สร้างงานของเมื่อวานได้ถ้ายังไม่มีใครเปิด
+  //  ชุดนี้รวมทุกสาขา: ใช้เวลาเริ่มกะที่ช้าที่สุดของทุกสาขา (lib/shifts · ไม่ได้ตั้ง = 07:00)
+  const latestStart = Math.max(DEFAULT_SHIFT.d, ...[...(await shiftCfgs()).values()].map((c) => c.d));
+  const nowTh = new Date(Date.now() + 7 * 3600e3);
+  const first = nowTh.getUTCHours() + nowTh.getUTCMinutes() / 60 < latestStart ? dayTh(-1) : dayTh();
   if (d < first || d > dayTh(14)) return;
   const created = await sql`INSERT INTO app_seed (collection) VALUES (${key}) ON CONFLICT DO NOTHING RETURNING collection`;
   if (!created.length) return;
   const routines = (await sql`
     SELECT r.* FROM care_routines r LEFT JOIN residents x ON x.id = r.resident_id
     WHERE r.active AND (x.status IS NULL OR x.status NOT LIKE 'ย้ายออก%')
+      -- งานประจำเฉพาะบางวัน (days = วัน ISO คั่นด้วย , · ว่าง = ทุกวัน)
+      AND (coalesce(r.days, '') = '' OR extract(isodow FROM ${d}::date)::int = ANY(string_to_array(r.days, ',')::int[]))
     ORDER BY r.sched_time`) as Record<string, string>[];
   if (!routines.length) return;
   const top = Date.now();
   await sql.transaction(routines.map((r, i) => sql`
-    INSERT INTO daily_tasks (id, sort_order, work_date, branch_name, resident_id, resident_name, task_name, assignee, scheduled_time, shift, status, instruction)
-    VALUES (${randomUUID()}, ${top - i}, ${d}, ${r.branch_name}, ${r.resident_id}, ${r.resident_name}, ${r.task_name}, '-', ${r.sched_time}, ${r.shift}, 'รอทำ', ${r.instruction ?? "-"})`));
+    INSERT INTO daily_tasks (id, sort_order, work_date, branch_name, resident_id, resident_name, task_name, assignee, scheduled_time, shift, status, instruction, end_time)
+    VALUES (${randomUUID()}, ${top - i}, ${d}, ${r.branch_name}, ${r.resident_id}, ${r.resident_name}, ${r.task_name}, '-', ${r.sched_time}, ${r.shift}, 'รอทำ', ${r.instruction ?? "-"}, ${/^\d{2}:\d{2}/.test(r.end_time ?? "") ? r.end_time : null}::time)`));
 }
 
 async function list(key: string, s: Spec, branch: string | null, me?: SessionUser) {
@@ -415,6 +423,16 @@ async function numberContracts(ids: string[]) {
                WHERE id = $1 AND (contract_no IS NULL OR contract_no = '')`, [id, prefix]);
 }
 
+/**
+ * รหัสงานมาตรฐาน: T-ลำดับ 3 หลัก ต่อจากรหัสสูงสุดทุกสาขา เช่น T-007 (หน้าเว็บเติมรหัสถัดไปให้ก่อน แต่เห็นเฉพาะสาขาตัวเอง + ส่วนกลาง)
+ *  งานใหม่ที่รหัสว่าง หรือรหัสซ้ำกับงานอื่น (อีกสาขา / อีกเครื่องเพิ่มพร้อมกัน) → ออกรหัสใหม่
+ */
+async function numberMasterTasks(ids: string[]) {
+  for (const id of ids)
+    await sql(`UPDATE master_tasks m SET task_code = 'T-' || lpad((SELECT coalesce(max(substring(task_code from '^T-([0-9]+)$')::int), 0) + 1 FROM master_tasks)::text, 3, '0')
+               WHERE m.id = $1 AND (coalesce(m.task_code, '') = '' OR EXISTS (SELECT 1 FROM master_tasks o WHERE o.id <> m.id AND o.task_code = m.task_code))`, [id]);
+}
+
 /** เลขที่ใบเสนอราคา: QT-ปี พ.ศ.-ลำดับของปี 4 หลัก เช่น QT-2569-0012 */
 async function numberQuotes(ids: string[]) {
   const prefix = `QT-${new Date(Date.now() + 7 * 3600e3).getUTCFullYear() + 543}-`;
@@ -560,6 +578,7 @@ export async function POST(req: NextRequest, { params }: { params: { key: string
         if (key === "residents" && fresh.length) await sql.transaction(hnQueries(fresh.map((x) => x.id)));
         if (key === "residents") logs.push(...await closeFamilyLinks(s, body.items));
         if (key === "contracts" && fresh.length) await numberContracts(fresh.map((x) => x.id));
+        if (key === "master" && fresh.length) await numberMasterTasks(fresh.map((x) => x.id));
         if (key === "assessments") await numberQuotes(body.items.map((x) => x.id));
         if (key === "invoices" && fresh.length) await numberInvoices(fresh.map((x) => x.id));
         // ใบแจ้งหนี้ที่ยังไม่มี HN (เช่น ออกพร้อมสัญญาก่อน server ออก HN ให้ผู้รับบริการ) เติมจากทะเบียนผู้รับบริการ
@@ -568,6 +587,8 @@ export async function POST(req: NextRequest, { params }: { params: { key: string
         if (key === "invoices") await sql(`UPDATE invoices i SET contract_no = c.contract_no
           FROM (SELECT DISTINCT ON (resident_id) resident_id, contract_no FROM contracts WHERE resident_id IS NOT NULL ORDER BY resident_id, created_at DESC) c
           WHERE i.id = ANY($1) AND c.resident_id = i.resident_id AND (i.contract_no IS NULL OR i.contract_no = '')`, [body.items.map((x) => x.id)]);
+        // แพ็กเกจกายภาพในใบ (เช่น PT-22-P 30 ครั้ง/เดือน) → คอร์สให้นักกายภาพตัดครั้ง · แก้ใบแล้วปรับตาม (lib/physioPackages)
+        if (key === "invoices") for (const c of await syncPackageCourses(body.items.map((x) => x.id))) logs.push({ area: "physio", action: "create", recordId: c.id, summary: c.summary, branch: c.branch });
         fresh.forEach((it, i) => {
           const after = asRec(s, values(s, it.data));
           logs.push({ area: key, action: "create", recordId: it.id, summary: labelOf(after), branch: owners?.[i] ?? (branchOf(s, it.data) as string | null) ?? me.branch, after });
@@ -699,6 +720,8 @@ async function guardInvoices(s: Spec, me: SessionUser, items: Item[], prev: Map<
   return { items: out, release: [
     // มีอีกเครื่องรับชำระแทรกเข้ามาหลังตรวจ (ก่อนคำสั่งนี้): คืนสถานะตามยอดที่รับจริง ไม่ยกเลิกใบที่มีเงินเข้าแล้ว
     sql(`UPDATE invoices SET status = CASE WHEN paid_total >= net - 0.005 THEN 'ชำระแล้ว' ELSE 'ชำระบางส่วน' END WHERE id = ANY($1) AND status = 'ยกเลิก' AND paid_total > 0`, [voided]),
+    // คอร์สจากแพ็กเกจกายภาพในใบที่ยังไม่ได้ตัดครั้ง: ลบทิ้ง ไม่ต้องกลับเป็นยังไม่เรียกเก็บ (lib/physioPackages)
+    voidQuery(voided),
     ...INVOICE_LINKED.map((t) => sql(`UPDATE ${t} SET invoice_id = NULL WHERE invoice_id = ANY($1) AND EXISTS (SELECT 1 FROM invoices v WHERE v.id = ${t}.invoice_id AND v.status = 'ยกเลิก')`, [voided])),
   ] };
 }

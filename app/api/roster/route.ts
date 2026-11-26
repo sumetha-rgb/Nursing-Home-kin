@@ -5,6 +5,8 @@ import { currentUser, forbidden, unauthorized } from "@/lib/auth";
 import { audit } from "@/lib/audit";
 import type { SessionUser } from "@/lib/roles";
 import { can } from "@/lib/perms";
+import { DEFAULT_SHIFT, hm, hourOf, shiftError, shiftLength, shiftRange, shiftStartHour, type ShiftCfg } from "@/lib/shifts";
+import { clearShiftCache, shiftCfgOf, shiftCfgs } from "@/lib/shiftsServer";
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
@@ -18,7 +20,9 @@ export const fetchCache = "force-no-store";
  *  POST { op: "assign_one", date, shift, staffId, on, branch? }  เพิ่ม (on=true) / เอาออก (on=false) ทีละคน · ผู้จัดการ
  *  POST { op: "checkin", kind: "in"|"out", photo }         เช็คชื่อด้วยรูปถ่ายสด · ทุกระดับ (ของตัวเอง)
  */
-const SHIFT_START: Record<string, string> = { เช้า: "07:00", ดึก: "19:00" };
+const SHIFT_KEYS = ["เช้า", "ดึก"];
+/** เวลาเข้าเวร "HH:MM" ตามเวลากะของสาขา (lib/shifts · ตั้งได้ที่หน้าตารางเวร) */
+const shiftTime = (c: ShiftCfg, shift: string) => hm(shiftStartHour(c, shift === "ดึก"));
 const LATE_GRACE = 15;
 const bad = (msg: string, status = 400) => NextResponse.json({ error: msg }, { status });
 /** จัดเวร/ดูการเช็คชื่อของทีม = มีเมนูตารางเวร (ไม่มี = เห็นเฉพาะของตัวเองใน KinApp) */
@@ -33,8 +37,8 @@ async function nowTh() {
   return r as { d: string; t: string; y: string };
 }
 /** เช็คชื่อเข้าได้ก่อนเวลาเข้าเวร 60 นาที · เช็คชื่อออกได้ถึง 3 ชั่วโมงหลังเลิกเวร (เวรละ 12 ชั่วโมง) */
-const EARLY_IN_MIN = 60, LATE_OUT_MIN = 180, SHIFT_HOURS = 12;
-type ShiftRow = { id: string; date: string; shift: string };
+const EARLY_IN_MIN = 60, LATE_OUT_MIN = 180;
+type ShiftRow = { id: string; date: string; shift: string; branch_name: string | null };
 /**
  * เวรที่การเช็คชื่อตอนนี้ผูกกับ (คิดเวลาไทยที่ server)
  *  kind "in"  : เวรที่ยังไม่เช็คชื่อเข้า และตอนนี้อยู่ระหว่าง 60 นาทีก่อนเข้าเวร ถึงเวลาเลิกเวร (เวรที่เริ่มล่าสุดก่อน)
@@ -44,12 +48,15 @@ type ShiftRow = { id: string; date: string; shift: string };
  */
 async function myShift(me: SessionUser, kind?: "in" | "out") {
   const n = await nowTh();
-  const rows = (await sql`SELECT id, shift_date::text AS date, shift FROM staff_shifts WHERE staff_id = ${me.id} AND shift_date IN (${n.d}::date, ${n.y}::date) ORDER BY shift_date`) as ShiftRow[];
+  const rows = (await sql`SELECT id, shift_date::text AS date, shift, branch_name FROM staff_shifts WHERE staff_id = ${me.id} AND shift_date IN (${n.d}::date, ${n.y}::date) ORDER BY shift_date`) as ShiftRow[];
   const att = (await sql`SELECT work_date::text AS date, shift, kind FROM attendance WHERE staff_id = ${me.id} AND work_date IN (${n.d}::date, ${n.y}::date) AND shift IS NOT NULL`) as { date: string; shift: string; kind: string }[];
   // เวลาเทียบกันเป็นนาที (นาฬิกาไทย)
   const now = Date.parse(`${n.d}T${n.t}:00Z`) / 60e3;
-  const startOf = (r: ShiftRow) => Date.parse(`${r.date}T${SHIFT_START[r.shift] ?? "07:00"}:00Z`) / 60e3;
-  const endOf = (r: ShiftRow) => startOf(r) + SHIFT_HOURS * 60;
+  const cfgs = await shiftCfgs();
+  const cfgOf = (r: ShiftRow) => cfgs.get(r.branch_name ?? me.branch) ?? DEFAULT_SHIFT;
+  const startOf = (r: ShiftRow) => Date.parse(`${r.date}T${shiftTime(cfgOf(r), r.shift)}:00Z`) / 60e3;
+  // เวรจบเมื่อเวรถัดไปเริ่ม (สองกะยาวไม่เท่ากันได้)
+  const endOf = (r: ShiftRow) => startOf(r) + Math.round(shiftLength(cfgOf(r), r.shift === "ดึก") * 60);
   const has = (r: ShiftRow, k: string) => att.some((a) => a.date === r.date && a.shift === r.shift && a.kind === k);
   const latest = (list: ShiftRow[]) => [...list].sort((a, b) => startOf(b) - startOf(a))[0];
   const inWin = rows.filter((r) => now >= startOf(r) - EARLY_IN_MIN && now < endOf(r));
@@ -103,6 +110,10 @@ export async function GET(req: NextRequest) {
           : await sql`SELECT kind, to_char(at AT TIME ZONE 'Asia/Bangkok', 'HH24:MI') AS time, late_min FROM attendance WHERE staff_id = ${me.id} AND work_date = ${m.now.d}::date AND shift IS NULL ORDER BY at`;
         return NextResponse.json({ now: m.now, shift: m.shift, next: m.next, attendance: att });
       }
+      case "shift_starts": {
+        // เวลาเริ่มกะเช้าของทุกสาขา (ทุกคนอ่านได้ · หน้าเว็บใช้คิดกะ/วันทำงาน · ไม่มี = 07:00)
+        return NextResponse.json({ shifts: Object.fromEntries(await shiftCfgs()), default: DEFAULT_SHIFT });
+      }
       default:
         return bad("unknown op");
     }
@@ -121,7 +132,7 @@ export async function POST(req: NextRequest) {
       if (!isAdmin(me)) return forbidden("บัญชีนี้ไม่มีสิทธิ์จัดเวร");
       const br = branchOf(me, b.branch);
       if (!br) return bad("กรุณาเลือกสาขา");
-      if (!dateOk(String(b.date)) || !(b.shift in SHIFT_START)) return bad("ข้อมูลเวรไม่ถูกต้อง");
+      if (!dateOk(String(b.date)) || !SHIFT_KEYS.includes(b.shift)) return bad("ข้อมูลเวรไม่ถูกต้อง");
       const ids = (Array.isArray(b.staffIds) ? b.staffIds : []).map(String);
       const team = (await sql`SELECT id, full_name FROM staff_users WHERE branch_name = ${br} AND id = ANY(${ids}) AND access_level IN ('Nurse', 'Nurse Aide', 'Head Nurse')`) as { id: string; full_name: string }[];
       const before = (await sql`SELECT staff_name FROM staff_shifts WHERE branch_name = ${br} AND shift_date = ${b.date}::date AND shift = ${b.shift}`) as { staff_name: string }[];
@@ -138,7 +149,7 @@ export async function POST(req: NextRequest) {
       if (!isAdmin(me)) return forbidden("บัญชีนี้ไม่มีสิทธิ์จัดเวร");
       const br = branchOf(me, b.branch);
       if (!br) return bad("กรุณาเลือกสาขา");
-      if (!dateOk(String(b.date)) || !(b.shift in SHIFT_START)) return bad("ข้อมูลเวรไม่ถูกต้อง");
+      if (!dateOk(String(b.date)) || !SHIFT_KEYS.includes(b.shift)) return bad("ข้อมูลเวรไม่ถูกต้อง");
       const staffId = String(b.staffId ?? "");
       const on = b.on !== false;
       const [t] = (on
@@ -153,6 +164,22 @@ export async function POST(req: NextRequest) {
       const [c] = (await sql`SELECT count(*)::int AS n FROM staff_shifts WHERE branch_name = ${br} AND shift_date = ${b.date}::date AND shift = ${b.shift}`) as { n: number }[];
       return NextResponse.json({ ok: true, changed: changed.length > 0, count: c?.n ?? 0 });
     }
+    if (b.op === "shift_start") {
+      // ตั้งเวลาเริ่มกะเช้าของสาขา: ผู้จัดการสาขา (สาขาตัวเอง) · ผู้บริหาร (ทุกสาขา) · กะดึก = +12 ชม.
+      if (me.role !== "Branch Admin" && me.role !== "Global Admin") return forbidden("ตั้งเวลากะได้เฉพาะผู้จัดการสาขาและผู้บริหาร");
+      const br = me.role === "Global Admin" ? String(b.branch ?? "").trim() : me.branch;
+      if (!br) return bad("กรุณาเลือกสาขา");
+      // { day: "07:30", night: "17:00" } = เวลาเริ่มกะเช้า / กะดึก (ตั้งได้อิสระ · lib/shifts shiftError)
+      const next: ShiftCfg = { d: hourOf(String(b.day ?? "")), n: hourOf(String(b.night ?? "")) };
+      const err = shiftError(next);
+      if (err) return bad(err);
+      const before = await shiftCfgOf(br);
+      await sql`INSERT INTO branch_shifts (branch_name, day_min, night_min, updated_by) VALUES (${br}, ${Math.round(next.d * 60)}, ${Math.round(next.n * 60)}, ${me.name})
+                ON CONFLICT (branch_name) DO UPDATE SET day_min = EXCLUDED.day_min, night_min = EXCLUDED.night_min, updated_by = EXCLUDED.updated_by, updated_at = now()`;
+      clearShiftCache();
+      await audit(req, me, [{ area: "roster", action: "update", recordId: br, branch: br, summary: `ตั้งเวลากะ ${br}: เช้า ${shiftRange(before, false)} · ดึก ${shiftRange(before, true)} → เช้า ${shiftRange(next, false)} · ดึก ${shiftRange(next, true)}`, before: { day: hm(before.d), night: hm(before.n) }, after: { day: hm(next.d), night: hm(next.n) } }]);
+      return NextResponse.json({ ok: true, shift: next });
+    }
     if (b.op === "checkin") {
       const kind = b.kind === "out" ? "out" : "in";
       const photo = typeof b.photo === "string" ? b.photo : "";
@@ -165,7 +192,7 @@ export async function POST(req: NextRequest) {
       if (done.length) return bad(`เช็คชื่อ${kind === "in" ? "เข้างาน" : "ออกงาน"}ไปแล้วเมื่อ ${done[0].t} น.`, 409);
       let late: number | null = null;
       if (kind === "in" && m.shift) {
-        const [r] = await sql`SELECT GREATEST(0, floor(extract(epoch FROM ((now() AT TIME ZONE 'Asia/Bangkok') - (${date}::date + ${SHIFT_START[m.shift.shift]}::time))) / 60))::int AS m`;
+        const [r] = await sql`SELECT GREATEST(0, floor(extract(epoch FROM ((now() AT TIME ZONE 'Asia/Bangkok') - (${date}::date + ${shiftTime(await shiftCfgOf(m.shift.branch_name ?? me.branch), m.shift.shift)}::time))) / 60))::int AS m`;
         late = (r.m as number) > LATE_GRACE ? (r.m as number) : 0;
       }
       const id = randomUUID();

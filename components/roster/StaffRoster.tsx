@@ -8,10 +8,13 @@ import { useApp } from "@/lib/app";
 import { useAutoRefresh } from "@/lib/autoRefresh";
 import type { SessionUser } from "@/lib/roles";
 import { checkIn, dayTitle, fetchMonth, fetchToday, isoDate, Month, shortName, SHIFTS, stampPhoto, WEEKDAYS, ymOf } from "@/lib/roster";
+import { hm, shiftLength, shiftRange, shiftStartHour, type ShiftCfg } from "@/lib/shifts";
+import { useShiftCfg } from "@/lib/shiftsClient";
 
 type Today = Awaited<ReturnType<typeof fetchToday>>;
 const thNow = () => new Date().toLocaleString("th-TH", { weekday: "short", day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
-const shiftTime = (s?: string) => SHIFTS.find((x) => x.key === s)?.time ?? "";
+/** ช่วงเวลาของเวร ตามเวลาเริ่มกะเช้าของสาขา (start · lib/shifts) */
+const shiftTime = (s: string | undefined, c: ShiftCfg) => (s ? shiftRange(c, s === "ดึก") : "");
 
 /** นาฬิกาที่เดินทุกวินาที (แสดงในหน้าถ่ายรูปเช็คชื่อ) */
 function useClock(on: boolean) {
@@ -23,6 +26,7 @@ function useClock(on: boolean) {
 /** การ์ดเช็คชื่อเข้า/ออกงาน: ต้องถ่ายรูปสดจากกล้อง ระบบประทับวันเวลาลงรูปและบันทึกเวลาของ server */
 /** compact = แถบบรรทัดเดียวบนหน้างานวันนี้ · เช็คชื่อครบทั้งเข้าและออกแล้วซ่อนตัวเอง */
 export function CheckInCard({ user, onChange, compact = false }: { user: SessionUser; onChange?: () => void; compact?: boolean }) {
+  const shStart = useShiftCfg(user.branch);
   const { toast } = useApp();
   const [today, setToday] = useState<Today | null>(null);
   const [kind, setKind] = useState<"in" | "out" | null>(null);
@@ -74,7 +78,7 @@ export function CheckInCard({ user, onChange, compact = false }: { user: Session
           <button type="button" className="btn-primary" disabled={busy} onClick={submit}>{busy ? "กำลังบันทึก…" : `ยืนยันเช็คชื่อ${label}`}</button>
         </>}>
         <div className="checkin-clock"><Icon name="history" className="h-4 w-4" /><span>{clock}</span></div>
-        <p className="mb-3 text-sm text-gold-700">{user.name} · สาขา{user.branch ?? "-"}{shift ? ` · เวร${shift.shift} ${shiftTime(shift.shift)}` : ""}</p>
+        <p className="mb-3 text-sm text-gold-700">{user.name} · สาขา{user.branch ?? "-"}{shift ? ` · เวร${shift.shift} ${shiftTime(shift.shift, shStart)}` : ""}</p>
         <PhotoPicker value={shot || raw} onChange={onPhoto} allowFile={false} front invalid={!!err && !shot}
           label="ถ่ายรูปตัวเองเพื่อยืนยันตัวตน" hint="ต้องถ่ายสดจากกล้องเท่านั้น ระบบประทับวันที่และเวลาลงในรูป และบันทึกเวลาจากเซิร์ฟเวอร์" />
         {err && <p role="alert" className="form-error mt-3"><Icon name="alert" className="h-4 w-4 shrink-0" />{err}</p>}
@@ -87,7 +91,7 @@ export function CheckInCard({ user, onChange, compact = false }: { user: Session
         <Icon name="camera" className="h-5 w-5 shrink-0" />
         <span className="ka-t">
           <b>{cin ? `เข้างานแล้ว ${cin.time} น.` : "ยังไม่เช็คชื่อเข้างาน"}{(cin?.late_min ?? 0) > 0 && <em className="ka-flag warn">สาย {cin!.late_min} นาที</em>}</b>
-          <small>{shift ? `เวร${shift.shift} ${shiftTime(shift.shift)}` : "ไม่มีเวรในตาราง · บันทึกเป็นนอกตาราง"}</small>
+          <small>{shift ? `เวร${shift.shift} ${shiftTime(shift.shift, shStart)}` : "ไม่มีเวรในตาราง · บันทึกเป็นนอกตาราง"}</small>
         </span>
         <button type="button" className={cin ? "btn-soft ka-btn-sm" : "btn-primary ka-btn-sm"} onClick={() => setKind(cin ? "out" : "in")}>{cin ? "เช็คชื่อออก" : "เช็คชื่อ"}</button>
         {dialog}
@@ -101,7 +105,7 @@ export function CheckInCard({ user, onChange, compact = false }: { user: Session
         <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-gold-100 text-gold-700"><Icon name="camera" /></span>
         <div className="min-w-0 flex-1">
           <p className="font-semibold text-gold-800">เช็คชื่อเข้างาน</p>
-          <p className="text-xs text-gold-600">{shift ? `เวร${shift.shift} ${shiftTime(shift.shift)} · ${dayTitle(shift.date)}` : "วันนี้ไม่มีเวรของคุณในตาราง (เช็คชื่อได้ ระบบจะบันทึกว่านอกตาราง)"}</p>
+          <p className="text-xs text-gold-600">{shift ? `เวร${shift.shift} ${shiftTime(shift.shift, shStart)} · ${dayTitle(shift.date)}` : "วันนี้ไม่มีเวรของคุณในตาราง (เช็คชื่อได้ ระบบจะบันทึกว่านอกตาราง)"}</p>
         </div>
       </div>
       <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
@@ -115,8 +119,8 @@ export function CheckInCard({ user, onChange, compact = false }: { user: Session
   );
 }
 
-const SHIFT_START: Record<string, number> = { เช้า: 7, ดึก: 19 };
-const at = (date: string, h: number) => new Date(`${date}T${String(h).padStart(2, "0")}:00:00`).getTime();
+/** วันที่ + ชั่วโมงทศนิยม (7.5 = 07:30) → เวลา (เวลาเครื่อง) */
+const at = (date: string, h: number) => new Date(`${date}T${hm(h)}:00`).getTime();
 const addDays = (iso: string, n: number) => { const d = new Date(`${iso}T00:00:00`); d.setDate(d.getDate() + n); return isoDate(d); };
 /** วันจันทร์ของสัปดาห์ที่มีวันนั้น (แถบสัปดาห์เริ่มวันจันทร์ ตรงกับปฏิทินเดือน) */
 const mondayOf = (iso: string) => { const d = new Date(`${iso}T00:00:00`); return addDays(iso, -((d.getDay() + 6) % 7)); };
@@ -128,6 +132,8 @@ const shortDay = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString
  *  การมาทำงานของฉันเดือนนี้ · ปุ่ม "ทั้งเดือน" เปิดปฏิทินเต็มเดือน · การ์ดเช็คชื่ออยู่ที่หน้างานวันนี้
  */
 export function StaffRoster({ user }: { user: SessionUser }) {
+  /** ชั่วโมงเริ่มกะเช้าของสาขา (ตั้งที่หน้าตารางเวร · ไม่ได้ตั้ง = 7) */
+  const shStart = useShiftCfg(user.branch);
   const today = isoDate(new Date());
   const [months, setMonths] = useState<Record<string, Month>>({});
   const [err, setErr] = useState("");
@@ -150,9 +156,9 @@ export function StaffRoster({ user }: { user: SessionUser }) {
   const attendance = all.flatMap((m) => m.attendance);
   const checkedIn = (staffId: string, date: string, shift: string) => attendance.find((a) => a.staff_id === staffId && a.date === date && a.kind === "in" && (!a.shift || a.shift === shift));
   const now = Date.now();
-  const startOf = (s: { date: string; shift: string }) => at(s.date, SHIFT_START[s.shift] ?? 7);
+  const startOf = (s: { date: string; shift: string }) => at(s.date, shiftStartHour(shStart, s.shift === "ดึก"));
   // เวรถัดไปของฉัน: เวรที่ยังไม่จบ (เวรละ 12 ชั่วโมง) ที่เริ่มเร็วที่สุด
-  const next = shifts.filter((s) => s.staff_id === user.id && startOf(s) + 12 * 3600e3 > now).sort((a, b) => startOf(a) - startOf(b))[0];
+  const next = shifts.filter((s) => s.staff_id === user.id && startOf(s) + shiftLength(shStart, s.shift === "ดึก") * 3600e3 > now).sort((a, b) => startOf(a) - startOf(b))[0];
   const nextStart = next ? startOf(next) : 0;
   const hoursTo = Math.round((nextStart - now) / 3600e3);
   const mates = next ? shifts.filter((s) => s.date === next.date && s.shift === next.shift && s.staff_id !== user.id) : [];
@@ -178,7 +184,7 @@ export function StaffRoster({ user }: { user: SessionUser }) {
         <small>เวรถัดไปของฉัน</small>
         {next ? <>
           <b>{dayWord(next.date) ? `${dayWord(next.date)} ` : ""}{shortDay(next.date)} · เวร{next.shift}</b>
-          <span>{shiftTime(next.shift)} · {nextStart <= now ? "กำลังอยู่เวร" : hoursTo < 1 ? "เริ่มในไม่ถึง 1 ชั่วโมง" : `อีก ${hoursTo} ชั่วโมง`}</span>
+          <span>{shiftTime(next.shift, shStart)} · {nextStart <= now ? "กำลังอยู่เวร" : hoursTo < 1 ? "เริ่มในไม่ถึง 1 ชั่วโมง" : `อีก ${hoursTo} ชั่วโมง`}</span>
           {mates.length > 0 && <p className="ka-mates">{mates.slice(0, 4).map((m) => <i key={m.id}>{shortName(m.staff_name).slice(0, 2)}</i>)}<span>เข้าเวรด้วย: {mates.map((m) => shortName(m.staff_name)).join(" ")}</span></p>}
         </> : <b className="!text-base">ยังไม่มีเวรของคุณ · ผู้จัดการสาขาจัดเวรได้ที่เมนู &quot;ตารางเวร&quot;</b>}
       </section>
@@ -203,7 +209,7 @@ export function StaffRoster({ user }: { user: SessionUser }) {
       <ul className="ka-list">
         {SHIFTS.map((sh) => {
           const who = shifts.filter((s) => s.date === day && s.shift === sh.key);
-          const started = at(day, SHIFT_START[sh.key] ?? 7) <= now;
+          const started = at(day, shiftStartHour(shStart, sh.key === "ดึก")) <= now;
           const inCount = who.filter((s) => checkedIn(s.staff_id, s.date, s.shift)).length;
           return (
             <li key={sh.key} className="ka-row">
@@ -214,7 +220,7 @@ export function StaffRoster({ user }: { user: SessionUser }) {
                   return <span key={s.id} className={s.staff_id === user.id ? "is-me" : ""}>{i ? " · " : ""}{s.staff_id === user.id ? "คุณ" : shortName(s.staff_name)}
                     {a && (a.late_min ?? 0) > 0 ? <em className="ka-flag warn">สาย {a.late_min} นาที</em> : started && !a && day < today ? <em className="ka-flag bad">ขาด</em> : null}</span>;
                 })}</b> : <b><em className="ka-flag warn">ยังไม่มีคนเข้าเวร</em></b>}
-                <small>{sh.time}{started && who.length ? ` · เช็คชื่อแล้ว ${inCount} จาก ${who.length} คน` : who.length ? ` · ${who.length} คน` : ""}</small>
+                <small>{shiftTime(sh.key, shStart)}{started && who.length ? ` · เช็คชื่อแล้ว ${inCount} จาก ${who.length} คน` : who.length ? ` · ${who.length} คน` : ""}</small>
               </span>
             </li>
           );

@@ -20,18 +20,24 @@ export type RecordTarget = {
   forName?: string | null;
   /** แก้ไขบันทึกเดิม (ภายใน 7 วัน) · ไม่ตัดคอร์สเพิ่ม ไม่เปลี่ยนรูป */
   edit?: PhysioHistory;
+  /** บันทึกครั้งใหม่ โดยเติมค่าจากบันทึกนี้ไว้ก่อน (ปุ่ม คัดลอก) · ยังไม่บันทึกจนกดบันทึกเอง */
+  copy?: PhysioHistory;
 };
 type F = { activities: string[]; pain: string; adl: string; mobility: string; photos: string[]; vit: Record<string, string>; cc: string; pe: string; dx: string; plan: string; showVit: boolean; minutes: string };
 
 /** ท้ายรายการประวัติ: ตัวหนังสือแดงบอกเวลาที่ยังแก้ได้ + ปุ่มแก้ไข (ผู้บันทึก / ผู้จัดการสาขา) */
-export function EditNote({ h, onEdit }: { h: PhysioHistory; onEdit: () => void }) {
+export function EditNote({ h, onEdit, onCopy }: { h: PhysioHistory; onEdit: () => void; onCopy?: () => void }) {
   const { user } = useSession();
   const left = editLeft(h);
+  const mayEdit = !!left && canEditRec(user, h);
+  // คัดลอก = เปิดบันทึกครั้งใหม่ที่เติมค่าจากครั้งนี้ไว้ (ยังไม่บันทึก) · ใช้ได้แม้เกิน 7 วันที่แก้ไขไม่ได้แล้ว
+  const copyBtn = onCopy && <button type="button" className="btn-soft !min-h-0 !py-1.5 !text-sm" onClick={onCopy} title="เปิดบันทึกครั้งใหม่ที่เติมค่าจากครั้งนี้ไว้ ตรวจแก้แล้วกดบันทึกเอง">คัดลอก</button>;
   return <>
     {h.edited && <p className="pk-edited">แก้ไขล่าสุด {h.edited.slice(8, 10)}/{h.edited.slice(5, 7)} {h.edited.slice(11)} น.{h.edited_by ? ` · ${h.edited_by}` : ""}</p>}
-    {left && canEditRec(user, h) && (left.open
-      ? <div className="pk-editrow"><p className="pk-editwarn">แก้ไขได้อีก {left.days} วัน (ถึง {left.until}) · เกิน {EDIT_DAYS} วันแก้ไม่ได้</p><button type="button" className="btn-soft !min-h-0 !py-1.5 !text-sm" onClick={onEdit}>แก้ไข</button></div>
-      : <p className="pk-editwarn is-off">เกิน {EDIT_DAYS} วันหลังบันทึก · แก้ไขไม่ได้แล้ว</p>)}
+    {(mayEdit || copyBtn) && <div className="pk-editrow">
+      {mayEdit ? (left!.open ? <p className="pk-editwarn">แก้ไขได้อีก {left!.days} วัน (ถึง {left!.until}) · เกิน {EDIT_DAYS} วันแก้ไม่ได้</p> : <p className="pk-editwarn is-off">เกิน {EDIT_DAYS} วันหลังบันทึก · แก้ไขไม่ได้แล้ว</p>) : <span />}
+      <span className="pk-editbtns">{copyBtn}{mayEdit && left!.open && <button type="button" className="btn-soft !min-h-0 !py-1.5 !text-sm" onClick={onEdit}>แก้ไข</button>}</span>
+    </div>}
   </>;
 }
 const nowTh = () => new Date().toLocaleString("th-TH", { day: "numeric", month: "short", year: "2-digit", hour: "2-digit", minute: "2-digit" });
@@ -56,6 +62,8 @@ export const stampFor = (u: string, title: string, resident: string, room: strin
 /**
  * ฟอร์มบันทึกกายภาพ (ตัดคอร์ส 1 ครั้ง): 1 สัญญาณชีพ (เตือนค่าที่เป็นไปไม่ได้) · 2 บันทึกการตรวจรักษา · 3 ผลการทำกายภาพ · 4 รูปงาน (เฉพาะเมื่อเช็คอิน)
  *  อาการสำคัญ/วินิจฉัยดึงจากครั้งก่อน · onSaved ได้ { used, total } จาก server
+ *  คัดลอกจากบันทึกเดิม (26 พ.ย. 2569): เลือกวันที่ (ครั้งก่อน หรือวันไหนก็ได้ ทุกคอร์สของผู้รับบริการคนนี้) → เติมการตรวจรักษา กิจกรรม การเคลื่อนไหว
+ *   สัญญาณชีพ ความปวด ADL และรูป ไม่คัดลอก (วัดใหม่ทุกครั้ง)
  */
 export default function PhysioRecordModal({ target, testMode = false, onClose, onSaved }: {
   target: RecordTarget | null; testMode?: boolean; onClose: () => void; onSaved: (x: { used: number; total: number }) => void;
@@ -66,6 +74,17 @@ export default function PhysioRecordModal({ target, testMode = false, onClose, o
   const { user } = useSession();
   const [f, setF] = useState<F | null>(null);
   const [busy, setBusy] = useState(false);
+  /** บันทึกเดิมของผู้รับบริการคนนี้ (ล่าสุดก่อน) · เลือกวันที่จะคัดลอก */
+  const [past, setPast] = useState<PhysioHistory[]>([]);
+  const [pick, setPick] = useState("");
+  useEffect(() => {
+    setPast([]); setPick("");
+    if (!target || target.edit || target.copy) return;
+    let live = true;
+    fetch(`/api/clinic?op=physio_history&course=${encodeURIComponent(target.courseId)}&resident=1`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : { items: [] })).then((d) => { if (live) { const l = ((d.items ?? []) as PhysioHistory[]).filter((h) => h.cc || h.pe || h.dx || h.plan || h.activities?.length || h.mobility); setPast(l); setPick(l[0]?.id ?? ""); } }).catch(() => {});
+    return () => { live = false; };
+  }, [target]);
   useEffect(() => {
     if (!target) { setF(null); return; }
     const e = target.edit;
@@ -74,6 +93,13 @@ export default function PhysioRecordModal({ target, testMode = false, onClose, o
       const plain = !(e.cc || e.pe || e.dx || e.plan);
       setF({ activities: e.activities ?? [], pain: e.pain ?? "", adl: e.adl ?? "", mobility: e.mobility ?? "", photos: [], cc: e.cc ?? "", pe: e.pe ?? (plain ? e.body ?? "" : ""), dx: e.dx ?? "", plan: e.plan ?? "",
         vit: Object.fromEntries(Object.entries(e.vitals ?? {}).filter(([k]) => k !== "bmi").map(([k, v]) => [k, String(v)])), showVit: true, minutes: e.minutes != null ? String(e.minutes) : "" });
+      return;
+    }
+    const c = target.copy;
+    if (c) {
+      // คัดลอก: การตรวจรักษา กิจกรรม การเคลื่อนไหว · สัญญาณชีพ ความปวด ADL วัดใหม่
+      const plain = !(c.cc || c.pe || c.dx || c.plan);
+      setF({ activities: c.activities ?? [], pain: "", adl: "", mobility: c.mobility ?? "", photos: [], vit: {}, cc: c.cc ?? "", pe: c.pe ?? (plain ? c.body ?? "" : ""), dx: c.dx ?? "", plan: c.plan ?? "", showVit: true, minutes: "" });
       return;
     }
     setF({ activities: [], pain: target.last?.pain ?? "", adl: "", mobility: target.last?.mobility ?? "", photos: [], vit: {}, cc: target.last?.cc ?? "", pe: "", dx: target.last?.dx ?? "", plan: "", showVit: true, minutes: "" });
@@ -130,6 +156,15 @@ export default function PhysioRecordModal({ target, testMode = false, onClose, o
   );
   const filled = VITAL_FIELDS.filter((x) => x.k !== "bmi" && f.vit[x.k]?.trim()).length;
   const bmi = bmiOf(Number(f.vit.bw) || undefined, Number(f.vit.ht) || undefined);
+  /** คัดลอกจากบันทึกที่เลือก (ทับช่องการตรวจรักษา กิจกรรม การเคลื่อนไหว) */
+  const copyFrom = () => {
+    const h = past.find((x) => x.id === pick);
+    if (!h) return;
+    const plain = !(h.cc || h.pe || h.dx || h.plan);
+    const run = () => { set({ cc: h.cc ?? "", pe: h.pe ?? (plain ? h.body ?? "" : ""), dx: h.dx ?? "", plan: h.plan ?? "", activities: h.activities ?? [], mobility: h.mobility ?? "" }); toast(`คัดลอกจากบันทึก ${h.at.slice(0, 16)} แล้ว · ตรวจแก้ให้ตรงกับวันนี้ก่อนบันทึก`); };
+    if ((f.pe.trim() || f.plan.trim()) && (f.pe !== (h.pe ?? "") || f.plan !== (h.plan ?? ""))) return confirm({ title: "คัดลอกทับที่กรอกไว้", message: "ช่องตรวจร่างกาย/แผนการรักษามีข้อความแล้ว · คัดลอกทับใช่หรือไม่", okLabel: "คัดลอกทับ", onOk: run });
+    run();
+  };
   const step = (n: number, done: boolean) => <i className={done ? "is-done" : ""}>{done ? "✓" : n}</i>;
   return (
     <Modal open title={`${ed ? "แก้ไขบันทึกกายภาพ" : "บันทึกกายภาพ"} · ${t.residentName || t.courseName}`} onClose={onClose}
@@ -141,6 +176,7 @@ export default function PhysioRecordModal({ target, testMode = false, onClose, o
           <p className="pk-who-line"><b>{ed.title ?? t.courseName}</b> · บันทึกเมื่อ {ed.at}{ed.author ? ` โดย ${ed.author}` : ""}</p>
           <p className="pk-editwarn is-box">{left?.open ? `แก้ไขได้อีก ${left.days} วัน (ถึง ${left.until}) · ` : ""}แก้ไขได้ภายใน {EDIT_DAYS} วันหลังบันทึกเท่านั้น · ทุกการแก้ไขเก็บค่าก่อน-หลังไว้ในบันทึกการใช้งาน · จำนวนครั้งและรูปไม่เปลี่ยน</p>
         </> : <p className="pk-who-line"><b>{t.residentName || t.courseName}</b>{t.hn ? ` · ${t.hn}` : ""} · ครั้งที่ {t.used + 1}/{t.total}{t.visit ? ` · เช็คอิน ${t.visit.at} น.` : ""}{t.forName ? ` · บันทึกแทน ${t.forName}` : ""}</p>}
+        {t.copy && !ed && <p className="pk-copied"><b>คัดลอกจากบันทึก {t.copy.at.slice(0, 16)}{t.copy.author ? ` · ${t.copy.author}` : ""}</b> ยังไม่บันทึก · ตรวจแก้ให้ตรงกับวันนี้ แล้วกด บันทึก เอง · สัญญาณชีพ ความปวด และ ADL วัดใหม่</p>}
 
         <section className="pk-step is-opt">
           <button type="button" className="pk-step-h" aria-expanded={f.showVit} onClick={() => set({ showVit: !f.showVit })}>
@@ -162,6 +198,15 @@ export default function PhysioRecordModal({ target, testMode = false, onClose, o
 
         <section className="pk-step">
           <h4>{step(2, txDone)}บันทึกการตรวจรักษา<small>กรอกอย่างน้อย 1 ช่อง</small></h4>
+          {/* คัดลอกจากปุ่มข้างนอกมาแล้ว = ไม่แสดงแถบนี้ (กันสับสน) */}
+          {!ed && !t.copy && past.length > 0 && <div className="pk-copy">
+            <span>คัดลอกจาก</span>
+            <select value={pick} onChange={(e) => setPick(e.target.value)} aria-label="เลือกวันที่บันทึกที่จะคัดลอก">
+              {past.map((h, i) => <option key={h.id} value={h.id}>{i === 0 ? "ครั้งก่อน · " : ""}{h.at.slice(0, 16)}{h.author ? ` · ${h.author}` : ""}</option>)}
+            </select>
+            <button type="button" className="btn-soft" onClick={copyFrom}>คัดลอก</button>
+            <small>เติมการตรวจรักษา กิจกรรม และการเคลื่อนไหว · สัญญาณชีพ ความปวด และ ADL วัดใหม่</small>
+          </div>}
           {(t.last?.cc || t.last?.dx) && <p className="pk-carry">อาการสำคัญและวินิจฉัยดึงจากครั้งก่อนให้แล้ว · แก้ได้</p>}
           <label className="pk-full">อาการสำคัญ (Chief Complaint)<textarea rows={2} value={f.cc} onChange={(e) => set({ cc: e.target.value })} placeholder="เช่น ปวดเข่าขวาเวลาเดิน" /></label>
           <label className="pk-full">ตรวจร่างกาย<textarea rows={2} value={f.pe} onChange={(e) => set({ pe: e.target.value })} placeholder="เช่น ROM เข่าขวา 0–110° · กำลังกล้ามเนื้อ 4/5" /></label>

@@ -60,7 +60,7 @@ const SPECS: Record<string, Omit<Spec, "scope">> = {
   rooms: { table: "rooms", kind: "rows", branchCol: "branch_name", cols: [c("room_no"), c("branch_name"), c("room_type"), c("capacity", "int"), c("monthly_rate", "money"), c("status"), c("note"), c("floor")] },
   residents: { table: "residents", kind: "rows", branchCol: "branch_name", cols: [c("full_name"), c("age", "int"), c("room"), c("branch_name"), c("chronic_diseases"), c("status"), ro("hn"), c("bed")] },
   tasks_table: { table: "task_logs", kind: "rows", branchCol: "branch_name", cols: [c("work_date", "date_th"), c("branch_name"), c("resident_name"), c("category"), c("task_name"), c("performed_by"), c("status"), c("submitted_at", "time")] },
-  appointments: { table: "appointments", kind: "rows", ...own, cols: [c("appt_date", "date_th"), c("appt_time", "time"), c("resident_name"), c("purpose"), c("caregiver"), c("prep")] },
+  appointments: { table: "appointments", kind: "rows", ...own, cols: [c("appt_date", "date_th"), c("appt_time", "time"), c("resident_name"), c("purpose"), c("caregiver"), c("prep"), c("travel"), c("place")] },
   health: { table: "health_logs", kind: "rows", ...own, cols: [c("recorded_at", "ts_th"), c("resident_name"), c("vital_signs"), c("o2_sat"), c("dtx"), c("weight_height"), c("other_info"), c("note"), c("recorded_by")] },
   complaints: { table: "complaints", kind: "rows", branchCol: "branch_name", cols: [c("reported_at", "ts_th"), c("branch_name"), c("issue"), c("contact_phone"), c("status")] },
   docs: { table: "official_documents", kind: "rows", ...own, cols: [c("title"), c("doc_type"), c("doc_date", "date_th"), c("status"), c("note"), ro("file_name")] },
@@ -68,8 +68,8 @@ const SPECS: Record<string, Omit<Spec, "scope">> = {
     table: "branches", kind: "rows", branchCol: "name", globalWrite: true,
     cols: [c("branch_code"), c("name"), c("legal_entity"), c("phone"), c("address"), c("bed_count", "int"), c("ownership_type"), c("branch_type"), c("selling_point"), c("email"), c("status"), c("lat_long"), c("image_url"), c("license_no"), c("bank_name"), c("main_account"), c("sub_account")],
   },
-  facility: { table: "facility_tasks", kind: "rows", ...own, cols: [c("task_name"), c("category"), c("schedule"), c("dispatch_mode")] },
-  master: { table: "master_tasks", kind: "rows", branchCol: "branch_name", cols: [c("task_code"), c("task_name"), c("instruction"), c("category"), c("shift"), c("branch_name"), c("profession")] },
+  facility: { table: "facility_tasks", kind: "rows", ...own, cols: [c("task_name"), c("category"), c("schedule"), c("dispatch_mode"), c("instruction")] },
+  master: { table: "master_tasks", kind: "rows", branchCol: "branch_name", cols: [c("task_code"), c("task_name"), c("instruction"), c("category"), c("shift"), c("branch_name"), c("profession"), c("suggest_times"), c("repeat_rule"), c("replaces_code")] },
   assessments: { table: "care_assessments", kind: "rows", ...own, cols: [c("plan_name"), c("resident_name"), c("chronic_diseases"), c("relative_phone"), c("estimated_price", "money"), c("note"),
     ro("doc_no"), c("quote_date", "date"), c("valid_days", "int"), c("payer_name"), c("care_level"), c("items_json"), c("contract_no"), c("follow_up", "date"), c("follow_note")] },
   "pharmacy-master": { table: "drug_catalog", kind: "rows", cols: [c("drug_name"), c("properties")] },
@@ -112,7 +112,7 @@ const SPECS: Record<string, Omit<Spec, "scope">> = {
   },
 };
 
-const DAILY = { table: "daily_tasks", kind: "rows" as const, ...own, cols: [c("resident_name"), c("task_name"), c("assignee"), c("scheduled_time", "time"), c("shift"), c("status"), c("instruction"), c("vital_signs"), c("submitted_time", "time"), c("note"), c("done_by"), ro("created_at", undefined, "ts_bkk")] };
+const DAILY = { table: "daily_tasks", kind: "rows" as const, ...own, cols: [c("resident_name"), c("task_name"), c("assignee"), c("scheduled_time", "time"), c("shift"), c("status"), c("instruction"), c("vital_signs"), c("submitted_time", "time"), c("note"), c("done_by"), ro("created_at", undefined, "ts_bkk"), c("end_time", "time")] };
 
 const linked = (cols: Col[]) => cols.some((c) => c.col === "resident_name");
 

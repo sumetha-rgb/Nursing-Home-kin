@@ -33,7 +33,9 @@ import PhotoPicker from "@/components/PhotoPicker";
 import { OfflineBar, usePwa } from "@/components/Pwa";
 import { usePush } from "@/lib/usePush";
 import { CheckInCard, StaffRoster } from "@/components/roster/StaffRoster";
-import { fetchToday, shortName, SHIFTS, stampPhoto } from "@/lib/roster";
+import { fetchToday, shortName, stampPhoto } from "@/lib/roster";
+import { hm, nightAfterMidnight, shiftRange, workDayOf } from "@/lib/shifts";
+import { useShiftCfg } from "@/lib/shiftsClient";
 import type { StaffReview } from "@/lib/reviews";
 import { KPI_PARTS, KpiResp, pointsOf } from "@/lib/kpi";
 import { NO_ALLERGY } from "@/lib/medicalLists";
@@ -43,7 +45,8 @@ import PhysioKin from "@/components/care/PhysioKin";
 
 /* ---------- ข้อมูลจำลอง ---------- */
 /** งานวันนี้ใน KinApp (มาจากหน้างานประจำวันของผู้จัดการ) */
-type Task = { id: string; rid?: string; who: string; title: string; time: string; ins: string; done?: string; note?: string; shift?: string; status?: string; by?: string; owner?: string };
+/** end = เวลาสิ้นสุดของช่วงเวลาทำ ("" = ไม่กำหนด) */
+type Task = { id: string; rid?: string; who: string; title: string; time: string; end?: string; ins: string; done?: string; note?: string; shift?: string; status?: string; by?: string; owner?: string };
 
 const HANDOVER0 = [
   { id: 1, type: "เฝ้าระวังอาการ", who: "คุณมาลี ศรีสุข", text: "แขนขวาอ่อนแรงมากขึ้นเล็กน้อย ให้ตรวจซ้ำทุก 4 ชม.", by: "พยาบาล วิภา", at: "เมื่อวาน 19:10" },
@@ -78,10 +81,9 @@ const VITAL_SHORT: Record<string, string> = { vs: "VS", o2: "O2", dtx: "DTX", wt
 
 /**
  * วันทำงานของ KinApp (YYYY-MM-DD) ตามเวลาไทย UTC+7 เสมอ ไม่ขึ้นกับเขตเวลาของเครื่อง
- * ตัดวันที่ 07:00 น. (เปลี่ยนเวร) ตรงกับตารางเวรและหน้ามอบหมายงาน: 00:00–06:59 ยังเป็นวันของเวรดึกเมื่อวาน
+ * ตัดวันตอนเริ่มกะเช้าของสาขา (lib/shifts · ค่าเริ่มต้น 07:00 น.) ตรงกับตารางเวรและหน้ามอบหมายงาน: 00:00–06:59 ยังเป็นวันของเวรดึกเมื่อวาน
  */
-// เวลาไทย (UTC+7) ลบ 7 ชั่วโมงของการตัดวัน 07:00 = เวลา UTC พอดี · วันที่ UTC จึงเป็นวันทำงานของ KinApp
-const workDayTh = (t = Date.now()) => new Date(t).toISOString().slice(0, 10);
+// วันทำงาน = workDayOf(เวลา, ชั่วโมงเริ่มกะเช้าของสาขา) · เดิมเขียนตายตัวเป็นวันที่ UTC (ไทย +7 ลบตัดวัน 7 ชม.)
 
 /* ---------- ตัวช่วย UI ---------- */
 const Empty = ({ t }: { t: string }) => <p className="rounded-2xl bg-cream-50 py-6 text-center text-sm text-gold-500">{t}</p>;
@@ -145,11 +147,13 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   useEffect(() => { const h = setInterval(() => setNow(Date.now()), 60_000); return () => clearInterval(h); }, []);
   // งานวันนี้ = งานที่ผู้จัดการมอบหมายในหน้า "ตรวจงานประจำวัน" ของวันทำงานนี้ · ส่งงานแล้วสถานะกลับไปให้ผู้จัดการตรวจ
   // วันทำงานตามเวลาไทย: ก่อน 07:00 ยังเป็นวันของเวรดึกเมื่อคืน (เปลี่ยนวันตอนเปลี่ยนเวร 07:00 ไม่ใช่เที่ยงคืน)
-  const workDay = workDayTh(now);
+  /** ชั่วโมงเริ่มกะเช้าของสาขา (ตั้งที่หน้าตารางเวร · ไม่ได้ตั้ง = 7) */
+  const shStart = useShiftCfg(user.branch);
+  const workDay = workDayOf(now, shStart);
   const { rows: drows, ids: dids, update: updDaily } = useCrud(`daily-${workDay}`, []);
   // รหัสงาน = รหัสแถวในฐานข้อมูล (ไม่ใช้ลำดับในรายการ เพราะลำดับเปลี่ยนได้เมื่อดึงข้อมูลใหม่)
   const tasks: Task[] = drows
-    .map((r, k) => ({ id: dids[k], rid: dids[k], who: r[0], title: r[1], time: String(r[3] ?? "").slice(0, 5), ins: r[6] && r[6] !== "-" ? r[6] : "ไม่มีคำสั่งงานเพิ่มเติม", done: r[5] && r[5] !== "รอทำ" ? (r[8] && r[8] !== "-" ? String(r[8]).slice(0, 5) : "ส่งแล้ว") : undefined, note: r[9] && r[9] !== "-" ? r[9] : "", shift: r[4], status: r[5], by: r[10] && r[10] !== "-" ? r[10] : undefined, owner: r[2] && r[2] !== "-" ? r[2] : undefined }))
+    .map((r, k) => ({ id: dids[k], rid: dids[k], who: r[0], title: r[1], time: String(r[3] ?? "").slice(0, 5), end: /^\d{2}:\d{2}/.test(String(r[12] ?? "")) ? String(r[12]).slice(0, 5) : "", ins: r[6] && r[6] !== "-" ? r[6] : "ไม่มีคำสั่งงานเพิ่มเติม", done: r[5] && r[5] !== "รอทำ" ? (r[8] && r[8] !== "-" ? String(r[8]).slice(0, 5) : "ส่งแล้ว") : undefined, note: r[9] && r[9] !== "-" ? r[9] : "", shift: r[4], status: r[5], by: r[10] && r[10] !== "-" ? r[10] : undefined, owner: r[2] && r[2] !== "-" ? r[2] : undefined }))
     .sort((a, b) => a.time.localeCompare(b.time));
   // คิวจ่ายยา = ซองยาที่ห้องยาจัด (แอปจัดยา) ของวันนี้ · ตรวจ QA ผ่านแล้วจึงจ่ายได้
   const [packs, setPacks] = useRecords<Pack>("pharmacy-packs", []);
@@ -161,14 +165,14 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   // นัดหมายและงานส่วนกลาง: ชุดข้อมูลเดียวกับที่ผู้จัดการ/หัวหน้าพยาบาลบันทึกในระบบจัดการ
   const { rows: apptRows } = useCrud("appointments", []);
   // งานส่วนกลาง: ทำแล้วถ่ายรูปส่ง (รอบละครั้ง ทุกวัน / ทุกสัปดาห์ / ทุกเดือน) · นับเป็นผลงานใน KPI
-  type Fac = { id: string; name: string; category: string | null; schedule: string; manual: boolean; assignee: string | null; done: boolean; late: boolean; last: { id: string; by: string; at: string; note: string | null } | null };
+  type Fac = { id: string; name: string; category: string | null; schedule: string; instruction?: string | null; manual: boolean; assignee: string | null; done: boolean; late: boolean; last: { id: string; by: string; at: string; note: string | null } | null };
   const [fac, setFac] = useState<Fac[]>([]);
   const loadFac = () => { fetch("/api/care?op=facility&mine=1", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).then((d) => d && setFac(d.items)).catch(() => {}); };
   useEffect(() => { loadFac(); const t = setInterval(() => { if (document.visibilityState === "visible") loadFac(); }, 60_000); return () => clearInterval(t); }, []);
   const [facPick, setFacPick] = useState<Fac | null>(null);
   const [facBusy, setFacBusy] = useState(false);
   const tomorrowIso = new Date(Date.now() + 7 * 3600e3 + 864e5).toISOString().slice(0, 10);
-  const appts = upcomingAppts(apptRows).filter(({ r }) => apptIso(r[0]) <= tomorrowIso).map(({ r }) => ({ who: r[2], what: r[3], when: `${apptIso(r[0]) === iso() ? "วันนี้" : "พรุ่งนี้"} ${(r[1] ?? "").slice(0, 5)}`, by: r[4] }));
+  const appts = upcomingAppts(apptRows).filter(({ r }) => apptIso(r[0]) <= tomorrowIso).map(({ r }) => ({ who: r[2], what: r[3], when: `${apptIso(r[0]) === iso() ? "วันนี้" : "พรุ่งนี้"} ${(r[1] ?? "").slice(0, 5)}`, by: r[4], where: [r[7], r[6]].filter((x) => x && x !== "-").join(" · ") }));
   const [profile, setProfile] = useState<string | null>(null);
   /** เปิดประวัติพร้อมฟอร์มบันทึกแรกรับ (จากการ์ดรอแรกรับ) */
   const [admitP, setAdmitP] = useState(false);
@@ -295,21 +299,32 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   const waiting = taskView === "mine" ? myPending : pendingAll;
   const t = cur !== null ? tasks.find((x) => x.id === cur) : undefined;
   // กำหนดเวลาของงาน (เวลาไทย) · งานกะดึกก่อน 07:00 เป็นของวันถัดจากวันทำงาน (เหมือนหน้ามอบหมายงาน)
-  const dueAt = (k: Task) => {
-    const m = k.time.match(/^(\d{1,2}):(\d{2})/);
+  const atOf = (k: Task, hm: string) => {
+    const m = hm.match(/^(\d{1,2}):(\d{2})/);
     if (!m) return null;
     const t = Date.parse(`${workDay}T${m[1].padStart(2, "0")}:${m[2]}:00+07:00`);
-    return k.shift === "กะดึก" && Number(m[1]) < 7 ? t + 864e5 : t;
+    return k.shift === "กะดึก" && nightAfterMidnight(hm, shStart) ? t + 864e5 : t;
   };
-  const isLate = (k: Task) => !k.done && (dueAt(k) ?? Infinity) + LATE_MIN * 60e3 < now;
-  const dueIn = (k: Task) => { const d = dueAt(k); if (d === null) return null; const min = Math.round((d - now) / 60e3); return <small className={min < 0 ? "is-late" : ""}>{min < 0 ? `เลย ${-min} นาที` : min < 60 ? `อีก ${min} นาที` : `อีก ${Math.floor(min / 60)} ชม.`}</small>; };
+  const dueAt = (k: Task) => atOf(k, k.time);
+  /** เลยเวลาเมื่อ: มีช่วงเวลาทำ = เลยเวลาสิ้นสุด · ไม่มี = เลยเวลาเริ่ม LATE_MIN นาที */
+  const deadlineOf = (k: Task) => (k.end ? atOf(k, k.end) : (() => { const d = dueAt(k); return d === null ? null : d + LATE_MIN * 60e3; })());
+  const isLate = (k: Task) => !k.done && (deadlineOf(k) ?? Infinity) < now;
+  const dueIn = (k: Task) => {
+    const d = dueAt(k); if (d === null) return null;
+    // อยู่ในช่วงเวลาทำ (เริ่มแล้ว ยังไม่ถึงเวลาสิ้นสุด) = "ทำได้ถึง HH:MM"
+    const e = k.end ? deadlineOf(k) : null;
+    if (e !== null && d <= now && now <= e) { const left = Math.round((e - now) / 60e3); return <small>{left < 60 ? `เหลือ ${left} นาที` : `ทำได้ถึง ${k.end}`}</small>; }
+    const ref = e !== null && now > e ? e : d;
+    const min = Math.round((ref - now) / 60e3);
+    return <small className={min < 0 ? "is-late" : ""}>{min < 0 ? (-min >= 60 ? `เลย ${Math.floor(-min / 60)} ชม.` : `เลย ${-min} นาที`) : min < 60 ? `อีก ${min} นาที` : `อีก ${Math.floor(min / 60)} ชม.`}</small>;
+  };
   const [taskTab, setTaskTab] = useState<"todo" | "sent" | "fac">("todo");
   const myLate = myPending.filter(isLate);
   const myGroups = Object.entries(myPending.filter((k) => !isLate(k)).reduce<Record<string, Task[]>>((g, k) => ({ ...g, [k.time]: [...(g[k.time] ?? []), k] }), {})).sort(([a], [b]) => a.localeCompare(b));
   const others = pendingAll.filter((k) => !isMine(k));
   const doneForMe = doneTasks.filter((k) => k.owner === user.name && k.by && k.by !== user.name);
   const fixCount = myReviews.filter((r) => r.stars <= 2).length;
-  const myShiftText = shownShift === undefined ? "กำลังตรวจตารางเวร…" : shownShift ? `เวร${shownShift} ${SHIFTS.find((x) => x.key === shownShift)?.time ?? ""}` : "วันนี้ไม่มีเวรในตาราง";
+  const myShiftText = shownShift === undefined ? "กำลังตรวจตารางเวร…" : shownShift ? `เวร${shownShift} ${shiftRange(shStart, shownShift === "ดึก")}` : "วันนี้ไม่มีเวรในตาราง";
   const roomOf = (name: string) => { const r = RESIDENTS.find((x) => x.name === name)?.room; return r && r !== "-" ? r : ""; };
   const ownerTag = (k: Task) => (k.owner === user.name ? <em className="ka-me">งานของคุณ</em> : !isMine(k) ? <em className="ka-own">{k.owner ? `ของ${k.owner}` : `ทีม${k.shift ?? "เวร"}`}</em> : null);
   // ตามงาน: แถบแดงบนสุด + ป้าย "ถูกตาม" ที่งาน · ตอบว่าทำไม่ได้ = ส่งเหตุผลถึงหัวหน้า
@@ -327,7 +342,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   const taskRow = (k: Task) => (
     <li key={k.id} className={`kn-tl-row ${isLate(k) ? "is-late" : ""} ${canSubmit(k) ? "" : "is-other"}`}>
       <button type="button" className="kn-tl-main" onClick={() => open("sop", k.id)}>
-        <span className="kn-tm"><b>{k.time || "-"}</b>{dueIn(k)}</span>
+        <span className="kn-tm"><b>{k.time || "-"}{k.end ? <i className="not-italic font-medium">–{k.end}</i> : null}</b>{dueIn(k)}</span>
         <span className="ka-t"><b>{k.title}{k.rid && nudged.has(k.rid) && <em className="ka-nudged">ถูกตาม</em>}</b><small>{k.who}{roomOf(k.who) ? ` · ห้อง ${roomOf(k.who)}` : ""}{ownerTag(k) && <> · {ownerTag(k)}</>}</small></span>
       </button>
       {canSubmit(k)
@@ -350,6 +365,10 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
   const [resQ, setResQ] = useState("");
   /** กรองผู้รับบริการ: all ทั้งหมด · due ต้องวัด (รอบการวัดรายบุคคล) · todo ยังไม่วัดวันนี้ · meds ยามื้อนี้ค้าง · intake รอแรกรับ */
   const [resTodo, setResTodo] = useState<"all" | "todo" | "due" | "meds" | "intake">("all");
+  /** กรองตามห้อง (ปุ่มห้องในแถวตัวกรอง) · "" = ทุกห้อง · "-" = ยังไม่มีห้อง */
+  const [resRoom, setResRoom] = useState("");
+  /** หน้าต่างเลือกห้อง (การ์ดห้อง) */
+  const [roomOpen, setRoomOpen] = useState(false);
   const [resPick, setResPick] = useState<(typeof RESIDENTS)[number] | null>(null);
   // รายงานเหตุการณ์ไม่พึงประสงค์ (หกล้ม ยาผิด แผลใหม่) · แจ้งหัวหน้าพยาบาลทันที
   const [incOpen, setIncOpen] = useState(false);
@@ -435,7 +454,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
         </button>
         <div className="min-w-0 flex-1 leading-tight">
           <p className="truncate text-[14px] font-semibold text-gold-900" title={`สาขา${user.branch || "-"}`}>{user.branch || "-"}{shownShift ? ` · เวร${shownShift}` : ""}</p>
-          <p className="truncate text-xs text-gold-600">{shownShift ? `${SHIFTS.find((x) => x.key === shownShift)?.time ?? ""} · ` : ""}{new Date(now).toLocaleDateString("th-TH", { weekday: "short", day: "numeric", month: "short" })} · {new Date(now).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" })}</p>
+          <p className="truncate text-xs text-gold-600">{shownShift ? `${shiftRange(shStart, shownShift === "ดึก")} · ` : ""}{new Date(now).toLocaleDateString("th-TH", { weekday: "short", day: "numeric", month: "short" })} · {new Date(now).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" })}</p>
         </div>
         <AlertsBell compact />
         {/* ปุ่มสลับแอป (ระบบจัดการ · ห้องยา) · ขึ้นเฉพาะบัญชีที่ใช้ได้มากกว่า 1 แอป */}
@@ -509,7 +528,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
             {lateRows.map((k) => (
               <div key={k.id} className="kn-todo is-red">
                 <button type="button" className="kn-todo-t" onClick={() => open("sop", k.id)}>
-                  <span className="kn-k">เลยเวลา · กำหนด {k.time || "-"} น.</span><b>{k.title}</b><small>{k.who}{roomOf(k.who) ? ` · ห้อง ${roomOf(k.who)}` : ""}</small>
+                  <span className="kn-k">เลยเวลา · กำหนด {k.time || "-"}{k.end ? `–${k.end}` : ""} น.</span><b>{k.title}</b><small>{k.who}{roomOf(k.who) ? ` · ห้อง ${roomOf(k.who)}` : ""}</small>
                 </button>
                 <button type="button" className="kn-go" onClick={() => { open("task", k.id); setProxyFor(null); }}>ส่งงาน</button>
               </div>
@@ -568,7 +587,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
             )}
 
             {taskTab === "todo" && <>
-              {myShift === null && taskView === "mine" && <p className="ka-note">{shownShift ? `เวร${shownShift}ของคุณเป็นของวันทำงานอื่น (เปลี่ยนวัน 07:00 น.)` : "วันนี้ไม่มีเวรของคุณในตาราง"} · แสดงเฉพาะงานที่ระบุชื่อคุณ</p>}
+              {myShift === null && taskView === "mine" && <p className="ka-note">{shownShift ? `เวร${shownShift}ของคุณเป็นของวันทำงานอื่น (เปลี่ยนวัน ${hm(shStart.d)} น.)` : "วันนี้ไม่มีเวรของคุณในตาราง"} · แสดงเฉพาะงานที่ระบุชื่อคุณ</p>}
               {upcoming.length === 0
                 ? <Empty t={taskView === "mine" && pendingAll.length ? "ไม่มีงานของคุณที่ต้องทำต่อ · กด \"ทั้งทีม\" เพื่อดูงานของทีม" : tasks.length ? "ไม่มีงานค้างแล้ว เยี่ยมมาก" : "ยังไม่มีงานที่ผู้จัดการมอบหมายสำหรับวันนี้"} />
                 : <ul className="kn-tl">{upcoming.map(taskRow)}</ul>}
@@ -603,6 +622,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
                 <li key={f.id} className={`ka-row ${f.late && !f.done ? "is-late" : ""}`}>
                   <span className="ka-t"><b>{f.name}{f.manual && <em className="ka-flag me">มอบหมายให้คุณ</em>}</b>
                     <small>{[f.category, f.schedule].filter((x) => x && x !== "-").join(" · ")}</small>
+                    {f.instruction && !f.done && <small className="text-gold-700">{f.instruction}</small>}
                     {f.done && f.last && <small className="text-emerald-800">ทำแล้ว {f.last.at.slice(11)} น. โดย {f.last.by}</small>}
                     {!f.done && f.late && <small className="font-semibold text-red-700">เลยเวลาแล้ว ยังไม่มีคนทำ</small>}</span>
                   {!f.done && <button type="button" className="ka-send" onClick={() => { setFacPick(f); setPhoto(""); setNote(""); setModal("facility"); }}><Icon name="camera" className="h-5 w-5" /><span>ทำแล้ว</span></button>}
@@ -631,7 +651,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
                     </button></li>
                   )}
                   {appts.map((a, k) => (
-                    <li key={k} className="ka-row"><span className="ka-dot" /><span className="ka-t"><b>นัด{a.when} น.</b><small>{a.who} · {a.what}</small></span></li>
+                    <li key={k} className="ka-row"><span className="ka-dot" /><span className="ka-t"><b>นัด{a.when} น.</b><small>{a.who} · {a.what}{a.where ? ` · ${a.where}` : ""}</small></span></li>
                   ))}
                 </ul>
               )}
@@ -664,18 +684,53 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
           const q = resQ.trim().toLowerCase();
           const hit = (r: (typeof RESIDENTS)[number]) => resTodo === "all" ? true : resTodo === "todo" ? !measured[r.name] : resTodo === "due" ? !!needBy[r.name] : resTodo === "meds" ? medsLeftOf(r.name) > 0 : !!intakeOf(r.name);
           const roomKey = (r: (typeof RESIDENTS)[number]) => (r.room && r.room !== "-" ? r.room : "");
-          const list = RESIDENTS.filter((r) => (!q || `${r.name} ${r.room}`.toLowerCase().includes(q)) && hit(r))
+          const rooms = [...new Set(RESIDENTS.map(roomKey))].sort((a, b) => Number(!a) - Number(!b) || a.localeCompare(b, "th", { numeric: true }));
+          const inRoom = (r: (typeof RESIDENTS)[number]) => !resRoom || (resRoom === "-" ? !roomKey(r) : roomKey(r) === resRoom);
+          const list = RESIDENTS.filter((r) => (!q || `${r.name} ${r.room}`.toLowerCase().includes(q)) && hit(r) && inRoom(r))
             .sort((a, b) => Number(!roomKey(a)) - Number(!roomKey(b)) || roomKey(a).localeCompare(roomKey(b), "th", { numeric: true }) || a.name.localeCompare(b.name, "th"));
-          const chips: [typeof resTodo, string, number][] = [
-            ["all", "ทั้งหมด", RESIDENTS.length], ["due", overCount ? `ต้องวัด · เลย ${overCount}` : "ต้องวัด", dueCount], ["todo", "ยังไม่วัดวันนี้", RESIDENTS.filter((r) => !measured[r.name]).length],
-            ["meds", `ยามื้อ${nowMeal}ค้าง`, medsLeft.length], ["intake", "รอแรกรับ", intake.length],
+          // ตัวกรองเป็นการ์ด (ขึ้นบรรทัดใหม่เองเมื่อไม่พอ · ข้อความเห็นครบบนโทรศัพท์) · ซ่อนการ์ดที่เป็น 0 ยกเว้นทั้งหมดและที่เลือกอยู่
+          // ตัวเลขในการ์ดนับเฉพาะห้องที่เลือก (ไม่เลือก = ทุกคน)
+          const base = RESIDENTS.filter(inRoom);
+          const dueN = base.filter((r) => needBy[r.name]).length, overN = base.filter((r) => needBy[r.name]?.some((x) => x.due.cls === "over")).length;
+          const tiles: { k: typeof resTodo; l: string; n: number; sub?: string; tone?: "bad" | "warn" }[] = [
+            { k: "all", l: resRoom ? "ทั้งห้อง" : "ทั้งหมด", n: base.length },
+            { k: "due", l: "ถึงรอบวัด", n: dueN, sub: overN ? `เลยกำหนด ${overN}` : undefined, tone: overN ? "bad" : "warn" },
+            { k: "todo", l: "ยังไม่วัดวันนี้", n: base.filter((r) => !measured[r.name]).length },
+            { k: "meds", l: `ยามื้อ${nowMeal}ค้าง`, n: physio ? 0 : base.filter((r) => medsLeftOf(r.name) > 0).length, tone: "warn" },
+            { k: "intake", l: "รอแรกรับ", n: base.filter((r) => intakeOf(r.name)).length, tone: "warn" },
           ];
+          const roomName = (rm: string) => (rm === "-" || !rm ? "ยังไม่มีห้อง" : `ห้อง ${rm}`);
           return <>
             <div className="ka-head"><div><h1>ผู้รับบริการ</h1><p>{RESIDENTS.length} คน · สาขา{user.branch || "-"}</p></div></div>
-            <label className="ka-search"><Icon name="search" className="h-4 w-4" /><input value={resQ} onChange={(e) => setResQ(e.target.value)} placeholder="ค้นหาชื่อหรือเลขห้อง" aria-label="ค้นหาผู้รับบริการ" /></label>
-            <div className="kn-chips" role="radiogroup" aria-label="กรองผู้รับบริการ">
-              {chips.filter(([k, , n]) => k === "all" || k === resTodo || n > 0).map(([k, l, n]) => <button key={k} type="button" role="radio" aria-checked={resTodo === k} onClick={() => setResTodo(k)}>{l} <b>{n}</b></button>)}
+            <div className="kn-find">
+              <label className="ka-search"><Icon name="search" className="h-4 w-4" /><input value={resQ} onChange={(e) => setResQ(e.target.value)} placeholder="ค้นหาชื่อหรือเลขห้อง" aria-label="ค้นหาผู้รับบริการ" /></label>
+              {rooms.length > 1 && <button type="button" className={`kn-roombtn ${resRoom ? "is-on" : ""}`} onClick={() => setRoomOpen(true)} aria-label={`เลือกห้อง · ตอนนี้ ${resRoom ? roomName(resRoom) : "ทุกห้อง"}`}>
+                <Icon name="bed" className="h-4 w-4" /><span>{resRoom ? (resRoom === "-" ? "ไม่มีห้อง" : resRoom) : "ห้อง"}</span><i aria-hidden="true">▾</i>
+              </button>}
             </div>
+            <div className="kn-ftiles" role="radiogroup" aria-label="กรองผู้รับบริการ">
+              {tiles.filter((t) => t.k === "all" || t.k === resTodo || t.n > 0).map((t) => (
+                <button key={t.k} type="button" role="radio" aria-checked={resTodo === t.k} className={`kn-ftile ${t.tone ? `is-${t.tone}` : ""}`} onClick={() => setResTodo(t.k)}>
+                  <b>{t.n}</b><span>{t.l}</span>{t.sub && <small>{t.sub}</small>}
+                </button>
+              ))}
+            </div>
+            {resRoom && <p className="kn-roomnote"><span>ดูเฉพาะ <b>{roomName(resRoom)}</b> · {list.length} คน</span><button type="button" onClick={() => setResRoom("")}>ดูทุกห้อง</button></p>}
+            <Modal open={roomOpen} title="เลือกห้อง" onClose={() => setRoomOpen(false)}>
+              <div className="kn-roomgrid">
+                <button type="button" aria-pressed={!resRoom} onClick={() => { setResRoom(""); setRoomOpen(false); }}><b>ทุกห้อง</b><small>{RESIDENTS.length} คน</small></button>
+                {rooms.map((rm) => {
+                  const ppl = RESIDENTS.filter((r) => roomKey(r) === rm), need = ppl.filter((r) => needBy[r.name]).length, meds = ppl.filter((r) => medsLeftOf(r.name) > 0).length;
+                  const v = rm || "-";
+                  return (
+                    <button key={v} type="button" aria-pressed={resRoom === v} onClick={() => { setResRoom(v); setRoomOpen(false); }}>
+                      <b>{rm || "ยังไม่มีห้อง"}</b><small>{ppl.length} คน</small>
+                      {(need > 0 || meds > 0) && <span>{need > 0 && <em className="is-warn">ถึงรอบวัด {need}</em>}{meds > 0 && <em className="is-warn">ยาค้าง {meds}</em>}</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            </Modal>
             {resTodo === "due" && <p className="text-xs text-gold-600">ตามรอบการวัดที่ตั้งไว้ของแต่ละคน · นับจากครั้งล่าสุดที่บันทึก · บันทึกแล้วรายการหายไปเอง</p>}
             {list.length === 0 ? <Empty t={q ? `ไม่พบ "${resQ}"` : resTodo === "due" ? "ไม่มีใครถึงรอบวัดตอนนี้" : resTodo === "todo" ? "วัดสัญญาณชีพครบทุกคนแล้ว" : resTodo === "meds" ? `ให้ยามื้อ${nowMeal}ครบแล้ว` : resTodo === "intake" ? "ไม่มีคนรอแรกรับ" : "ยังไม่มีผู้รับบริการ"} /> : (
               <div className="kn-res-list">{list.map((r, i) => {
@@ -936,6 +991,7 @@ function App({ user, onLogout }: { user: SessionUser; onLogout: () => void }) {
       <Modal open={modal === "facility"} title={facPick ? `ส่งงานส่วนกลาง · ${facPick.name}` : "ส่งงานส่วนกลาง"} onClose={() => { close(); setFacPick(null); }}
         footer={<button className="btn-primary w-full" disabled={facBusy} onClick={saveFac}>{facBusy ? "กำลังส่ง…" : "ยืนยันส่งงาน"}</button>}>
         {facPick && <div className="space-y-4">
+          {facPick.instruction && <p className="rounded-xl border border-cream-300 bg-white px-4 py-3 text-sm text-gold-800"><b className="font-semibold">คำแนะนำ:</b> {facPick.instruction}</p>}
           <p className="rounded-xl bg-cream-50 px-4 py-3 text-sm text-gold-700">{[facPick.category, facPick.schedule].filter(Boolean).join(" · ")} · <b>{facPick.schedule.includes("ทุกเดือน") ? "ส่งได้เดือนละ 1 ครั้งต่อสาขา" : facPick.schedule.includes("ทุกสัปดาห์") ? "ส่งได้สัปดาห์ละ 1 ครั้งต่อสาขา (จันทร์–อาทิตย์)" : "ส่งได้วันละ 1 ครั้งต่อสาขา"} {facPick.manual ? "งานนี้มอบหมายให้คุณรับผิดชอบ" : "ใครทำก่อนเป็นคนส่ง"}</b> · นับเป็นผลงานของคุณใน KPI</p>
           <div><p className="label">ถ่ายภาพหลักฐาน (บังคับ)</p><PhotoInput label="กดเพื่อถ่ายภาพ" file={photo} onFile={setPhoto} /></div>
           <Field label="หมายเหตุ (ถ้ามี)"><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="เช่น ถังดับเพลิงหมดอายุ 1 ถัง แจ้งผู้จัดการแล้ว" /></Field>

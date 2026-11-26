@@ -9,11 +9,11 @@ export const fetchCache = "force-no-store";
 
 /**
  * รูปของแอปจัดยา (แยกจากข้อมูลยา จึงไม่ถูกดึงไปทุกครั้งที่ระบบรีเฟรช)
- *  POST { kind: "label" | "pack", id, photo }   label = รูปฉลากยาตอนรับเข้า · pack = รูปซองยาที่จัดเสร็จ
+ *  POST { kind: "label" | "pack" | "give", id, photo }   label = รูปฉลากยาตอนรับเข้า · pack = รูปซองยาที่จัดเสร็จ · give = รูปตอนให้ยา (KinApp · id = วันที่:มื้อ:รหัสยาตัวแรก)
  *  GET  ?kind=…&ids=a,b                          รูปของหลายรายการ → { photos: { [id]: dataUrl } }
  *  ผู้ใช้ที่ไม่ใช่ผู้บริหารเห็นเฉพาะรูปของสาขาตัวเอง
  */
-const KINDS = ["label", "pack"];
+const KINDS = ["label", "pack", "give"];
 const bad = (msg: string, status = 400) => NextResponse.json({ error: msg }, { status });
 const allowed = (me: SessionUser) => ["Global Admin", "Branch Admin", "Head Nurse"].includes(me.role) || can(me, "app.pharmacy") || can(me, "app.staff") || can(me, "residents");
 

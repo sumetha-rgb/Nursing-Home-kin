@@ -441,11 +441,16 @@ export function Dashboard() {
 
 /* ---------- ระบบตารางนัดหมาย ---------- */
 /** ช่องในฟอร์มนัดหมาย · รายชื่อผู้รับบริการมาจากทะเบียนจริง (เฉพาะคนที่ยังไม่ย้ายออก) */
-const apptFields = (names: string[], nurses: string[]): FieldDef[] => [
+/** วิธีเดินทางที่ใช้บ่อย (พิมพ์อย่างอื่นเองได้) */
+export const APPT_TRAVEL = ["เดินทางเอง / ญาติพาไป", "รถพยาบาลของศูนย์", "รถของศูนย์ (ไม่ใช่รถพยาบาล)", "แท็กซี่ / รถรับจ้าง", "รถพยาบาลของโรงพยาบาล"];
+/** ฟอร์ม: [วันที่, เวลา, ผู้รับบริการ, รายการ, สถานที่, การเดินทาง, ผู้ดูแล, การเตรียมตัว] · แถวข้อมูล (lib/schema) = [วันที่, เวลา, ผู้รับบริการ, รายการ, ผู้ดูแล, การเตรียมตัว, การเดินทาง, สถานที่] */
+const apptFields = (names: string[], nurses: string[], places: string[]): FieldDef[] => [
   { label: "วันที่", type: "date", required: true },
   { label: "เวลา", type: "time", required: true },
   { label: "ผู้รับบริการ", options: names, required: true, pick: "resident" },
-  { label: "รายการ", required: true, placeholder: "เช่น พบแพทย์อายุรกรรม รพ.ศิริราช, ทำกายภาพ, ตรวจเลือด" },
+  { label: "รายการ", required: true, placeholder: "เช่น พบแพทย์อายุรกรรม, ทำกายภาพ, ตรวจเลือด" },
+  { label: "ไปที่ไหน", suggest: places, placeholder: "เช่น รพ.ศิริราช ตึกผู้ป่วยนอก" },
+  { label: "การเดินทาง", suggest: APPT_TRAVEL, placeholder: "เช่น รถพยาบาลของศูนย์ · เดินทางเอง" },
   { label: "ผู้ดูแล / ผู้พาไป", suggest: nurses, placeholder: "พิมพ์ค้นหาชื่อพยาบาล หรือพิมพ์เอง เช่น ญาติพาไปเอง" },
   { label: "การเตรียมตัว", placeholder: "กรอกเฉพาะเมื่อโรงพยาบาลหรือแพทย์สั่ง เช่น งดน้ำและอาหารหลังเที่ยงคืน · นำผลเลือดเดิมไป (คั่นข้อด้วย ·)" },
 ];
@@ -470,6 +475,9 @@ export function Appointments() {
   // คนที่ย้ายออกแล้วแต่มีนัดเดิม ยังแสดงในช่องเลือกตอนแก้ไขนัดนั้น
   const editName = dlg?.mode === "edit" ? rows[dlg.i]?.[2] : undefined;
   const names = [...new Set([...active.map((r) => r[0]), ...(editName ? [editName] : [])])];
+  /** สถานที่ที่เคยไป (เลือกซ้ำได้ไม่ต้องพิมพ์) */
+  const places = useMemo(() => [...new Set(rows.map((r) => r[7]).filter((x) => x && x !== "-"))].slice(0, 40), [rows]);
+  const go = (r: string[]) => [r[7], r[6]].filter((x) => x && x !== "-").join(" · ");
   const now = nowTh(), today = now.slice(0, 10);
   const week = new Date(Date.now() + 7 * 3600e3 + 7 * 864e5).toISOString().slice(0, 10);
   const all = rows.map((r, i) => ({ r, i, k: apptKey(r) }));
@@ -489,14 +497,15 @@ export function Appointments() {
   const who = (name: string) => { const p = residentOf(name); return p ? [p[6], p[2] && p[2] !== "-" ? `ห้อง ${p[2]}${p[7] ? ` เตียง ${p[7]}` : ""}` : ""].filter(Boolean).join(" · ") || "-" : "ไม่พบในทะเบียน"; };
   const formValue = useMemo(() => {
     if (!dlg) return undefined;
-    if (dlg.mode === "edit") { const r = rows[dlg.i]; return [apptIso(r[0]), (r[1] ?? "").slice(0, 5), r[2], r[3], r[4] === "-" ? "" : r[4], r[5] && r[5] !== "-" ? r[5] : ""]; }
-    return [today, "", "", "", "", ""];
+    const t = (x?: string) => (x && x !== "-" ? x : "");
+    if (dlg.mode === "edit") { const r = rows[dlg.i]; return [apptIso(r[0]), (r[1] ?? "").slice(0, 5), r[2], r[3], t(r[7]), t(r[6]), t(r[4]), t(r[5])]; }
+    return [today, "", "", "", "", "", "", ""];
   }, [dlg]); // eslint-disable-line react-hooks/exhaustive-deps
   const save = (v: string[]) => {
     if (!v[0] || !v[1]) return toast("กรุณาระบุวันที่และเวลานัด");
     if (!names.includes(v[2])) return toast("กรุณาเลือกผู้รับบริการจากทะเบียน");
     if (!v[3].trim()) return toast("กรุณากรอกรายการนัดหมาย");
-    const row = [apptTh(v[0]), v[1], v[2], v[3].trim(), v[4].trim() || "-", (v[5] ?? "").trim() || "-"];
+    const row = [apptTh(v[0]), v[1], v[2], v[3].trim(), (v[6] ?? "").trim() || "-", (v[7] ?? "").trim() || "-", (v[5] ?? "").trim() || "-", (v[4] ?? "").trim() || "-"];
     if (dlg?.mode === "edit") update(dlg.i, row); else add(row);
     const edit = dlg?.mode === "edit"; setDlg(null); toast({ type: edit ? "edit" : "ok", title: edit ? "แก้ไขนัดหมายแล้ว" : "บันทึกนัดหมายแล้ว", detail: `${row[2]} · ${row[0]} ${row[1].slice(0, 5)} น. ${row[3]}` });
   };
@@ -505,8 +514,8 @@ export function Appointments() {
       <PageHeader title="ตารางนัดหมาย" sub="นัดแพทย์และธุระของผู้รับบริการ"
         actions={<button className="btn-primary" onClick={() => setDlg({ mode: "add", i: -1 })}><Icon name="plus" className="h-4 w-4" /> เพิ่มนัดหมาย</button>} />
       <Section title="นัดหมายของผู้รับบริการ" actions={<button className="btn-soft" disabled={!shown.length} onClick={() => {
-        downloadCsv(`นัดหมาย-${tab ? APPT_FILTERS.find((f) => f.k === tab)?.t : "ทั้งหมด"}-${today}`, ["วันที่", "เวลา", "ผู้รับบริการ", "HN · ห้อง", "รายการ", "ผู้ดูแล", "การเตรียมตัว", "สถานะ"],
-          shown.map(({ r, k }) => [r[0], (r[1] ?? "").slice(0, 5), r[2], who(r[2]), r[3], r[4], r[5] && r[5] !== "-" ? r[5] : "", statusOf(k).t]));
+        downloadCsv(`นัดหมาย-${tab ? APPT_FILTERS.find((f) => f.k === tab)?.t : "ทั้งหมด"}-${today}`, ["วันที่", "เวลา", "ผู้รับบริการ", "HN · ห้อง", "รายการ", "สถานที่", "การเดินทาง", "ผู้ดูแล", "การเตรียมตัว", "สถานะ"],
+          shown.map(({ r, k }) => [r[0], (r[1] ?? "").slice(0, 5), r[2], who(r[2]), r[3], r[7] && r[7] !== "-" ? r[7] : "", r[6] && r[6] !== "-" ? r[6] : "", r[4], r[5] && r[5] !== "-" ? r[5] : "", statusOf(k).t]));
         toast(`ส่งออกนัดหมายแล้ว ${shown.length} รายการ`);
       }}><CsvIcon /> ส่งออก CSV</button>}>
         <div className="stat-filter" role="radiogroup" aria-label="กรองนัดหมาย">
@@ -522,6 +531,7 @@ export function Appointments() {
           rows={shown.map(({ r, k }) => [r[0], (r[1] ?? "").slice(0, 5), r[2], r[3], r[4], statusOf(k).t])}
           render={(i, col) => {
             if (col === 2) return <span className="block leading-tight"><b className="font-semibold">{shown[i].r[2]}</b><small className="block text-xs text-gold-500">{who(shown[i].r[2])}</small></span>;
+            if (col === 3 && go(shown[i].r)) return <span className="block leading-tight">{shown[i].r[3]}<small className="block text-xs text-gold-500">{go(shown[i].r)}</small></span>;
             if (col !== 5) return undefined;
             const s = statusOf(shown[i].k); return <span className={`status-badge ${s.c}`}>{s.t}</span>;
           }}
@@ -536,13 +546,13 @@ export function Appointments() {
       </Section>
       <FormDialog
         open={!!dlg} mode={dlg?.mode ?? "add"} title={dlg?.mode === "edit" ? "แก้ไขนัดหมาย" : "เพิ่มนัดหมาย"}
-        fields={apptFields(names, nurses)} value={formValue} onClose={() => setDlg(null)} onSave={save}
+        fields={apptFields(names, nurses, places)} value={formValue} onClose={() => setDlg(null)} onSave={save}
       />
       <PrintModal open={slip !== null && !!rows[slip]} title="ใบนัดหมาย" onClose={() => setSlip(null)}>
         {slip !== null && rows[slip] && (() => {
           const a = rows[slip], r = residentOf(a[2]);
           return <ApptSlip resident={a[2]} date={apptIso(a[0])} time={(a[1] ?? "").slice(0, 5)}
-            purpose={a[3]} caregiver={a[4]} prep={a[5]} branch={branchInfo(r?.[3] ?? user?.branch ?? "")} by={user?.name} />;
+            purpose={a[3]} caregiver={a[4]} prep={a[5]} travel={a[6]} place={a[7]} branch={branchInfo(r?.[3] ?? user?.branch ?? "")} by={user?.name} />;
         })()}
       </PrintModal>
     </div>

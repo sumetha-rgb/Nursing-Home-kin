@@ -2,6 +2,8 @@
 //  ใช้ทั้ง GET /api/care?op=vital_due (หน้าเว็บคิดสถานะเอง) และแถบ "ต้องจัดการ" (lib/attention · นับคนที่ถึงรอบ)
 import { sql } from "@/lib/db";
 import { needOf, planOf, type VitalDueRow } from "@/lib/vitalPlan";
+import { DEFAULT_SHIFT } from "@/lib/shifts";
+import { shiftCfgs } from "@/lib/shiftsServer";
 
 /** branch = สาขา (null = ทุกสาขา) · id / name = คนเดียว */
 export async function vitalDueRows(q: { branch?: string | null; id?: string | null; name?: string | null }): Promise<VitalDueRow[]> {
@@ -29,8 +31,11 @@ export async function vitalDueRows(q: { branch?: string | null; id?: string | nu
       if (!String((e as Error).message).includes("vital_plans")) throw e;
       return [];
     })) as Record<string, unknown>[];
+  // shiftStart: เวลาเริ่มเวรเช้าของสาขา (lib/shifts) · หน้าเว็บและแถบต้องจัดการคิด "ถึงรอบเวรนี้" ตามเวลากะของสาขานั้น
+  const cfgs = await shiftCfgs();
   return rows.map((r) => ({ id: String(r.id), name: String(r.name), room: (r.room as string) ?? null, branch: (r.branch as string) ?? null, plan: planOf(r.plan), custom: !!r.plan, by: (r.by as string) ?? null,
-    last: { vs: (r.vs as string) ?? null, o2: (r.o2 as string) ?? null, dtx: (r.dtx as string) ?? null, wt: (r.wt as string) ?? null, ht: (r.ht as string) ?? null } }));
+    last: { vs: (r.vs as string) ?? null, o2: (r.o2 as string) ?? null, dtx: (r.dtx as string) ?? null, wt: (r.wt as string) ?? null, ht: (r.ht as string) ?? null },
+    shift: cfgs.get(String(r.branch ?? "")) ?? DEFAULT_SHIFT }));
 }
 
 /** จำนวนคนที่ถึงรอบวัดตอนนี้ (มีอย่างน้อย 1 รายการที่ถึงรอบหรือเลยกำหนด) · over = คนที่มีรายการเลยกำหนด · names = ชื่อตัวอย่าง (เลยกำหนดก่อน) */

@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import CsvIcon from "@/components/CsvIcon";
 import Icon from "@/components/Icon";
-import { MenuButton, Modal, PageHeader, Section, Select, Tabs } from "@/components/ui";
+import { MenuButton, Modal, PageHeader, Section, Select, Tabs, TimeInput } from "@/components/ui";
 import { downloadCsv } from "@/lib/store";
 import RosterCalendar from "@/components/roster/RosterCalendar";
 import { TH_MONTHS } from "@/lib/appointments";
@@ -12,6 +12,8 @@ import { useAutoRefresh } from "@/lib/autoRefresh";
 import { ROLE_INFO, Role } from "@/lib/roles";
 import { useBranchNames } from "@/lib/branches";
 import { assignOne, assignShift, Attendance, dayTitle, fetchDay, fetchMonth, isoDate, Month, Shift, shortName, SHIFTS, WEEKDAYS, ymOf } from "@/lib/roster";
+import { hm, hourOf, lenText, shiftError, shiftLength, shiftRange, shiftStartHour } from "@/lib/shifts";
+import { reloadShiftStarts, useShiftCfg } from "@/lib/shiftsClient";
 
 /** ตารางเวรของสาขา: ผู้จัดการดูภาพรวมทั้งเดือน กดวันเพื่อจัดคนเข้าเวรและดูรูปเช็คชื่อ */
 export function Roster() {
@@ -35,6 +37,26 @@ export function Roster() {
   const [nextData, setNextData] = useState<Month | null>(null);
 
   const isGlobal = data?.me.role === "Global Admin";
+  /** เวลากะของสาขาที่เปิดอยู่ (ชั่วโมงเริ่มกะเช้า · กะดึก +12) · ผู้จัดการสาขา/ผู้บริหารตั้งได้ที่ปุ่ม ตั้งเวลากะ */
+  const shStart = useShiftCfg(data?.branch ?? branch);
+  const canSetShift = data?.me.role === "Branch Admin" || isGlobal;
+  /** หน้าต่างตั้งเวลากะ: เวลาเริ่มกะเช้า / กะดึก "HH:MM" */
+  const [shiftDlg, setShiftDlg] = useState<{ d: string; n: string } | null>(null);
+  const dlgCfg = shiftDlg ? { d: hourOf(shiftDlg.d), n: hourOf(shiftDlg.n) } : null;
+  const dlgErr = dlgCfg ? shiftError(dlgCfg) : "";
+  const dlgSame = !!dlgCfg && dlgCfg.d === shStart.d && dlgCfg.n === shStart.n;
+  const saveShift = async () => {
+    if (!shiftDlg || !dlgCfg || !data?.branch) return;
+    if (dlgErr) return toast(dlgErr);
+    setBusy(true);
+    const r = await fetch("/api/roster", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "shift_start", branch: data.branch, day: shiftDlg.d, night: shiftDlg.n }) });
+    const d = await r.json().catch(() => ({}));
+    setBusy(false);
+    if (!r.ok) return toast(d.error || "บันทึกเวลากะไม่สำเร็จ");
+    await reloadShiftStarts();
+    setShiftDlg(null);
+    toast(`ตั้งเวลากะ สาขา${data.branch} แล้ว · เช้า ${shiftRange(dlgCfg, false)} · ดึก ${shiftRange(dlgCfg, true)}`);
+  };
   const weekDays = Array.from({ length: 7 }, (_, i) => { const d = new Date(week + "T00:00:00"); d.setDate(d.getDate() + i); return isoDate(d); });
   const loadYm = view === "สัปดาห์" ? week.slice(0, 7) : ym;
   const crossYm = view === "สัปดาห์" && weekDays[6].slice(0, 7) !== loadYm ? weekDays[6].slice(0, 7) : "";
@@ -86,7 +108,7 @@ export function Roster() {
   const attendance = data?.attendance ?? [];
   // สรุปการมาทำงานรายคน: นับเฉพาะเวรที่ถึงเวลาเข้างานแล้ว (+ผ่อนผัน 15 นาที) · ขาด 2 ครั้งขึ้นไปชื่อเป็นสีแดง
   const nowHm = new Date().toTimeString().slice(0, 5);
-  const due = (s: { date: string; shift: string }) => s.date < today || (s.date === today && nowHm >= (s.shift === "ดึก" ? "19:15" : "07:15"));
+  const due = (s: { date: string; shift: string }) => s.date < today || (s.date === today && nowHm >= hm(shiftStartHour(shStart, s.shift === "ดึก") + 0.25));
   const report = (() => {
     const by = new Map<string, { name: string; due: number; ontime: number; late: number; lateMin: number; missed: number; extra: number }>();
     const row = (id: string, name: string) => { if (!by.has(id)) by.set(id, { name, due: 0, ontime: 0, late: 0, lateMin: 0, missed: 0, extra: 0 }); return by.get(id)!; };
@@ -190,7 +212,7 @@ export function Roster() {
     } catch (e) { toast((e as Error).message); }
     finally { await load(); setSaving(""); }
   };
-  // ตัวกรองและกลุ่ม: ค้นหาชื่อ · เฉพาะคนที่มีเวรสัปดาห์นี้ · กลุ่มตามตำแหน่ง ย่อ/ขยายได้
+  // ตัวกรองและกลุ่ม: ค้นหาชื่อ · เฉพาะคนที่มีกะสัปดาห์นี้ · กลุ่มตามตำแหน่ง ย่อ/ขยายได้
   const [who, setWho] = useState("");
   const [onlyOn, setOnlyOn] = useState(false);
   const [folded, setFolded] = useState<string[]>([]);
@@ -200,10 +222,12 @@ export function Roster() {
   const shownTeam = team.filter((t) => (!who || t.name.toLowerCase().includes(who.trim().toLowerCase())) && (!onlyOn || weekDays.some((d) => cellOf(t.id, d).length)));
   const groups = ROLE_ORDER.map((r) => ({ role: r, label: ROLE_INFO[r as Role]?.th ?? r, list: shownTeam.filter((t) => t.role === r) })).filter((g) => g.list.length);
   const MENU_OPTS: { k: string[]; t: string; sub: string; c: string }[] = [
-    { k: ["เช้า"], t: "เช้า", sub: "07:00–19:00", c: "is-d" },
-    { k: ["ดึก"], t: "ดึก", sub: "19:00–07:00", c: "is-n" },
-    { k: ["เช้า", "ดึก"], t: "เช้า+ดึก", sub: "ควบกะ 24 ชม.", c: "is-dn" },
+    { k: ["เช้า"], t: "กะเช้า", sub: shiftRange(shStart, false), c: "is-d" },
+    { k: ["ดึก"], t: "กะดึก", sub: shiftRange(shStart, true), c: "is-n" },
+    { k: ["เช้า", "ดึก"], t: "ควบ 2 กะ (เช้า + ดึก)", sub: "24 ชั่วโมง", c: "is-dn" },
   ];
+  /** ข้อความในช่องของพนักงาน */
+  const cellText = (c: string[]) => (c.length === 2 ? "ควบ 2 กะ" : c[0] === "เช้า" ? "กะเช้า" : c[0] === "ดึก" ? "กะดึก" : "");
   /** คัดลอกเวรของสัปดาห์ก่อนหน้า มาใส่วันที่ยังไม่ผ่านของสัปดาห์นี้ (แทนที่ของเดิม) */
   const copyWeek = async () => {
     if (!data?.branch) return toast("กรุณาเลือกสาขาก่อนจัดเวร");
@@ -241,10 +265,10 @@ export function Roster() {
       {SHIFTS.map((sh) => {
         const ids = onShift(mD, sh.key), n = ids.length, open = crew?.d === mD && crew.sh === sh.key, names = team.filter((t) => ids.includes(t.id)).map((t) => shortName(t.name));
         return <div key={sh.key} className={`wk-m-shift ${!n && mD >= today ? "is-gap" : ""}`}>
-          <span className="min-w-0"><b>เวร{sh.key}</b> <small>{sh.time}</small><small className="wk-m-names">{names.length ? names.join(", ") : "ยังไม่มีคน"}</small></span>
+          <span className="min-w-0"><b>กะ{sh.key}</b> <small>{shiftRange(shStart, sh.key === "ดึก")}</small><small className="wk-m-names">{names.length ? names.join(", ") : "ยังไม่มีคน"}</small></span>
           {mD < today ? <em>{n} คน</em> : <button type="button" className={`wk-covb ${open ? "is-open" : ""}`} aria-haspopup="dialog" aria-expanded={open}
-            aria-label={`เลือกพนักงานเวร${sh.key} ${dm(mD)} · ตอนนี้ ${n} คน`} onClick={(e) => (open ? setCrew(null) : openCrew(e, mD, sh.key))}>
-            {saving === `cov|${mD}|${sh.key}` ? "…" : n ? `${n} คน` : "ไม่มี"}<Icon name="plus" className="h-3 w-3" /></button>}
+            aria-label={`เลือกพนักงานกะ${sh.key} ${dm(mD)} · ตอนนี้ ${n} คน`} onClick={(e) => (open ? setCrew(null) : openCrew(e, mD, sh.key))}>
+            {saving === `cov|${mD}|${sh.key}` ? "…" : n ? `${n} คน` : "ยังไม่มีคน"}<Icon name="plus" className="h-3 w-3" /></button>}
         </div>;
       })}
       <ul className="wk-m-list">
@@ -256,8 +280,8 @@ export function Roster() {
           return <li key={t.id}>
             <span className="min-w-0"><b title={t.name}>{shortName(t.name)}</b><small>{ROLE_INFO[t.role as Role]?.th ?? t.role}</small></span>
             <button type="button" className={`wk-c is-${k} ${mD < today ? "is-past" : ""} ${open ? "is-open" : ""}`} disabled={saving === `${t.id}|${mD}`} aria-haspopup="menu" aria-expanded={open}
-              aria-label={`${t.name} วันที่ ${Number(mD.slice(8, 10))} ${c.length ? `เวร${c.join("+")}` : "ยังไม่มีเวร"}`} onClick={(e) => (open ? setMenu(null) : openMenu(e, t.id, t.name, mD))}>
-              {saving === `${t.id}|${mD}` ? "…" : c.length ? c.join("+") : mD < today ? "–" : "+ จัดเวร"}{ins.length > 0 && <i className="ok" title="เช็คชื่อแล้ว">✓</i>}{missed && <i className="bad" title="ไม่ได้เช็คชื่อ">ขาด</i>}
+              aria-label={`${t.name} วันที่ ${Number(mD.slice(8, 10))} ${c.length ? cellText(c) : "ยังไม่ได้จัดกะ"}`} onClick={(e) => (open ? setMenu(null) : openMenu(e, t.id, t.name, mD))}>
+              {saving === `${t.id}|${mD}` ? "…" : c.length ? cellText(c) : mD < today ? "–" : "+ จัดกะ"}{ins.length > 0 && <i className="ok" title="เช็คชื่อแล้ว">✓</i>}{missed && <i className="bad" title="ไม่ได้เช็คชื่อ">ขาด</i>}
             </button>
           </li>;
         })}
@@ -268,9 +292,10 @@ export function Roster() {
 
   return (
     <>
-      <PageHeader title="ตารางเวร" sub={view === "สัปดาห์" ? "กดช่องเพื่อจัดเวร" : "กดวันที่เพื่อจัดเวรหรือดูการเช็คชื่อ"}
+      <PageHeader title="ตารางเวร" sub={view === "สัปดาห์" ? "กดช่องของพนักงานเพื่อเลือกกะเช้า / กะดึก · กดแถว กะเช้า / กะดึก ด้านบน เพื่อเลือกหลายคนพร้อมกัน" : "กดวันที่เพื่อจัดกะหรือดูการเช็คชื่อ"}
         actions={<>
           <Tabs tabs={["สัปดาห์", "ทั้งเดือน"]} value={view} onChange={(v) => setView(v as "สัปดาห์" | "ทั้งเดือน")} />
+          {canSetShift && data?.branch && <button type="button" className="btn-soft" onClick={() => setShiftDlg({ d: hm(shStart.d), n: hm(shStart.n) })}><Icon name="clock" className="h-4 w-4" /> ตั้งเวลากะ <small className="text-gold-500">{hm(shStart.d)} / {hm(shStart.n)}</small></button>}
           <MenuButton label="ส่งออก CSV" icon={<CsvIcon />} items={[
             { label: "ตารางเวรของเดือน", hint: "เวลาเช็คชื่อ สาย ขาด", onClick: exportShifts },
             { label: "สรุปการมาทำงานรายคน", onClick: exportReport },
@@ -294,19 +319,19 @@ export function Roster() {
             <Icon name="search" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gold-400" />
             <input type="search" value={who} onChange={(e) => setWho(e.target.value)} className="!pl-9" placeholder="ค้นหาชื่อพนักงาน" aria-label="ค้นหาชื่อพนักงาน" />
           </div>
-          <label className="wk-only"><input type="checkbox" checked={onlyOn} onChange={(e) => setOnlyOn(e.target.checked)} /> เฉพาะคนที่มีเวรสัปดาห์นี้</label>
+          <label className="wk-only"><input type="checkbox" checked={onlyOn} onChange={(e) => setOnlyOn(e.target.checked)} /> เฉพาะคนที่มีกะสัปดาห์นี้</label>
           <span className="text-sm text-gold-500">{shownTeam.length} จาก {team.length} คน</span>
         </div>}
         {!team.length ? <p className="rounded-xl bg-cream-50 px-4 py-6 text-center text-sm text-gold-600">ยังไม่มีพยาบาลที่ทำงานอยู่ในสาขานี้</p> : <><div className="sm:hidden">{mobileWeek}</div><div className="wk-wrap hidden sm:block">
           <table className="wk">
             <thead>
               <tr><th scope="col">พนักงาน</th>{weekDays.map((d, i) => <th key={d} scope="col" className={d === today ? "is-today" : d < today ? "is-past" : ""}>{DAY_FULL[i]}{d === today && <em>วันนี้</em>}<b>{dm(d)}</b></th>)}<th scope="col">รวม</th></tr>
-              {SHIFTS.map((sh) => <tr key={sh.key} className="wk-cov"><th scope="row">คน{sh.key}</th>{weekDays.map((d) => {
+              {SHIFTS.map((sh) => <tr key={sh.key} className="wk-cov"><th scope="row">กะ{sh.key}<small>{shiftRange(shStart, sh.key === "ดึก")}</small></th>{weekDays.map((d) => {
                 const ids = onShift(d, sh.key), n = ids.length, open = crew?.d === d && crew.sh === sh.key, names = team.filter((t) => ids.includes(t.id)).map((t) => shortName(t.name));
                 return <td key={d} className={!n && d >= today ? "is-gap" : ""}>{d < today ? (n || "-")
                   : <button type="button" className={`wk-covb ${open ? "is-open" : ""}`} aria-haspopup="dialog" aria-expanded={open} title={names.length ? names.join(", ") : undefined}
-                    aria-label={`เลือกพนักงานเวร${sh.key} ${dm(d)} · ตอนนี้ ${n} คน`} onClick={(e) => (open ? setCrew(null) : openCrew(e, d, sh.key))}>
-                    {saving === `cov|${d}|${sh.key}` ? "…" : n ? `${n} คน` : "ไม่มี"}<Icon name="plus" className="h-3 w-3" /></button>}</td>;
+                    aria-label={`เลือกพนักงานกะ${sh.key} ${dm(d)} · ตอนนี้ ${n} คน`} onClick={(e) => (open ? setCrew(null) : openCrew(e, d, sh.key))}>
+                    {saving === `cov|${d}|${sh.key}` ? "…" : n ? `${n} คน` : "ยังไม่มีคน"}<Icon name="plus" className="h-3 w-3" /></button>}</td>;
               })}<td /></tr>)}
             </thead>
             {groups.map((g) => {
@@ -324,8 +349,8 @@ export function Roster() {
                         const missed = c.length > ins.length && due({ date: d, shift: c[c.length - 1] });
                         const open = menu?.id === t.id && menu.d === d;
                         return <td key={d}><button type="button" className={`wk-c is-${k} ${d < today ? "is-past" : ""} ${open ? "is-open" : ""}`} disabled={saving === `${t.id}|${d}`} aria-haspopup="menu" aria-expanded={open}
-                          aria-label={`${t.name} วันที่ ${Number(d.slice(8, 10))} ${c.length ? `เวร${c.join("+")}` : "ยังไม่มีเวร"}`} onClick={(e) => (open ? setMenu(null) : openMenu(e, t.id, t.name, d))}>
-                          {saving === `${t.id}|${d}` ? "…" : c.length ? c.join("+") : d < today ? "–" : "+"}{ins.length > 0 && <i className="ok" title="เช็คชื่อแล้ว">✓</i>}{missed && <i className="bad" title="ไม่ได้เช็คชื่อ">ขาด</i>}
+                          aria-label={`${t.name} วันที่ ${Number(d.slice(8, 10))} ${c.length ? cellText(c) : "ยังไม่ได้จัดกะ"}`} onClick={(e) => (open ? setMenu(null) : openMenu(e, t.id, t.name, d))}>
+                          {saving === `${t.id}|${d}` ? "…" : c.length ? cellText(c) : d < today ? "–" : "+"}{ins.length > 0 && <i className="ok" title="เช็คชื่อแล้ว">✓</i>}{missed && <i className="bad" title="ไม่ได้เช็คชื่อ">ขาด</i>}
                         </button></td>;
                       })}
                       <td className="wk-tot">{weekDays.reduce((n, d) => n + cellOf(t.id, d).length, 0)}</td>
@@ -337,7 +362,10 @@ export function Roster() {
           </table>
           {!shownTeam.length && <p className="px-4 py-6 text-center text-sm text-gold-500">ไม่พบพนักงานตามตัวกรอง</p>}
         </div></>}
-        <p className="wk-leg"><span><i className="is-d" />เช้า 07:00–19:00</span><span><i className="is-n" />ดึก 19:00–07:00</span><span><i className="is-o" />+ ยังไม่มีเวร</span><span>กดช่องเพื่อเลือกเวรรายคน · กดแถว คนเช้า / คนดึก เพื่อเลือกพนักงานทั้งกะ · ✓ เช็คชื่อแล้ว · แดง = ยังไม่มีคน</span></p>
+        <div className="wk-leg">
+          <p><b>สี</b><span><i className="is-d" />กะเช้า {shiftRange(shStart, false)}</span><span><i className="is-n" />กะดึก {shiftRange(shStart, true)}</span><span><i className="is-o" />ช่อง + = ยังไม่ได้จัดกะ</span><span className="is-gapk">ช่องแดงแถวบน = กะนั้นยังไม่มีคน</span></p>
+          <p><b>วิธีใช้</b><span>กดช่องของพนักงาน = เลือกกะของคนนั้น</span><span>กดแถว กะเช้า / กะดึก = เลือกหลายคนพร้อมกัน</span><span>✓ = เช็คชื่อเข้างานแล้ว</span><span>ขาด = ถึงเวลาแล้วยังไม่เช็คชื่อ</span></p>
+        </div>
         {menu && createPortal(<div ref={menuRef} className="wk-menu" role="menu" aria-label={`เวรของ ${menu.name}`} style={{ left: menu.x, top: menu.y }}>
           <p>{shortName(menu.name)} · {WEEKDAYS[weekDays.indexOf(menu.d)]} {dm(menu.d)}</p>
           {MENU_OPTS.map((o) => {
@@ -348,7 +376,7 @@ export function Roster() {
           <button type="button" role="menuitem" className="is-del" disabled={!cellOf(menu.id, menu.d).length} onClick={() => setCell(menu.id, menu.d, [])}>เอาออก</button>
         </div>, document.body)}
         {crew && createPortal(<div ref={menuRef} className="wk-menu wk-pick" role="dialog" aria-label={`เลือกพนักงานเวร${crew.sh} ${dm(crew.d)}`} style={{ left: crew.x, top: crew.y }}>
-          <p><b>เวร{crew.sh}</b> · {WEEKDAYS[weekDays.indexOf(crew.d)]} {dm(crew.d)}<small>{SHIFTS.find((x) => x.key === crew.sh)?.time}</small></p>
+          <p><b>เวร{crew.sh}</b> · {WEEKDAYS[weekDays.indexOf(crew.d)]} {dm(crew.d)}<small>{shiftRange(shStart, crew.sh === "ดึก")}</small></p>
           <ul>{ROLE_ORDER.flatMap((r) => team.filter((t) => t.role === r)).map((t) => {
             const on = crew.sel.includes(t.id), other = SHIFTS.find((x) => x.key !== crew.sh && cellOf(t.id, crew.d).includes(x.key));
             return <li key={t.id}><label className={on ? "is-on" : ""}>
@@ -364,7 +392,7 @@ export function Roster() {
       {view === "ทั้งเดือน" && <Section title={`ตารางเวร${data?.branch ? ` · สาขา${data.branch}` : ""}`}
         actions={data && monthDays.length > 0 ? <span className={`rounded-full px-3 py-1 text-sm font-semibold ${gapDays ? "bg-red-50 text-red-800" : "bg-emerald-50 text-emerald-800"}`}>{gapDays ? `ยังจัดเวรไม่ครบ ${gapDays} วัน` : "จัดเวรครบทุกวันแล้ว"}</span> : undefined}>
         {error && <p role="alert" className="form-error mb-3"><Icon name="alert" className="h-4 w-4 shrink-0" />{error}</p>}
-        <RosterCalendar ym={ym} onMonth={setYm} shifts={shifts} attendance={attendance} today={today} selected={day} onDay={openDay} gaps={!!data} />
+        <RosterCalendar ym={ym} onMonth={setYm} shifts={shifts} attendance={attendance} today={today} selected={day} onDay={openDay} gaps={!!data} start={shStart} />
       </Section>}
 
       <Section title="สรุปการมาทำงานรายคน" sub="ชื่อสีแดง = ขาด 2 ครั้งขึ้นไปในเดือนนี้">
@@ -398,7 +426,7 @@ export function Roster() {
         <div className="grid gap-4 md:grid-cols-2">
           {SHIFTS.map((s) => (
             <div key={s.key}>
-              <p className="label">{s.label} <small className="text-gold-500">{s.time} · {pick[s.key]?.length ?? 0} คน</small></p>
+              <p className="label">{s.label} <small className="text-gold-500">{shiftRange(shStart, s.key === "ดึก")} · {pick[s.key]?.length ?? 0} คน</small></p>
               <ul className="pick-list">{team.map((t) => <li key={t.id}><label><input type="checkbox" checked={pick[s.key]?.includes(t.id) ?? false} onChange={() => toggle(s.key, t.id)} /> <span>{t.name} <small className="text-gold-500">· {ROLE_INFO[t.role as Role]?.th ?? t.role}</small></span></label></li>)}</ul>
               {!team.length && <p className="text-sm text-gold-500">ยังไม่มีพยาบาลที่ทำงานอยู่ในสาขานี้</p>}
             </div>
@@ -426,6 +454,22 @@ export function Roster() {
         footer={<button type="button" className="btn-primary" onClick={() => setPhoto(null)}>ปิด</button>}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         {photo?.photo && <img src={photo.photo} alt="รูปเช็คชื่อ" className="w-full rounded-xl" />}
+      </Modal>
+      {/* ตั้งเวลากะของสาขา: 2 กะ กะละ 12 ชม. เลือกเวลาเริ่มกะเช้า · กะดึกเริ่มหลังจากนั้น 12 ชม. (lib/shifts) */}
+      <Modal open={shiftDlg !== null} title={`ตั้งเวลากะ · สาขา${data?.branch ?? ""}`} onClose={() => setShiftDlg(null)}
+        footer={<><button type="button" className="btn-soft" onClick={() => setShiftDlg(null)}>ยกเลิก</button><button type="button" className="btn-primary" disabled={busy || dlgSame || !!dlgErr} onClick={saveShift}>{busy ? "กำลังบันทึก…" : "บันทึกเวลากะ"}</button></>}>
+        {shiftDlg && dlgCfg && <div className="space-y-4">
+          <p className="form-intro">ทุกสาขามี 2 กะต่อกันครบ 24 ชั่วโมง · ตั้งเวลาเริ่มของแต่ละกะได้เอง (ชั่วโมงและนาที) · กะเช้าจบเมื่อกะดึกเริ่ม กะดึกจบเมื่อกะเช้าวันถัดไปเริ่ม</p>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div><p className="label">เวลาเริ่มกะเช้า</p><TimeInput value={shiftDlg.d} onChange={(v) => setShiftDlg({ ...shiftDlg, d: v })} /></div>
+            <div><p className="label">เวลาเริ่มกะดึก</p><TimeInput value={shiftDlg.n} onChange={(v) => setShiftDlg({ ...shiftDlg, n: v })} /></div>
+          </div>
+          {dlgErr ? <p role="alert" className="form-error"><Icon name="alert" className="h-4 w-4 shrink-0" />{dlgErr}</p> : <div className="grid gap-2 sm:grid-cols-2">
+            <div className="rounded-xl bg-cream-50 px-4 py-3"><small className="text-gold-600">กะเช้า · {lenText(shiftLength(dlgCfg, false))}</small><p className="text-lg font-semibold text-gold-900">{shiftRange(dlgCfg, false)}</p></div>
+            <div className="rounded-xl bg-cream-50 px-4 py-3"><small className="text-gold-600">กะดึก · {lenText(shiftLength(dlgCfg, true))}</small><p className="text-lg font-semibold text-gold-900">{shiftRange(dlgCfg, true)}</p></div>
+          </div>}
+          <p className="rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-900">ใช้ทันทีกับทั้งสาขา: เวลาเช็คชื่อเข้างานและการนับสาย · รอบวัดสัญญาณชีพเวรเช้า/ดึก · การตัดวันของงานประจำวันและ KinApp · เวลางานแนะนำตอนมอบหมาย (1 ชม. หลังเริ่มกะ) · งานที่มอบหมายไปแล้วยังอยู่กะเดิม</p>
+        </div>}
       </Modal>
     </>
   );

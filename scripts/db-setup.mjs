@@ -27,6 +27,7 @@ const DEMOS = [
   ["aide@kin.test", "ผู้ช่วยพยาบาล (ทดลอง)", "Nurse Aide", "สุขุมวิท 107"],
   ["physio@kin.test", "นักกายภาพ (ทดลอง)", "Physio", "สุขุมวิท 107"],
   ["physio2@kin.test", "ปวีณา สุขเจริญ", "Physio", "สุขุมวิท 107"],
+  ["omkod@kin.test", "ผู้จัดการสาขาอ้อมกอด (ทดลอง)", "Branch Admin", "อ้อมกอด พระราม 3"],
 ];
 if (process.env.SEED_DEMO !== "false") {
   const { randomBytes, scryptSync, randomUUID } = await import("node:crypto");

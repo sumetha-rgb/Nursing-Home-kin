@@ -10,9 +10,14 @@ import { taskHandoff } from "@/lib/handoff";
 import { useApp } from "@/lib/app";
 import { fetchNurses, useResidents } from "@/lib/care";
 import { fetchMonth, Month } from "@/lib/roster";
+import { hm, hourOf, nightAfterMidnight, shiftOfHour, shiftRange, type ShiftCfg } from "@/lib/shifts";
+import { useShiftCfg } from "@/lib/shiftsClient";
 import { staying } from "@/lib/rooms";
-import { DataTable, Field, FieldDef, FormDialog, MenuButton, Modal, PageHeader, RowAction, RowMenu, Section, StatusBadge, Tabs, TimeInput } from "../ui";
+import { DataTable, Field, FieldDef, FormDialog, MenuButton, Modal, PageHeader, RowAction, RowMenu, Section, StatusBadge, Tabs } from "../ui";
 import { OptionSettings, useOptions } from "../OptionSettings";
+import AssignDialog, { type AssignPlan, type AssignResult, type RoutineItem } from "./AssignDialog";
+import { DAYS_TH, effectiveTasks, parseRepeat, repeatText } from "@/lib/taskPlan";
+import { seesAllBranches } from "@/lib/roles";
 
 /**
  * งานประจำวัน: ผู้จัดการมอบหมายงาน → ขึ้นใน "งานวันนี้" ของ KinApp → พนักงานส่งงาน → ผู้จัดการตรวจ
@@ -37,17 +42,20 @@ const STAT_FILTERS: { k: Phase | ""; t: string }[] = [
   { k: "todo", t: "ยังไม่ได้ทำ" },
   { k: "done", t: "ตรวจแล้ว" },
 ];
-const SHIFT_TIME: Record<string, string> = { กะเช้า: "08:00", กะดึก: "20:00" };
 /** เวลาที่มอบหมาย (ระบบบันทึกเอง) · "dd/mm/yyyy HH:MM" → เทียบเรียงด้วย yyyy-mm-dd HH:MM */
 const stamp = (r: string[]) => { const m = String(r[11] ?? "").match(/^(\d{2})\/(\d{2})\/(\d{4}) (\d{2}:\d{2})/); return m ? `${m[3]}-${m[2]}-${m[1]} ${m[4]}` : "9999"; };
-const blankRow = (who: string, task: string, time: string, shift: string, ins: string, by = "-") => [who, task, by, time, shift, "รอทำ", ins || "-", "-", "-", "-", "-"];
+/** แถวงานใหม่ · [11] = เวลาสร้าง (server ใส่) · [12] = เวลาสิ้นสุดของช่วงเวลาทำ (ว่าง = ไม่กำหนด) */
+const blankRow = (who: string, task: string, time: string, shift: string, ins: string, by = "-", end = "") => [who, task, by, time, shift, "รอทำ", ins || "-", "-", "-", "-", "-", "", end];
+/** "07:00" หรือ "07:00–08:00" */
+const timeText = (r: string[]) => { const a = String(r[3] ?? "").slice(0, 5), b = /^\d{2}:\d{2}/.test(String(r[12] ?? "")) ? String(r[12]).slice(0, 5) : ""; return a ? (b ? `${a}–${b}` : a) : "-"; };
 
 const isoOf = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const todayIso = () => isoOf(new Date());
 const prevIso = (iso: string) => { const d = new Date(iso + "T00:00:00"); d.setDate(d.getDate() - 1); return isoOf(d); };
 const thaiDate = (iso: string) =>
   iso ? new Date(iso + "T00:00:00").toLocaleDateString("th-TH", { year: "numeric", month: "long", day: "numeric", weekday: "long" }) : "";
-const shiftOf = (time: string) => { const h = Number(time.slice(0, 2)); return h >= 7 && h < 19 ? "กะเช้า" : "กะดึก"; };
+/** เวลานี้อยู่กะไหน ตามเวลาเริ่มกะเช้าของสาขา (start) */
+const shiftOf = (time: string, c: ShiftCfg) => shiftOfHour(hourOf(time), c);
 
 /** หน้าต่างตรวจงาน: ระดับดาว และข้อความสำเร็จรูป (กดแล้วต่อท้ายความคิดเห็น) */
 const STAR_TEXT = ["", "ไม่ผ่าน ต้องทำใหม่", "ต้องปรับปรุง", "พอใช้", "ดี", "ดีมาก"];
@@ -90,15 +98,12 @@ export function DailyTasks() {
   const [note, setNote] = useState("");
   const [addOpen, setAddOpen] = useState(false);
   const [assign, setAssign] = useState(false);
-  const [pickRes, setPickRes] = useState<string[]>([]);
-  const [pickTask, setPickTask] = useState<number[]>([]);
-  const [times, setTimes] = useState(SHIFT_TIME);
-  const [assignErr, setAssignErr] = useState("");
-  const [repeat, setRepeat] = useState(true);
   const [routineOpen, setRoutineOpen] = useState(false);
   const { user: me } = useSession();
+  /** ชั่วโมงเริ่มกะเช้าของสาขา (ตั้งที่หน้าตารางเวร · ไม่ได้ตั้ง = 7) */
+  const shStart = useShiftCfg(me?.branch);
   const canRoutine = can(me, "tasks.review");
-  type Routine = { id: string; resident_name: string; branch_name: string; task_name: string; shift: string; sched_time: string; created_by: string };
+  type Routine = { id: string; resident_name: string; branch_name: string; task_name: string; shift: string; sched_time: string; end_time?: string | null; days?: string | null; created_by: string };
   const [routines, setRoutines] = useState<Routine[]>([]);
   const loadRoutines = useCallback(() => { fetch("/api/care?op=routines", { cache: "no-store" }).then((r) => r.json()).then((d) => setRoutines(d.routines ?? [])).catch(() => {}); }, []);
   useEffect(loadRoutines, [loadRoutines]);
@@ -122,16 +127,25 @@ export function DailyTasks() {
   // งานประจำ = มีรายการทำซ้ำของผู้รับบริการ + งาน + กะ เดียวกัน
   const routine = (r: string[]) => routines.some((x) => x.resident_name === r[0] && x.task_name === r[1] && x.shift === r[4]);
   const kindOf = (r: string[]) => (routine(r) ? "งานประจำ" : "งานรายครั้ง");
-  /** เวลาที่ต้องทำงาน · งานกะดึกหลังเที่ยงคืน (ก่อน 07:00) เป็นของวันถัดไป */
+  /** เวลาที่ต้องทำงาน · งานกะดึกหลังเที่ยงคืน (ก่อนเวลาเริ่มกะเช้า เช่น 07:00) เป็นของวันถัดไป */
   const dueAt = (r: string[]) => {
     const m = String(r[3] ?? "").match(/^(\d{1,2}):(\d{2})/);
     if (!m) return null;
     const d = new Date(`${date}T00:00:00`);
-    if (r[4] === "กะดึก" && Number(m[1]) < 7) d.setDate(d.getDate() + 1);
+    if (r[4] === "กะดึก" && nightAfterMidnight(String(r[3]), shStart)) d.setDate(d.getDate() + 1);
     d.setHours(Number(m[1]), Number(m[2]), 0, 0);
     return d.getTime();
   };
-  const phase = (r: string[]): Phase => (r[5] === "ตรวจแล้ว" ? "done" : r[5] === "เสร็จแล้ว" ? "review" : (dueAt(r) ?? Infinity) + LATE_MIN * 60e3 < now ? "late" : "todo");
+  /** เวลาที่นับว่าเลยเวลา: มีเวลาสิ้นสุด (ช่วงเวลาทำ เช่น 07:00–08:00) = เวลาสิ้นสุด · ไม่มี = เวลาเริ่ม + LATE_MIN นาที */
+  const deadline = (r: string[]) => {
+    const e = String(r[12] ?? "").match(/^(\d{1,2}):(\d{2})/);
+    if (!e) { const d = dueAt(r); return d === null ? null : d + LATE_MIN * 60e3; }
+    const d = new Date(`${date}T00:00:00`);
+    if (r[4] === "กะดึก" && nightAfterMidnight(String(r[12]), shStart)) d.setDate(d.getDate() + 1);
+    d.setHours(Number(e[1]), Number(e[2]), 0, 0);
+    return d.getTime();
+  };
+  const phase = (r: string[]): Phase => (r[5] === "ตรวจแล้ว" ? "done" : r[5] === "เสร็จแล้ว" ? "review" : (deadline(r) ?? Infinity) < now ? "late" : "todo");
   const base = rows.map((r, k) => ({ r, k })).filter(({ r }) => (shift === "ทั้งหมด" || r[4] === shift) && (kind === "ทั้งหมด" || kindOf(r) === kind));
   const statCount = (k: Phase | "") => base.filter(({ r }) => !k || phase(r) === k).length;
   const isProxy = (r: string[]) => String(r[9] ?? "").startsWith("ทำแทน");
@@ -154,33 +168,23 @@ export function DailyTasks() {
       .then((d) => { setShot(d); if (d.stars) setStar(String(d.stars)); if (d.note) setNote(d.note); }) // ตรวจแล้ว: แสดงดาวเดิม
       .catch(() => setShot({ photo: null, at: null }));
   }, [curId]);
-  const exists = (who: string, task: string, sh: string) => rows.some((r) => r[0] === who && r[1] === task && r[4] === sh);
-
-  /** มอบหมายจากคลังงาน: ผู้รับบริการที่เลือก × งานที่เลือก (งาน "ทั้งสองกะ" สร้างทั้งกะเช้าและกะดึก) ข้ามงานที่มีอยู่แล้ว */
-  const doAssign = () => {
-    if (!pickRes.length) return setAssignErr("กรุณาเลือกผู้รับบริการอย่างน้อย 1 คน");
-    if (!pickTask.length) return setAssignErr("กรุณาเลือกงานจากคลังงานอย่างน้อย 1 งาน");
-    let made = 0, skipped = 0;
-    const plan: { resident: string; task: string; ins: string; shift: string; time: string }[] = [];
-    for (const who of pickRes) for (const ti of pickTask) {
-      const t = master[ti];
-      const shifts = t[4] === "ทั้งสองกะ" ? ["กะเช้า", "กะดึก"] : [t[4] === "กะดึก" ? "กะดึก" : "กะเช้า"];
-      for (const sh of shifts) {
-        plan.push({ resident: who, task: t[1], ins: t[2], shift: sh, time: times[sh] });
-        if (exists(who, t[1], sh)) { skipped++; continue; }
-        add(blankRow(who, t[1], times[sh], sh, t[2])); made++;
-      }
-    }
-    setAssign(false); setPickRes([]); setPickTask([]); setAssignErr("");
-    if (repeat && plan.length) {
-      // skipDate: วันนี้หน้าจอมอบหมายให้แล้ว · วันอื่นที่ระบบสร้างงานไปแล้ว (ถึง 14 วันข้างหน้า) server ใส่งานประจำใหม่ให้เอง
-      fetch("/api/care", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "routines_add", items: plan, skipDate: date }) })
-        .then((r) => r.json()).then((d) => { loadRoutines(); toast(`ตั้งงานประจำแล้ว ${d.added ?? 0} รายการ · ระบบสร้างงานให้เองทุกวัน`); })
-        .catch(() => toast("มอบหมายงานวันนี้แล้ว แต่ตั้งงานประจำไม่สำเร็จ"));
-      return;
-    }
-    toast(`มอบหมายงานแล้ว ${made} งาน · ขึ้นใน KinApp แล้ว${skipped ? ` · ข้ามงานที่มีอยู่แล้ว ${skipped} งาน` : ""}`);
+  /** มีงานนี้อยู่แล้ว (ผู้รับบริการ + งาน + กะ · ระบุเวลา = ต้องตรงเวลาเริ่มด้วย งานเดียวกันหลายเวลาในกะเดียวได้) */
+  const exists = (who: string, task: string, sh: string, time?: string) => rows.some((r) => r[0] === who && r[1] === task && r[4] === sh && (!time || String(r[3] ?? "").slice(0, 5) === time));
+  /** มอบหมายงาน (หน้าต่างแบบใหม่ AssignDialog) · คืน false = มีงานนี้เวลานี้อยู่แล้ว */
+  const createTask = (p: AssignPlan) => { if (exists(p.who, p.name, p.sh, p.s)) return false; add(blankRow(p.who, p.name, p.s, p.sh, p.ins, "-", p.e)); return true; };
+  const addRoutines = async (items: RoutineItem[]) => {
+    // skipDate: วันนี้หน้าจอมอบหมายให้แล้ว · วันอื่นที่ระบบสร้างงานไปแล้ว (ถึง 14 วันข้างหน้า) server ใส่งานประจำใหม่ให้เอง
+    const r = await fetch("/api/care", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "routines_add", items, skipDate: date }) });
+    const d = await r.json().catch(() => ({}));
+    loadRoutines();
+    return r.ok ? Number(d.added ?? 0) : 0;
   };
+  const assignDone = (r: AssignResult) => toast([
+    r.made ? `มอบหมายงานแล้ว ${r.made} งาน · ขึ้นใน KinApp แล้ว` : "วันนี้ไม่มีงานใหม่",
+    r.skipped ? `ข้ามงานที่มีอยู่แล้ว ${r.skipped} งาน` : "",
+    r.routineFail ? "ตั้งงานทำซ้ำไม่สำเร็จ" : r.routines ? `ตั้งทำซ้ำ ${r.routines} รายการ (ระบบสร้างให้เองตามวัน)` : "",
+  ].filter(Boolean).join(" · "));
+  const assignPeople = useMemo(() => residents.filter((r) => staying(r.status ?? "")).map((r) => ({ name: r.full_name, room: r.room ?? "" })), [residents]);
 
   /** คัดลอกงานของวันก่อนหน้า (สถานะกลับเป็นรอทำ) */
   const copyPrev = async () => {
@@ -201,7 +205,7 @@ export function DailyTasks() {
   const qk = q.replace(/\s+/g, "").toLowerCase();
   const listed = shown.filter(({ r }) => !qk || [r[0], r[1], r[2], r[10]].join(" ").replace(/\s+/g, "").toLowerCase().includes(qk))
     .sort((a, b) => (dueAt(a.r) ?? 0) - (dueAt(b.r) ?? 0) || String(a.r[0]).localeCompare(String(b.r[0])));
-  const lateText = (r: string[]) => { const d = dueAt(r); if (!d) return PHASE_TEXT.late; const m = Math.floor((now - d) / 60e3); return m >= 60 ? `เลยเวลา ${Math.floor(m / 60)} ชม.` : `เลยเวลา ${m} นาที`; };
+  const lateText = (r: string[]) => { const d = /^\d{2}:\d{2}/.test(String(r[12] ?? "")) ? deadline(r) : dueAt(r); if (!d) return PHASE_TEXT.late; const m = Math.floor((now - d) / 60e3); return m >= 60 ? `เลยเวลา ${Math.floor(m / 60)} ชม.` : `เลยเวลา ${m} นาที`; };
   const openTask = (k: number) => { setI(k); setStar("5"); setNote(""); };
 
   // ตามงาน: สถานะล่าสุดต่องาน (ดึงใหม่ทุกนาทีพร้อมเวลา) · ส่ง = op nudge
@@ -230,7 +234,8 @@ export function DailyTasks() {
   const ADD_FIELDS: FieldDef[] = [
     { label: "ผู้รับบริการ", options: names, required: true, pick: "resident", requireRoom: true },
     { label: "ชื่องาน", required: true },
-    { label: "เวลา", type: "time", required: true },
+    { label: "เวลาเริ่ม", type: "time", required: true },
+    { label: "ถึงเวลา (ไม่บังคับ)", type: "time" },
     { label: "คำสั่งงาน", area: true },
     { label: "ผู้รับผิดชอบ", options: [ANYONE, ...people("กะเช้า"), ...people("กะดึก").filter((n) => !people("กะเช้า").includes(n))] },
   ];
@@ -239,12 +244,12 @@ export function DailyTasks() {
     <>
       <PageHeader
         title="มอบหมายและตรวจงาน"
-        sub={`${thaiDate(date)} · ตัดกะ 07:00 น.`}
+        sub={`${thaiDate(date)} · ตัดกะ ${hm(shStart.d)} น.`}
         actions={<>
           <input type="date" value={date} onChange={(e) => e.target.value && setDate(e.target.value)} aria-label="เลือกวันที่" className="!w-auto font-medium" />
           {date !== todayIso() && <button className="btn-soft" onClick={() => setDate(todayIso())}>วันนี้</button>}
           <MenuButton primary label="มอบหมายงาน" icon={<Icon name="plus" className="h-4 w-4" />} items={[
-            { label: "จากแม่แบบงานมาตรฐาน", hint: "เลือกหลายคน × หลายงาน", onClick: () => { setAssignErr(""); setAssign(true); } },
+            { label: "เลือกคนและงาน", hint: "พิมพ์งานเอง หรือจิ้มจากรายการ · หลายคนพร้อมกัน · ตั้งวันทำซ้ำ", onClick: () => setAssign(true) },
             { label: "งานรายครั้ง", hint: "พิมพ์งานเอง", onClick: () => setAddOpen(true) },
             { label: "คัดลอกงานจากวันก่อน", onClick: copyPrev },
             { label: `งานประจำ (${routines.length})`, hint: "ดู / หยุดทำซ้ำ", onClick: () => { loadRoutines(); setRoutineOpen(true); } },
@@ -280,7 +285,7 @@ export function DailyTasks() {
             if (!list.length) return null;
             return (
               <section key={sh} className="tl-shift" aria-label={sh}>
-                <h3>{sh} <small>{sh === "กะเช้า" ? "07:00–19:00" : "19:00–07:00"} · {list.length} งาน</small></h3>
+                <h3>{sh} <small>{shiftRange(shStart, sh !== "กะเช้า")} · {list.length} งาน</small></h3>
                 <ul className="tl-list">
                   {list.map(({ r, k }) => {
                     const p = phase(r), nd = nudgeOf(k);
@@ -293,7 +298,7 @@ export function DailyTasks() {
                     return (
                       <li key={ids[k] ?? k} className={`is-${p}`}>
                         <button type="button" className="tl-main" onClick={() => openTask(k)}>
-                          <time>{String(r[3] ?? "").slice(0, 5) || "-"}</time>
+                          <time>{timeText(r)}</time>
                           <span className="tl-t"><b>{r[1]}{routine(r) && <span title="งานประจำ"><Icon name="refresh" className="ml-1.5 inline h-3 w-3 text-gold-400" /></span>}</b>
                             <small>{r[0]} · {owner(r)}{isProxy(r) && <span className="proxy-badge ml-1.5" title={proxyLabel(r)}>ทำแทน</span>}</small>
                             {nd && p !== "done" && p !== "review" && <small className={`tl-nudge ${nd.reply ? "is-bad" : ""}`}>{nd.reply ? `ทำไม่ได้: ${nd.reply} · ${nd.replyBy} ${nd.replyAt}` : `ตามแล้ว ${nd.at}${nd.seenAt ? ` · ${nd.seenBy} เปิดดู ${nd.seenAt}` : " · ยังไม่เปิดดู"}`}</small>}
@@ -325,43 +330,25 @@ export function DailyTasks() {
         </div>}
       </Modal>
 
-      {/* มอบหมายจากคลังงาน */}
-      <Modal open={assign} wide title="มอบหมายงานจากแม่แบบงานมาตรฐาน" onClose={() => setAssign(false)}
-        footer={<><button className="btn-soft" onClick={() => setAssign(false)}>ยกเลิก</button><button className="btn-primary" onClick={doAssign}>มอบหมาย {pickRes.length * pickTask.length > 0 ? `(${pickRes.length} คน × ${pickTask.length} งาน)` : ""}</button></>}>
-        <p className="form-intro">เลือกผู้รับบริการและงาน ระบบสร้างงานของวันที่ {thaiDate(date)} ให้ทุกคู่ งาน &quot;ทั้งสองกะ&quot; สร้างทั้งกะเช้าและกะดึก</p>
-        <div className="grid gap-5 md:grid-cols-2">
-          <div>
-            <div className="mb-2 flex items-center justify-between"><p className="label !mb-0">1. ผู้รับบริการ ({pickRes.length})</p><button type="button" className="text-xs font-medium text-gold-700 underline-offset-2 hover:underline" onClick={() => setPickRes(pickRes.length === names.length ? [] : names)}>{pickRes.length === names.length ? "ไม่เลือกทั้งหมด" : "เลือกทั้งหมด"}</button></div>
-            <ul className="pick-list">{names.map((n) => <li key={n}><label><input type="checkbox" checked={pickRes.includes(n)} onChange={() => { setAssignErr(""); setPickRes(pickRes.includes(n) ? pickRes.filter((x) => x !== n) : [...pickRes, n]); }} /> {n}</label></li>)}</ul>
-            {!names.length && <p className="text-sm text-gold-500">ยังไม่มีผู้รับบริการในสาขา</p>}
-          </div>
-          <div>
-            <p className="label">2. งานจากแม่แบบงานมาตรฐาน ({pickTask.length})</p>
-            <ul className="pick-list">{master.map((t, k) => <li key={k}><label><input type="checkbox" checked={pickTask.includes(k)} onChange={() => { setAssignErr(""); setPickTask(pickTask.includes(k) ? pickTask.filter((x) => x !== k) : [...pickTask, k]); }} /> <span>{t[1]} <small className="text-gold-500">· {t[4]} · {t[6]}</small></span></label></li>)}</ul>
-          </div>
-        </div>
-        <div className="mt-5 grid grid-cols-2 gap-3">
-          <Field label="3. เวลางานกะเช้า"><TimeInput value={times["กะเช้า"]} onChange={(v) => setTimes({ ...times, กะเช้า: v })} /></Field>
-          <Field label="เวลางานกะดึก"><TimeInput value={times["กะดึก"]} onChange={(v) => setTimes({ ...times, กะดึก: v })} /></Field>
-        </div>
-        <label className="repeat-toggle mt-4"><input type="checkbox" checked={repeat} onChange={(e) => setRepeat(e.target.checked)} /><span><b>ทำซ้ำทุกวัน (งานประจำ)</b><small>ระบบสร้างงานชุดนี้ให้เองทุกวัน ไม่ต้องมอบหมายใหม่ทุกเช้า · หยุดได้ที่ปุ่ม &quot;งานประจำ&quot;</small></span></label>
-        {assignErr && <p role="alert" className="form-error mt-4"><Icon name="alert" className="h-4 w-4 shrink-0" />{assignErr}</p>}
-      </Modal>
+      {/* มอบหมายงาน: พิมพ์งานเอง หรือจิ้มจากรายการงาน · ครั้งเดียว / ทุกวัน / เลือกวัน */}
+      <AssignDialog open={assign} onClose={() => setAssign(false)} date={date} dateText={date === todayIso() ? "วันนี้" : thaiDate(date)} people={assignPeople} master={effectiveTasks(master.map((r) => ({ r })), seesAllBranches(me?.role) ? undefined : me?.branch).map((x) => x.r)} cfg={shStart}
+        onCreate={createTask} onRoutines={addRoutines} onDone={assignDone} />
 
       {/* งานประจำ */}
-      <Modal open={routineOpen} wide title="งานประจำ (ทำซ้ำทุกวัน)" onClose={() => setRoutineOpen(false)} footer={<button className="btn-primary" onClick={() => setRoutineOpen(false)}>ปิด</button>}>
-        <p className="form-intro">ระบบสร้างงานเหล่านี้ให้ทุกวัน ล่วงหน้า 14 วัน</p>
-        <DataTable search={false} columns={["ผู้รับบริการ", "สาขา", "งาน", "กะ", "เวลา", "ตั้งโดย"]} empty="ยังไม่มีงานประจำ"
-          rows={routines.map((r) => [r.resident_name, r.branch_name, r.task_name, r.shift, r.sched_time, r.created_by ?? "-"])}
+      <Modal open={routineOpen} wide title="งานประจำ (ทำซ้ำ)" onClose={() => setRoutineOpen(false)} footer={<button className="btn-primary" onClick={() => setRoutineOpen(false)}>ปิด</button>}>
+        <p className="form-intro">ระบบสร้างงานเหล่านี้ให้เองตามวันที่ตั้ง ล่วงหน้า 14 วัน</p>
+        <DataTable search={false} columns={["ผู้รับบริการ", "สาขา", "งาน", "กะ", "เวลา", "วัน", "ตั้งโดย"]} empty="ยังไม่มีงานประจำ"
+          rows={routines.map((r) => [r.resident_name, r.branch_name, r.task_name, r.shift, `${String(r.sched_time).slice(0, 5)}${r.end_time ? `–${String(r.end_time).slice(0, 5)}` : ""}`, r.days ? repeatText(parseRepeat(String(r.days).split(",").map((d) => DAYS_TH[Number(d) - 1]).join(" "))) : "ทุกวัน", r.created_by ?? "-"])}
           actions={[{ label: "หยุดทำซ้ำ", danger: true, onClick: (i) => stopRoutine(routines[i]) }]} />
       </Modal>
 
       <FormDialog open={addOpen} mode="add" title="มอบหมายงานประจำวัน" fields={ADD_FIELDS} onClose={() => setAddOpen(false)} saveLabel="มอบหมายงาน"
         onSave={(v) => {
           if (!v[0] || !v[1].trim() || !v[2]) return toast("กรุณากรอกผู้รับบริการ ชื่องาน และเวลา");
-          const sh = shiftOf(v[2]);
-          if (exists(v[0], v[1].trim(), sh)) return toast("มีงานนี้ของผู้รับบริการคนนี้ในกะนี้แล้ว");
-          add(blankRow(v[0], v[1].trim(), v[2], sh, v[3], v[4] && v[4] !== ANYONE ? v[4] : "-")); setAddOpen(false); toast(`มอบหมายงานแล้ว · ${v[1].trim()} · ${v[0]} · ${sh} ${v[2]} น. · ขึ้นใน KinApp แล้ว`);
+          const sh = shiftOf(v[2], shStart);
+          if (exists(v[0], v[1].trim(), sh, v[2])) return toast("มีงานนี้ของผู้รับบริการคนนี้ในกะนี้แล้ว");
+          if (v[3] && v[3] <= v[2] && sh === "กะเช้า") return toast("เวลาสิ้นสุดต้องหลังเวลาเริ่ม");
+          add(blankRow(v[0], v[1].trim(), v[2], sh, v[4], v[5] && v[5] !== ANYONE ? v[5] : "-", v[3] || "")); setAddOpen(false); toast(`มอบหมายงานแล้ว · ${v[1].trim()} · ${v[0]} · ${sh} ${v[2]} น. · ขึ้นใน KinApp แล้ว`);
         }} />
 
       <Modal open={!!who} title="มอบหมายผู้รับผิดชอบ" onClose={() => setWho(null)}
@@ -379,7 +366,7 @@ export function DailyTasks() {
           const r = rows[who.k]; const duty = onDuty(r[4]);
           return (
             <div className="space-y-3">
-              <p className="rounded-xl bg-cream-50 px-4 py-3 text-sm"><b>{r[1]}</b> · {r[0]}<br /><span className="text-gold-600">{r[3]} น. · {r[4]}</span></p>
+              <p className="rounded-xl bg-cream-50 px-4 py-3 text-sm"><b>{r[1]}</b> · {r[0]}<br /><span className="text-gold-600">{timeText(r)} น. · {r[4]}</span></p>
               <ul className="pick-list">
                 {[ANYONE, ...people(r[4])].map((n) => (
                   <li key={n}><label><input type="radio" name="owner" checked={who.v === n} onChange={() => setWho({ ...who, v: n })} />
@@ -424,7 +411,7 @@ export function DailyTasks() {
             </div>
             <div className="review-meta">
               <div><span>ผู้ปฏิบัติงาน</span><b>{doer}</b></div>
-              <div><span>เวลาที่กำหนด</span><b>{cur[3]} น. · {cur[4]}</b></div>
+              <div><span>เวลาที่กำหนด</span><b>{timeText(cur)} น. · {cur[4]}</b></div>
               <div><span>ส่งงานเมื่อ</span><b>{notSent ? "ยังไม่ส่ง" : filled(cur[8]) ? `${cur[8]} น.` : "-"}</b>
                 {late !== null && <em className={late > 15 ? "is-late" : "is-ok"}>{late > 15 ? `ช้า ${late} นาที` : "ตรงเวลา"}</em>}</div>
             </div>

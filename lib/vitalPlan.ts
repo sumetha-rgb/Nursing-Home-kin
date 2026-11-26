@@ -4,6 +4,7 @@
  *  ถึงรอบ = วันที่บันทึกล่าสุด + รอบ · ยังไม่เคยวัด = ถึงรอบทันที · วัดนอกรอบก็นับเป็นรอบใหม่
  *  วันละ 2 ครั้ง = เวรเช้า (07:00–19:00) + เวรดึก (19:00–07:00) วัดเวรละครั้ง
  */
+import { DEFAULT_SHIFT, type ShiftCfg } from "@/lib/shifts";
 export type VitalKey = "vs" | "o2" | "dtx" | "wt" | "ht";
 export type PresetKey = "2d" | "1d" | "3d" | "1w" | "2w" | "1m" | "off";
 export type VitalPlan = Record<VitalKey, PresetKey>;
@@ -48,19 +49,24 @@ export const thShort = (s: string) => `${s.slice(8, 10)}/${s.slice(5, 7)}/${Stri
  * สถานะของรายการวัด 1 รายการ
  *  last = ครั้งล่าสุดที่บันทึก (เวลาไทย "YYYY-MM-DD HH:MM") หรือ null = ยังไม่เคยวัด
  */
-export function dueOf(preset: PresetKey, last: string | null, now = nowBkk()): Due {
+export function dueOf(preset: PresetKey, last: string | null, now = nowBkk(), shift: ShiftCfg = DEFAULT_SHIFT): Due {
   const p = VITAL_PRESETS.find((x) => x.k === preset);
   if (!p || p.days === null) return { cls: "off", text: "ไม่ต้องวัด", next: null };
   const tNow = ms(now);
   if (p.days < 1) {
-    // เวรตอนนี้เริ่มกี่โมง: 07:00 หรือ 19:00 (ก่อน 07:00 = เวรดึกที่เริ่ม 19:00 เมื่อวาน)
-    const day = ms(now.slice(0, 10)), h = Number(now.slice(11, 13));
-    const start = h >= 19 ? day + 19 * H : h >= 7 ? day + 7 * H : day - 5 * H;
-    const shift = h >= 7 && h < 19 ? "เวรเช้า" : "เวรดึก";
+    // เวรตอนนี้เริ่มกี่โมง ตามเวลากะของสาขา (lib/shifts · S = เริ่มเวรเช้า, N = S + 12 เริ่มเวรดึก)
+    //  เริ่ม 07:00: 07:00 หรือ 19:00 · ก่อน 07:00 = เวรดึกที่เริ่ม 19:00 เมื่อวาน
+    const S = shift.d, N = shift.n;
+    const day = ms(now.slice(0, 10)), h = Number(now.slice(11, 13)) + Number(now.slice(14, 16) || 0) / 60;
+    const start = h >= N ? day + N * H : h >= S ? day + S * H : day + (N - 24) * H;
+    const inDay = h >= S && h < N;
+    const shiftName = inDay ? "เวรเช้า" : "เวรดึก";
+    /** ความยาวเวรนี้ และเวรก่อนหน้า (สองเวรยาวไม่เท่ากันได้) */
+    const L = (inDay ? N - S : 24 - (N - S)) * H, P = 24 * H - L;
     if (!last) return { cls: "due", text: "ยังไม่เคยวัด", next: fmt(start) };
     const tl = ms(last);
-    if (tl >= start) return { cls: "rest", text: `วัดแล้ว${shift}`, next: fmt(start + 12 * H) };
-    if (tl >= start - 12 * H) return { cls: "due", text: `ถึงรอบ${shift}`, next: fmt(start) };
+    if (tl >= start) return { cls: "rest", text: `วัดแล้ว${shiftName}`, next: fmt(start + L) };
+    if (tl >= start - P) return { cls: "due", text: `ถึงรอบ${shiftName}`, next: fmt(start) };
     return { cls: "over", text: `ขาดวัด ${Math.floor((start - tl) / (12 * H))} เวร`, next: fmt(start) };
   }
   if (!last) return { cls: "due", text: "ยังไม่เคยวัด", next: now.slice(0, 10) };
@@ -72,8 +78,9 @@ export function dueOf(preset: PresetKey, last: string | null, now = nowBkk()): D
 }
 
 /** แถวจาก GET /api/care?op=vital_due */
-export type VitalDueRow = { id: string; name: string; room: string | null; branch: string | null; plan: VitalPlan; custom: boolean; by: string | null; last: Record<VitalKey, string | null> };
-export const dueAll = (r: VitalDueRow, now = nowBkk()) => VITAL_ITEMS.map((it) => ({ ...it, preset: r.plan[it.k], last: r.last[it.k], due: dueOf(r.plan[it.k], r.last[it.k], now) }));
+/** shift = เวลากะของสาขา { d: เริ่มเวรเช้า, n: เริ่มเวรดึก } (server ใส่ให้ · lib/shifts · ไม่มี = 07:00/19:00) */
+export type VitalDueRow = { id: string; name: string; room: string | null; branch: string | null; plan: VitalPlan; custom: boolean; by: string | null; last: Record<VitalKey, string | null>; shift?: ShiftCfg };
+export const dueAll = (r: VitalDueRow, now = nowBkk()) => VITAL_ITEMS.map((it) => ({ ...it, preset: r.plan[it.k], last: r.last[it.k], due: dueOf(r.plan[it.k], r.last[it.k], now, r.shift ?? DEFAULT_SHIFT) }));
 /** รายการที่ต้องวัด (ถึงรอบ/เลยกำหนด) ของผู้ป่วยคนนี้ · เลยกำหนดขึ้นก่อน */
 export const needOf = (r: VitalDueRow, now = nowBkk()) => dueAll(r, now).filter((x) => x.due.cls === "due" || x.due.cls === "over").sort((a, b) => Number(b.due.cls === "over") - Number(a.due.cls === "over"));
 

@@ -1,10 +1,12 @@
 // ใช้ฝั่ง server เท่านั้น: ตัวชี้วัด "วัดสัญญาณชีพตามรอบ" (หน้าภาพรวมและรายงาน)
 import { sql } from "@/lib/db";
 import { planOf, VITAL_ITEMS, VITAL_PRESETS, type VitalKey } from "@/lib/vitalPlan";
+import { DEFAULT_SHIFT } from "@/lib/shifts";
+import { shiftCfgs } from "@/lib/shiftsServer";
 
 /**
  * วัดตามรอบ % = ช่วงที่วัดทันรอบ ÷ ช่วงที่ต้องวัด (ทุกคน × ทุกรายการที่ไม่ได้ตั้ง "ไม่ต้องวัด")
- *  วันละ 2 ครั้ง  = นับทีละเวร (เวรเช้า 07:00–19:00 · เวรดึก 19:00–07:00) ทันรอบ = มีบันทึกในเวรนั้น
+ *  วันละ 2 ครั้ง  = นับทีละเวร (ตามเวลากะของสาขา lib/shifts · ค่าเริ่มต้น เวรเช้า 07:00–19:00 · เวรดึก 19:00–07:00) ทันรอบ = มีบันทึกในเวรนั้น
  *  ทุก N วัน     = นับทีละวัน ทันรอบ = ณ สิ้นวันนั้น มีบันทึกภายใน N วันล่าสุด (ยังไม่เลยกำหนด · ตรงกับ "เลยกำหนด" ใน lib/vitalPlan)
  *  นับถึงเมื่อวาน (วันนี้ยังไม่จบ) · ผู้รับบริการที่เข้าอยู่ตอนนี้ (ไม่นับย้ายออก/มัดจำ) · เริ่มนับจากวันที่เพิ่มเข้าระบบ
  *  ใช้รอบที่ตั้งไว้ตอนนี้กับทั้งช่วง (ระบบไม่ได้เก็บประวัติการเปลี่ยนรอบ) · ยังไม่ตั้งรอบ = ค่าเริ่มต้น
@@ -29,7 +31,7 @@ export async function vitalRounds(br: string | null, ranges: { from: string; to:
   const lo = iso(ms(valid.reduce((a, r) => (r.from < a ? r.from : a), valid[0].from)) - 31 * DAY);
   const hi = iso(ms(valid.reduce((a, r) => (r.to > a ? r.to : a), valid[0].to)) + 2 * DAY);
   const rw = (i: number) => ["coalesce(r.status, '') NOT LIKE 'ย้ายออก%'", "coalesce(r.status, '') NOT LIKE 'มัดจำ%'", ...(br ? [`r.branch_name = $${i}`] : [])].join(" AND ");
-  const resQ = (withPlan: boolean) => sql(`SELECT r.id, r.full_name AS name, (r.created_at AT TIME ZONE 'Asia/Bangkok')::date::text AS start, ${withPlan ? "vp.plan" : "NULL AS plan"}
+  const resQ = (withPlan: boolean) => sql(`SELECT r.id, r.full_name AS name, r.branch_name AS branch, (r.created_at AT TIME ZONE 'Asia/Bangkok')::date::text AS start, ${withPlan ? "vp.plan" : "NULL AS plan"}
       FROM residents r ${withPlan ? "LEFT JOIN vital_plans vp ON vp.resident_id = r.id" : ""} WHERE ${rw(1)}`, br ? [br] : []);
   const [res, evs] = (await Promise.all([
     resQ(true).catch(() => resQ(false)), // ยังไม่ได้รัน db:setup (ไม่มีตาราง vital_plans) = ทุกคนใช้ค่าเริ่มต้น
@@ -64,8 +66,11 @@ export async function vitalRounds(br: string | null, ranges: { from: string; to:
     if (i === 0) { const p = (perRes[curId] ??= { total: 0, ok: 0 }); p.total++; if (ok) p.ok++; }
     if (ok) stats[i].ok++; else if (i === 0) missBy.set(name, (missBy.get(name) ?? 0) + 1);
   };
+  const cfgs = await shiftCfgs();
   for (const r of res) {
     const plan = planOf(r.plan), ev = byRes.get(String(r.id)) ?? empty(), name = String(r.name);
+    /** เวลากะของสาขาผู้รับบริการ: d = เริ่มเวรเช้า · n = เริ่มเวรดึก */
+    const sh = cfgs.get(String(r.branch ?? "")) ?? DEFAULT_SHIFT;
     curId = String(r.id);
     const start = ms(String(r.start ?? lo));
     for (const { k } of VITAL_ITEMS) {
@@ -74,9 +79,9 @@ export async function vitalRounds(br: string | null, ranges: { from: string; to:
       rs.forEach((rg, i) => {
         for (let d = Math.max(ms(rg.from), start); d <= ms(rg.to); d += DAY) {
           if (days < 1) {
-            // วันละ 2 ครั้ง: เวรเช้า 07–19 · เวรดึก 19 – 07 ของวันถัดไป
-            count(i, has(ev[k], d + 7 * H, d + 19 * H), name);
-            count(i, has(ev[k], d + 19 * H, d + 31 * H), name);
+            // วันละ 2 ครั้ง: เวรเช้า d–n · เวรดึก n – d ของวันถัดไป (ค่าเริ่มต้น 07–19 · 19–07)
+            count(i, has(ev[k], d + sh.d * H, d + sh.n * H), name);
+            count(i, has(ev[k], d + sh.n * H, d + (sh.d + 24) * H), name);
           } else {
             const n = Math.round(days);
             if (d - (n - 1) * DAY < start) continue; // เพิ่งเข้าอยู่ ยังไม่ครบรอบแรก

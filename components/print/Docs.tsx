@@ -2,7 +2,7 @@
 import { ReactNode, useEffect, useRef } from "react";
 import Icon from "../Icon";
 import { Modal } from "../ui";
-import { bahtText, contractLines, contractMonthSum, contractRoomName, money, svcDiscount, svcNet } from "@/lib/billing";
+import { bahtText, contractLines, contractMonthSum, contractRoomName, contractVat, isRoomLine, isStayContract, money, prepaidMonthsOf, svcDiscount, svcNet } from "@/lib/billing";
 // ย้ายไปไว้ที่ lib/billing (ใช้ร่วมกับหน้าใบแจ้งหนี้) · ส่งต่อให้ไฟล์ที่ import จากที่นี่
 export { contractLines, contractMonthSum, contractRoomName } from "@/lib/billing";
 export type { ContractLine } from "@/lib/billing";
@@ -31,6 +31,19 @@ export function longDate(v?: string | null, short = false) {
 }
 const nowTh = () => { const n = new Date(Date.now() + 7 * 3600e3); return `${n.getUTCDate()} ${SHORT[n.getUTCMonth()]} ${n.getUTCFullYear() + 543} ${String(n.getUTCHours()).padStart(2, "0")}:${String(n.getUTCMinutes()).padStart(2, "0")}`; };
 const blank = (v?: string | null) => !v || v === "-" ? "" : v;
+/** วันที่ (YYYY-MM-DD หรือ วว/ดด/ปปปป พ.ศ./ค.ศ.) → [ปี ค.ศ., เดือน, วัน] */
+const ymd = (v?: string | null): [number, number, number] | null => {
+  const s = String(v ?? "").trim(), iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/), th = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (iso) return [+iso[1], +iso[2], +iso[3]];
+  if (th) { const y = +th[3]; return [y > 2400 ? y - 543 : y, +th[2], +th[1]]; }
+  return null;
+};
+/** จำนวนเดือนเต็มของสัญญา (เริ่ม 25 พ.ย. ถึง 24 ธ.ค. = 1 เดือน) · คิดไม่ได้ = 0 */
+const contractMonths = (from?: string | null, to?: string | null) => {
+  const a = ymd(from), b = ymd(to);
+  if (!a || !b) return 0;
+  return Math.max(0, (b[0] - a[0]) * 12 + (b[1] - a[1]) - (b[2] + 1 < a[2] ? 1 : 0));
+};
 const val = (v?: string | null) => blank(v) || "-";
 const numOf = (v?: string | null) => Number(String(v ?? "").replace(/,/g, "")) || 0;
 /** เลขบัตร 13 หลัก → 1-2345-67890-12-3 · เบอร์ 10 หลัก → 081-234-5678 */
@@ -137,6 +150,14 @@ export function ContractDoc({ r, hn, bed, branch, terms, by, copy, chronic }: { 
   const lines = contractLines(r);
   // ยอดต่อเดือนคิดแบบเดียวกับใบแจ้งหนี้ (รวม VAT ค่าห้อง) ให้สัญญาที่ลงนามตรงกับใบแจ้งหนี้และทะเบียนสัญญา
   const fee = numOf(r[4]), sum = contractMonthSum(r), total = sum.total, dep = numOf(r[27]), prepaid = numOf(r[18]), deposit = numOf(r[19]);
+  // แสดงราคาจริงที่ลูกค้าจ่าย (ค่าห้องรวม VAT แล้ว) ไม่แยกบรรทัด VAT · ยอดรวมเท่าเดิม (25 พ.ย. 2569)
+  const rate = contractVat(r), withVat = (n: number) => (rate ? Math.round(n * (100 + rate)) / 100 : n);
+  const feeShown = fee && sum.feeIn ? withVat(fee) : 0;
+  /** ห้องพักระยะยาว (สัญญารายเดือน): ระยะเวลาสัญญากี่เดือน · ชำระล่วงหน้ากี่เดือน */
+  /** บรรทัดที่แสดงแยก: ส่วนของราคาห้อง (ค่าบริการทางการแพทย์) และค่าห้อง · ค่าบริการเพิ่มเติมอื่นรวมเป็นยอดเดียว ไม่แจกแจง (25 พ.ย. 2569) */
+  const mainLine = (x: (typeof lines)[number]) => !!x.pkg || !!x.stay || isRoomLine(x.desc);
+  const extras = lines.filter((x) => !mainLine(x) && x.price > 0), extraSum = Math.round(extras.reduce((n, x) => n + svcNet(x), 0) * 100) / 100;
+  const months = isStayContract(r) ? 0 : contractMonths(r[7], r[22]), preMonths = prepaid > 0 && !isStayContract(r) ? prepaidMonthsOf(r) : 0;
   const net = Math.round((total - dep) * 100) / 100;
   const legal = branch?.legal || COMPANY.legal;
   const room = blank(r[6]) ? `ห้อง ${r[6]}${bed ? ` เตียง ${bed}` : ""}` : "";
@@ -162,20 +183,17 @@ export function ContractDoc({ r, hn, bed, branch, terms, by, copy, chronic }: { 
       <div className="doc-tbl"><table>
         <thead><tr><th>รายการ</th><th className="n">จำนวนเงิน (บาท)</th></tr></thead>
         <tbody>
-          <tr><td><b>{val(r[21]) === "-" ? "ค่าบริการ" : r[21]}</b>{contractRoomTitle(r) && ` · ${contractRoomTitle(r)}`}</td><td className="n">{fee && sum.feeIn ? money(fee) : ""}</td></tr>
-          {lines.map((x, i) => <tr key={i}><td>&nbsp;- {x.desc}{x.qty !== 1 || !["เดือน", "แพ็กเกจ"].includes(x.unit) ? ` (${x.qty.toLocaleString("en-US")} ${x.unit}${x.price ? ` × ${money(x.price)}` : ""})` : ""}{svcDiscount(x) ? ` ส่วนลด${x.pct ? ` ${x.pct}%` : ""} ${money(svcDiscount(x))}` : ""}</td><td className="n">{x.price ? money(svcNet(x)) : "รวมในโปรแกรม"}</td></tr>)}
+          <tr><td><b>{val(r[21]) === "-" ? "ค่าบริการ" : r[21]}</b>{contractRoomTitle(r) && ` · ${contractRoomTitle(r)}`}{months > 0 && ` · ระยะเวลา ${months} เดือน (ราคาต่อเดือน)`}</td><td className="n">{feeShown ? money(feeShown) : ""}</td></tr>
+          {lines.filter(mainLine).map((x, i) => <tr key={i}><td>&nbsp;- {x.desc}{x.qty !== 1 || !["เดือน", "แพ็กเกจ"].includes(x.unit) ? ` (${x.qty.toLocaleString("en-US")} ${x.unit}${x.price ? ` × ${money(x.price)}` : ""})` : ""}{svcDiscount(x) ? ` ส่วนลด${x.pct ? ` ${x.pct}%` : ""} ${money(svcDiscount(x))}` : ""}</td><td className="n">{x.price ? money(isRoomLine(x.desc) ? withVat(svcNet(x)) : svcNet(x)) : "รวมในโปรแกรม"}</td></tr>)}
+          {extras.length > 0 && <tr><td>&nbsp;- ค่าบริการเพิ่มเติมรายเดือน</td><td className="n">{money(extraSum)}</td></tr>}
         </tbody>
         <tfoot>
-          {sum.vat > 0 && <>
-            <tr><td>รวมก่อนภาษีมูลค่าเพิ่ม</td><td className="n">{money(sum.base)}</td></tr>
-            <tr><td>ภาษีมูลค่าเพิ่ม {sum.rate}% (ค่าห้อง)</td><td className="n">{money(sum.vat)}</td></tr>
-          </>}
-          <tr><td>ยอดรวมทั้งหมด{sum.vat > 0 ? " (รวมภาษีมูลค่าเพิ่ม)" : ""}</td><td className="n">{money(total)}</td></tr>
+          <tr><td>ยอดรวมทั้งหมด{months > 0 ? " ต่อเดือน" : ""}</td><td className="n">{money(total)}</td></tr>
           {dep > 0 && <tr><td>หักค่ามัดจำห้องพัก</td><td className="n">-{money(dep)}</td></tr>}
           {dep > 0 && <tr><td>ยอดรวมทั้งหมด ({bahtText(net)})</td><td className="n">{money(net)}</td></tr>}
         </tfoot>
       </table></div>
-      {(prepaid > 0 || deposit > 0) && <p className="doc-note">ชำระแรกเข้า: {[prepaid ? `ค่าบริการล่วงหน้า ${money(prepaid)} บาท` : "", deposit ? `เงินประกัน ${money(deposit)} บาท (คืนเมื่อสิ้นสุดสัญญา หักค่าใช้จ่ายค้างชำระ)` : ""].filter(Boolean).join(" · ")}</p>}
+      {(prepaid > 0 || deposit > 0) && <p className="doc-note">ชำระแรกเข้า: {[prepaid ? `ค่าบริการล่วงหน้า${preMonths > 1 ? ` ${preMonths} เดือน` : ""} ${money(prepaid)} บาท` : "", deposit ? `เงินประกัน ${money(deposit)} บาท (คืนเมื่อสิ้นสุดสัญญา หักค่าใช้จ่ายค้างชำระ)` : ""].filter(Boolean).join(" · ")}</p>}
       {blank(r[20]) && <p className="doc-note">หมายเหตุ: {r[20]}</p>}
       {sign([["ผู้ว่าจ้าง ผู้รับบริการ ญาติ หรือผู้สนับสนุน", blank(r[3])]])}
 
@@ -484,8 +502,8 @@ function MiniMonth({ y, m, d }: { y: number; m: number; d: number }) {
  */
 /** "นายสมชาย ใจดี" → "คุณสมชาย ใจดี" · ชื่อที่มีคำนำหน้าอื่น (เช่น พล.อ. ดร.) คงไว้ตามเดิม */
 const khun = (name: string) => { const n = name.trim().replace(/^(นางสาว|นาย|นาง|น\.ส\.|คุณ)\s*/, ""); return /^(พล|พ\.|ร\.|จ\.|ด\.|ดร\.|ศ\.|รศ\.|ผศ\.|นพ\.|พญ\.|พระ)/.test(n) ? n : `คุณ${n}`; };
-export function ApptSlip({ resident, date, time, purpose, caregiver, prep, branch, by }: {
-  resident: string; date: string; time: string; purpose: string; caregiver?: string; prep?: string; branch?: DocBranch; by?: string;
+export function ApptSlip({ resident, date, time, purpose, caregiver, prep, travel, place, branch, by }: {
+  resident: string; date: string; time: string; purpose: string; caregiver?: string; prep?: string; travel?: string; place?: string; branch?: DocBranch; by?: string;
 }) {
   const iso = date.match(/^(\d{4})-(\d{2})-(\d{2})/);
   const y = iso ? +iso[1] : 0, m = iso ? +iso[2] : 0, d = iso ? +iso[3] : 0;
@@ -513,6 +531,8 @@ export function ApptSlip({ resident, date, time, purpose, caregiver, prep, branc
         <div className="ap-what">
           <div><p className="ap-lbl">นัดเพื่อ</p><p className="ap-h">{val(purpose)}</p></div>
           <div><p className="ap-lbl">ผู้พาไป</p><p className="ap-v">{val(caregiver)}</p></div>
+          {blank(place) && <div><p className="ap-lbl">สถานที่</p><p className="ap-v">{place}</p></div>}
+          {blank(travel) && <div><p className="ap-lbl">การเดินทาง</p><p className="ap-v">{travel}</p></div>}
         </div>
         <div className={`ap-lists${steps.length ? "" : " one"}`}>
           {steps.length > 0 && <div className="ap-list is-prep"><p className="ap-lbl">การเตรียมตัว</p><ul>{steps.map((x, i) => <li key={i}>{x}</li>)}</ul></div>}

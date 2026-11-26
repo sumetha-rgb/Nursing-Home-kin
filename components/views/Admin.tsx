@@ -18,27 +18,10 @@ import { useApp } from "@/lib/app";
 import { Avatar } from "../Avatar";
 import { DataTable, Field, FieldDef, FormDialog, Modal, PageHeader, Section, StatFilter, StatusBadge, Tabs } from "../ui";
 import { Group, Item } from "./ContractView";
+import BranchDialog from "./BranchDialog";
 
 /* ---------- จัดการสาขา ---------- */
-const BRANCH_FIELDS: FieldDef[] = [
-  { label: "รหัสสาขา" },
-  { label: "ชื่อสาขา", required: true },
-  { label: "นิติบุคคลหรือผู้แทน" },
-  { label: "เบอร์ติดต่อศูนย์", type: "tel" },
-  { label: "ที่อยู่ศูนย์", area: true },
-  { label: "จำนวนเตียงรองรับ", type: "number" },
-  { label: "ประเภทเจ้าของ", options: ["HQ", "F (Franchise)", "B (NJY GROUP)"] },
-  { label: "ประเภทสาขา", options: ["ศูนย์ดูแลผู้สูงอายุ (Nursing Home)", "ศูนย์บริการจัดส่งพนักงาน (Central Services)", "จุดบริการหน้าร้าน (POS/Retail)", "สำนักงานส่วนกลาง (HQ/Backoffice)"] },
-  { label: "จุดเด่นของสาขา", area: true },
-  { label: "อีเมล", type: "email" },
-  { label: "สถานะ", options: ["เปิด", "เตรียมเปิด", "ปิด", "ภายใน"], required: true },
-  { label: "พิกัด (ละติจูด, ลองจิจูด)" },
-  { label: "ลิงก์ภาพสาขา", wide: true },
-  { label: "เลขที่ใบอนุญาตประกอบกิจการดูแลผู้สูงอายุ", wide: true },
-  { label: "ธนาคารและชื่อบัญชี", wide: true },
-  { label: "เลขบัญชีหลัก" },
-  { label: "เลขบัญชีสำรอง" },
-];
+/* ช่องของฟอร์มสาขาอยู่ที่ BranchDialog (17 ช่อง ลำดับเดียวกับ lib/schema branches) */
 export const BRANCH_COLS = ["รหัสสาขา", "ชื่อสาขา", "นิติบุคคล", "เบอร์ติดต่อ", "ประเภทกิจการ", "บัญชีรับโอนหลัก", "บัญชีรับโอนสำรอง/ย่อย", "สถานะ"];
 export const BRANCH_IDX = [0, 1, 2, 3, 7, 15, 16, 10];
 
@@ -53,7 +36,6 @@ export function Branches() {
   const beds=new Map(branchBeds(roomInfos(roomRows,resRows)).map(b=>[b.branch,b]));
   const bedsOf=(r:string[])=>beds.get(r[1])?beds.get(r[1])!.capacity:Number(r[5])||0;
   const [dlg,setDlg]=useState<{mode:"add"|"edit";i:number}|null>(null);
-  const bedFields=BRANCH_FIELDS.map((f,k)=>k===5?{...f,label:"จำนวนเตียงรองรับ (นับจากห้องพักและเตียงอัตโนมัติ)",readOnly:!!(dlg&&beds.get(rows[dlg.i]?.[1]))}:f);
   const [layout,setLayout]=useState("การ์ดสาขา");
   const [query,setQuery]=useState("");
   /** กรองตามบริษัท (นิติบุคคลของสาขา) · ว่าง = ทุกบริษัท */
@@ -98,7 +80,11 @@ export function Branches() {
         <p className="text-xs text-gold-500">ข้อมูลสาขาแก้ไขได้เฉพาะผู้บริหาร</p>
       </div>;})()}
     </Modal>
-    <FormDialog open={!!dlg&&(canEdit||dlg.mode==="add")} mode={dlg?.mode??"add"} title={dlg?.mode==="edit"?"รายละเอียดสาขา":"เพิ่มพื้นที่แห่งการดูแล"} fields={bedFields} value={dlg?.mode==="edit"?rows[dlg.i].map((v,k)=>k===5?String(bedsOf(rows[dlg.i])):k===9&&(v??"").trim()==="-"?"":v):undefined} onClose={()=>setDlg(null)} onSave={v=>{if(dlg?.mode==="edit")update(dlg.i,v);else add(v);setDlg(null);setTimeout(reloadBranches,1500);toast(`${dlg?.mode==="edit"?"แก้ไขข้อมูลสาขาแล้ว":"เพิ่มสาขาแล้ว"} · ${v[1]}`);}} />
+    {/* ฟอร์มสาขา: หน้าเดียว 3 คอลัมน์ ไม่ต้องเลื่อน (BranchDialog) · แก้ไข = ชื่อสาขาล็อก */}
+    <BranchDialog open={!!dlg&&(canEdit||dlg.mode==="add")} mode={dlg?.mode??"add"} names={rows.map(r=>r[1])} companies={coNames.filter(c=>c!==NO_CO)}
+      bedsFromRooms={!!(dlg&&dlg.mode==="edit"&&beds.get(rows[dlg.i]?.[1]))}
+      value={dlg?.mode==="edit"?rows[dlg.i].map((v,k)=>k===5?String(bedsOf(rows[dlg.i])):(v??"").trim()==="-"?"":v):undefined}
+      onClose={()=>setDlg(null)} onSave={v=>{if(dlg?.mode==="edit")update(dlg.i,v);else add(v);setDlg(null);setTimeout(reloadBranches,1500);toast(`${dlg?.mode==="edit"?"แก้ไขข้อมูลสาขาแล้ว":"เพิ่มสาขาแล้ว"} · ${v[1]}`);}} />
   </>;
 }
 

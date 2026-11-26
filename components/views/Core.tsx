@@ -410,6 +410,8 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, co
   const { user } = useSession();
   /** ผู้จัดการ/พนักงานสาขาเดียว: เลือกสาขาของตัวเองไว้ให้ (ผู้บริหารเลือกเอง) */
   const myBranch = !seesAllBranches(user?.role) && user?.branch && branchNames.includes(user.branch) ? user.branch : branchNames.length === 1 ? branchNames[0] : "";
+  /** บัญชีสาขาเดียว: ช่องสาขาล็อก ไม่ให้เลือก (เปิดสัญญาให้สาขาอื่นไม่ได้อยู่แล้ว server กันไว้) */
+  const lockBranch = !seesAllBranches(user?.role) && !!myBranch;
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
   /** ห้องที่กด "ราคาถูกแล้ว" (ไม่เตือนค่าห้องไม่ตรงซ้ำ) */
   const [priceOk, setPriceOk] = useState("");
@@ -703,7 +705,10 @@ function ContractForm({ rooms, residents, contracts = [], initial, fromQuote, co
             <small>กรอกแค่สาขา ผู้ว่าจ้าง ผู้รับบริการ แล้วเลือกห้อง/เตียงที่จะจอง · ระบบออกใบแจ้งหนี้มัดจำให้ · ข้อมูลอื่นกรอกตอนกด &quot;เปิดสัญญา&quot; ทีหลัง</small></span>
         </label>}
         <div className="grid gap-4 md:grid-cols-2">
-          <Field label="สาขา (Branch)" required className="md:col-span-2"><select key={myBranch} name="branch" aria-label="สาขา (Branch)" required defaultValue={d(1) ?? myBranch}><option value="">-- กรุณาเลือกสาขา --</option>{branchNames.map((b) => <option key={b} value={b}>{b}{b === myBranch ? " (สาขาของคุณ)" : ""}</option>)}</select></Field>
+          {/* ผู้จัดการ/พนักงานสาขา: ล็อกเป็นสาขาของตัวเอง (ไม่มีตัวเลือก) · ผู้บริหาร/การเงินเลือกสาขาได้ · ค่าอ่านจาก name="branch" เหมือนเดิม (curBranch / g("branch")) */}
+          {lockBranch
+            ? <Field label="สาขา (Branch)" required className="md:col-span-2"><p className="field-view">{d(1) ?? myBranch}</p><input type="hidden" name="branch" value={d(1) ?? myBranch} /></Field>
+            : <Field label="สาขา (Branch)" required className="md:col-span-2"><select key={myBranch} name="branch" aria-label="สาขา (Branch)" required defaultValue={d(1) ?? myBranch}><option value="">-- กรุณาเลือกสาขา --</option>{branchNames.map((b) => <option key={b} value={b}>{b}{b === myBranch ? " (สาขาของคุณ)" : ""}</option>)}</select></Field>}
           {booking && <h3 className="booking-group md:col-span-2">ผู้ว่าจ้าง (ผู้วางมัดจำ)</h3>}
           <Field label="ชื่อ นามสกุล ผู้จ้าง" required>{lockNames ? <input value={boss} onChange={(e) => setBoss(e.target.value)} required />
             : <SuggestText value={boss} onChange={setBoss} options={[...new Set(contracts.map((c) => c[3]).filter((x) => x && x !== "-"))]} onPick={pickEmployer} label="ชื่อผู้ว่าจ้าง" placeholder="เช่น นายสมชาย ใจดี"

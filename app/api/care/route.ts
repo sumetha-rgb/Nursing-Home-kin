@@ -28,7 +28,7 @@ export const fetchCache = "force-no-store";
  *  POST { op: "ack", id, note } รับทราบแจ้งเตือน (บันทึกประวัติการใช้งาน)
  *  GET  ?op=routines            งานประจำ (ทำซ้ำทุกวัน) ที่ยังใช้อยู่
  *  GET  ?op=turning_risk        ผู้เสี่ยงแผลกดทับ (Braden < 13 หรือติดเตียง) สำหรับตารางพลิกตัวทุก 2 ชม.
- *  POST { op: "routines_add", items: [{ resident, task, ins, shift, time }], skipDate? }  เพิ่มงานประจำ (ผู้จัดการขึ้นไป)
+ *  POST { op: "routines_add", items: [{ resident, task, ins, shift, time, end? }], skipDate? }  end = เวลาสิ้นสุดของช่วงเวลาทำ (ไม่มี = ไม่กำหนด)  เพิ่มงานประจำ (ผู้จัดการขึ้นไป)
  *       ใส่งานให้วันที่ระบบสร้างไปแล้ว (วันนี้ถึง +14 วัน) ด้วย ยกเว้น skipDate (วันที่หน้าจอมอบหมายเองแล้ว)
  *  POST { op: "routine_stop", id }  หยุดทำซ้ำ
  *  GET  ?op=surveys[&branch=]       ผลประเมินความพึงพอใจจากครอบครัว (ผู้จัดการขึ้นไป)
@@ -156,7 +156,7 @@ export async function GET(req: NextRequest) {
       }
       case "facility": {
         if (!canFacility(me)) return forbidden();
-        const rows = await sql(`SELECT f.id, f.task_name AS name, f.category, f.schedule, f.dispatch_mode,
+        const rows = await sql(`SELECT f.id, f.task_name AS name, f.category, f.schedule, f.dispatch_mode, f.instruction,
             ${scoped(me) ? "(SELECT assignee FROM facility_assignees WHERE task_id = f.id AND branch_name = $1)" : "(SELECT string_agg(branch_name || ': ' || assignee, ', ') FROM facility_assignees WHERE task_id = f.id)"} AS assignee, to_char(${PERIOD_SQL}, 'YYYY-MM-DD') AS period_start,
             l.id AS log_id, l.done_by, to_char(l.done_at AT TIME ZONE 'Asia/Bangkok', 'YYYY-MM-DD HH24:MI') AS done_at, l.work_date::text AS done_date, l.note,
             (SELECT count(*)::int FROM facility_logs x WHERE x.task_id = f.id ${scoped(me) ? "AND x.branch_name = $1" : ""} AND x.work_date >= date_trunc('month', (now() AT TIME ZONE 'Asia/Bangkok'))::date) AS month_count
@@ -172,7 +172,7 @@ export async function GET(req: NextRequest) {
           const nowMin = new Date(Date.now() + 7 * 3600e3).getUTCHours() * 60 + new Date(Date.now() + 7 * 3600e3).getUTCMinutes();
           const late = !done && (sched.includes("ทุกเดือน") ? !!day && Number(today.slice(8)) > Number(day[1]) + 2 : !sched.includes("ทุกสัปดาห์") && !!hm && nowMin > Number(hm[1]) * 60 + Number(hm[2]) + 120);
           const manual = isManual(r.dispatch_mode);
-          return { id: r.id, name: r.name, category: r.category, schedule: sched, manual, assignee: manual ? (r.assignee as string | null) || null : null, done, late, last: r.log_id ? { id: r.log_id, by: r.done_by, at: r.done_at, note: r.note } : null, monthCount: r.month_count };
+          return { id: r.id, name: r.name, category: r.category, schedule: sched, instruction: r.instruction && r.instruction !== "-" ? r.instruction : null, manual, assignee: manual ? (r.assignee as string | null) || null : null, done, late, last: r.log_id ? { id: r.log_id, by: r.done_by, at: r.done_at, note: r.note } : null, monthCount: r.month_count };
         });
         // KinApp: งานมอบหมายขึ้นเฉพาะคนรับผิดชอบ · งานทั่วไปขึ้นให้ทุกคน
         return NextResponse.json({ items: qs.get("mine") ? items.filter((x) => !x.manual || x.assignee === me.name) : items });
@@ -286,7 +286,7 @@ export async function GET(req: NextRequest) {
       }
       case "routines": {
         const rows = await sql(
-          `SELECT id, resident_name, branch_name, task_name, instruction, shift, sched_time, created_by FROM care_routines
+          `SELECT id, resident_name, branch_name, task_name, instruction, shift, sched_time, end_time, days, created_by FROM care_routines
            WHERE active ${scoped(me) ? "AND branch_name = $1" : ""} ORDER BY branch_name, resident_name, sched_time`, scoped(me) ? [me.branch] : []);
         return NextResponse.json({ routines: rows });
       }
@@ -446,22 +446,27 @@ export async function POST(req: NextRequest) {
       await audit(req, me, [{ area: "routines", action: "delete", recordId: r.id, summary: `${r.resident_name} · ${r.task_name}`, branch: r.branch_name }]);
       return NextResponse.json({ ok: true });
     }
-    const items = (Array.isArray(b.items) ? b.items : []) as { resident: string; task: string; ins?: string; shift: string; time: string }[];
+    // days = วันในสัปดาห์ ISO (1 = จันทร์ … 7 = อาทิตย์) ที่ทำ · ไม่ส่ง/ว่าง/ครบ 7 วัน = ทุกวัน
+    const items = (Array.isArray(b.items) ? b.items : []) as { resident: string; task: string; ins?: string; shift: string; time: string; end?: string; days?: number[] }[];
     const res = (await sql`SELECT id, full_name, branch_name FROM residents`) as Record<string, string>[];
-    const have = (await sql`SELECT resident_id, task_name, shift FROM care_routines WHERE active`) as Record<string, string>[];
+    // งานเดียวกันหลายเวลาได้ (เช่น ทานอาหาร 3 มื้อ) · ซ้ำ = ผู้รับบริการ + งาน + กะ + เวลาเริ่มเดียวกัน
+    const have = (await sql`SELECT resident_id, task_name, shift, sched_time FROM care_routines WHERE active`) as Record<string, string>[];
     let added = 0;
     const logs = [];
-    const made: { resident_id: string; resident_name: string; branch_name: string; task_name: string; instruction: string; shift: string; sched_time: string }[] = [];
+    const made: { resident_id: string; resident_name: string; branch_name: string; task_name: string; instruction: string; shift: string; sched_time: string; end_time: string | null; days: number[] | null }[] = [];
     for (const it of items) {
       const r = res.find((x) => x.full_name === it.resident && (!scoped(me) || x.branch_name === me.branch));
       if (!r || !it.task || !it.shift || !/^\d{2}:\d{2}/.test(it.time ?? "")) continue;
-      if (have.some((h) => h.resident_id === r.id && h.task_name === it.task && h.shift === it.shift)) continue;
+      if (have.some((h) => h.resident_id === r.id && h.task_name === it.task && h.shift === it.shift && String(h.sched_time).slice(0, 5) === it.time.slice(0, 5))) continue;
       const id = crypto.randomUUID();
-      await sql`INSERT INTO care_routines (id, resident_id, resident_name, branch_name, task_name, instruction, shift, sched_time, created_by)
-                VALUES (${id}, ${r.id}, ${r.full_name}, ${r.branch_name}, ${it.task}, ${it.ins ?? "-"}, ${it.shift}, ${it.time.slice(0, 5)}, ${me.name})`;
-      have.push({ resident_id: r.id, task_name: it.task, shift: it.shift });
-      made.push({ resident_id: r.id, resident_name: r.full_name, branch_name: r.branch_name, task_name: it.task, instruction: it.ins ?? "-", shift: it.shift, sched_time: it.time.slice(0, 5) });
-      logs.push({ area: "routines", action: "create", recordId: id, summary: `${r.full_name} · ${it.task} · ${it.shift} ${it.time.slice(0, 5)}`, branch: r.branch_name });
+      const end = /^\d{2}:\d{2}/.test(it.end ?? "") ? it.end!.slice(0, 5) : null;
+      const dset = [...new Set((Array.isArray(it.days) ? it.days : []).map(Number).filter((d) => Number.isInteger(d) && d >= 1 && d <= 7))].sort();
+      const days = dset.length && dset.length < 7 ? dset : null;
+      await sql`INSERT INTO care_routines (id, resident_id, resident_name, branch_name, task_name, instruction, shift, sched_time, created_by, end_time, days)
+                VALUES (${id}, ${r.id}, ${r.full_name}, ${r.branch_name}, ${it.task}, ${it.ins ?? "-"}, ${it.shift}, ${it.time.slice(0, 5)}, ${me.name}, ${end}, ${days ? days.join(",") : null})`;
+      have.push({ resident_id: r.id, task_name: it.task, shift: it.shift, sched_time: it.time.slice(0, 5) });
+      made.push({ resident_id: r.id, resident_name: r.full_name, branch_name: r.branch_name, task_name: it.task, instruction: it.ins ?? "-", shift: it.shift, sched_time: it.time.slice(0, 5), end_time: end, days });
+      logs.push({ area: "routines", action: "create", recordId: id, summary: `${r.full_name} · ${it.task} · ${it.shift} ${it.time.slice(0, 5)}${end ? `–${end}` : ""}${days ? ` · วัน ${days.join(",")}` : " · ทุกวัน"}`, branch: r.branch_name });
       added++;
     }
     // วันที่ระบบสร้างงานประจำไปแล้ว (วันนี้ถึงล่วงหน้า 14 วัน) ใส่งานประจำใหม่ให้ด้วย แถวแบบเดียวกับที่ระบบสร้างเอง
@@ -473,11 +478,13 @@ export async function POST(req: NextRequest) {
           AND substring(collection from 7)::date BETWEEN (now() AT TIME ZONE 'Asia/Bangkok')::date AND (now() AT TIME ZONE 'Asia/Bangkok')::date + 14`) as { d: string }[])
         .map((x) => x.d).filter((d) => d !== skip);
       const top = Date.now();
-      const q = dates.flatMap((d) => made.map((r, i) => sql`
-        INSERT INTO daily_tasks (id, sort_order, work_date, branch_name, resident_id, resident_name, task_name, assignee, scheduled_time, shift, status, instruction)
-        SELECT ${crypto.randomUUID()}, ${top - i}::float8, ${d}::date, ${r.branch_name}, ${r.resident_id}, ${r.resident_name}, ${r.task_name}, '-', ${r.sched_time}::time, ${r.shift}, 'รอทำ', ${r.instruction}
+      // งานประจำเฉพาะบางวัน: ใส่เฉพาะวันที่ตรงกับวันในสัปดาห์ที่เลือก
+      const dow = (d: string) => ((new Date(`${d}T00:00:00Z`).getUTCDay() + 6) % 7) + 1;
+      const q = dates.flatMap((d) => made.filter((r) => !r.days || r.days.includes(dow(d))).map((r, i) => sql`
+        INSERT INTO daily_tasks (id, sort_order, work_date, branch_name, resident_id, resident_name, task_name, assignee, scheduled_time, shift, status, instruction, end_time)
+        SELECT ${crypto.randomUUID()}, ${top - i}::float8, ${d}::date, ${r.branch_name}, ${r.resident_id}, ${r.resident_name}, ${r.task_name}, '-', ${r.sched_time}::time, ${r.shift}, 'รอทำ', ${r.instruction}, ${r.end_time}::time
         WHERE NOT EXISTS (SELECT 1 FROM daily_tasks WHERE work_date = ${d}::date AND branch_name IS NOT DISTINCT FROM ${r.branch_name}
-          AND (resident_id = ${r.resident_id} OR resident_name = ${r.resident_name}) AND task_name = ${r.task_name} AND shift = ${r.shift})`));
+          AND (resident_id = ${r.resident_id} OR resident_name = ${r.resident_name}) AND task_name = ${r.task_name} AND shift = ${r.shift} AND scheduled_time = ${r.sched_time}::time)`));
       if (q.length) await sql.transaction(q);
     }
     await audit(req, me, logs);

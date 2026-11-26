@@ -16,7 +16,7 @@ export const PERM_GROUPS: { title: string; items: Item[] }[] = [
     { id: "physio", label: "ตารางกายภาพ", hint: "ดูเคสและตารางของนักกายภาพ" }, { id: "appointments", label: "ตารางนัดหมาย" }, { id: "health_logs", label: "บันทึกสุขภาพ" }, { id: "feedbacks", label: "เสียงจากครอบครัว" },
   ] },
   { title: "เมนูขายและการเงิน", items: [
-    { id: "prices", label: "ราคาสินค้าและบริการ", hint: "ดูราคากลาง · ผู้จัดการสาขาและผู้บริหารแก้ราคาและรหัสได้" },
+    { id: "prices", label: "ราคาสินค้าและบริการ", hint: "ดูราคาของสาขา · ผู้จัดการสาขาแก้ราคาของสาขาตัวเอง · ผู้บริหารแก้ราคากลาง ชื่อ และรหัส" },
     { id: "quotations", label: "ใบเสนอราคา / แผนดูแล" },
     { id: "contracts", label: "สัญญาบริการ", hint: "เปิด/แก้/ต่อสัญญา D/C ยกเลิกสัญญา" }, { id: "billing", label: "ใบแจ้งหนี้และใบเสร็จ", hint: "ออกใบแจ้งหนี้ รับชำระ ใบเสร็จ" },
   ] },
@@ -27,7 +27,7 @@ export const PERM_GROUPS: { title: string; items: Item[] }[] = [
     { id: "staff", label: "ทีมและสิทธิ์การใช้งาน", hint: "สร้างบัญชีและกำหนดสิทธิ์" }, { id: "kpi", label: "KPI พนักงาน" }, { id: "reviews", label: "รีวิวพนักงาน" },
   ] },
   { title: "เมนูเครื่องมือและระบบ", items: [
-    { id: "tasks_table", label: "งานดูแลย้อนหลัง" }, { id: "facility_tasks", label: "งานส่วนกลางของสาขา" }, { id: "master_tasks", label: "แม่แบบงานมาตรฐาน" },
+    { id: "tasks_table", label: "งานดูแลย้อนหลัง" }, { id: "facility_tasks", label: "งานส่วนกลางของสาขา" }, { id: "master_tasks", label: "ตั้งค่ารายการงาน" },
     { id: "official-docs", label: "เอกสารและระเบียบ" }, { id: "tutorials", label: "วิดีโอสอนใช้งาน" }, { id: "audit", label: "บันทึกการใช้งานระบบ" },
   ] },
   { title: "สิทธิ์การทำงาน", items: [

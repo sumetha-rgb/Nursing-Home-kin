@@ -21,7 +21,7 @@ import { apptIso, apptKey, nowTh } from "@/lib/appointments";
 import { invoiceDocsCsv } from "@/lib/exportsCsv";
 import { contractsCsv } from "../billing/contractsCsv";
 import { BRANCH_COLS, BRANCH_IDX } from "./Admin";
-import { FAC_COLS, MT_COLS } from "./Tasks";
+import { FAC_CSV_COLS, MT_COLS, mtRow } from "./Tasks";
 
 /**
  * หน้า "ส่งออกข้อมูล" (เมนูบริหาร) · รวมไฟล์ CSV ของทั้งระบบไว้ที่เดียว แยก 5 หมวด
@@ -107,7 +107,7 @@ const GROUPS: Group[] = [
   { id: "care", name: "ผู้รับบริการและการดูแล", hint: "สัญญา การเข้าพัก สุขภาพ นัดหมาย", icon: "user", items: [
     { id: "contracts", t: "ทะเบียนสัญญาบริการ", d: "ทุกสัญญา: ผู้รับบริการ ผู้ว่าจ้าง ห้อง ค่าบริการ เงินประกัน สถานะ", pdpa: true, perms: ["contracts"],
       run: async (c) => { const rows = (await fetchKey<string[]>("contracts")).filter((r) => !c.branch || r[1] === c.branch); return contractsCsv(rows, `ทะเบียนสัญญา-ข้อมูลส่วนบุคคล-${todayIso()}${c.branch ? `-${c.branch}` : ""}`); } },
-    { id: "appts", t: "นัดหมาย", d: "วันที่ เวลา สาขา ผู้รับบริการ HN ห้อง เตียง รายการ ผู้พาไป การเตรียมตัว สถานะ", rng: true, pdpa: true, perms: ["appointments"],
+    { id: "appts", t: "นัดหมาย", d: "วันที่ เวลา สาขา ผู้รับบริการ HN ห้อง เตียง รายการ สถานที่ การเดินทาง ผู้พาไป การเตรียมตัว สถานะ", rng: true, pdpa: true, perms: ["appointments"],
       run: async (c) => {
         const [rows, res] = await Promise.all([fetchKey<string[]>("appointments"), fetchKey<string[]>("residents")]);
         const resOf = (n: string) => res.find((r) => r[0] === n);
@@ -115,9 +115,9 @@ const GROUPS: Group[] = [
         const list = rows.filter((r) => c.inRange(apptIso(r[0])) && (!c.branch || resOf(r[2])?.[3] === c.branch)).sort((a, b) => apptKey(a).localeCompare(apptKey(b)));
         // ทะเบียนผู้รับบริการ: [ชื่อ, อายุ, ห้อง, สาขา, โรคประจำตัว, สถานะ, HN, เตียง] · HN ห้อง เตียง แยกช่อง กรองใน Excel ได้
         const v = (x?: string) => (x && x.trim() !== "-" ? x : "");
-        downloadCsv(`นัดหมาย-${c.tag}`, ["วันที่", "เวลา", "สาขา", "ผู้รับบริการ", "HN", "ห้อง", "เตียง", "รายการ", "ผู้พาไป", "การเตรียมตัว", "สถานะ"], list.map((r) => {
+        downloadCsv(`นัดหมาย-${c.tag}`, ["วันที่", "เวลา", "สาขา", "ผู้รับบริการ", "HN", "ห้อง", "เตียง", "รายการ", "สถานที่", "การเดินทาง", "ผู้พาไป", "การเตรียมตัว", "สถานะ"], list.map((r) => {
           const p = resOf(r[2]), k = apptKey(r);
-          return [csvDate(apptIso(r[0])) || r[0], (r[1] ?? "").slice(0, 5), v(p?.[3]), r[2], v(p?.[6]), v(p?.[2]), v(p?.[7]), r[3], v(r[4]), v(r[5]), k < now ? "ผ่านแล้ว" : k.startsWith(today) ? "วันนี้" : "กำลังจะมาถึง"];
+          return [csvDate(apptIso(r[0])) || r[0], (r[1] ?? "").slice(0, 5), v(p?.[3]), r[2], v(p?.[6]), v(p?.[2]), v(p?.[7]), r[3], v(r[7]), v(r[6]), v(r[4]), v(r[5]), k < now ? "ผ่านแล้ว" : k.startsWith(today) ? "วันนี้" : "กำลังจะมาถึง"];
         }));
         audit("appointments", list.length); return list.length;
       } },
@@ -181,7 +181,7 @@ const GROUPS: Group[] = [
     { id: "kpi", t: "KPI พนักงาน", d: "คะแนนรวมและคะแนนแต่ละด้านของเดือน", perms: ["kpi"], link: { view: "kpi", where: "KPI พนักงาน › ส่งออก CSV" } },
     { id: "users", t: "ผู้ใช้งานระบบ", d: "ชื่อ ตำแหน่ง สาขา สถานะบัญชี", pdpa: true, perms: ["staff"], link: { view: "staff", where: "ทีมและสิทธิ์การใช้งาน › ส่งออก CSV" } },
   ] },
-  { id: "branch", name: "สาขาและงานส่วนกลาง", hint: "ข้อมูลสาขา ราคากลาง และงานมาตรฐาน", icon: "building", items: [
+  { id: "branch", name: "สาขาและงานส่วนกลาง", hint: "ข้อมูลสาขา ราคากลาง และรายการงาน", icon: "building", items: [
     { id: "kpib", t: "KPI สาขา", d: "ตัวชี้วัดหลักของแต่ละสาขา (คนที่ไม่มีสิทธิ์การเงินเห็นเฉพาะงานดูแล)", perms: ["dashboard"], link: { view: "dashboard", where: "ภาพรวมและรายงาน › แท็บตัวชี้วัดหลัก" } },
     { id: "branches", t: "ข้อมูลสาขา", d: "รหัส ชื่อ นิติบุคคล เบอร์ ประเภทกิจการ บัญชีรับโอน สถานะ", perms: ["branches"],
       run: async () => { const rows = await fetchKey<string[]>("branches"); downloadCsv("สาขา", BRANCH_COLS, rows.map((r) => BRANCH_IDX.map((k) => r[k]))); return rows.length; } },
@@ -193,9 +193,9 @@ const GROUPS: Group[] = [
         return items.length;
       } },
     { id: "facility", t: "งานส่วนกลางของสาขา", d: "งานสถานที่ ทำความสะอาด ความถี่ และวิธีจ่ายงาน", perms: ["facility_tasks"],
-      run: async () => { const rows = await fetchKey<string[]>("facility"); downloadCsv("งานส่วนกลางของสาขา", FAC_COLS, rows); return rows.length; } },
-    { id: "master", t: "แม่แบบงานมาตรฐาน", d: "รหัส ชื่องาน คำสั่งงาน หมวด กะ สาขา", perms: ["master_tasks"],
-      run: async () => { const rows = await fetchKey<string[]>("master"); downloadCsv("แม่แบบงานมาตรฐาน", MT_COLS, rows.map((r) => r.slice(0, 6))); return rows.length; } },
+      run: async () => { const rows = await fetchKey<string[]>("facility"); downloadCsv("งานส่วนกลางของสาขา", FAC_CSV_COLS, rows); return rows.length; } },
+    { id: "master", t: "รายการงาน", d: "รหัส ชื่องาน คำสั่งงาน กะ สาขา", perms: ["master_tasks"],
+      run: async () => { const rows = await fetchKey<string[]>("master"); downloadCsv("รายการงาน", MT_COLS, rows.map(mtRow)); return rows.length; } },
   ] },
 ];
 const QUICK_MONEY = ["lines", "spendLines", "spend"], QUICK_CARE = ["mar", "health", "roster"];

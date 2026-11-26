@@ -1335,3 +1335,74 @@ COMMENT ON TABLE bu_divisions IS 'ฝ่าย (BU): หมวดในใบร
 --  ทีทรีฯ = KN-RC… · คิน ออริจิ้นฯ = KO-RC… · งวดก่อนหน้านี้ว่าง = ใช้เลขเดิม (เลขใบแจ้งหนี้ หรือ เลขใบ-งวด) ไม่เปลี่ยนย้อนหลัง
 ALTER TABLE invoice_payments ADD COLUMN IF NOT EXISTS receipt_no text;
 CREATE UNIQUE INDEX IF NOT EXISTS invoice_payments_receipt_no ON invoice_payments (receipt_no) WHERE receipt_no IS NOT NULL;
+
+-- เวลากะของสาขา (25 พ.ย. 2569 · 26 พ.ย. ตั้งเองได้อิสระ): 2 กะต่อกันครบ 24 ชม. · day_min = นาทีที่เริ่มกะเช้า · night_min = นาทีที่เริ่มกะดึก (นับจากเที่ยงคืน)
+--  กะเช้า = day → night (วันเดียวกัน) · กะดึก = night → day ของวันถัดไป · ไม่มีแถว = 07:00 / 19:00 (lib/shifts)
+--  ผู้จัดการสาขาตั้งได้ที่หน้าตารางเวร (/api/roster op shift_start) · ใช้ทั้งเช็คชื่อมาสาย KPI รอบวัดสัญญาณชีพ งานประจำวัน KinApp
+--  แยกตารางจาก branches (หน้าข้อมูลสาขาบันทึกแบบแทนที่ทั้งแถว ค่าจะหาย)
+CREATE TABLE IF NOT EXISTS branch_shifts (
+  branch_name text PRIMARY KEY,
+  day_min     smallint NOT NULL,
+  night_min   smallint NOT NULL,
+  updated_by  text,
+  updated_at  timestamptz NOT NULL DEFAULT now()
+);
+
+-- นัดหมาย: การเดินทาง (เดินทางเอง / รถพยาบาลของศูนย์ …) และสถานที่ที่ไป (25 พ.ย. 2569)
+ALTER TABLE appointments ADD COLUMN IF NOT EXISTS travel text;
+ALTER TABLE appointments ADD COLUMN IF NOT EXISTS place text;
+
+-- ช่วงเวลาทำงาน (25 พ.ย. 2569): งานมีเวลาเริ่ม (scheduled_time) ถึงเวลาสิ้นสุด (end_time) เช่น อาหารเช้า 07:00–08:00
+--  มี end_time = เลยเวลาเมื่อเลยเวลาสิ้นสุด · ไม่มี = เลยเวลาเมื่อเลยเวลาเริ่ม 30 นาที (แบบเดิม) · งานประจำเก็บช่วงเวลาไว้สร้างทุกวัน
+ALTER TABLE daily_tasks ADD COLUMN IF NOT EXISTS end_time time;
+ALTER TABLE care_routines ADD COLUMN IF NOT EXISTS end_time text;
+
+-- รายการงาน (26 พ.ย. 2569): เวลาแนะนำ ("07:00–08:00, 12:00–13:00") และทำเมื่อไร ("ทุกวัน" / "ครั้งเดียว" / "จ. พ. ศ.") · ใช้เติมให้ตอนมอบหมายงาน
+ALTER TABLE master_tasks ADD COLUMN IF NOT EXISTS suggest_times text;
+ALTER TABLE master_tasks ADD COLUMN IF NOT EXISTS repeat_rule text;
+-- งานของสาขาที่แก้จากงานส่วนกลาง: replaces_code = รหัสงานส่วนกลางที่แทน · สาขานั้นเห็นงานของตัวเองแทนงานส่วนกลาง (ลบงานของสาขา = กลับไปใช้ของส่วนกลาง)
+ALTER TABLE master_tasks ADD COLUMN IF NOT EXISTS replaces_code text;
+-- งานส่วนกลาง: คำแนะนำเพิ่มเติม (พนักงานเห็นใน KinApp ตอนส่งงาน)
+ALTER TABLE facility_tasks ADD COLUMN IF NOT EXISTS instruction text;
+-- งานประจำทำเฉพาะบางวัน: days = วันในสัปดาห์ ISO คั่นด้วย , (1 = จันทร์ … 7 = อาทิตย์) · NULL = ทุกวัน
+ALTER TABLE care_routines ADD COLUMN IF NOT EXISTS days text;
+
+-- ราคาของสาขา (26 พ.ย. 2569): ผู้จัดการสาขาตั้งราคาของสาขาตัวเอง · ไม่มีแถว = ใช้ราคากลาง (price_items)
+--  rates = ราคาตามลำดับราคาของรายการกลาง (หน่วยต้องตรงกัน) · next = ราคาที่ตั้งล่วงหน้า
+CREATE TABLE IF NOT EXISTS price_branch (
+  item_id     text NOT NULL REFERENCES price_items(id) ON DELETE CASCADE,
+  branch_name text NOT NULL,
+  rates       jsonb NOT NULL,
+  updated_by  text,
+  updated_at  timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (item_id, branch_name)
+);
+-- ปิด/เปิดใช้เฉพาะสาขา (null = ตามราคากลาง)
+ALTER TABLE price_branch ADD COLUMN IF NOT EXISTS active boolean;
+-- รายการเฉพาะสาขา (null = ทุกสาขา)
+ALTER TABLE price_items ADD COLUMN IF NOT EXISTS branch_name text;
+
+-- นักกายภาพไม่ว่าง (26 พ.ย. 2569): ลา / ป่วย / ประชุม · start_min/end_min ว่าง = ทั้งวัน · ใช้ในตารางว่าง หน้าต่างวางนัด และเตือนนัดทับ
+CREATE TABLE IF NOT EXISTS physio_blocks (
+  id             text PRIMARY KEY,
+  therapist_id   text NOT NULL,
+  therapist_name text,
+  branch_name    text,
+  date           date NOT NULL,
+  start_min      int,
+  end_min        int,
+  reason         text,
+  created_by     text,
+  created_at     timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS physio_blocks_date ON physio_blocks (date, therapist_id);
+
+-- เวลางานนักกายภาพรายคน (26 พ.ย. 2569): ไม่มีแถว = 08:00–19:00 ทุกวัน · days = วันที่เข้างาน (0 = อาทิตย์ … 6 = เสาร์ · ว่าง = ทุกวัน)
+CREATE TABLE IF NOT EXISTS physio_hours (
+  therapist_id text PRIMARY KEY,
+  start_min    int NOT NULL,
+  end_min      int NOT NULL,
+  days         int[],
+  updated_by   text,
+  updated_at   timestamptz NOT NULL DEFAULT now()
+);

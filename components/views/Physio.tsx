@@ -8,14 +8,19 @@ import PhysioAssign from "@/components/care/PhysioAssign";
 import PhysioHistoryModal from "@/components/care/PhysioHistoryModal";
 import PhysioReassign from "@/components/care/PhysioReassign";
 import PhysioSlot from "@/components/care/PhysioSlot";
+import PhysioCalendar from "@/components/care/PhysioCalendar";
+import PhysioBook, { BookTarget } from "@/components/care/PhysioBook";
+import PhysioAvail from "@/components/care/PhysioAvail";
+import PhysioBlockDialog, { BlockTarget } from "@/components/care/PhysioBlock";
+import PhysioHoursDialog, { HoursTarget } from "@/components/care/PhysioHours";
 import ResidentProfile from "@/components/care/ResidentProfile";
 import PhysioCloseCourse, { CloseTarget } from "@/components/care/PhysioCloseCourse";
-import { teamOf, teamText, whoOn } from "@/lib/physio";
+import { teamOf, teamText, timeOn } from "@/lib/physio";
 import { useSession } from "@/lib/session";
 import { can } from "@/lib/perms";
 import { useBranchNames } from "@/lib/branches";
 import { downloadCsv } from "@/lib/store";
-import { addMonth, DAY_FULL, DAY_TH, dowOf, leftOf, loadOf, monthCells, monthLabel, onDate, PhysioBoard, PhysioCase, projectDates, payOf, recBy, PayState, schedOf, schedText, TRACK_TEXT, trackRows, TrackRow, TrackStatus, WEEK, weekDates, addDays, dayLabel } from "@/lib/physio";
+import { DAY_FULL, dowOf, leftOf, loadOf, onDate, PhysioBoard, PhysioCase, payOf, PayState, schedOf, schedText, TRACK_TEXT, trackRows, TrackRow, TrackStatus, weekDates, addDays, dayLabel } from "@/lib/physio";
 
 /**
  * ตารางกายภาพ (เมนูงานดูแล): จ่ายเคสให้นักกายภาพ · ตารางสัปดาห์รายคน · ภาระงาน · ผลงานเดือนนี้
@@ -25,7 +30,8 @@ import { addMonth, DAY_FULL, DAY_TH, dowOf, leftOf, loadOf, monthCells, monthLab
 const PAY_SHORT: Record<PayState, string> = { free: "คอร์สฟรี", none: "ยังไม่ออกใบ", open: "ออกใบแล้ว · รอชำระ", paid: "ชำระแล้ว" };
 
 /** แท็บของหน้าตารางกายภาพ */
-const PAGES = ["ตาราง", "ติดตามการส่งงาน", "เคสทั้งหมด", "ผลงานเดือนนี้"];
+/** ชื่อแท็บ: ตารางงานนักกายภาพ (นัดทั้งหมด) · ตารางว่างนักกายภาพ (ใครว่างวันไหน) */
+const PAGES = ["ตารางงานนักกายภาพ", "ตารางว่างนักกายภาพ", "ติดตามการส่งงาน", "เคสทั้งหมด", "ผลงานเดือนนี้"];
 
 export function Physio() {
   const { user } = useSession();
@@ -36,13 +42,8 @@ export function Physio() {
   const br = global ? branch : user?.branch ?? "";
   const [d, setD] = useState<PhysioBoard | null>(null);
   const [pick, setPick] = useState<PhysioCase | null>(null);
-  const [view, setView] = useState("สัปดาห์");
   /** แท็บของหน้า (หน้ายาว 6 ส่วน → แยกเป็น 4 แท็บ) */
-  const [pg, setPg] = useState("ตาราง");
-  /** เลื่อนตารางสัปดาห์: 0 = สัปดาห์นี้ · -1 = สัปดาห์ก่อน · 1 = สัปดาห์หน้า */
-  const [wkOff, setWkOff] = useState(0);
-  const [ym, setYm] = useState(() => new Date(Date.now() + 7 * 36e5).toISOString().slice(0, 7));
-  const [who, setWho] = useState("");
+  const [pg, setPg] = useState("ตารางงานนักกายภาพ");
   /** ติดตามการส่งงาน: ช่วงวัน · นักกายภาพ · สถานะ · ประวัติที่เปิดดู */
   const [trk, setTrk] = useState("สัปดาห์นี้");
   const [trkWho, setTrkWho] = useState("");
@@ -60,6 +61,12 @@ export function Physio() {
   const [mv, setMv] = useState(false);
   /** นัดเดียว (คนทำแทนเฉพาะวัน) */
   const [slot, setSlot] = useState<{ c: PhysioCase; date: string } | null>(null);
+  /** วางนัด / ย้ายนัด (ปฏิทิน) */
+  const [book, setBook] = useState<BookTarget | null>(null);
+  /** ตั้งนักกายภาพไม่ว่าง (ตารางว่าง) */
+  const [blk, setBlk] = useState<BlockTarget | null>(null);
+  /** ตั้งเวลางานนักกายภาพ */
+  const [hrsT, setHrsT] = useState<HoursTarget | null>(null);
   const load = useCallback(() => {
     fetch(`/api/clinic?op=physio_board${br ? `&branch=${encodeURIComponent(br)}` : ""}`, { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : null)).then((x) => setD(x ?? { cases: [], therapists: [], today: [], month: [], date: "" })).catch(() => {});
@@ -79,15 +86,11 @@ export function Physio() {
   /** วันจันทร์–อาทิตย์ของสัปดาห์นี้ (ตารางสัปดาห์ใช้วันที่จริง รองรับนัดแบบเลือกวันเอง) */
   /** สัปดาห์นี้ (ใช้กับติดตามการส่งงาน) · wk = สัปดาห์ที่กำลังดูในตาราง */
   const wk0 = weekDates(tIso);
-  const wk = weekDates(addDays(tIso, wkOff * 7));
   // แถวของตาราง = นักกายภาพในสาขา + คนที่มีเคสอยู่แต่ไม่อยู่ในรายชื่อแล้ว (ย้ายสาขา/ลาออก)
   // แถวของตาราง = นักกายภาพของสาขาที่เลือก (ทุกสาขา = ทุกคน) + คนสาขาอื่นที่มาทำเคสที่นี่ + คนที่ไม่อยู่ในทีมแล้วแต่ยังมีเคส
   const withCase = new Set(cases.flatMap((c) => teamOf(c).map((t) => t.id)));
   const rows = [...(d?.therapists ?? []).filter((t) => !br || t.branch === br || withCase.has(t.id)).map((t) => ({ id: t.id, name: br && t.branch !== br ? `${t.name} · 📍${t.branch}` : t.name, branch: t.branch })),
     ...[...new Map(cases.filter((c) => c.therapist_id && !d?.therapists.some((t) => t.id === c.therapist_id)).map((c) => [c.therapist_id!, { id: c.therapist_id!, name: `${c.therapist_name} (ไม่อยู่ในทีมแล้ว)`, branch: c.branch_name }])).values()]];
-  // ตารางสัปดาห์: นัดพร้อมสถานะจริง (ทำแล้ว / ไม่ได้ทำ / รอทำ / นัดไว้) ของแต่ละนักกายภาพ
-  const wkRows = d ? trackRows(d, wk[0], wk[6]) : [];
-  const cell = (tid: string, date: string) => wkRows.filter((x) => x.therapistId === tid && x.date === date);
   /** รหัสผู้รับบริการของแถวติดตาม (จากคอร์ส · คอร์สที่ครบแล้วเทียบชื่อ) */
   const residentOf = (x: TrackRow) => cases.find((c) => c.id === x.caseId)?.resident_id ?? cases.find((c) => c.resident_name === x.resident)?.resident_id ?? null;
   const openRow = (x: TrackRow) => {
@@ -96,21 +99,7 @@ export function Physio() {
     // นัดวันนี้/ข้างหน้าที่ยังไม่ทำ = หน้าต่างนัดเดียว (ให้คนอื่นทำแทนเฉพาะวันนั้น) · นัดที่ผ่านไปแล้ว = แผนทั้งคอร์ส
     if (c && canAssign) { if (x.date >= (d?.date ?? "")) setSlot({ c, date: x.date }); else setPick(c); }
   };
-  // เดือน: วันนัดที่เหลือของทุกคอร์สตามแผน (เริ่มวันนี้ · บันทึกวันนี้แล้วเริ่มพรุ่งนี้) + ที่บันทึกแล้ววันนี้
   const todayIso = d?.date ?? new Date(Date.now() + 7 * 36e5).toISOString().slice(0, 10);
-  const byDay = useMemo(() => {
-    const m = new Map<string, { c: PhysioCase; n: number; done?: boolean }[]>();
-    const put = (date: string, x: { c: PhysioCase; n: number; done?: boolean }) => m.set(date, [...(m.get(date) ?? []), x]);
-    // ทำแล้ววันนี้ = ของคนที่ทำจริง · นัดที่เหลือ = ของผู้รับผิดชอบปัจจุบัน
-    const doneBy = new Map((d?.log ?? []).filter((r) => r.date === todayIso && r.course_id).map((r) => [r.course_id!, d ? recBy(d, r) : null]));
-    for (const c of cases) {
-      if (!c.therapist_id) continue;
-      if (doneIds.has(c.id) && (!who || doneBy.get(c.id) === who)) put(todayIso, { c, n: c.used, done: true });
-      for (const p of projectDates(c, todayIso, doneIds.has(c.id))) if (!who || whoOn(c, p.date)?.id === who) put(p.date, { c, n: p.n });
-    }
-    m.forEach((l) => l.sort((a, b) => (a.c.plan_time ?? "").localeCompare(b.c.plan_time ?? "")));
-    return m;
-  }, [cases, who, todayIso, d]); // eslint-disable-line react-hooks/exhaustive-deps
   /** สถานะเคส (แยกจากใบแจ้งหนี้): ยังไม่มีผู้รับผิดชอบ / ใกล้หมด / อยู่ระหว่างคอร์ส */
   const caseState = (c: PhysioCase) => !c.therapist_id ? "ยังไม่มีผู้รับผิดชอบ" : leftOf(c) <= 2 ? `ใกล้หมด · เหลือ ${leftOf(c)} ครั้ง` : "อยู่ระหว่างคอร์ส";
   const statusOf = (c: PhysioCase) => payOf(c) === "none" ? "ยังไม่ออกใบแจ้งหนี้" : leftOf(c) <= 2 ? `ใกล้หมด (เหลือ ${leftOf(c)})` : !c.therapist_id ? "ยังไม่มีผู้รับผิดชอบ" : "อยู่ระหว่างคอร์ส";
@@ -145,7 +134,7 @@ export function Physio() {
 
         <div className="pt-pages"><Tabs tabs={PAGES} value={pg} onChange={setPg} /></div>
 
-        {pg === "ตาราง" && <>
+        {pg === "ตารางงานนักกายภาพ" && <>
         {open.length > 0 && <Section title={`ยังไม่มีผู้รับผิดชอบ (${open.length})`} sub={canAssign ? "เลือกนักกายภาพ วัน และเวลา" : "รอผู้จัดการหรือฝ่ายขายจ่ายเคส"}>
           <ul className="pt-open">{open.map((c) => (
             <li key={c.id}>
@@ -155,67 +144,17 @@ export function Physio() {
           ))}</ul>
         </Section>}
 
-        <Section title={view === "เดือน" ? `ตารางเดือน ${monthLabel(ym)}` : "ตารางสัปดาห์"} sub={view === "เดือน" ? "วันนัดที่เหลือของทุกคอร์สตามแผน จนครบจำนวนครั้ง · กดนัดเพื่อเปลี่ยนคนทำ ยกเลิก หรือแก้แผน" : "นัดของแต่ละนักกายภาพ · กดนัดเพื่อเปลี่ยนคนทำ ยกเลิก หรือแก้แผน · สีดูคำอธิบายใต้ตาราง"}
-          actions={<Tabs tabs={["สัปดาห์", "เดือน"]} value={view} onChange={setView} />}>
-          {view === "เดือน" ? <>
-            <div className="pt-mhead">
-              <button type="button" className="icon-button" aria-label="เดือนก่อน" onClick={() => setYm(addMonth(ym, -1))}>‹</button>
-              <button type="button" className="btn-soft !min-h-0 !py-1.5" onClick={() => setYm(todayIso.slice(0, 7))}>เดือนนี้</button>
-              <button type="button" className="icon-button" aria-label="เดือนถัดไป" onClick={() => setYm(addMonth(ym, 1))}>›</button>
-              <select aria-label="เลือกนักกายภาพ" value={who} onChange={(e) => setWho(e.target.value)} className="!w-auto"><option value="">นักกายภาพทุกคน</option>{rows.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}</select>
-            </div>
-            <div className="pt-month-grid">
-              {WEEK.map((x) => <span key={x} className="pt-mdow">{DAY_FULL[x]}</span>)}
-              {monthCells(ym).map((day, k) => {
-                if (!day) return <span key={k} className="pt-mday is-blank" />;
-                const list = byDay.get(day) ?? [];
-                return (
-                  <div key={day} className={`pt-mday ${day === todayIso ? "is-today" : ""} ${day < todayIso ? "is-past" : ""}`}>
-                    <span className="pt-mnum">{Number(day.slice(8, 10))}{list.length > 0 && <small>{list.length} ครั้ง</small>}</span>
-                    {list.slice(0, 4).map(({ c, n, done }) => (
-                      <button key={c.id} type="button" className={`pt-chip ${done ? "is-done" : ""}`} disabled={!canAssign} title={`${c.plan_time} ${c.resident_name} · ครั้งที่ ${n}/${c.total} · ${whoOn(c, day)?.name ?? "-"}`} onClick={() => (done ? setHist({ id: c.id, name: c.resident_name }) : setSlot({ c, date: day }))}>
-                        <b>{c.plan_time}</b>{!done && (c.plan_slots?.req?.[day] ? <em className="pt-cover is-req">ขอแทน</em> : c.plan_slots?.date?.[day] && <em className="pt-cover">แทน</em>)}{c.resident_name.replace(/^(คุณ|นาย|นางสาว|นาง)\s*/, "")}{done ? " ✓" : ""}
-                      </button>
-                    ))}
-                    {list.length > 4 && <span className="pt-more">อีก {list.length - 4} เคส</span>}
-                  </div>
-                );
-              })}
-            </div>
-          </> : <>
-            <div className="pt-mhead">
-              <button type="button" className="icon-button" aria-label="สัปดาห์ก่อน" onClick={() => setWkOff(wkOff - 1)}>‹</button>
-              <button type="button" className="btn-soft !min-h-0 !py-1.5" disabled={wkOff === 0} onClick={() => setWkOff(0)}>สัปดาห์นี้</button>
-              <button type="button" className="icon-button" aria-label="สัปดาห์หน้า" onClick={() => setWkOff(wkOff + 1)}>›</button>
-              <b className="pt-wklabel">{dayLabel(wk[0])} – {dayLabel(wk[6])}{wkOff === 0 ? " · สัปดาห์นี้" : wkOff === 1 ? " · สัปดาห์หน้า" : wkOff === -1 ? " · สัปดาห์ก่อน" : ""}</b>
-            </div>
-            {rows.length === 0 ? <p className="rounded-xl bg-cream-50 px-4 py-6 text-center text-sm text-gold-600">ยังไม่มีบัญชีนักกายภาพ{br ? `ในสาขา${br}` : ""} · สร้างบัญชีตำแหน่ง "นักกายภาพบำบัด" ที่เมนูทีมและสิทธิ์การใช้งาน</p> : (
-            <div className="pt-week-wrap"><table className="pt-week">
-              <thead><tr><th scope="col">นักกายภาพ</th>{wk.map((dt) => <th key={dt} scope="col" className={dt === tIso ? "is-today" : ""}>{DAY_TH[dowOf(dt)]} {Number(dt.slice(8, 10))}</th>)}</tr></thead>
-              <tbody>{rows.map((r) => {
-                const l = loadOf(cases, r.id);
-                return (
-                  <tr key={r.id}>
-                    <th scope="row"><b>{r.name}</b><small>{l.cases} เคส · {l.hours} ชม.{!br ? ` · ${r.branch}` : ""}</small></th>
-                    {wk.map((dt) => (
-                      <td key={dt} className={dt === tIso ? "is-today" : ""}>{cell(r.id, dt).map((x, k) => (
-                        <button key={`${x.caseId}${k}`} type="button" className={`pt-chip is-${x.status}`} title={`${x.resident} · ${TRACK_TEXT[x.status]}${x.author ? ` · ${x.author} ${x.at}` : ""}`} onClick={() => openRow(x)}>
-                          <b>{x.time}</b>{x.req ? <em className="pt-cover is-req">ขอแทน</em> : x.cover && <em className="pt-cover">แทน</em>}{x.resident.replace(/^(คุณ|นาย|นางสาว|นาง)\s*/, "")}{x.status === "done" ? " ✓" : x.status === "missed" ? " ✗" : x.status === "noRecord" ? " !" : ""}
-                        </button>
-                      ))}</td>
-                    ))}
-                  </tr>
-                );
-              })}</tbody>
-            </table></div>
-            )}
-          </>}
-          <div className="pt-legend" aria-label="คำอธิบายสี">
-            <span className="pt-chip is-done"><b>✓</b>ทำแล้ว</span><span className="pt-chip is-missed"><b>✗</b>ไม่ได้ทำ</span><span className="pt-chip is-noRecord"><b>!</b>เช็คอินไม่บันทึก</span>
-            <span className="pt-chip is-live"><b>●</b>กำลังทำ</span><span className="pt-chip is-todo"><b>○</b>รอทำวันนี้</span><span className="pt-chip is-planned"><b>○</b>นัดไว้</span><span className="pt-chip is-planned"><em className="pt-cover">แทน</em>มีคนทำแทน</span><span className="pt-chip is-planned"><em className="pt-cover is-req">ขอแทน</em>นักกายภาพขอคนแทน</span>
-          </div>
+        <Section title="ตารางงานนักกายภาพ" sub={canAssign ? "นัดของนักกายภาพทุกคน · กดนัดเพื่อเปลี่ยนคนทำ เวลา ยกเลิก หรือแก้แผน" : "นัดของนักกายภาพทุกคน"}>
+          <PhysioCalendar d={d} cases={cases} therapists={rows} today={todayIso} canAssign={canAssign} onOpen={openRow}
+            onAdd={(date, time) => setBook({ mode: "add", date, time })}
+            onMove={(x, date, time) => { const c = cases.find((k) => k.id === x.caseId); if (c) setBook({ mode: "move", c, from: x.date, date, time: time || timeOn(c, x.date) }); }} />
         </Section>
         </>}
+
+        {pg === "ตารางว่างนักกายภาพ" && <Section title="ตารางว่างนักกายภาพ" sub="ดูทีละสัปดาห์ หรือทั้งเดือน (ล่วงหน้าได้หลายเดือน) · ใครว่างวันไหน · ตั้งลา / ไม่ว่างได้ · เลือกเคสแล้วเห็นเฉพาะคนที่ว่าง">
+          <PhysioAvail cases={cases} therapists={rows} today={todayIso} branch={br || undefined} canAssign={canAssign} blocks={d.blocks} onBook={(date, time, cid, tid) => setBook({ mode: "add", date, time, cid, tid })}
+            onBlock={(tid, tname, date) => setBlk({ tid, tname, date })} hours={d.hours} onHours={(tid, tname) => setHrsT({ tid, tname })} />
+        </Section>}
 
         {pg === "ติดตามการส่งงาน" && (() => {
           // ติดตามการส่งงาน: นัดทุกนัดในช่วงที่เลือก พร้อมสถานะ · กดดูสิ่งที่บันทึกได้
@@ -275,7 +214,10 @@ export function Physio() {
       <PhysioCloseCourse target={closeT} onClose={() => setCloseT(null)} onDone={load} />
       <ResidentProfile id={prof} initialTab="กายภาพ" onClose={() => { setProf(null); load(); }} />
       <PhysioHistoryModal courseId={hist?.id ?? null} title={hist?.name ?? ""} onClose={() => setHist(null)} />
-      <PhysioSlot target={slot} cases={cases} therapists={d?.therapists ?? []} today={todayIso} doneToday={!!slot && doneIds.has(slot.c.id)} onClose={() => setSlot(null)} onSaved={load} onEditPlan={(c) => setPick(c)} />
+      <PhysioSlot target={slot} cases={cases} therapists={d?.therapists ?? []} today={todayIso} doneToday={!!slot && doneIds.has(slot.c.id)} onClose={() => setSlot(null)} onSaved={load} onEditPlan={(c) => setPick(c)} onMove={(c, date) => setBook({ mode: "move", c, from: date, date, time: timeOn(c, date) })} />
+      <PhysioBook target={book} cases={cases} therapists={d?.therapists ?? []} today={todayIso} blocks={d?.blocks} hours={d?.hours} onClose={() => setBook(null)} onSaved={load} />
+      <PhysioBlockDialog target={blk} blocks={d?.blocks ?? []} today={todayIso} onClose={() => setBlk(null)} onSaved={load} />
+      <PhysioHoursDialog target={hrsT} hours={d?.hours ?? []} onClose={() => setHrsT(null)} onSaved={load} />
       <PhysioReassign open={mv} cases={cases} therapists={d?.therapists ?? []} branch={br} onClose={() => setMv(false)} onSaved={load} />
       <PhysioAssign c={pick} cases={cases} therapists={d?.therapists ?? []} today={todayIso} doneToday={!!pick && doneIds.has(pick.id)} onClose={() => setPick(null)} onSaved={load} />
     </>
