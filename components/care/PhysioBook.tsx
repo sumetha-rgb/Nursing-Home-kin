@@ -57,15 +57,14 @@ export default function PhysioBook({ target, cases, therapists, today, blocks = 
     .sort((p, q) => Number(q.mine) - Number(p.mine) || Number(q.free) - Number(p.free) || p.x.resident_name.localeCompare(q.x.resident_name, "th"));
   const problem = !date || date < today ? "เลือกวันนี้หรือวันข้างหน้า" : !time ? "เลือกเวลา" : !tid ? "แตะเลือกนักกายภาพ" : !c ? "เลือกผู้รับบริการ" : "";
   const same = isMove && date === target.from && time === timeOn(target.c, target.from) && tid === (whoOn(target.c, target.from)?.id ?? "");
-  const save = async (force = false) => {
+  const save = async () => {
     if (problem || busy || !c) return;
     setBusy(true);
-    const body = isMove ? { op: "slot_move", courseId: c.id, from: target.from, to: date, time, therapistId: tid, force } : { op: "slot_add", courseId: c.id, date, time, therapistId: tid, force };
+    const body = isMove ? { op: "slot_move", courseId: c.id, from: target.from, to: date, time, therapistId: tid } : { op: "slot_add", courseId: c.id, date, time, therapistId: tid };
     const r = await fetch("/api/clinic", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).catch(() => null);
     const d = r ? await r.json().catch(() => ({})) : {};
     setBusy(false);
-    // นัดทับเวลา: ถามก่อน (ยืนยัน = ลงนัดทับได้)
-    if (r?.status === 409 && d.clash) return confirm({ title: "เวลาชนกับนัดอื่น", message: `${d.error} · ยืนยันลงนัดทับเวลาใช่หรือไม่ (นักกายภาพต้องทำ 2 เคสพร้อมกัน)`, okLabel: "ยืนยันลงนัดทับ", danger: true, onOk: () => save(true) });
+    // นักกายภาพไม่ว่าง (ลา · นอกเวลางาน · มีนัดอื่นทับ) = ลงไม่ได้ ไม่มีปุ่มลงทับ
     if (!r?.ok) return toast(d.error || "บันทึกไม่สำเร็จ");
     const who = therapists.find((t) => t.id === tid)?.name ?? "";
     toast(`${isMove ? "ย้ายนัด" : "วางนัด"} ${c.resident_name} ${dayLabel(date)} ${time} น. แล้ว · แจ้ง ${who} ใน KinApp`);

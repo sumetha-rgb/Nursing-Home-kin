@@ -1,11 +1,13 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { addDays, blockHit, blockText, dayLabel, DAY_TH, DEFAULT_HOURS, dowOf, hoursOn, leftOf, monthLabel, onDate, PhysioBlock, PhysioCase, PhysioHours, schedOf, timeOn, whoOn } from "@/lib/physio";
+import { addDays, addMonth, blockHit, blockText, dayLabel, DAY_TH, DEFAULT_HOURS, dowOf, hoursOn, leftOf, monthCells, monthLabel, onDate, PhysioBlock, PhysioCase, PhysioHours, schedOf, timeOn, WEEK, whoOn } from "@/lib/physio";
 import { fetchMonth, Month } from "@/lib/roster";
 
 /**
  * ตารางว่างนักกายภาพ (26 พ.ย. 2569) · ดูทีละสัปดาห์ (จ.–อา.) หรือทีละเดือน (เดือนนี้เริ่มจากวันนี้)
  *  สัปดาห์นี้: วันที่ผ่านไปแล้วเป็นช่องลาย กดไม่ได้
+ *  (27 พ.ย. 2569) ปุ่มปฏิทินกลางแถบ: เลือกเดือน (ล่วงหน้าข้ามปีได้) → ดูทั้งเดือน · กดวันที่ในปฏิทินเล็ก → ดูสัปดาห์นั้น
+ *  มุมมองเดือน = ปฏิทินจริง (จ.–อา.) แต่ละวันบอกนักกายภาพทุกคน: ว่างหมด / ว่างกี่ชั่วโมง / ลา / หยุด · กดชื่อ = วางนัดหรือตั้งลา · กดเลขวัน = ดูสัปดาห์นั้น
  *  ไม่เลือกเคส: แถว = นักกายภาพ · ช่อง = วัน → แถบเวลา 08:00–18:00 (ช่วงที่มีนัด) + จำนวนนัด + ชั่วโมงว่าง · กดช่อง = วางนัด (เลือกคนนั้นไว้แล้ว)
  *  เลือกเคส + เวลา: แต่ละวันแสดงเฉพาะนักกายภาพที่ว่างช่วงนั้น · กดชื่อ = วางนัดเคสนี้ให้คนนั้นทันที (หน้าต่างยืนยัน)
  *  วันหยุด: นักกายภาพที่มีเวรในตารางเวรเดือนนั้น วันที่ไม่มีเวร = หยุด · ไม่มีเวรเลยทั้งเดือน = ถือว่าทำทุกวัน
@@ -56,8 +58,15 @@ export default function PhysioAvail({ cases, therapists, today, branch, canAssig
   const days = useMemo(() => {
     if (view === "week") return Array.from({ length: 7 }, (_, i) => addDays(start, i));
     const [y, m] = ym.split("-").map(Number), n = new Date(Date.UTC(y, m, 0)).getUTCDate();
-    return Array.from({ length: n }, (_, i) => `${ym}-${String(i + 1).padStart(2, "0")}`).filter((x) => x >= today);
-  }, [view, start, ym, today]);
+    return Array.from({ length: n }, (_, i) => `${ym}-${String(i + 1).padStart(2, "0")}`);
+  }, [view, start, ym]);
+  /** ปฏิทินเลือกเดือน/สัปดาห์ */
+  const [pick, setPick] = useState(false);
+  const [pym, setPym] = useState(today.slice(0, 7));
+  const thisYm = today.slice(0, 7), pickY = Number(pym.slice(0, 4));
+  const MON = ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."];
+  const goWeek = (d: string) => { setView("week"); setStart(monOf(d) < monOf(today) ? monOf(today) : monOf(d)); setPick(false); };
+  const goMonth = (m: string) => { setView("month"); setYm(m < thisYm ? thisYm : m); setPick(false); };
   // ตารางเวรของเดือนที่อยู่ในช่วง (ใช้ดูวันหยุดของนักกายภาพ)
   useEffect(() => {
     const yms = [...new Set(days.map((d) => d.slice(0, 7)))];
@@ -99,6 +108,19 @@ export default function PhysioAvail({ cases, therapists, today, branch, canAssig
   const hasOwn = (date: string) => !!c && onDate(schedOf(c), date);
   const open = cases.filter((x) => leftOf(x) > 0).sort((a, b) => a.resident_name.localeCompare(b.resident_name, "th"));
   const label = view === "month" ? monthLabel(ym) : `${dayLabel(days[0])} – ${dayLabel(days[days.length - 1])}`;
+  /** สถานะของนักกายภาพวันนั้น (ใช้ในปฏิทินเดือน) */
+  const stat = (tid: string, dt: string): { tone: string; text: string; blk?: boolean; title: string } => {
+    if (off(tid, dt)) return { tone: "off", text: "หยุด", title: "หยุดตามตารางเวร" };
+    const wh = hrs(tid, dt);
+    if (!wh) return { tone: "off", text: "ไม่เข้างาน", title: "ไม่ใช่วันเข้างาน" };
+    const ad = allDay(tid, dt);
+    if (ad) return { tone: "blk", text: ad.reason || "ไม่ว่าง", blk: true, title: `${ad.reason || "ไม่ว่าง"} ทั้งวัน · กดเพื่อดู/ยกเลิก` };
+    const b = booked(tid, dt), fm = freeMin(tid, dt), blks = b.filter((x) => x.b), appts = b.filter((x) => x.k);
+    const full = fm >= wh.e - wh.s;
+    return { tone: full ? "ok" : fm <= 0 ? "full" : blks.length ? "part" : fm >= 240 ? "ok" : "mid",
+      text: full ? "ว่างหมด" : fm <= 0 ? "เต็ม" : `ว่าง ${durS(fm)}`,
+      title: `${appts.length ? `นัด: ${appts.map((x) => `${hm(x.s)}–${hm(x.e)} ${x.k!.resident_name}`).join(", ")}` : "ยังไม่มีนัด"}${blks.length ? ` · ${blks.map((x) => blockText(x.b!)).join(", ")}` : ""}` };
+  };
   /** ผ่านไปแล้ว (สัปดาห์นี้) */
   const past = (dt: string) => dt < today;
 
@@ -118,23 +140,68 @@ export default function PhysioAvail({ cases, therapists, today, branch, canAssig
           <button type="button" aria-pressed={view === "week"} onClick={() => setView("week")}>สัปดาห์</button>
           <button type="button" aria-pressed={view === "month"} onClick={() => setView("month")}>เดือน</button>
         </span>
-        {view === "week" ? <span className="pc-nav">
-          <button type="button" aria-label="สัปดาห์ก่อน" disabled={start <= monOf(today)} onClick={() => setStart(addDays(start, -7))}>‹</button>
-          <button type="button" onClick={() => setStart(monOf(today))}>สัปดาห์นี้</button>
-          <button type="button" aria-label="สัปดาห์ถัดไป" onClick={() => setStart(addDays(start, 7))}>›</button>
-        </span> : <span className="pc-nav">
-          <button type="button" aria-label="เดือนก่อน" disabled={ym <= today.slice(0, 7)} onClick={() => shiftYm(-1)}>‹</button>
-          <button type="button" onClick={() => setYm(today.slice(0, 7))}>เดือนนี้</button>
-          <button type="button" aria-label="เดือนถัดไป" onClick={() => shiftYm(1)}>›</button>
-        </span>}
-        <b className="pv-range">{label}</b>
+        <span className="pv-nav2">
+          <button type="button" className="pv-arw" aria-label={view === "week" ? "สัปดาห์ก่อน" : "เดือนก่อน"} disabled={view === "week" ? start <= monOf(today) : ym <= thisYm} onClick={() => (view === "week" ? setStart(addDays(start, -7)) : shiftYm(-1))}>‹</button>
+          <span className="pv-pickwrap">
+            <button type="button" className="pv-pickbtn" aria-expanded={pick} aria-haspopup="dialog" onClick={() => { setPym(view === "month" ? ym : start < today ? thisYm : start.slice(0, 7)); setPick(!pick); }} title="กดเพื่อเลือกเดือนหรือสัปดาห์">
+              <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="4.5" width="14" height="12" rx="2" /><path d="M3 8.5h14M7 2.8v3.4M13 2.8v3.4" /></svg>
+              <span>{label}</span><i aria-hidden="true">▾</i>
+            </button>
+          {pick && <>
+            <button type="button" className="pv-popbg" aria-label="ปิดปฏิทิน" onClick={() => setPick(false)} />
+            <div className="pv-picker" role="dialog" aria-label="เลือกเดือนหรือสัปดาห์">
+              <div className="pv-pk-y">
+                <button type="button" aria-label="ปีก่อน" disabled={pickY <= Number(thisYm.slice(0, 4))} onClick={() => setPym(`${pickY - 1}-${pym.slice(5)}` < thisYm ? thisYm : `${pickY - 1}-${pym.slice(5)}`)}>‹</button>
+                <b>พ.ศ. {pickY + 543}</b>
+                <button type="button" aria-label="ปีถัดไป" onClick={() => setPym(`${pickY + 1}-${pym.slice(5)}`)}>›</button>
+              </div>
+              <div className="pv-pk-m">{MON.map((m, i) => { const v = `${pickY}-${String(i + 1).padStart(2, "0")}`; return <button key={v} type="button" disabled={v < thisYm} aria-pressed={v === pym} className={v === thisYm ? "is-now" : ""} onClick={() => setPym(v)}>{m}</button>; })}</div>
+              <div className="pv-pk-cal">
+                <div className="pv-pk-calh"><button type="button" aria-label="เดือนก่อน" disabled={pym <= thisYm} onClick={() => setPym(addMonth(pym, -1))}>‹</button><b>{monthLabel(pym)}</b><button type="button" aria-label="เดือนถัดไป" onClick={() => setPym(addMonth(pym, 1))}>›</button></div>
+                {WEEK.map((d) => <span key={d} className="pv-pk-dow">{DAY_TH[d]}</span>)}
+                {monthCells(pym).map((d, k) => d === null ? <span key={k} /> : (
+                  <button key={d} type="button" disabled={monOf(d) < monOf(today)} className={`${d === today ? "is-today" : ""} ${view === "week" && monOf(d) === start ? "is-wk" : ""}`} onClick={() => goWeek(d)} title={`ดูสัปดาห์ของ ${dayLabel(d)}`}>{Number(d.slice(8, 10))}</button>
+                ))}
+              </div>
+              <p className="pv-pk-hint">กดวันที่ = ดูสัปดาห์นั้น</p>
+              <button type="button" className="btn-primary pv-pk-go" onClick={() => goMonth(pym)}>ดูทั้งเดือน {monthLabel(pym)}</button>
+            </div>
+          </>}
+          </span>
+          <button type="button" className="pv-arw" aria-label={view === "week" ? "สัปดาห์ถัดไป" : "เดือนถัดไป"} onClick={() => (view === "week" ? setStart(addDays(start, 7)) : shiftYm(1))}>›</button>
+          <button type="button" className="pv-now" onClick={() => (view === "week" ? setStart(monOf(today)) : setYm(thisYm))}>{view === "week" ? "สัปดาห์นี้" : "เดือนนี้"}</button>
+        </span>
         <select value={cid} onChange={(e) => setCid(e.target.value)} aria-label="เลือกเคส"><option value="">เลือกเคส: ดูว่าใครว่าง</option>{open.map((x) => <option key={x.id} value={x.id}>{x.resident_name} · {x.name} · เหลือ {leftOf(x)}</option>)}</select>
         {c && <select value={time} onChange={(e) => setTime(e.target.value)} aria-label="เวลาที่ต้องการ">{(TIMES.includes(time) ? TIMES : [...TIMES, time].sort()).map((t) => <option key={t} value={t}>{t}</option>)}</select>}
         {c && <button type="button" className="btn-soft" onClick={() => setCid("")}>ดูทั้งหมด</button>}
       </div>
-      <p className="pv-hint">{c ? `เคส ${c.resident_name} · ${time}–${hm(toMin(time) + minutes)} น. (${minutes} นาที) · แต่ละวันแสดงเฉพาะนักกายภาพที่ว่าง${canAssign ? " · กดชื่อเพื่อวางนัด" : ""}` : <span className="pv-legend"><span><i className="is-appt" />มีนัด</span><span><i className="is-blk" />ลา / ไม่ว่าง</span><span><i className="is-free" />ว่าง = ยังลงนัดได้อีกกี่ชั่วโมง</span>{canAssign && <em>กดช่องเพื่อลงนัดหรือตั้งลา</em>}</span>}</p>
+      <p className="pv-hint">{c ? `เคส ${c.resident_name} · ${time}–${hm(toMin(time) + minutes)} น. (${minutes} นาที) · แต่ละวันแสดงเฉพาะนักกายภาพที่ว่าง${canAssign ? " · กดชื่อเพื่อวางนัด" : ""}` : <span className="pv-legend"><span><i className="is-appt" />มีนัด</span><span><i className="is-blk" />ลา / ไม่ว่าง</span><span><i className="is-free" />ว่าง = ยังลงนัดได้อีกกี่ชั่วโมง</span>{canAssign && <em>{view === "month" ? "กดชื่อเพื่อลงนัดหรือตั้งลา · กดเลขวันที่เพื่อดูสัปดาห์นั้น" : "กดช่องเพื่อลงนัดหรือตั้งลา"}</em>}</span>}</p>
 
-      {!therapists.length ? <p className="pv-empty">ยังไม่มีบัญชีนักกายภาพในสาขา</p> : c ? (
+      {!therapists.length ? <p className="pv-empty">ยังไม่มีบัญชีนักกายภาพในสาขา</p> : view === "month" ? (
+        <div className="pv-wrap pv-monwrap"><div className="pv-mon">
+          {WEEK.map((d) => <span key={d} className={`pv-mon-h ${d === 0 || d === 6 ? "is-we" : ""}`}>{DAY_TH[d]}</span>)}
+          {monthCells(ym).map((dt, k) => dt === null ? <span key={k} className="pv-mon-pad" /> : (
+            <div key={dt} className={`pv-mon-d ${dt === today ? "is-today" : ""} ${past(dt) ? "is-past" : ""}`}>
+              <button type="button" className="pv-mon-n" disabled={past(dt) && monOf(dt) < monOf(today)} onClick={() => goWeek(dt)} title={`ดูสัปดาห์ของ ${dayLabel(dt)}`}><i className="pv-mon-dow">{dayLabel(dt).split(" ")[0]}</i>{Number(dt.slice(8, 10))}{dt === today && <small>วันนี้</small>}</button>
+              {past(dt) ? null : c ? (() => {
+                const free = therapists.filter((t) => isFree(t.id, dt));
+                return <>
+                  {hasOwn(dt) && <span className="pv-own">มีนัดเคสนี้แล้ว {timeOn(c, dt)}</span>}
+                  {free.length ? free.map((t) => <button key={t.id} type="button" className="pv-free" disabled={!canAssign || hasOwn(dt)} onClick={() => onBook(dt, time, c.id, t.id)} title={`วางนัด ${c.resident_name} ${dayLabel(dt)} ${time} ให้ ${t.name}`}>{t.name}</button>) : <span className="pv-none">ไม่มีคนว่าง</span>}
+                </>;
+              })() : therapists.map((t) => {
+                const st = stat(t.id, dt);
+                return (
+                  <button key={t.id} type="button" className={`pv-mon-t is-${st.tone}`} disabled={!canAssign || st.tone === "off"} title={`${t.name} · ${dayLabel(dt)} · ${st.title}`}
+                    onClick={(e) => { if (st.blk) return onBlock?.(t.id, t.name, dt); const r = e.currentTarget.getBoundingClientRect(); setPop({ tid: t.id, tname: t.name, date: dt, x: r.left, y: r.bottom + 4 }); }}>
+                    <span>{t.name}</span><b>{st.text}</b>
+                  </button>
+                );
+              })}
+            </div>
+          ))}
+        </div></div>
+      ) : c ? (
         <div className="pv-wrap"><div className="pv-cols" style={{ gridTemplateColumns: `repeat(${days.length}, minmax(128px, 1fr))` }}>
           {days.map((dt) => {
             const free = therapists.filter((t) => isFree(t.id, dt));
@@ -153,7 +220,7 @@ export default function PhysioAvail({ cases, therapists, today, branch, canAssig
           })}
         </div></div>
       ) : (
-        <div className="pv-wrap"><table className={`pv-grid ${view === "month" ? "is-month" : ""}`} style={{ minWidth: view === "month" ? 170 + days.length * 76 : 900 }}>
+        <div className="pv-wrap"><table className="pv-grid" style={{ minWidth: 900 }}>
           <thead><tr><th scope="col">นักกายภาพ</th>{days.map((dt) => <th key={dt} scope="col" className={`${dt === today ? "is-today" : ""} ${dowOf(dt) === 0 || dowOf(dt) === 6 ? "is-we" : ""}`}><i>{DAY_TH[dowOf(dt)]}</i>{view === "week" ? dayLabel(dt).replace(/^\S+\s/, "") : Number(dt.slice(8, 10))}</th>)}</tr></thead>
           <tbody>{therapists.map((t) => (
             <tr key={t.id}>
@@ -175,7 +242,7 @@ export default function PhysioAvail({ cases, therapists, today, branch, canAssig
                     <button type="button" className={`pv-cell is-${tone}`} disabled={!canAssign} onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setPop({ tid: t.id, tname: t.name, date: dt, x: r.left, y: r.bottom + 4 }); }}
                       title={`${t.name} · ${dayLabel(dt)} · เวลางาน ${hm(wh.s)}–${hm(wh.e)}${appts.length ? ` · นัด: ${appts.map((x) => `${hm(x.s)}–${hm(x.e)} ${x.k!.resident_name}`).join(", ")}` : " · ยังไม่มีนัด"}${blks.length ? ` · ไม่ว่าง: ${blks.map((x) => blockText(x.b!)).join(", ")}` : ""}`}>
                       <span className="pv-bar2">{b.filter((x) => x.e > wh.s && x.s < wh.e).map((x, i) => <i key={i} className={x.b ? "is-blk" : ""} style={{ left: `${((Math.max(wh.s, x.s) - wh.s) / (wh.e - wh.s)) * 100}%`, width: `${((Math.min(wh.e, x.e) - Math.max(wh.s, x.s)) / (wh.e - wh.s)) * 100}%` }} />)}</span>
-                      <b>{fm >= wh.e - wh.s ? (view === "month" ? "ว่างหมด" : "ว่างทั้งวัน") : fm <= 0 ? "เต็ม" : `${view === "month" ? "" : "ว่าง "}${durS(fm)}`}</b>
+                      <b>{fm >= wh.e - wh.s ? "ว่างทั้งวัน" : fm <= 0 ? "เต็ม" : `ว่าง ${durS(fm)}`}</b>
                       <small>{appts.length ? `${appts.length} นัด` : "ไม่มีนัด"}{blks.length ? ` · ${blks.map((x) => x.b!.reason || "ไม่ว่าง").join(", ")}` : ""}</small>
                     </button>
                   </td>

@@ -367,7 +367,7 @@ function Physio({ id, c, reload, name }: P & { name: string }) {
       <div><h4 className="profile-sub">ประเมินและ Progress note</h4>
         <PhysioSessions items={sessions.map(toHist)} onCopy={canRecord ? (h) => copyRec(h) : undefined} onEdit={(h) => { const n = sessions.find((x) => x.id === h.id); const k = c.courses.find((x) => x.id === n?.data.course_id);
           setRecT({ courseId: k?.id ?? "", courseName: k?.name ?? h.title ?? "", used: k?.used ?? 0, total: k?.total ?? 0, residentName: name, edit: h }); }} /></div>
-      <PhysioAssign c={assign} cases={board?.cases ?? []} therapists={board?.therapists ?? []} today={board?.date ?? new Date(Date.now() + 7 * 36e5).toISOString().slice(0, 10)}
+      <PhysioAssign c={assign} cases={board?.cases ?? []} therapists={board?.therapists ?? []} blocks={board?.blocks} hours={board?.hours} today={board?.date ?? new Date(Date.now() + 7 * 36e5).toISOString().slice(0, 10)}
         doneToday={!!assign && !!board?.today.some((t) => t.course_id === assign.id)} onClose={() => setAssign(null)} onSaved={() => { setBoard(null); reload(); }} />
 
       <Modal open={!!buy} title="ซื้อคอร์สกายภาพ" onClose={() => setBuy(null)}

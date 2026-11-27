@@ -43,18 +43,24 @@ export default function PhysioBlockDialog({ target, blocks, today, onClose, onSa
     const r = await fetch("/api/clinic", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }).catch(() => null);
     const d = r ? await r.json().catch(() => ({})) : {};
     setBusy(false);
+    if (r?.status === 409 && Array.isArray(d.booked)) return "booked:" + d.error;
     if (!r?.ok) { toast(d.error || "บันทึกไม่สำเร็จ"); return false; }
     return true;
   };
   const save = async () => {
     if (problem || busy) return;
-    if (await post({ op: "block_add", therapistId: target.tid, date, ...(to && to > date ? { to } : {}), ...(dows.length ? { days: dows } : {}), reason, ...(whole ? {} : { start: s, end: e }) })) {
+    const body = { op: "block_add", therapistId: target.tid, date, ...(to && to > date ? { to } : {}), ...(dows.length ? { days: dows } : {}), reason, ...(whole ? {} : { start: s, end: e }) };
+    const ok = await post(body);
+    // มีนัดอยู่แล้วในช่วงนั้น: ถามก่อน · ตั้งต่อได้ แต่นัดเดิมไม่หาย (ปฏิทินขึ้นแดง "ชนวันลา" ให้ย้าย)
+    if (typeof ok === "string") return confirm({ title: "มีนัดอยู่แล้วในช่วงนี้", message: `${ok.slice(7)}\n\nตั้งไม่ว่างต่อหรือไม่? นัดเดิมยังอยู่ ในตารางงานจะขึ้นสีแดงว่า "ชนวันลา" ให้ย้ายหรือหาคนทำแทน`, okLabel: "ตั้งไม่ว่างต่อ",
+      onOk: async () => { if ((await post({ ...body, force: true })) === true) { toast(`ตั้ง ${target.tname} ไม่ว่างแล้ว · อย่าลืมย้ายนัดที่ชน`); onSaved(); onClose(); } } });
+    if (ok) {
       toast(`ตั้ง ${target.tname} ไม่ว่าง ${span.length > 1 ? `${dayLabel(span[0])} – ${dayLabel(span[span.length - 1])} (${span.length} วัน)` : dayLabel(date)} ${whole ? "ทั้งวัน" : `${s}–${e}`} (${reason}) แล้ว`);
       onSaved(); onClose();
     }
   };
   const del = (b: PhysioBlock) => confirm({ title: "ยกเลิกไม่ว่าง", message: `${target.tname} · ${dayLabel(b.date)} · ${blockText(b)} · กลับมาว่างช่วงนี้`, okLabel: "ยกเลิกไม่ว่าง",
-    onOk: async () => { if (await post({ op: "block_del", id: b.id })) { toast("ยกเลิกแล้ว · กลับมาว่าง"); onSaved(); } } });
+    onOk: async () => { if ((await post({ op: "block_del", id: b.id })) === true) { toast("ยกเลิกแล้ว · กลับมาว่าง"); onSaved(); } } });
   return (
     <Modal open title={`ตั้งไม่ว่าง · ${target.tname}`} onClose={onClose}
       footer={<>{problem && <span className="pb-miss">{problem}</span>}<button className="btn-soft" onClick={onClose}>ปิด</button><button className="btn-primary" disabled={!!problem || busy} onClick={save}>{busy ? "กำลังบันทึก…" : "ตั้งไม่ว่าง"}</button></>}>

@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Modal } from "../ui";
 import { useApp } from "@/lib/app";
-import { addMonth, clashes, courseMinutes, DAY_FULL, DAY_TH, dayLabel, dowOf, leftOf, loadOf, monthCells, monthLabel, PhysioCase, projectDates, Sched, Therapist, WEEK } from "@/lib/physio";
+import { addMonth, blockHit, blockText, clashes, courseMinutes, DAY_FULL, DAY_TH, dayLabel, dowOf, hoursOn, leftOf, loadOf, monthCells, monthLabel, PhysioBlock, PhysioCase, PhysioHours, projectDates, Sched, Therapist, WEEK } from "@/lib/physio";
 import { useOptions } from "../OptionSettings";
 import { useSession } from "@/lib/session";
 
@@ -20,8 +20,10 @@ const same = (a: number[], b: number[]) => a.length === b.length && a.every((x) 
  *  ด้านขวา = ปฏิทินทั้งเดือน บอกวันที่ทำครั้งที่ 1…N จนครบคอร์ส · กดวันที่ = เพิ่ม/ยกเลิกนัดทีละวัน (เปลี่ยนเป็น "เลือกวันเอง")
  *  cases = เคสทั้งหมดในสาขา (คิดภาระงานและเวลาชน) · today = วันนี้ (YYYY-MM-DD) · doneToday = บันทึกเคสนี้แล้ววันนี้
  */
-export default function PhysioAssign({ c, cases, therapists, today, doneToday, onClose, onSaved }: {
-  c: PhysioCase | null; cases: PhysioCase[]; therapists: Therapist[]; today: string; doneToday?: boolean; onClose: () => void; onSaved: () => void;
+export default function PhysioAssign({ c, cases, therapists, today, doneToday, blocks = [], hours = [], onClose, onSaved }: {
+  c: PhysioCase | null; cases: PhysioCase[]; therapists: Therapist[]; today: string; doneToday?: boolean;
+  /** วันลา / ไม่ว่าง และเวลางาน (เตือนเมื่อนัดชน) */ blocks?: PhysioBlock[]; hours?: PhysioHours[];
+  onClose: () => void; onSaved: () => void;
 }) {
   // ช่วงเวลานัดและความยาวต่อครั้ง แก้ได้ที่ ตั้งค่าตัวเลือก (เลือกเวลาอื่นเองได้เหมือนเดิม)
   const TIME_SLOTS = useOptions("physio_slots").values, MINUTES = useOptions("physio_minutes").values.map(Number).filter((n) => n > 0);
@@ -89,14 +91,43 @@ export default function PhysioAssign({ c, cases, therapists, today, doneToday, o
   const lockedMin = bought != null && !boss;
   const minuteOpts = [...new Set([...(bought != null ? [bought] : []), ...(c.plan_minutes ? [c.plan_minutes] : []), ...MINUTES])].sort((a, b) => a - b);
   const need = tid ? [!days.length && !dates.length && "วัน", !time && "เวลา", needWhy && "เหตุผลที่เปลี่ยนความยาวต่อครั้ง"].filter(Boolean) as string[] : [];
+  /** ชนกับเคสอื่น (ยังทำไม่จบ) = บันทึกไม่ได้ */
+  const blocked = !!tid && !!time && clash.length > 0;
   const onDay = new Map(plan.map((p) => [p.date, p.n]));
-  const save = async () => {
-    if (need.length) return toast(`กรุณาเลือก${need.join("และ")}`);
+  /** นัดที่ชนวันลา / ไม่ว่าง / ไม่เข้างาน / นอกเวลางาน ของคนทำวันนั้น (วันที่ → ข้อความ) */
+  const t0 = time ? Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5)) : NaN;
+  const nameOf = (id: string) => team.find((t) => t.id === id)?.name ?? "-";
+  /** คนทำวันนั้นไม่ว่างเพราะอะไร (ไม่มี = ว่าง) */
+  const leaveInfo = (d: string): { who: string; why: string } | null => {
+    const id = doerOf(dowOf(d)); if (!id) return null;
+    const k = blockHit(blocks, id, d, Number.isNaN(t0) ? undefined : t0, Number.isNaN(t0) ? undefined : t0 + minutes);
+    if (k.length) return { who: nameOf(id), why: k.map((b) => blockText(b).replace(" · ", " ")).join(", ") };
+    // เวลางาน: เช็กเฉพาะคนที่ตั้งไว้ (เหมือนฝั่งเซิร์ฟเวอร์)
+    if (!hours.some((x) => x.therapist_id === id)) return null;
+    const h = hoursOn(hours, id, d);
+    if (!h) return { who: nameOf(id), why: "ไม่เข้างานวันนี้" };
+    if (!Number.isNaN(t0) && (t0 < h.s || t0 + minutes > h.e)) return { who: nameOf(id), why: "นอกเวลางาน" };
+    return null;
+  };
+  const leaveOf = (d: string) => { const x = leaveInfo(d); return x ? `${x.who}: ${x.why}` : ""; };
+  const leave = tid ? plan.flatMap((p) => { const x = leaveInfo(p.date); return x ? [{ d: p.date, ...x }] : []; }) : [];
+  const send = async () => {
     setBusy(true);
     const r = await fetch("/api/clinic", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ op: "course_plan", courseId: c.id, therapistId: tid, days: dates.length ? [] : days, dates, time, minutes, minutesWhy: offPlan ? why.trim() : "", slots: { dow: Object.fromEntries(planDow.filter((x) => doerOf(x) !== tid).map((x) => [String(x), doerOf(x)])), team: crewIds } }) });
     const d = await r.json().catch(() => ({}));
     setBusy(false);
+    return { r, d };
+  };
+  const save = async () => {
+    if (need.length) return toast(`กรุณาเลือก${need.join("และ")}`);
+    if (blocked || leave.length) return toast("นักกายภาพไม่ว่างบางวัน · เลือกเวลา วัน หรือคนอื่นก่อน");
+    const { r, d } = await send();
+    // ชนวันลา: ถามก่อน (ยืนยันแล้วบันทึกได้ เช่น ลาเปลี่ยนใจ)
     if (!r.ok) return toast(d.error || "บันทึกไม่สำเร็จ");
+    done();
+  };
+  const done = () => {
+    if (!c) return;
     toast(tid ? `จ่ายเคส${c.resident_name}ให้ ${[tid, ...new Set(split.map(doerOf))].map((id) => team.find((t) => t.id === id)?.name ?? "").join(", ")} แล้ว` : `${c.resident_name} กลับเป็นยังไม่มีผู้รับผิดชอบ`);
     onSaved(); onClose();
   };
@@ -104,9 +135,9 @@ export default function PhysioAssign({ c, cases, therapists, today, doneToday, o
     <Modal open wide title={`จ่ายเคสกายภาพ · ${c.resident_name}`} onClose={onClose}
       footer={<>
         {c.therapist_id && <button className="btn-soft pa-unassign" disabled={busy} onClick={() => { setTid(""); setDays([]); setDates([]); setTime(""); }}>ไม่ระบุผู้รับผิดชอบ</button>}
-        {need.length > 0 && <span className="pa-need">ยังไม่ได้เลือก{need.join(" · ")}</span>}
+        {need.length > 0 ? <span className="pa-need">ยังไม่ได้เลือก{need.join(" · ")}</span> : (blocked || leave.length > 0) && <span className="pa-need is-stop">⛔ ยังบันทึกไม่ได้ · ดูกล่องสีแดง</span>}
         <button className="btn-soft" onClick={onClose}>ยกเลิก</button>
-        <button className="btn-primary" disabled={busy || need.length > 0} onClick={save}>{busy ? "กำลังบันทึก…" : "บันทึก"}</button>
+        <button className="btn-primary" disabled={busy || need.length > 0 || blocked || leave.length > 0} onClick={save}>{busy ? "กำลังบันทึก…" : "บันทึก"}</button>
       </>}>
       <div className="pa2">
         <div className="pa2-form">
@@ -147,7 +178,7 @@ export default function PhysioAssign({ c, cases, therapists, today, doneToday, o
             <section className={`pa2-step ${!time ? "is-need" : ""}`}>
               <h4><i>3</i>เวลาเริ่ม</h4>
               <div className="pa-slots">{TIME_SLOTS.map((t) => {
-                const b = days.length ? busyAt(t) : [];
+                const b = days.length || dates.length ? busyAt(t) : [];
                 return (
                   <button key={t} type="button" aria-pressed={time === t} className={`${time === t ? "is-on" : ""} ${b.length ? "is-busy" : ""}`} title={b.length ? `ไม่ว่าง: ${b.map((x) => `${x.resident_name} ${x.plan_time}`).join(", ")}` : undefined} onClick={() => setTime(t)}>
                     {t}{b.length > 0 && <small>มีเคส</small>}
@@ -156,7 +187,11 @@ export default function PhysioAssign({ c, cases, therapists, today, doneToday, o
               })}
                 <label className={`pa-other ${time && !TIME_SLOTS.includes(time) ? "is-on" : ""}`}>เวลาอื่น<input type="time" step={900} value={TIME_SLOTS.includes(time) ? "" : time} onChange={(e) => setTime(e.target.value)} /></label>
               </div>
-              {clash.length > 0 && <p role="alert" className="pa-warn">ชนกับเคส {clash.map((x) => `${x.resident_name} ${x.plan_time}`).join(", ")} · บันทึกได้ แต่ควรเลือกเวลาอื่น</p>}
+              {clash.length > 0 && <div role="alert" className="pa-stop">
+                <b>⛔ เวลา {time} ไม่ว่าง</b>
+                <ul>{clash.map((x) => <li key={x.id}>มีนัด <strong>{x.resident_name}</strong> {x.plan_time} ยังทำไม่จบ</li>)}</ul>
+                <p>เลือกเวลาอื่น หรือเลือกนักกายภาพคนอื่น</p>
+              </div>}
             </section>
 
             <section className="pa2-step">
@@ -214,12 +249,19 @@ export default function PhysioAssign({ c, cases, therapists, today, doneToday, o
             {WEEK.map((d) => <span key={d} className="pa2-dow">{DAY_TH[d]}</span>)}
             {monthCells(ym).map((d, k) => d === null ? <span key={k} /> : (
               <button key={d} type="button" disabled={d < today || !tid} aria-pressed={onDay.has(d)} aria-label={`${dayLabel(d)}${onDay.has(d) ? ` นัดครั้งที่ ${onDay.get(d)} · กดเพื่อยกเลิก` : " · กดเพื่อเพิ่มนัด"}`}
-                className={`pa2-day ${onDay.has(d) ? "is-on" : ""} ${d === today ? "is-today" : ""} ${d < today ? "is-past" : ""}`} onClick={() => pickDate(d)}>
-                {Number(d.slice(8, 10))}{onDay.has(d) && <small>ครั้ง {onDay.get(d)}</small>}
+                className={`pa2-day ${onDay.has(d) ? "is-on" : ""} ${d === today ? "is-today" : ""} ${d < today ? "is-past" : ""} ${tid && d >= today && leaveOf(d) ? "is-leave" : ""}`} onClick={() => pickDate(d)}
+                title={tid && d >= today && leaveOf(d) ? leaveOf(d) : undefined}>
+                {Number(d.slice(8, 10))}{onDay.has(d) ? <small>{leaveOf(d) ? "ชนวันลา" : `ครั้ง ${onDay.get(d)}`}</small> : tid && d >= today && leaveOf(d) ? <small>ไม่ว่าง</small> : null}
               </button>
             ))}
           </div>
-          {tid && <p className="pa2-hint">กดวันที่เพื่อเพิ่มหรือยกเลิกนัดทีละวัน</p>}
+          {tid && <div className="pa2-legend"><span><i className="is-on" />วันนัด</span><span><i className="is-leave" />ลา / ไม่ว่าง</span><em>กดวันที่เพื่อเพิ่มหรือเอาออก</em></div>}
+          {leave.length > 0 && <div role="alert" className="pa-stop pa-leave">
+            <b>⛔ บันทึกไม่ได้ · นักกายภาพไม่ว่าง {leave.length} วัน</b>
+            <ul>{leave.slice(0, 4).map((x) => <li key={x.d}><strong>{dayLabel(x.d)}</strong> {x.why}<small>{x.who}</small></li>)}{leave.length > 4 && <li>และอีก {leave.length - 4} วัน</li>}</ul>
+            <p>แก้ได้ 3 ทาง</p>
+            <ol><li>กดวันที่สีแดงเพื่อเอาออก</li><li>เลือกเวลาอื่น</li><li>เลือกนักกายภาพคนอื่น</li></ol>
+          </div>}
           <p className="pa2-sum">{!tid ? "เลือกนักกายภาพ วัน และเวลา เพื่อดูวันนัด"
             : !plan.length ? "เลือกวันในสัปดาห์ หรือกดวันที่ในปฏิทิน"
             : <>นัด <b>{plan.length} ครั้ง</b>{time ? ` เวลา ${time}` : ""} · เริ่ม <b>{dayLabel(plan[0].date)}</b> · {plan.length >= leftOf(c) ? <>ครบครั้งที่ {c.total} ประมาณ <b>{dayLabel(plan[plan.length - 1].date)}</b></> : <>นัดไว้ถึง <b>{dayLabel(plan[plan.length - 1].date)}</b> · ยังเหลืออีก {leftOf(c) - plan.length} ครั้งที่ยังไม่ได้นัด</>}</>}</p>

@@ -219,7 +219,7 @@ export function Physio() {
       <PhysioBlockDialog target={blk} blocks={d?.blocks ?? []} today={todayIso} onClose={() => setBlk(null)} onSaved={load} />
       <PhysioHoursDialog target={hrsT} hours={d?.hours ?? []} onClose={() => setHrsT(null)} onSaved={load} />
       <PhysioReassign open={mv} cases={cases} therapists={d?.therapists ?? []} branch={br} onClose={() => setMv(false)} onSaved={load} />
-      <PhysioAssign c={pick} cases={cases} therapists={d?.therapists ?? []} today={todayIso} doneToday={!!pick && doneIds.has(pick.id)} onClose={() => setPick(null)} onSaved={load} />
+      <PhysioAssign c={pick} cases={cases} therapists={d?.therapists ?? []} today={todayIso} blocks={d?.blocks} hours={d?.hours} doneToday={!!pick && doneIds.has(pick.id)} onClose={() => setPick(null)} onSaved={load} />
     </>
   );
 }

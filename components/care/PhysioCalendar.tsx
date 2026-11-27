@@ -1,7 +1,7 @@
 "use client";
 import { useMemo, useRef, useState } from "react";
 import Icon from "../Icon";
-import { addDays, addMonth, DAY_TH, dowOf, monthCells, monthLabel, PhysioBoard, PhysioCase, TRACK_TEXT, trackRows, TrackRow, TrackStatus, WEEK, weekDates } from "@/lib/physio";
+import { addDays, addMonth, DAY_TH, dowOf, monthCells, monthLabel, PhysioBoard, PhysioCase, TRACK_TEXT, trackRows, TrackRow, TrackStatus, WEEK, weekDates, blockHit, blockText } from "@/lib/physio";
 
 /**
  * ปฏิทินกายภาพ (26 พ.ย. 2569) · แบบปฏิทินนัด: เดือน / สัปดาห์
@@ -126,12 +126,14 @@ export default function PhysioCalendar({ d, cases, therapists, today, canAssign,
     const s = toMin(x.time), e = Number.isNaN(s) ? NaN : s + minutesOf(x);
     // นัดวันนี้ที่เลยเวลาจบแล้วยังไม่บันทึก = แดง (เหมือนไม่ได้ทำ)
     const late = x.status === "todo" && x.date === today && !Number.isNaN(e) && e < nowMin;
+    // นัดที่ยังไม่ทำแต่คนทำลา/ไม่ว่างช่วงนั้น = แดง "ชนวันลา" (ต้องย้ายหรือหาคนแทน)
+    const lv = (x.status === "planned" || x.status === "todo") && x.therapistId ? blockHit(d.blocks, x.therapistId, x.date, Number.isNaN(s) ? undefined : s, Number.isNaN(e) ? undefined : e) : [];
     return (
-      <button type="button" className={`pc-ev is-${late ? "bad" : tone(x.status)} ${x.status === "done" ? "is-done" : ""} ${movable(x) ? "is-move" : ""} ${drop && drop.x === x ? "is-src" : ""}`} disabled={!canAssign && !["done", "noRecord"].includes(x.status)} onClick={(e) => { e.stopPropagation(); if (skipClick.current) return; onOpen(x); }}
+      <button type="button" className={`pc-ev is-${late || lv.length ? "bad" : tone(x.status)} ${lv.length ? "is-leave" : ""} ${x.status === "done" ? "is-done" : ""} ${movable(x) ? "is-move" : ""} ${drop && drop.x === x ? "is-src" : ""}`} disabled={!canAssign && !["done", "noRecord"].includes(x.status)} onClick={(e) => { e.stopPropagation(); if (skipClick.current) return; onOpen(x); }}
         onPointerDown={(e) => press(e, x)} onContextMenu={(e) => { if (movable(x)) e.preventDefault(); }}
-        title={`${x.time ? `${x.time}${Number.isNaN(e) ? "" : `–${hm(e)}`} · ` : ""}${x.therapist} · ${x.resident} · ${TRACK_TEXT[x.status]}${x.cover ? " · มีคนทำแทน" : ""}${x.req ? ` · ขอคนแทน: ${x.req}` : ""}`}>
+        title={`${x.time ? `${x.time}${Number.isNaN(e) ? "" : `–${hm(e)}`} · ` : ""}${x.therapist} · ${x.resident} · ${TRACK_TEXT[x.status]}${x.cover ? " · มีคนทำแทน" : ""}${x.req ? ` · ขอคนแทน: ${x.req}` : ""}${lv.length ? ` · ชนวันลา: ${lv.map(blockText).join(", ")} · ลากไปวันอื่นหรือกดเพื่อเปลี่ยนคน` : ""}`}>
         <b>{x.time ? `${x.time}${Number.isNaN(e) ? "" : `–${hm(e)}`} ` : ""}{x.therapist}{x.req ? " · ขอแทน" : x.cover ? " · แทน" : ""}</b>
-        <small>{x.resident}{x.status === "done" ? " ✓" : x.status === "missed" ? " ✗" : x.status === "noRecord" ? " !" : late ? " · เลยเวลา ยังไม่บันทึก" : ""}</small>
+        <small>{x.resident}{x.status === "done" ? " ✓" : x.status === "missed" ? " ✗" : x.status === "noRecord" ? " !" : lv.length ? ` · ⚠ ชนวันลา (${lv[0].reason || "ไม่ว่าง"})` : late ? " · เลยเวลา ยังไม่บันทึก" : ""}</small>
       </button>
     );
   };

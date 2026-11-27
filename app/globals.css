@@ -4739,3 +4739,112 @@ button.pv-who small { color:#8B6E3E; text-decoration:underline; text-underline-o
 .pv-legend em { font-style:normal; color:#6b5430; }
 .pl-legend i.is-next { background:#e8954d; }
 .pl-legend b { font-weight:600; font-size:11.5px; padding:0 7px; border:1px solid #d9c7a3; border-radius:999px; color:#6b5430; }
+
+/* ชนวันลา: ปฏิทินจ่ายเคส · การ์ดนัดในตารางงาน */
+.pa2-day.is-leave { background:#fdecea; border-color:#e8a29c; color:#a3302a; }
+.pa2-day.is-leave.is-on { background:#c2413a; border-color:#c2413a; color:#fff; }
+.pa2-day.is-leave small { color:inherit; }
+.pa-leave { margin-top:8px; }
+.pc-ev.is-leave { outline:2px dashed #c2413a; outline-offset:-2px; }
+
+/* จ่ายเคส: กล่องบันทึกไม่ได้ (อ่านง่าย: หัวข้อ · รายการ · วิธีแก้) */
+.pa-stop { display:grid; gap:4px; margin-top:8px; padding:10px 12px; border:1px solid #efb7b2; border-radius:10px; background:#fdf1f0; color:#7a2722; font-size:13px; line-height:1.5; }
+.pa-stop > b { font-size:13.5px; color:#a3302a; }
+.pa-stop ul, .pa-stop ol { margin:0; padding-left:18px; display:grid; gap:2px; }
+.pa-stop ul { list-style:disc; } .pa-stop ol { list-style:decimal; }
+.pa-stop li small { display:block; font-size:11.5px; color:#9a5a55; }
+.pa-stop strong { font-weight:600; }
+.pa-stop p { margin:2px 0 0; font-weight:600; color:#7a2722; }
+.pa-need.is-stop { color:#a3302a; font-weight:600; }
+.pa2-legend { display:flex; flex-wrap:wrap; align-items:center; gap:4px 12px; font-size:11.5px; color:#8a6f45; }
+.pa2-legend span { display:inline-flex; align-items:center; gap:5px; }
+.pa2-legend i { width:12px; height:12px; border-radius:4px; display:inline-block; }
+.pa2-legend i.is-on { background:#8B6E3E; }
+.pa2-legend i.is-leave { background:#fdecea; border:1px solid #e8a29c; }
+.pa2-legend em { font-style:normal; }
+
+/* ตารางว่างนักกายภาพ: ปุ่มปฏิทิน + มุมมองเดือนแบบปฏิทิน (27 พ.ย. 2569) */
+.pv-nav2 { display:inline-flex; align-items:center; gap:6px; margin-left:auto; flex-wrap:wrap; }
+.pv-arw { width:40px; height:40px; border:1px solid #e3d6bd; border-radius:12px; background:#fff; font-size:18px; color:#4a3d28; }
+.pv-arw:disabled { opacity:.35; }
+.pv-pickbtn { display:inline-flex; align-items:center; gap:8px; min-height:40px; padding:0 14px; border:1px solid #5c4520; border-radius:12px; background:#fffdf8; font-size:14.5px; font-weight:700; color:#3a2f20; white-space:nowrap; }
+.pv-pickbtn:hover { background:#f6eedd; }
+.pv-pickbtn svg { width:18px; height:18px; fill:none; stroke:#8B6E3E; stroke-width:1.6; stroke-linecap:round; }
+.pv-pickbtn i { font-style:normal; font-size:11px; color:#8B6E3E; }
+.pv-now { min-height:40px; padding:0 12px; border:1px solid #e3d6bd; border-radius:12px; background:#fff; font-size:13.5px; color:#4a3d28; white-space:nowrap; }
+.pv-picker { position:absolute; z-index:151; right:0; top:52px; width:300px; display:grid; gap:10px; padding:14px; border-radius:16px; background:#fff; border:1px solid #e3d6bd; box-shadow:0 14px 32px rgba(40,25,5,.2); }
+.pv-bar { position:relative; }
+.pv-pk-y, .pv-pk-calh { display:flex; align-items:center; justify-content:space-between; }
+.pv-pk-y b, .pv-pk-calh b { font-size:14px; color:#3a2f20; }
+.pv-pk-y button, .pv-pk-calh button { width:30px; height:30px; border-radius:9px; border:1px solid #e3d6bd; background:#fff; color:#4a3d28; }
+.pv-pk-y button:disabled, .pv-pk-calh button:disabled { opacity:.35; }
+.pv-pk-m { display:grid; grid-template-columns:repeat(4, 1fr); gap:6px; }
+.pv-pk-m button { padding:7px 0; border-radius:9px; border:1px solid #eadfca; background:#fffdf8; font-size:13px; color:#4a3d28; }
+.pv-pk-m button.is-now { border-color:#c9a86a; font-weight:700; }
+.pv-pk-m button[aria-pressed=true] { background:#5c4520; border-color:#5c4520; color:#fff; }
+.pv-pk-m button:disabled { opacity:.35; }
+.pv-pk-cal { display:grid; grid-template-columns:repeat(7, 1fr); gap:3px; padding-top:8px; border-top:1px solid #f1e8d8; }
+.pv-pk-calh { grid-column:1 / -1; margin-bottom:4px; }
+.pv-pk-dow { text-align:center; font-size:11px; color:#8a7457; }
+.pv-pk-cal > button { height:32px; border-radius:8px; font-size:13px; color:#3a2f20; background:transparent; }
+.pv-pk-cal > button:hover:not(:disabled) { background:#f6eedd; }
+.pv-pk-cal > button:disabled { color:#cbbfa9; }
+.pv-pk-cal > button.is-today { box-shadow:inset 0 0 0 1.5px #8B6E3E; font-weight:700; }
+.pv-pk-cal > button.is-wk { background:#efe4cf; }
+.pv-pk-hint { margin:0; font-size:11.5px; color:#8a7457; text-align:center; }
+.pv-pk-go { width:100%; justify-content:center; }
+.pv-monwrap { padding:0; }
+.pv-mon { display:grid; grid-template-columns:repeat(7, minmax(120px, 1fr)); min-width:840px; }
+.pv-mon-h { padding:8px; text-align:center; font-size:12.5px; font-weight:700; color:#4a3d28; background:#faf7f1; border-bottom:1px solid #EDE5D6; }
+.pv-mon-h.is-we { color:#a0522d; }
+.pv-mon-pad { background:#fbf9f4; border-right:1px solid #F4EEE3; border-bottom:1px solid #F4EEE3; }
+.pv-mon-d { display:flex; flex-direction:column; gap:4px; min-height:96px; padding:6px; border-right:1px solid #F4EEE3; border-bottom:1px solid #F4EEE3; background:#fff; }
+.pv-mon-d.is-past { background:repeating-linear-gradient(135deg,#faf7f1 0 6px,#f4efe5 6px 12px); }
+.pv-mon-d.is-today { background:#fdf8ee; box-shadow:inset 0 0 0 2px #c9a86a; }
+.pv-mon-n { align-self:flex-start; display:inline-flex; align-items:baseline; gap:6px; padding:1px 6px; border-radius:7px; font-size:14px; font-weight:700; color:#3a2f20; }
+.pv-mon-n:hover:not(:disabled) { background:#f6eedd; }
+.pv-mon-n small { font-size:11px; font-weight:600; color:#8B6E3E; }
+.pv-mon-d.is-past .pv-mon-n { color:#b9ad97; }
+.pv-mon-t { display:grid; gap:0; width:100%; text-align:left; padding:4px 7px; border-radius:8px; border:1px solid transparent; font-size:11.5px; line-height:1.35; }
+.pv-mon-t span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#5d4c33; }
+.pv-mon-t b { font-size:12px; font-weight:700; }
+.pv-mon-t.is-ok { background:#eef7ef; } .pv-mon-t.is-ok b { color:#1f6b40; }
+.pv-mon-t.is-mid { background:#fbf4e4; } .pv-mon-t.is-mid b { color:#8a5a00; }
+.pv-mon-t.is-part { background:#fdf1ef; border-color:#f3cfca; } .pv-mon-t.is-part b { color:#8a5a00; }
+.pv-mon-t.is-full { background:#f3efe8; } .pv-mon-t.is-full b { color:#6b5f4c; }
+.pv-mon-t.is-blk { background:repeating-linear-gradient(135deg,#fde4e1 0 5px,#fbd2cd 5px 10px); border-color:#ef9f97; } .pv-mon-t.is-blk b { color:#a3302a; }
+.pv-mon-t.is-off { background:#f6f3ee; } .pv-mon-t.is-off b { color:#8a7f6e; font-weight:600; }
+.pv-mon-t:hover:not(:disabled) { border-color:#c9a86a; }
+.pv-mon-d .pv-free { font-size:11.5px; padding:4px 7px; }
+@media (max-width: 640px) { .pv-nav2 { margin-left:0; } .pv-picker { left:0; right:auto; width:min(300px, calc(100vw - 32px)); } }
+
+.pv-mon-dow { display:none; font-style:normal; font-size:12.5px; font-weight:600; color:#8a7457; }
+@media (max-width: 640px) {
+  .pv-nav2 { width:100%; }
+  .pv-pickbtn { flex:1; min-width:0; }
+  .pv-pickbtn span { overflow:hidden; text-overflow:ellipsis; }
+  .pv-picker { top:auto; }
+  /* เดือนบนมือถือ: เรียงเป็นรายการวัน (ตั้งแต่วันนี้) แทนตาราง 7 ช่อง */
+  .pv-mon { grid-template-columns:1fr; min-width:0; }
+  .pv-mon-h, .pv-mon-pad, .pv-mon-d.is-past { display:none; }
+  .pv-mon-d { min-height:0; flex-direction:row; flex-wrap:wrap; align-items:stretch; border-right:0; }
+  .pv-mon-n { width:100%; }
+  .pv-mon-dow { display:inline; }
+  .pv-mon-t, .pv-mon-d .pv-free { width:calc(50% - 2px); }
+}
+
+/* ตารางว่าง: ตารางกว้างเลื่อนในกรอบ ไม่ดันหน้าจอมือถือ */
+.pv { min-width:0; max-width:100%; }
+.pv-wrap { max-width:100%; }
+.pv { grid-template-columns:minmax(0, 1fr); }
+.pv > * { min-width:0; }
+/* ปฏิทินเลือกเดือน: เปิดใต้ปุ่มพอดี · คอม 2 คอลัมน์ (เดือนซ้าย ปฏิทินขวา) */
+.pv-pickwrap { position:relative; display:inline-flex; }
+.pv-picker { left:0; right:auto; top:calc(100% + 8px); width:560px; grid-template-columns:200px minmax(0, 1fr); grid-template-areas:"y cal" "m cal" "go hint"; align-items:start; column-gap:16px; row-gap:10px; }
+.pv-pk-y { grid-area:y; } .pv-pk-m { grid-area:m; grid-template-columns:repeat(3, 1fr); } .pv-pk-go { grid-area:go; } .pv-pk-hint { grid-area:hint; align-self:center; }
+.pv-pk-cal { grid-area:cal; border-top:0; padding-top:0; padding-left:16px; border-left:1px solid #f1e8d8; }
+@media (max-width: 760px) { .pv-picker { width:min(300px, calc(100vw - 80px)); grid-template-columns:minmax(0, 1fr); grid-template-areas:"y" "m" "cal" "hint" "go"; } .pv-pk-m { grid-template-columns:repeat(4, 1fr); } .pv-pk-cal { padding-left:0; border-left:0; padding-top:8px; border-top:1px solid #f1e8d8; } }
+@media (max-width: 640px) { .pv-pickwrap { flex:1; min-width:0; } .pv-pickwrap .pv-pickbtn { width:100%; } }
+/* คอม: ปุ่มอยู่ฝั่งขวา → ปฏิทินชิดขอบขวาของปุ่ม เปิดไปทางซ้าย (ไม่ล้นจอ) · มือถือชิดซ้ายของปุ่ม */
+@media (min-width: 641px) { .pv-picker { left:auto; right:0; width:580px; grid-template-columns:220px minmax(0, 1fr); } }
+@media (min-width: 641px) { .pv-picker { grid-template-rows:auto 1fr auto; } .pv-pk-m { align-self:start; } }
