@@ -114,18 +114,18 @@ export function SalesTax() {
     if (!cur || !dated.length) return toast("ไม่มีรายการในช่วงนี้");
     const ex = mode === "all";
     downloadCsv(`รายงานภาษีขาย${ex ? "-ทั้งหมด" : ""}-${tag}-${cur.legal}${cur.office !== "สำนักงานใหญ่" ? `-${cur.office}` : ""}${brNow ? `-เฉพาะสาขา${brNow}` : ""}`,
-      ["ลำดับ", "วันที่", "เลขที่ใบกำกับภาษี", "ชื่อผู้ซื้อสินค้า / ผู้รับบริการ", "เลขประจำตัวผู้เสียภาษีของผู้ซื้อ", "สนญ. / สาขา", "มูลค่าสินค้า / บริการ", "จำนวนเงินภาษีมูลค่าเพิ่ม", ...(ex ? ["ยอดที่ไม่มี VAT / ยกเว้น"] : []), "มูลค่าสุทธิ", "หมายเหตุ"],
-      [...dated.map((r, i) => [String(i + 1), docDate(r.date), r.no, r.buyer, r.taxId, r.payerBranch, money(r.base), money(r.vat), ...(ex ? [money(r.ex)] : []), money(rowTotal(r)), [r.tag, r.ref].filter(Boolean).join(" · ")]),
-        ["", "", "", `รวม ${dated.length} รายการ`, "", "", money(tot.base), money(tot.vat), ...(ex ? [money(tot.ex)] : []), money(grand), `${cur.legal} · เลขผู้เสียภาษี ${cur.taxId ? taxIdText(cur.taxId) : "-"} · ${cur.office} · ${periodText}${ex ? " · รวมใบที่ไม่มี VAT" : ""}${brNow ? ` · เฉพาะสาขา ${brNow} (ตรวจสอบภายใน)` : ""}`]]);
+      ["ลำดับ", "วันที่", "เลขที่ใบกำกับภาษี", "ชื่อผู้ซื้อสินค้า / ผู้รับบริการ", "มูลค่าสินค้า / บริการ", "จำนวนเงินภาษีมูลค่าเพิ่ม", ...(ex ? ["ยอดที่ไม่มี VAT / ยกเว้น"] : []), "มูลค่าสุทธิ", "หมายเหตุ"],
+      [...dated.map((r, i) => [String(i + 1), docDate(r.date), r.no, r.buyer, money(r.base), money(r.vat), ...(ex ? [money(r.ex)] : []), money(rowTotal(r)), [r.tag, r.ref].filter(Boolean).join(" · ")]),
+        ["", "", "", `รวม ${dated.length} รายการ`, money(tot.base), money(tot.vat), ...(ex ? [money(tot.ex)] : []), money(grand), `${cur.legal} · เลขผู้เสียภาษี ${cur.taxId ? taxIdText(cur.taxId) : "-"} · ${cur.office} · ${periodText}${ex ? " · รวมใบที่ไม่มี VAT" : ""}${brNow ? ` · เฉพาะสาขา ${brNow} (ตรวจสอบภายใน)` : ""}`]]);
     toast(`ส่งออกรายงานภาษีขาย ${periodText} แล้ว ${dated.length} รายการ`);
   };
 
   const table = (rows: Row[]) => {
-    const ex = mode === "all", span = ex ? 10 : 9;
+    const ex = mode === "all", span = ex ? 8 : 7;
     return (
       <table className="st-table">
         <thead>
-          <tr><th rowSpan={2}>ลำดับ</th><th colSpan={2}>ใบกำกับภาษี</th><th rowSpan={2}>ชื่อผู้ซื้อสินค้า / ผู้รับบริการ</th><th rowSpan={2}>เลขประจำตัว<br />ผู้เสียภาษีของผู้ซื้อ</th><th rowSpan={2}>สนญ. /<br />สาขา</th>
+          <tr><th rowSpan={2}>ลำดับ</th><th colSpan={2}>ใบกำกับภาษี</th><th rowSpan={2}>ชื่อผู้ซื้อสินค้า / ผู้รับบริการ</th>
             <th rowSpan={2}>มูลค่าสินค้า /<br />บริการ</th><th rowSpan={2}>จำนวนเงิน<br />ภาษีมูลค่าเพิ่ม</th>{ex && <th rowSpan={2}>ยอดที่ไม่มี VAT /<br />ยกเว้น</th>}<th rowSpan={2}>มูลค่าสุทธิ</th></tr>
           <tr><th>วันที่</th><th>เลขที่</th></tr>
         </thead>
@@ -134,12 +134,11 @@ export function SalesTax() {
             <tr key={r.key} className={r.cn ? "is-neg" : ""}>
               <td className="c">{i + 1}</td><td className="c">{docDate(r.date)}</td><td className="c">{r.no}</td>
               <td>{r.buyer}{r.tag && <span className={`st-chip ${r.cn ? "is-cn" : ""}`}>{r.tag}</span>}{ex && !r.vat && !r.base && !r.cn && <span className="st-chip">ไม่มี VAT</span>}{r.ref && <><br /><small>{r.ref}</small></>}</td>
-              <td className="c">{r.taxId ? taxIdText(r.taxId) : ""}</td><td className="c">{r.payerBranch}</td>
               <td className="n">{money(r.base)}</td><td className="n">{money(r.vat)}</td>{ex && <td className="n">{money(r.ex)}</td>}<td className="n">{money(rowTotal(r))}</td>
             </tr>
           ))}
           {!rows.length && <tr><td colSpan={span} className="c st-empty">ไม่มีใบกำกับภาษีในช่วงนี้</td></tr>}
-          <tr className="is-tot"><td colSpan={6} className="n">รวม {rows.length} รายการ</td><td className="n">{money(tot.base)}</td><td className="n">{money(tot.vat)}</td>{ex && <td className="n">{money(tot.ex)}</td>}<td className="n">{money(grand)}</td></tr>
+          <tr className="is-tot"><td colSpan={4} className="n">รวม {rows.length} รายการ</td><td className="n">{money(tot.base)}</td><td className="n">{money(tot.vat)}</td>{ex && <td className="n">{money(tot.ex)}</td>}<td className="n">{money(grand)}</td></tr>
         </tbody>
       </table>
     );
