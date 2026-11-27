@@ -244,7 +244,8 @@ export function PriceList() {
             </div>
           ))}
       </section>
-      <p className="field-hint">กดราคาในใบเสนอราคา สัญญา หรือใบแจ้งหนี้ จะได้ราคาของสาขาจากหน้านี้ · เอกสารที่ออกไปแล้วไม่เปลี่ยนตาม · ส้ม = ราคาใหม่ที่ตั้งล่วงหน้า · ราคาสาขา = สาขาตั้งราคาเอง (กลาง = ราคากลาง)</p>
+      <p className="field-hint">ราคาในหน้านี้ใช้ตอนออกใบเสนอราคา สัญญา และใบแจ้งหนี้ · แก้ราคาแล้วเอกสารเก่าไม่เปลี่ยน</p>
+      <p className="pl-legend"><span><i className="is-next" />ราคาใหม่ ยังไม่ถึงวันใช้</span><span><b>ราคาสาขา</b> สาขาตั้งเอง</span><span><b>กลาง</b> ราคาเดียวกันทุกสาขา</span></p>
 
       {edit && <EditDialog key={edit.item?.id ?? "new"} item={edit.item} tab={edit.tab} items={items} canEdit={canEdit} branch={branch} toggleOk={toggleOk}
         onClose={() => setEdit(null)} onToggle={toggle} onSaved={(m) => { toast(m); setEdit(null); load(); }} onReload={load} />}
@@ -334,7 +335,7 @@ function SubsBody({ subs, onReload }: { subs: PriceSub[]; onReload: () => Promis
               <button type="button" className="btn-primary" disabled={busy} onClick={() => run({ op: "sub_add", cat, name: adding }, `เพิ่มหมวดย่อย ${adding.trim()} แล้ว`)}>เพิ่ม</button>
               <button type="button" className="btn-soft" onClick={() => setAdding(null)}>ยกเลิก</button>
             </div>}
-        <p className="field-hint">ระบบจองช่วงรหัสให้หมวดย่อยใหม่ต่อจากช่วงสุดท้าย (ช่วงละ 10 เลข) · เปลี่ยนชื่อแล้วรายการในหมวดย่อยเปลี่ยนตาม รหัสและราคาเดิม · หมวดย่อยที่ยังมีรายการใช้อยู่ปิดไม่ได้</p>
+        <p className="field-hint">ระบบตั้งรหัสให้หมวดย่อยใหม่เอง · เปลี่ยนชื่อได้ รหัสและราคาไม่เปลี่ยน · ปิดหมวดได้เมื่อไม่มีรายการเหลือในหมวด</p>
       </div>
   );
 }

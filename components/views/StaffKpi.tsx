@@ -47,20 +47,20 @@ export function StaffKpi() {
   const sum = edit ? Object.values(edit).reduce((a, v) => a + (Number(v) || 0), 0) : 0;
   const saveWeights = async () => {
     if (!edit) return;
-    if (sum !== 100) return setWerr(`น้ำหนักรวมตอนนี้ ${sum}% ต้องเท่ากับ 100%`);
+    if (sum !== 100) return setWerr(`รวมตอนนี้ ${sum}% ต้องรวมได้ 100% พอดี`);
     const r = await fetch("/api/kpi", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(edit) });
     const d = await r.json().catch(() => ({}));
     if (!r.ok) return setWerr(d.error || "บันทึกไม่สำเร็จ");
-    setEdit(null); toast("แก้ไขน้ำหนัก KPI แล้ว · คะแนนทุกคนคำนวณใหม่ตามน้ำหนักนี้"); load();
+    setEdit(null); toast("ตั้งสัดส่วนคะแนนแล้ว · คะแนนทุกคนคิดใหม่ตามสัดส่วนนี้"); load();
   };
   const csv = () => downloadCsv(`KPI พนักงาน ${month}`, ["อันดับ", "พนักงาน", "สาขา", "คะแนนรวม", ...KPI_PARTS.map((p) => `${p.label} (${w?.[p.key]}%)`)],
     rows.map((r) => [r.rank ? String(r.rank) : "-", r.name, r.branch, fmt(r.total), ...KPI_PARTS.map((p) => cell(r, p.key))]));
 
   return (
     <>
-      <PageHeader title="KPI พนักงาน" sub="คะแนนรายเดือนจาก 4 ส่วน · แต่ละส่วน 0–100 รวมตามน้ำหนัก"
+      <PageHeader title="KPI พนักงาน" sub="คะแนนเต็ม 100 รวมจาก 4 เรื่อง แต่ละเรื่องมีสัดส่วนต่างกัน"
         actions={<>
-          {data?.canEdit && w && <button className="btn-soft" onClick={() => { setWerr(""); setEdit({ ...w }); }}><Icon name="cpu" className="h-4 w-4" /> ตั้งน้ำหนัก</button>}
+          {data?.canEdit && w && <button className="btn-soft" onClick={() => { setWerr(""); setEdit({ ...w }); }}><Icon name="cpu" className="h-4 w-4" /> ตั้งสัดส่วนคะแนน</button>}
           <button className="btn-soft" onClick={csv}><CsvIcon /> ส่งออก CSV</button>
         </>} />
 
@@ -103,7 +103,7 @@ export function StaffKpi() {
                   const s = sc[p.key]; const pts = pointsOf(p.key, sc, w);
                   return (
                     <li key={p.key} className={s == null ? "is-empty" : ""}>
-                      <div className="kpi-part-head"><b>{p.label}</b><span>น้ำหนัก {w[p.key]}%</span></div>
+                      <div className="kpi-part-head"><b>{p.label}</b><span>สัดส่วน {w[p.key]}%</span></div>
                       <div className="kpi-bar"><i style={{ width: `${s ?? 0}%` }} /></div>
                       <div className="kpi-part-foot">
                         <span>{rawOf(open, p.key)}</span>
@@ -114,14 +114,14 @@ export function StaffKpi() {
                   );
                 })}
               </ul>
-              {KPI_PARTS.some((p) => sc[p.key] == null) && <p className="mt-3 text-xs text-gold-600">ส่วนที่ยังไม่มีข้อมูล (-) ไม่นับคะแนน ระบบเกลี่ยน้ำหนักของส่วนที่มีข้อมูลให้รวมเป็น 100</p>}
+              {KPI_PARTS.some((p) => sc[p.key] == null) && <p className="mt-3 text-xs text-gold-600">เรื่องที่ยังไม่มีข้อมูล (-) ไม่นำมาคิด คะแนนคิดจากเรื่องที่มีข้อมูลแทน</p>}
             </>
           );
         })()}
       </Modal>
 
-      <Modal open={!!edit} title="ตั้งน้ำหนัก KPI พนักงาน" onClose={() => setEdit(null)}
-        footer={<><button className="btn-soft" onClick={() => setEdit(null)}>ยกเลิก</button><button className="btn-primary" onClick={saveWeights}>บันทึกน้ำหนัก</button></>}>
+      <Modal open={!!edit} title="ตั้งสัดส่วนคะแนน KPI" onClose={() => setEdit(null)}
+        footer={<><button className="btn-soft" onClick={() => setEdit(null)}>ยกเลิก</button><button className="btn-primary" onClick={saveWeights}>บันทึก</button></>}>
         {edit && (
           <div className="space-y-3">
             <p className="text-sm text-gold-600">ใช้กับทุกสาขา · รวมกันต้องเท่ากับ 100% · ใส่ 0 เพื่อไม่นับส่วนนั้น</p>

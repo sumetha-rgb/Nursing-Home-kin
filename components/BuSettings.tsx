@@ -30,7 +30,7 @@ export function BuSettings() {
     if (list.length <= 1) return toast("ต้องมีอย่างน้อย 1 ฝ่าย");
     const moves = d.cats.map((c) => { const to = list.find((x) => x.id !== d.id && x.active && x.cats.includes(c)); return `${BU_CAT_TH[c]} → ${to ? to.name : "ยังไม่ได้กำหนดฝ่าย"}`; });
     confirm({ title: `ลบ ${d.name}`, danger: true, okLabel: "ลบฝ่าย",
-      message: `ลบ ${d.name} ออกจากการตั้งค่า BU ใช่หรือไม่${moves.length ? `\n\nหมวดของฝ่ายนี้จะย้ายไป: ${moves.join(" · ")}` : ""}\n\nรายงานรายได้ตาม BU คิดใหม่ทันที ใบแจ้งหนี้และใบเสร็จไม่เปลี่ยน`,
+      message: `ลบ ${d.name} ออกจากการตั้งค่าฝ่ายใช่หรือไม่${moves.length ? `\n\nหมวดของฝ่ายนี้จะย้ายไป: ${moves.join(" · ")}` : ""}\n\nรายงานรายได้ตาม BU คิดใหม่ทันที ใบแจ้งหนี้และใบเสร็จไม่เปลี่ยน`,
       onOk: () => { setList(list.filter((x) => x.id !== d.id)); toast(`ลบ ${d.name} แล้ว`); } });
   };
   const add = () => {
@@ -79,7 +79,7 @@ export function BuSettings() {
         <input className="!w-auto min-w-0 flex-1" value={adding} maxLength={60} placeholder="เพิ่มฝ่าย เช่น ฝ่าย HomeCare" aria-label="ชื่อฝ่ายใหม่" onChange={(e) => setAdding(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); add(); } }} />
         <button type="button" className="btn-primary" onClick={add}><Icon name="plus" className="h-4 w-4" /> เพิ่มฝ่าย</button>
       </div>
-      <p className="field-hint">กดหมวดเพื่อผูก/เอาออกจากฝ่าย · "ตามบริษัทของสาขาที่ออกใบ" = รายได้เข้าบริษัทเดียวกับที่ออกใบเสร็จ · ใช้กับรายงานรายได้ตาม BU (รายงานภายใน) ไม่เปลี่ยนเอกสารลูกค้า</p>
+      <p className="field-hint">กดหมวดสินค้าเพื่อใส่เข้าหรือเอาออกจากฝ่ายนี้ · "ตามบริษัทของสาขาที่ออกใบ" = รายได้เข้าบริษัทที่ออกใบเสร็จ · มีผลกับรายงานรายได้ตามฝ่ายเท่านั้น เอกสารลูกค้าไม่เปลี่ยน</p>
     </div>
   );
 }

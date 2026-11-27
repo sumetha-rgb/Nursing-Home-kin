@@ -385,7 +385,7 @@ function Physio({ id, c, reload, name }: P & { name: string }) {
           <Field label={buy.code ? "ชื่อคอร์ส (เติมจากใบราคา · แก้ได้)" : "ชื่อคอร์ส · พิมพ์เอง"} className="md:col-span-2"><input value={buy.name} onChange={(e) => setBuy({ ...buy, name: e.target.value })} /></Field>
           <Field label="จำนวนครั้ง"><input type="number" min={1} value={buy.total} onChange={(e) => setBuy({ ...buy, total: e.target.value })} /></Field>
           <Field label="ราคาคอร์ส (บาท)" required={!buy.free}><input type="number" min={0} value={buy.free ? "" : buy.price} disabled={buy.free} onChange={(e) => setBuy({ ...buy, price: e.target.value })} placeholder="เช่น 8000" />
-            <p className="field-hint">ซื้อแล้วนักกายภาพเริ่มทำได้ทันที · กด &quot;บันทึกคอร์สและออกใบแจ้งหนี้&quot; เพื่อออกใบต่อเลย (ผู้ชำระ ส่วนลด เลขผู้เสียภาษี และรวมรายการอื่นได้)</p></Field>
+            <p className="field-hint">บันทึกแล้วนักกายภาพเริ่มทำได้เลย · ถ้าจะเก็บเงินตอนนี้ กด &quot;บันทึกคอร์สและออกใบแจ้งหนี้&quot;</p></Field>
           {boss && <label className="md:col-span-2 flex items-center gap-2 text-sm text-gold-700"><input type="checkbox" className="!h-4 !w-4 !min-h-0" checked={buy.free} onChange={(e) => setBuy({ ...buy, free: e.target.checked })} /> ให้คอร์สนี้ฟรี (ระบุเหตุผล)</label>}
           {buy.free && <Field label="เหตุผลที่ให้ฟรี" required className="md:col-span-2"><input value={buy.why} onChange={(e) => setBuy({ ...buy, why: e.target.value })} placeholder="เช่น โปรโมชันเปิดสาขา, ทดลองครั้งแรก" /></Field>}
         </div>}

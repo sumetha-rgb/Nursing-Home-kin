@@ -132,7 +132,7 @@ export default function PhysioAvail({ cases, therapists, today, branch, canAssig
         {c && <select value={time} onChange={(e) => setTime(e.target.value)} aria-label="เวลาที่ต้องการ">{(TIMES.includes(time) ? TIMES : [...TIMES, time].sort()).map((t) => <option key={t} value={t}>{t}</option>)}</select>}
         {c && <button type="button" className="btn-soft" onClick={() => setCid("")}>ดูทั้งหมด</button>}
       </div>
-      <p className="pv-hint">{c ? `เคส ${c.resident_name} · ${time}–${hm(toMin(time) + minutes)} น. (${minutes} นาที) · แต่ละวันแสดงเฉพาะนักกายภาพที่ว่าง${canAssign ? " · กดชื่อเพื่อวางนัด" : ""}` : `แถบ = เวลางานของแต่ละคน (ค่าเริ่มต้น 08:00–19:00 · ปุ่ม "ตั้งเวลางาน" ใต้ชื่อ) · น้ำเงิน = มีนัด · แดง = ลา / ไม่ว่าง · "ว่าง" = เวลาที่เหลือให้ลงนัดได้${canAssign ? " · กดช่องเพื่อวางนัดหรือตั้งไม่ว่าง" : ""} · เลือกเคสเพื่อดูเฉพาะคนที่ว่าง`}</p>
+      <p className="pv-hint">{c ? `เคส ${c.resident_name} · ${time}–${hm(toMin(time) + minutes)} น. (${minutes} นาที) · แต่ละวันแสดงเฉพาะนักกายภาพที่ว่าง${canAssign ? " · กดชื่อเพื่อวางนัด" : ""}` : <span className="pv-legend"><span><i className="is-appt" />มีนัด</span><span><i className="is-blk" />ลา / ไม่ว่าง</span><span><i className="is-free" />ว่าง = ยังลงนัดได้อีกกี่ชั่วโมง</span>{canAssign && <em>กดช่องเพื่อลงนัดหรือตั้งลา</em>}</span>}</p>
 
       {!therapists.length ? <p className="pv-empty">ยังไม่มีบัญชีนักกายภาพในสาขา</p> : c ? (
         <div className="pv-wrap"><div className="pv-cols" style={{ gridTemplateColumns: `repeat(${days.length}, minmax(128px, 1fr))` }}>

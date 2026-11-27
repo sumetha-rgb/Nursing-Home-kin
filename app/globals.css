@@ -4727,3 +4727,15 @@ button.pv-who small { color:#8B6E3E; text-decoration:underline; text-underline-o
 .pv-grid:not(.is-month) td { min-width:104px; }
 .pv-grid.is-month td { min-width:70px; }
 .pv-grid.is-month .pv-cell small { font-size:10.5px; }
+
+/* ป้ายสีแทนคำอธิบาย (ตารางว่างกายภาพ · ราคา) */
+.pv-legend, .pl-legend { display:inline-flex; flex-wrap:wrap; align-items:center; gap:4px 14px; }
+.pl-legend { display:flex; margin:4px 0 0; font-size:12.5px; color:#8a7457; }
+.pv-legend > span, .pl-legend > span { display:inline-flex; align-items:center; gap:6px; white-space:nowrap; }
+.pv-legend i, .pl-legend i { width:16px; height:8px; border-radius:3px; display:inline-block; }
+.pv-legend i.is-appt { background:#4f7fc4; }
+.pv-legend i.is-blk { background:repeating-linear-gradient(135deg,#e05a52 0 3px,#f6c9c5 3px 6px); }
+.pv-legend i.is-free { background:#d8ead4; }
+.pv-legend em { font-style:normal; color:#6b5430; }
+.pl-legend i.is-next { background:#e8954d; }
+.pl-legend b { font-weight:600; font-size:11.5px; padding:0 7px; border:1px solid #d9c7a3; border-radius:999px; color:#6b5430; }

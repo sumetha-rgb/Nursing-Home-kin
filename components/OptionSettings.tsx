@@ -152,7 +152,7 @@ export function OptionListPanel({ list, bare }: { list: OptList; bare?: boolean 
         <button type="button" className="btn-primary" onClick={doAdd}><Icon name="plus" className="h-4 w-4" /> เพิ่ม</button>
       </div>}
       {err && <p className="text-sm text-red-600">{err}</p>}
-      <p className="field-hint">ปิดใช้แล้วจะไม่ขึ้นให้เลือกในฟอร์ม แต่ข้อมูลเก่าที่เคยเลือกไว้ยังอยู่ · แก้ชื่อมีผลกับการเลือกครั้งต่อไป ข้อมูลที่บันทึกไปแล้วไม่เปลี่ยน · ใช้ร่วมกันทุกสาขา</p>
+      <p className="field-hint">ปิดแล้วจะไม่ขึ้นให้เลือกอีก ข้อมูลเก่ายังอยู่ · แก้ชื่อมีผลกับครั้งต่อไป · ทุกสาขาใช้รายการเดียวกัน</p>
     </div>
   );
 }

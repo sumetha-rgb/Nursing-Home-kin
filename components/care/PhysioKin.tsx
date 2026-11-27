@@ -297,7 +297,7 @@ export default function PhysioKin({ view, user, onCount }: { view: PhysioView; u
         {ci && <div className="pk-form">
           <p className="pk-meta">{ci.c.name} · ครั้งที่ {ci.c.used + 1} จาก {ci.c.total}{ci.c.room ? ` · ห้อง ${ci.c.room}` : ""}</p>
           {testMode && !ci.photo && <button type="button" className="pk-test" onClick={async () => setCi({ ...ci, photo: await stamp(testPhoto("เช็คอินข้างเตียง"), "เช็คอินกายภาพ", ci.c) })}>ใช้รูปทดสอบ · บัญชีทดลองเท่านั้น</button>}
-          <PhotoPicker value={ci.photo} allowFile={false} label="ถ่ายรูปข้างเตียง" hint="ให้เห็นผู้รับบริการหรือป้ายเตียง · ระบบประทับชื่อและเวลาลงรูป · เวลาเช็คอินใช้เวลาของระบบ"
+          <PhotoPicker value={ci.photo} allowFile={false} label="ถ่ายรูปข้างเตียง" hint="ถ่ายให้เห็นผู้รับบริการหรือป้ายเตียง · ระบบใส่ชื่อและเวลาลงในรูปให้เอง"
             onChange={async (u) => setCi({ ...ci, photo: u ? await stamp(u, "เช็คอินกายภาพ", ci.c) : "" })} />
         </div>}
       </Modal>

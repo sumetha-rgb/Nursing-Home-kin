@@ -154,7 +154,7 @@ export function Deposits() {
 
   return (
     <>
-      <PageHeader title="รับเงินแยกตามบัญชี" sub="เงินที่รับในช่วงนี้เข้าช่องทางไหน บัญชีไหน เท่าไร และเป็นค่าอะไร · ใช้กระทบยอดกับ statement ธนาคารและลงบัญชี · กดการ์ดช่องทางเพื่อดูรายการ"
+      <PageHeader title="รับเงินแยกตามบัญชี" sub="เงินที่รับเข้ามาแต่ละช่องทาง (เงินสด โอน บัตร) เข้าบัญชีไหน เท่าไร · ใช้เทียบกับรายการเดินบัญชีธนาคาร · กดการ์ดเพื่อดูรายการ"
         actions={<button className="btn-soft" disabled={!shown.length} onClick={exportCsv}><CsvIcon /> ส่งออก Excel / CSV</button>} />
       <div className="st-bar is-grid dp-bar">
         <div className="pp-field dp-when"><span className="label">ช่วงเวลา</span><RangePicker from={from} to={to} onChange={(f, t) => setRng([f, t])} /></div>
@@ -190,7 +190,7 @@ export function Deposits() {
 
         <section className="card dp-card" aria-labelledby="dp-mix-h">
           <h3 id="dp-mix-h">เป็นค่าอะไรบ้าง</h3>
-          {sel?.kind === "wht" ? <p className="field-hint">ภาษีหัก ณ ที่จ่ายเป็นส่วนที่ลูกค้าหักไว้ ไม่ได้เข้าบัญชี จึงไม่แยกว่าเป็นค่าอะไร · ขอหนังสือรับรอง 50 ทวิ จากผู้ชำระเก็บไว้ให้ฝ่ายบัญชี</p> : <>
+          {sel?.kind === "wht" ? <p className="field-hint">เงินส่วนนี้ลูกค้าหักไว้ส่งสรรพากร ไม่ได้เข้าบัญชีเรา · อย่าลืมขอใบ 50 ทวิ จากลูกค้าส่งให้ฝ่ายบัญชี</p> : <>
             <p className="field-hint">{sel ? `${sel.label} · ` : "ทุกช่องทาง · "}รวมรายการที่ชำระ {money(mixTotal)} บาท (ก่อนหักภาษี ณ ที่จ่าย) · ตัดตามลำดับรายการที่มี VAT ก่อน</p>
             <div className="dp-mixbar" role="img" aria-label={mixRows.map(([c, v]) => `${catName(c)} ${money(v)} บาท`).join(", ")}>
               {mixRows.map(([c, v]) => <i key={c} style={{ width: `${(v / (mixTotal || 1)) * 100}%`, background: CAT_COLOR[c] ?? "#8A7A5A" }} />)}
@@ -235,7 +235,7 @@ export function Deposits() {
             </tbody>
           </table></div>
         </section>
-        <p className="field-hint">ยอดตามวันที่รับเงินจริง · งวดที่จ่ายหลายช่องทางแยกยอดไปตามแต่ละช่องทาง · ไม่นับการหักด้วยใบลดหนี้ · เลขบัญชีและเครื่อง EDC มาจาก ตั้งค่า › บัญชีธนาคาร (ชื่อ ณ ตอนรับเงิน)</p>
+        <p className="field-hint">นับตามวันที่ได้รับเงินจริง · จ่ายหลายช่องทางในครั้งเดียว ระบบแยกยอดให้ตามช่องทาง · ไม่รวมใบลดหนี้ · ชื่อบัญชีและเครื่องรูดบัตรแก้ได้ที่ ตั้งค่า › บัญชีธนาคาร</p>
       </>}
     </>
   );

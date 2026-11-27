@@ -21,7 +21,7 @@ export const NAV:NavItem[]=[
 {kind:"view",id:"billing",label:"ใบแจ้งหนี้และใบเสร็จ",icon:"receipt",group:1},
 {kind:"view",id:"deposits",label:"รับเงินแยกตามบัญชี",icon:"download",group:1},
 {kind:"view",id:"sales_tax",label:"รายงานภาษีขาย",icon:"table",group:1},
-{kind:"view",id:"revenue",label:"รายได้ตาม BU",icon:"chart",group:1},
+{kind:"view",id:"revenue",label:"รายได้ตามฝ่าย",icon:"chart",group:1},
 {kind:"view",id:"staff",label:"ทีมและสิทธิ์การใช้งาน",icon:"id",group:3},
 {kind:"view",id:"kpi",label:"KPI พนักงาน",icon:"trophy",group:3},
 {kind:"view",id:"reviews",label:"รีวิวพนักงาน",icon:"star",group:3},

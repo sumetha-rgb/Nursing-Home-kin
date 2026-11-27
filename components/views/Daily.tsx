@@ -326,7 +326,7 @@ export function DailyTasks() {
           <p className="text-sm text-gold-700"><b className="font-semibold text-gold-800">{rows[nudge.k][1]}</b> · {rows[nudge.k][0]} · เวลา {String(rows[nudge.k][3]).slice(0, 5)}</p>
           <p className="text-sm text-gold-600">ส่งถึง: <b className="font-medium text-gold-800">{rows[nudge.k][2] && rows[nudge.k][2] !== "-" && rows[nudge.k][2] !== ANYONE ? rows[nudge.k][2] : `พยาบาลที่อยู่${String(rows[nudge.k][4] || "เวร").replace("กะ", "เวร")}ของวันนี้ (งานนี้ยังไม่ระบุผู้รับผิดชอบ · ยังไม่จัดเวร = ทุกคนในสาขา)`}</b></p>
           <Field label="ข้อความ (ถ้ามี)"><input value={nudge.msg} maxLength={200} onChange={(e) => setNudge({ ...nudge, msg: e.target.value })} placeholder="เช่น ช่วยทำก่อนพักเที่ยงนะ" /></Field>
-          <p className="field-hint">ขึ้นเป็นแถบแดงบนสุดใน KinApp ภายใน 1 นาทีถ้าเปิดแอปอยู่ · พยาบาลส่งงาน หรือตอบว่าทำไม่ได้พร้อมเหตุผล · สถานะขึ้นใต้ชื่องานในหน้านี้</p>
+          <p className="field-hint">พยาบาลจะเห็นแถบแดงใน KinApp ภายใน 1 นาที · เขากดส่งงาน หรือบอกเหตุผลถ้าทำไม่ได้ · ดูผลได้ใต้ชื่องานในหน้านี้</p>
         </div>}
       </Modal>
 

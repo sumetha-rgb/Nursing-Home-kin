@@ -47,7 +47,7 @@ export default function TurningBoard({ rows, phase, routineTasks, isToday, canSe
     },
   });
   return (
-    <Section title="ตารางพลิกตัวทุก 2 ชั่วโมง" sub="ผู้ที่ Braden ต่ำกว่า 13 หรือติดเตียง (จากประเมินแรกรับ) · เขียว = ทำแล้ว · แดง = เลยเวลายังไม่ได้ทำ · กรอบทอง = รอบนี้">
+    <Section title="ตารางพลิกตัวทุก 2 ชั่วโมง" sub="คนที่เสี่ยงแผลกดทับ (คะแนน Braden ต่ำกว่า 13 หรือติดเตียง) · เขียว = ทำแล้ว · แดง = เลยเวลา ยังไม่ได้ทำ · กรอบทอง = รอบตอนนี้">
       <ul className="turn-list">
         {risk.map((p) => {
           const mine = rows.filter((r) => r[0] === p.name && r[1].startsWith("พลิกตัว "));

@@ -87,15 +87,15 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const me = await currentUser(req);
   if (!me) return unauthorized();
-  if (me.role !== "Global Admin") return forbidden("ตั้งน้ำหนัก KPI ได้เฉพาะผู้บริหาร");
+  if (me.role !== "Global Admin") return forbidden("ตั้งสัดส่วนคะแนน KPI ได้เฉพาะผู้บริหาร");
   const b = await req.json().catch(() => ({}));
   const w = Object.fromEntries(KPI_PARTS.map((p) => [p.key, Number(b[p.key])])) as Weights;
-  if (Object.values(w).some((v) => !Number.isInteger(v) || v < 0 || v > 100)) return bad("น้ำหนักต้องเป็นจำนวนเต็ม 0–100");
-  if (Object.values(w).reduce((a, v) => a + v, 0) !== 100) return bad("น้ำหนักรวมต้องเท่ากับ 100%");
+  if (Object.values(w).some((v) => !Number.isInteger(v) || v < 0 || v > 100)) return bad("สัดส่วนต้องเป็นจำนวนเต็ม 0–100");
+  if (Object.values(w).reduce((a, v) => a + v, 0) !== 100) return bad("สัดส่วนรวมต้องเท่ากับ 100%");
   try {
     const before = await weightsOf();
     await sql`UPDATE kpi_settings SET w_family = ${w.family}, w_manager = ${w.manager}, w_tasks = ${w.tasks}, w_punctual = ${w.punctual}, updated_by = ${me.name}, updated_at = now() WHERE id = 'default'`;
-    await audit(req, me, [{ area: "kpi", action: "update", recordId: "default", summary: "น้ำหนัก KPI พนักงาน", before, after: w }]);
+    await audit(req, me, [{ area: "kpi", action: "update", recordId: "default", summary: "สัดส่วนคะแนน KPI พนักงาน", before, after: w }]);
     return NextResponse.json({ ok: true, weights: w });
   } catch (e) {
     console.error("[api/kpi]", e);

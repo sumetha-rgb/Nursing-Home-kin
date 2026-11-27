@@ -76,7 +76,7 @@ export default function ContractSummary({ rows, onOpen }: { rows: string[][]; on
   return (
     <div className="space-y-5">
       <MetricGrid items={tiles} />
-      <Section title={`สรุปการเปิดสัญญา · ${period}`} sub="นับตามวันที่เปิดสัญญาในระบบ · สถานะเป็นสถานะปัจจุบันของสัญญาที่เปิดในช่วงนั้น · ยอดเงินไม่นับสัญญาที่ยกเลิก · กดแถวเพื่อดูรายชื่อ"
+      <Section title={`สรุปการเปิดสัญญา · ${period}`} sub="สัญญาที่เปิดในช่วงนี้ และสถานะของสัญญานั้น ณ วันนี้ · ยอดเงินไม่รวมสัญญาที่ยกเลิก · กดแถวเพื่อดูรายชื่อ"
         actions={<><button type="button" className="btn-soft" onClick={exportSummary}><CsvIcon /> ส่งออกสรุป</button><button type="button" className="btn-soft" disabled={!tot.n} onClick={exportList}><CsvIcon /> ส่งออกรายชื่อ</button></>}>
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <div className="segmented-tabs" role="group" aria-label="สรุปตาม">

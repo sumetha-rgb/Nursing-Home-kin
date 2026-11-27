@@ -144,14 +144,14 @@ export function Physio() {
           ))}</ul>
         </Section>}
 
-        <Section title="ตารางงานนักกายภาพ" sub={canAssign ? "นัดของนักกายภาพทุกคน · กดนัดเพื่อเปลี่ยนคนทำ เวลา ยกเลิก หรือแก้แผน" : "นัดของนักกายภาพทุกคน"}>
+        <Section title="ตารางงานนักกายภาพ" sub={canAssign ? "กดช่องว่างเพื่อลงนัด · กดค้างที่นัดแล้วลากเพื่อย้ายวันหรือเวลา · กดนัดเพื่อดูรายละเอียด เปลี่ยนคน หรือยกเลิก" : "นัดของนักกายภาพทุกคน"}>
           <PhysioCalendar d={d} cases={cases} therapists={rows} today={todayIso} canAssign={canAssign} onOpen={openRow}
             onAdd={(date, time) => setBook({ mode: "add", date, time })}
             onMove={(x, date, time) => { const c = cases.find((k) => k.id === x.caseId); if (c) setBook({ mode: "move", c, from: x.date, date, time: time || timeOn(c, x.date) }); }} />
         </Section>
         </>}
 
-        {pg === "ตารางว่างนักกายภาพ" && <Section title="ตารางว่างนักกายภาพ" sub="ดูทีละสัปดาห์ หรือทั้งเดือน (ล่วงหน้าได้หลายเดือน) · ใครว่างวันไหน · ตั้งลา / ไม่ว่างได้ · เลือกเคสแล้วเห็นเฉพาะคนที่ว่าง">
+        {pg === "ตารางว่างนักกายภาพ" && <Section title="ตารางว่างนักกายภาพ" sub="ดูว่านักกายภาพคนไหนว่างวันไหน · ตั้งวันลาล่วงหน้าได้ · เลือกเคสเพื่อดูเฉพาะคนที่ว่าง">
           <PhysioAvail cases={cases} therapists={rows} today={todayIso} branch={br || undefined} canAssign={canAssign} blocks={d.blocks} onBook={(date, time, cid, tid) => setBook({ mode: "add", date, time, cid, tid })}
             onBlock={(tid, tname, date) => setBlk({ tid, tname, date })} hours={d.hours} onHours={(tid, tname) => setHrsT({ tid, tname })} />
         </Section>}
@@ -170,7 +170,7 @@ export function Physio() {
           const exportTrack = () => downloadCsv(`กายภาพ-ติดตามการส่งงาน-${range[0]}-ถึง-${range[1]}${br ? `-${br}` : ""}`, ["วันที่", "เวลานัด/บันทึก", "ผู้รับบริการ", "นักกายภาพ", "สถานะ", "ผู้บันทึก", "เวลาเช็คอิน/บันทึก"],
             list.map((x) => [x.date, x.time, x.resident, x.therapist, TRACK_TEXT[x.status], x.author ?? "", x.at ?? ""]));
           return (
-            <Section title="ติดตามการส่งงาน" sub="นัดตามแผนเทียบกับที่บันทึกจริง · นับ “ไม่ได้ทำ” ตั้งแต่วันที่จ่ายเคสหรือแก้แผนล่าสุด"
+            <Section title="ติดตามการส่งงาน" sub="นัดที่วางไว้ เทียบกับที่นักกายภาพบันทึกจริง · &quot;ไม่ได้ทำ&quot; เริ่มนับจากวันที่มอบเคสหรือแก้แผนครั้งล่าสุด"
               actions={<><Tabs tabs={["วันนี้", "สัปดาห์นี้", "สัปดาห์ก่อน", "30 วันล่าสุด"]} value={trk} onChange={setTrk} /><button className="btn-soft" onClick={exportTrack}><CsvIcon /> ส่งออก</button></>}>
               <div className="pt-trk-sum">
                 <span><b>{due.length}</b> นัดที่ถึงกำหนด</span>
@@ -203,7 +203,7 @@ export function Physio() {
               ...(boss ? [{ label: "ปิดคอร์ส (ไม่ทำต่อ)", more: true, danger: true, hidden: (k: number) => cases[k].used === 0, onClick: (k: number) => { const c = cases[k]; setCloseT({ id: c.id, name: c.name, used: c.used, total: c.total, resident: c.resident_name, billed: c.billed, team: teamText(c) || undefined }); } }] : []), ...(canAssign ? [{ label: "จ่ายเคส", onClick: (k: number) => setPick(cases[k]) }] : [])]} empty="ยังไม่มีคอร์สกายภาพที่ใช้ได้" />
         </Section>}
 
-        {pg === "ผลงานเดือนนี้" && <Section title="ผลงานเดือนนี้" sub="บันทึกกายภาพ (ตัดคอร์ส) แยกตามผู้บันทึก · ชั่วโมง = เช็คอินถึงบันทึก (หรือนาทีที่แก้ไว้) · ทำแทน = เคสที่ไม่ได้เป็นผู้รับผิดชอบหลัก"
+        {pg === "ผลงานเดือนนี้" && <Section title="ผลงานเดือนนี้" sub="นักกายภาพแต่ละคนทำไปกี่ครั้ง (ทำ 1 ครั้ง = หักคอร์ส 1 ครั้ง) · ชั่วโมง = จากตอนถ่ายรูปเริ่มงาน ถึงตอนกดบันทึก · ทำแทน = ทำเคสของคนอื่น"
           actions={d.month.length ? <button className="btn-soft" onClick={() => downloadCsv(`ผลงานกายภาพ-${d.date.slice(0, 7)}${br ? `-${br}` : ""}`, ["นักกายภาพ", "ครั้ง", "ชั่วโมง", "เคส", "ทำแทน (ครั้ง)"], d.month.map((m) => [m.author, String(m.n), String(m.hours ?? 0), String(m.cases ?? 0), String(m.sub ?? 0)]))}><CsvIcon /> ส่งออกให้บัญชี</button> : undefined}>
           {d.month.length === 0 ? <p className="rounded-xl bg-cream-50 px-4 py-6 text-center text-sm text-gold-600">ยังไม่มีบันทึกกายภาพเดือนนี้</p> : (
             <DataTable search={false} columns={["นักกายภาพ", "ครั้ง", "ชั่วโมง", "เคส", "ทำแทน"]}

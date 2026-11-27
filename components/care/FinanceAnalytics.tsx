@@ -231,7 +231,7 @@ export default function FinanceAnalytics({ branch, compact, onTiles, month, prev
         : <Section title="ลูกหนี้ค้างชำระตามอายุหนี้"><p className="rounded-xl bg-cream-50 px-4 py-6 text-center text-sm text-gold-600">{meta.loaded ? "ไม่มีใบค้างชำระ" : "กำลังโหลด…"}</p></Section>}
       <SalesTargets month={now} branch={branch} list={all.filter((x) => x.status !== VOID)} contracts={con.rows} branchOf={branchOf} />
       <div className="grid gap-6 xl:grid-cols-[3fr_2fr]">
-        <Section title="ออกใบ กับ รับจริง 12 เดือน" sub="ยอดออกใบตามวันที่ออกใบ (หักใบลดหนี้) · รับจริงตามวันที่รับเงิน (บาท) · ชี้ที่เดือนเพื่อดูยอด">
+        <Section title="ออกใบ กับ รับจริง 12 เดือน" sub="ยอดที่ออกใบแจ้งหนี้ เทียบกับเงินที่ได้รับจริงในแต่ละเดือน (หักใบลดหนี้แล้ว) · ชี้ที่เดือนเพื่อดูตัวเลข">
           {meta.loaded ? <PairBars data={months.map((m) => ({ label: monLabel(m), billed: billedSum(m), paid: paidIn(m) }))} goal={collectGoal} open={cut ? monLabel(now) : undefined} /> : <p className="text-sm text-gold-500">กำลังโหลด…</p>}
         </Section>
         <Section title={`ยอดออกใบ ${curLabel} แยกตามประเภท`} sub="ไม่นับใบที่ยกเลิกและใบรอตรวจสอบยอด (บาท)">

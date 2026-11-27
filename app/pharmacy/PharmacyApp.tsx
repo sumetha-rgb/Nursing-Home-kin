@@ -1208,7 +1208,7 @@ function Report({ packs }: { packs: Pack[] }) {
     .map((p) => [thai(p.date), p.who, p.meal, p.items.join(", "), p.by || "-", p.qby || "-", p.gby || "-", p.gat || "-", p.given ? "ให้ยาแล้ว" : "ยังไม่ให้"]), [packs, q]);
   return (
     <>
-      <PageHeader title="ซองยาระบบเดิม" sub="ซองยาที่จัดก่อนเปลี่ยนมาให้ยาแบบใหม่ ดูย้อนหลังได้อย่างเดียว · การให้ยาแบบใหม่ดูที่ ประวัติผู้รับบริการ › ยาและการให้ยา"
+      <PageHeader title="ซองยาระบบเดิม" sub="ซองยาของระบบเดิม ดูย้อนหลังได้อย่างเดียว · การให้ยาตอนนี้ดูที่ ประวัติผู้รับบริการ › ยาและการให้ยา"
         actions={<><button className="btn-soft" onClick={() => downloadCsv("รายงานการจัดยา", cols, rows)}><CsvIcon /> ส่งออก CSV</button><button className="btn-primary" onClick={() => window.print()}><Icon name="print" className="h-4 w-4" /> พิมพ์รายงานจัดยา (A4)</button></>} />
       <form className="card mb-6 grid gap-4 p-5 sm:grid-cols-2 lg:grid-cols-[1.3fr_1.4fr_1fr_auto] lg:items-end" onSubmit={(e) => { e.preventDefault(); setQ({ who, from, to, status }); }}>
         <Field label="ผู้ป่วย"><Select options={RESIDENTS} placeholder="-- ทั้งหมด --" value={who} onChange={setWho} /></Field>

@@ -31,7 +31,7 @@ import { FAC_CSV_COLS, MT_COLS, mtRow } from "./Tasks";
  */
 type Ctx = { from: string; to: string; branch: string; inRange: (d: string) => boolean; tag: string; userBranch?: string; prices: PriceItem[] };
 /** money = ไฟล์เงินและการขาย: เฉพาะคนที่เห็นตัวเลขเงิน (lib/perms seesMoney) แม้มีสิทธิ์หน้าต้นทาง */
-/** salesTax = หน้ารายงานภาษีขาย / รายได้ตาม BU / รับเงินแยกตามบัญชี: ผู้บริหาร ผู้จัดการสาขา การเงิน (เกณฑ์เดียวกับเมนู · lib/settingsAccess) */
+/** salesTax = หน้ารายงานภาษีขาย / รายได้ตามฝ่าย / รับเงินแยกตามบัญชี: ผู้บริหาร ผู้จัดการสาขา การเงิน (เกณฑ์เดียวกับเมนู · lib/settingsAccess) */
 type Item = { id: string; t: string; d: string; rng?: boolean; pdpa?: boolean; money?: boolean; salesTax?: boolean; perms: Perm[]; run?: (c: Ctx) => Promise<number>; link?: { view: ViewId; where: string } };
 type Group = { id: string; name: string; hint: string; icon: string; items: Item[] };
 
@@ -74,7 +74,7 @@ const GROUPS: Group[] = [
       run: async (c) => { const { list, branchOf } = await invoicesWithBranch(c); return debtorsCsv(debtorsOf(list.filter((x) => x.status !== VOID), branchOf).debtors, `ลูกหนี้ตามอายุหนี้-${todayIso()}${c.branch ? `-${c.branch}` : ""}`); } },
     { id: "salestax", t: "รายงานภาษีขาย", d: "ใบที่มี VAT เรียงตามวันที่ แยกตามบริษัท", money: true, salesTax: true, perms: ["billing"], link: { view: "sales_tax", where: "รายงานภาษีขาย › ส่งออก CSV" } },
     { id: "deposits", t: "รับเงินแยกตามบัญชี", d: "ช่องทาง บัญชีธนาคาร / เครื่อง EDC และเป็นค่าอะไร", money: true, salesTax: true, perms: ["billing"], link: { view: "deposits", where: "รับเงินแยกตามบัญชี › ส่งออก CSV" } },
-    { id: "revenue", t: "รายได้ตาม BU", d: "ยอดออกใบ รับเงินจริง ก่อน VAT และ VAT ตามบริษัทและฝ่าย", money: true, salesTax: true, perms: ["billing"], link: { view: "revenue", where: "รายได้ตาม BU › ส่งออก CSV" } },
+    { id: "revenue", t: "รายได้ตามฝ่าย", d: "ยอดออกใบ รับเงินจริง ก่อน VAT และ VAT ตามบริษัทและฝ่าย", money: true, salesTax: true, perms: ["billing"], link: { view: "revenue", where: "รายได้ตามฝ่าย › ส่งออก CSV" } },
     { id: "monthly", t: "สรุปการเงินรายเดือน (12 เดือน)", d: "ยอดออกใบ ส่วนลด รับชำระ ต่อเดือน", money: true, perms: ["dashboard"], link: { view: "dashboard", where: "ภาพรวมและรายงาน › แท็บการเงิน" } },
   ] },
   { id: "sales", name: "ยอดขาย", hint: "อะไรขายดี ใครซื้ออะไร จ่ายเท่าไร", icon: "chart", items: [
@@ -261,7 +261,7 @@ export function Exports() {
 
   return (
     <>
-      <PageHeader title="ส่งออกข้อมูล" sub="ไฟล์ CSV ทุกชนิดของระบบ · เลือกช่วงวันที่และสาขาครั้งเดียว แล้วกดส่งออกไฟล์ที่ต้องการ · เปิดได้ใน Excel และ Google Sheets" />
+      <PageHeader title="ส่งออกข้อมูล" sub="เลือกช่วงวันที่และสาขา แล้วกดดาวน์โหลดไฟล์ที่ต้องการ · เปิดใน Excel หรือ Google Sheets ได้" />
       <div className="space-y-5">
         <section className="ex-bar" aria-label="ตัวเลือกกลาง">
           <div className="min-w-0">

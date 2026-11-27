@@ -25,7 +25,7 @@ const opt = (list: OptList, head: string): Sec => ({
 const SECTIONS: Sec[] = [
   { id: "bank", head: "การเงิน", label: "บัญชีธนาคาร / เครื่อง EDC", sub: "บัญชีรับโอน เครื่องรูดบัตร และช่องทางบัตร ที่แคชเชียร์เลือกตอนรับชำระ", show: (u) => can(u, "billing"), body: () => <PayAccountsManager /> },
   { id: "price_subs", head: "การเงิน", label: "หมวดย่อยใบราคา", sub: "หมวดย่อยและช่วงรหัสของราคาสินค้าและบริการ", show: canPriceSubs, body: () => <PriceSubsPanel /> },
-  { id: "bu", head: "การเงิน", label: "BU (ฝ่ายและบริษัท)", sub: "หมวดในใบราคาไหนเป็นของฝ่ายไหน และเป็นรายได้ของบริษัทไหน · ใช้กับรายงานรายได้ตาม BU", show: (u) => u?.role === "Global Admin", body: () => <BuSettings /> },
+  { id: "bu", head: "การเงิน", label: "ฝ่ายและบริษัท", sub: "หมวดในใบราคาไหนเป็นของฝ่ายไหน และเป็นรายได้ของบริษัทไหน · ใช้กับรายงานรายได้ตามฝ่าย", show: (u) => u?.role === "Global Admin", body: () => <BuSettings /> },
   opt("cn_reasons", "การเงิน"),
   ...(["relations", "health_rights", "booking_amounts", "dc_reasons", "allergy_drugs", "food_allergens", "common_meds"] as OptList[]).map((l) => opt(l, "สัญญาบริการ")),
   ...(["task_categories", "review_notes"] as OptList[]).map((l) => opt(l, "งานดูแล")),
@@ -40,7 +40,7 @@ export function Settings() {
   const heads = [...new Set(mine.map((s) => s.head))];
   return (
     <>
-      <PageHeader title="ตั้งค่า" sub="เพิ่ม แก้ไข และเปิด/ปิดตัวเลือกที่ใช้ในระบบ · ปิดแล้วไม่ขึ้นให้เลือก แต่ข้อมูลเก่ายังอยู่ · ใช้ร่วมกันทุกสาขา" />
+      <PageHeader title="ตั้งค่า" sub="เพิ่ม แก้ไข เปิด/ปิดตัวเลือก · ปิดแล้วจะไม่ขึ้นให้เลือกอีก ข้อมูลเก่ายังอยู่ · ทุกสาขาใช้รายการเดียวกัน" />
       {!cur ? <p className="card section-surface text-sm text-gold-600">บัญชีนี้ยังไม่มีสิทธิ์แก้การตั้งค่าส่วนใด</p> : (
         <div className="set-layout">
           {/* มือถือ: เลือกจากรายการ · จอใหญ่: เมนูด้านซ้าย */}

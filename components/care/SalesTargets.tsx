@@ -76,7 +76,7 @@ export default function SalesTargets({ month, branch, list, contracts, branchOf 
   };
 
   return (
-    <Section title={`เป้ายอดขาย ${monLabel(month)}`} sub="วัดจากรายได้ตามช่วงบริการของเดือน (รวม VAT) · ใบจ่ายล่วงหน้านับเฉพาะส่วนของเดือนนี้"
+    <Section title={`เป้ายอดขาย ${monLabel(month)}`} sub="นับรายได้จากบริการที่ใช้ในเดือนนี้ (รวม VAT) · ถ้าจ่ายล่วงหน้าหลายเดือน นับเฉพาะส่วนของเดือนนี้"
       actions={canEdit ? <button className="btn-soft" onClick={() => openEdit()}>{anyTarget ? "แก้เป้ายอดขาย" : "ตั้งเป้ายอดขาย"}</button> : undefined}>
       {targets === null ? <p className="text-sm text-gold-500">กำลังโหลด…</p> : (
         <div className="tgt">

@@ -2,7 +2,7 @@
 /**
  * เงินที่รับในเดือน แยกตามบริษัทที่ออกใบเสร็จ (บริษัทของสาขา) · หน้า ภาพรวมและรายงาน › การเงิน
  *  รับจริง / ก่อน VAT / VAT ขาย ตัดลงรายการตามลำดับตัดชำระ (lib/billing payTake) · ไม่นับเงินประกัน/มัดจำ
- *  ข้อมูลชุดเดียวกับเมนูรายได้ตาม BU (GET /api/billing?op=revenue) · เห็นเฉพาะผู้บริหาร ผู้จัดการสาขา การเงิน
+ *  ข้อมูลชุดเดียวกับเมนูรายได้ตามฝ่าย (GET /api/billing?op=revenue) · เห็นเฉพาะผู้บริหาร ผู้จัดการสาขา การเงิน
  */
 import { useEffect, useMemo, useState } from "react";
 import { COMPANY, Section } from "../ui";
@@ -14,7 +14,7 @@ import { useApp } from "@/lib/app";
 type Pay = { date: string; amount: number; items: string; branch: string; paidBefore: number };
 type Co = { name: string; recv: number; base: number; vat: number; branches: Set<string> };
 const r2 = (n: number) => Math.round(n * 100) / 100;
-/** สีบริษัทเดียวกับหน้ารายได้ตาม BU */
+/** สีบริษัทเดียวกับหน้ารายได้ตามฝ่าย */
 const CO_COLORS = ["#8a5a1a", "#2b6b7a", "#6b7a2b", "#7a2b5a", "#4a4a8a"];
 
 export default function CompanyStrip({ month, range, branch, monthLabel }: { month: string; range?: { from: string; to: string }; branch: string; monthLabel: string }) {
@@ -52,7 +52,7 @@ export default function CompanyStrip({ month, range, branch, monthLabel }: { mon
   const pct = (c: Co) => (total ? Math.round((c.recv / total) * 100) : 0);
 
   const links = <div className="flex flex-wrap gap-2">
-    <button type="button" className="btn-soft" onClick={() => go("revenue")}>รายได้ตาม BU ›</button>
+    <button type="button" className="btn-soft" onClick={() => go("revenue")}>รายได้ตามฝ่าย ›</button>
     <button type="button" className="btn-soft" onClick={() => go("sales_tax")}>รายงานภาษีขาย ›</button>
   </div>;
   return (

@@ -1,8 +1,8 @@
 "use client";
 /**
- * รายได้ตาม BU (รายงานภายใน) · ตอบว่าเงินแต่ละส่วนเป็นรายได้ของบริษัทไหน มาจากฝ่ายไหน
+ * รายได้ตามฝ่าย (รายงานภายใน) · ตอบว่าเงินแต่ละส่วนเป็นรายได้ของบริษัทไหน มาจากฝ่ายไหน
  *  ยอดออกใบ = ใบที่ออกในเดือน (ใบลดหนี้เป็นยอดลบ) · รับเงินจริง = งวดรับเงินในเดือน ตัดลงรายการตามลำดับตัดชำระ (lib/billing payTake)
- *  ค้างรับ = ยอดที่ยังไม่ได้รับของใบที่ออกในเดือน · ไม่นับเงินประกัน/มัดจำ · รายการ → ฝ่าย → บริษัท ตั้งค่าได้ที่ ตั้งค่า › BU (ฝ่ายและบริษัท)
+ *  ค้างรับ = ยอดที่ยังไม่ได้รับของใบที่ออกในเดือน · ไม่นับเงินประกัน/มัดจำ · รายการ → ฝ่าย → บริษัท ตั้งค่าได้ที่ ตั้งค่า › ฝ่ายและบริษัท
  */
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import CsvIcon from "../CsvIcon";
@@ -141,9 +141,9 @@ export function Revenue() {
   const exportCsv = () => {
     if (!view.length) return toast("ไม่มีข้อมูลในเดือนนี้");
     const row = (a: string, b: string, c: string, x: Cell) => [a, b, c, money(x.billed), money(x.recv), money(x.base), money(x.vat), money(x.owe), `${share(x)}%`];
-    downloadCsv(`รายได้ตาม BU-${useRange ? `${from}-ถึง-${to}` : month}${branch ? `-${branch}` : ""}${company ? `-${company}` : ""}`, ["บริษัท", "ฝ่าย", "สาขา", "ยอดออกใบ", "รับเงินจริง", "ก่อน VAT (เงินที่รับ)", "VAT (เงินที่รับ)", "ค้างรับ", `สัดส่วน (${basis === "recv" ? "เงินที่รับ" : "ยอดออกใบ"})`],
+    downloadCsv(`รายได้ตามฝ่าย-${useRange ? `${from}-ถึง-${to}` : month}${branch ? `-${branch}` : ""}${company ? `-${company}` : ""}`, ["บริษัท", "ฝ่าย", "สาขา", "ยอดออกใบ", "รับเงินจริง", "ก่อน VAT (เงินที่รับ)", "VAT (เงินที่รับ)", "ค้างรับ", `สัดส่วน (${basis === "recv" ? "เงินที่รับ" : "ยอดออกใบ"})`],
       [...view.flatMap((co) => [row(co.name, "รวมบริษัท", "", co), ...[...co.divs.values()].flatMap((d) => [row(co.name, d.name, "ทุกสาขา", d), ...[...d.byBranch.entries()].map(([b, x]) => row(co.name, d.name, b, x))])]), row(company ? `รวม ${company}` : "รวมทุกบริษัท", "", "", vt)]);
-    toast(`ส่งออกรายได้ตาม BU ${label} แล้ว`);
+    toast(`ส่งออกรายได้ตามฝ่าย ${label} แล้ว`);
   };
 
   // แท็บ: สรุป (บริษัท › ฝ่าย › สาขา) · รายการทั้งหมด (ทุกบรรทัด กรองได้ ใช้กระทบยอด)
@@ -159,7 +159,7 @@ export function Revenue() {
     .sort((a, b) => b.date.localeCompare(a.date) || a.no.localeCompare(b.no));
   const LF_MAX = 300;
   const noCodeN = allLines.filter((x) => (lf.kind === "recv" ? x.kind === "recv" : x.kind === "bill") && !x.code && x.cat !== "CN").length;
-  const exportAll = () => downloadCsv(`รายการรายได้ตาม BU-${useRange ? `${from}-ถึง-${to}` : month}${branch ? `-${branch}` : ""}`,
+  const exportAll = () => downloadCsv(`รายการรายได้ตามฝ่าย-${useRange ? `${from}-ถึง-${to}` : month}${branch ? `-${branch}` : ""}`,
     ["วันที่", "เลขที่ใบเสร็จ", "เลขที่ใบแจ้งหนี้", "ผู้รับบริการ", "สาขา", "บริษัท", "ฝ่าย", "รายการ", "รหัส", "หมวด", lf.kind === "recv" ? "รับเงิน" : "ยอดออกใบ", lf.kind === "recv" ? "VAT" : "ค้างรับ"],
     lfShown.map((x) => [dTh(x.date), x.rcpt, x.no, x.who, x.branch, x.co, x.div, x.desc, x.code, x.cat === "CN" ? "ใบลดหนี้" : BU_CAT_TH[x.cat] ?? x.cat, money(x.amount), money(lf.kind === "recv" ? x.vat : x.owe)]));
   // หน้าต่างดูรายการของฝ่าย
@@ -178,7 +178,7 @@ export function Revenue() {
 
   return (
     <>
-      <PageHeader title="รายได้ตาม BU" sub="เงินแต่ละส่วนเป็นรายได้ของบริษัทไหน มาจากฝ่ายไหน · รายงานภายใน (ใบเสร็จของลูกค้ายังออกในนามบริษัทของสาขา) · ไม่นับเงินประกัน/มัดจำ"
+      <PageHeader title="รายได้ตามฝ่าย" sub="รายได้แยกตามฝ่าย (กายภาพ พยาบาล ห้องพัก ฯลฯ) และบริษัทที่ได้รับ · ใช้ดูภายใน ใบเสร็จลูกค้าไม่เปลี่ยน · ไม่รวมเงินประกัน/มัดจำ"
         actions={<button className="btn-soft" disabled={!view.length} onClick={exportCsv}><CsvIcon /> ส่งออก Excel / CSV</button>} />
       <div className="st-bar is-grid">
         <div className="pp-field"><span className="label">เดือน</span><MonthPicker value={month} active={!useRange} onChange={(m) => { setMonth(m); setUseRange(false); }} /></div>
@@ -231,7 +231,7 @@ export function Revenue() {
                   <td className="num">{money(lf.kind === "recv" ? x.vat : x.owe)}</td>
                 </tr>))}</tbody>
             </table></div>)}
-          <p className="field-hint mt-2">หมวดมาจากรหัสสินค้า 2 ตัวแรก (ราคาสินค้าและบริการ) · ไม่มีรหัส = ยา เวชภัณฑ์ หรือรายการที่พิมพ์เอง จะเข้าหมวดอื่น ๆ · ฝ่ายของแต่ละหมวดตั้งได้ที่ ตั้งค่า › BU (ฝ่ายและบริษัท)</p>
+          <p className="field-hint mt-2">หมวดมาจากรหัสสินค้า 2 ตัวแรก (ราคาสินค้าและบริการ) · ไม่มีรหัส = ยา เวชภัณฑ์ หรือรายการที่พิมพ์เอง จะเข้าหมวดอื่น ๆ · ฝ่ายของแต่ละหมวดตั้งได้ที่ ตั้งค่า › ฝ่ายและบริษัท</p>
         </>}
       </section>}
 
@@ -242,7 +242,7 @@ export function Revenue() {
           </div>
           <p className="rv-legend">{view.map((c) => <span key={c.name}><i style={{ background: CO_COLORS[cos.indexOf(c) % CO_COLORS.length] }} />{c.name} <b>{share(c)}%</b></span>)}</p>
           <p className="rv-swipe" hidden={!more} aria-hidden="true">เลื่อนดูคอลัมน์อื่น →</p>
-          <div className={`rv-scroll-wrap ${more ? "has-more" : ""}`}><div className="st-scroll" ref={scrollRef} onScroll={checkMore} tabIndex={0} aria-label="ตารางรายได้ตาม BU เลื่อนซ้ายขวาได้">
+          <div className={`rv-scroll-wrap ${more ? "has-more" : ""}`}><div className="st-scroll" ref={scrollRef} onScroll={checkMore} tabIndex={0} aria-label="ตารางรายได้ตามฝ่าย เลื่อนซ้ายขวาได้">
             <table className="rv-table">
               <thead><tr><th>บริษัท / ฝ่าย</th><th>ยอดออกใบ</th><th>รับเงินจริง</th><th>ก่อน VAT</th><th>VAT</th><th>ค้างรับ</th><th>สัดส่วน</th></tr></thead>
               <tbody>
@@ -255,7 +255,7 @@ export function Revenue() {
                         <Fragment key={k}>
                           <tr className={`is-div ${isOpen ? "is-open" : ""}`} onClick={() => setOpen(isOpen ? null : k)} tabIndex={0} aria-expanded={isOpen}
                             onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setOpen(isOpen ? null : k); } }}>
-                            <td><span className="rv-caret" aria-hidden="true">{isOpen ? "▾" : "▸"}</span>{d.name}{d.name === NO_DIV && <small> · ตั้งได้ที่ ตั้งค่า › BU (ฝ่ายและบริษัท)</small>}
+                            <td><span className="rv-caret" aria-hidden="true">{isOpen ? "▾" : "▸"}</span>{d.name}{d.name === NO_DIV && <small> · ตั้งได้ที่ ตั้งค่า › ฝ่ายและบริษัท</small>}
                               <button type="button" className="rv-lines-btn" onClick={(e) => { e.stopPropagation(); setLinesOf({ co: co.name, div: d.name }); setLinesTab(basis); }}>ดูรายการ</button></td>
                             <td>{money(d.billed)}</td><td>{money(d.recv)}</td><td>{money(d.base)}</td><td>{money(d.vat)}</td><td>{money(d.owe)}</td><td className="rv-pct">{share(d)}%</td>
                           </tr>
@@ -271,7 +271,7 @@ export function Revenue() {
               </tbody>
             </table>
           </div></div>
-          <p className="field-hint">กดแถวฝ่ายเพื่อดูแยกตามสาขา · กด “ดูรายการ” เพื่อดูว่าบรรทัดไหนจากใบไหนถูกนับเข้าฝ่ายนั้น{dep ? ` · เงินประกัน/มัดจำที่รับในเดือนนี้ ${money(dep)} บาท ไม่นับเป็นรายได้` : ""} · ฝ่ายและบริษัทของแต่ละหมวด ตั้งได้ที่ ตั้งค่า › BU (ฝ่ายและบริษัท) (ผู้บริหาร)</p>
+          <p className="field-hint">กดแถวฝ่ายเพื่อดูแยกตามสาขา · กด “ดูรายการ” เพื่อดูว่าบรรทัดไหนจากใบไหนถูกนับเข้าฝ่ายนั้น{dep ? ` · เงินประกัน/มัดจำที่รับในเดือนนี้ ${money(dep)} บาท ไม่นับเป็นรายได้` : ""} · ฝ่ายและบริษัทของแต่ละหมวด ตั้งได้ที่ ตั้งค่า › ฝ่ายและบริษัท (ผู้บริหาร)</p>
         </>}
       </section>}
 
